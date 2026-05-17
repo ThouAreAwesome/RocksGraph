@@ -10,5 +10,12 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-pub mod logical;
-pub mod physical;
+mod push_down_id_filter;
+
+use crate::engine::logical_step::LogicalPlan;
+use push_down_id_filter::push_down_id_filter;
+
+/// Rewrites a `LogicalPlan` into a more efficient equivalent before physical planning.
+pub fn optimize(plan: LogicalPlan) -> LogicalPlan {
+    LogicalPlan { steps: push_down_id_filter(plan.steps) }
+}

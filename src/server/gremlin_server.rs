@@ -6,6 +6,7 @@ use tokio_tungstenite::{accept_async, tungstenite::Message};
 
 use crate::{
     engine::{logical_step::LogicalPlan, volcano::builder::PhysicalPlanBuilder},
+    optimizer::optimize,
     graph::LogicalGraph,
     server::{
         bytecode_deserializer::{deserialize_bytecode, GremlinQueryAst},
@@ -106,6 +107,7 @@ fn process_query_message(bytes: &[u8], graph: &mut LogicalGraph<RocksStorage>) -
             return format!(r#"{{"status":{{"code":400,"message":{}}}}}"#, error_msg);
         }
     };
+    let logical_plan = optimize(logical_plan);
 
     let mut builder = PhysicalPlanBuilder::default();
     let physical_plan = builder.build(&logical_plan);
