@@ -13,9 +13,9 @@
 use crate::{
     engine::volcano::{
         builder::PhysicalPlanBuilder,
-        steps::traits::{ConsumerIter, GremlinStep, Step},
+        steps::traits::{ConsumerIter, GremlinStep, Step}, // Add these imports
     },
-    types::{gvalue::Primitive, prop_key::PropKey, LabelId},
+    types::{gvalue::Primitive, keys::VertexKey, prop_key::PropKey, LabelId},
 };
 
 #[derive(Clone)]
@@ -34,6 +34,11 @@ pub enum LogicalStep {
     ScalarFilter(ScalarFilterStep),
     Where(WhereStep),
     Union(UnionStep),
+    // Add new logical steps here
+    AddV(AddVStep),
+    AddE(AddEStep),
+    Property(PropertyStep),
+    V(VStep),
 }
 
 #[derive(Clone)]
@@ -76,6 +81,27 @@ pub struct UnionStep {
     pub plans: Vec<LogicalPlan>,
 }
 
+#[derive(Clone)]
+pub struct AddVStep {
+    pub label_id: LabelId,
+    pub vertex_id: VertexKey,
+    pub properties: std::collections::HashMap<PropKey, Primitive>,
+}
+
+#[derive(Clone)]
+pub struct AddEStep {
+    pub label_id: LabelId,
+    pub out_v_id: VertexKey,
+    pub in_v_id: VertexKey,
+    pub properties: std::collections::HashMap<PropKey, Primitive>,
+}
+
+#[derive(Clone)]
+pub struct PropertyStep {
+    pub prop_key: PropKey,
+    pub prop_value: Primitive,
+}
+
 impl LogicalStep {
     pub fn build(&self, builder: &mut PhysicalPlanBuilder, upstream: Option<ConsumerIter>) -> Option<ConsumerIter> {
         match self {
@@ -88,6 +114,11 @@ impl LogicalStep {
             LogicalStep::ScalarFilter(s) => s.build(builder, upstream),
             LogicalStep::Where(s) => s.build(builder, upstream),
             LogicalStep::Union(s) => s.build(builder, upstream),
+            // Add new logical steps here
+            LogicalStep::AddV(s) => s.build(builder, upstream),
+            LogicalStep::AddE(s) => s.build(builder, upstream),
+            LogicalStep::Property(s) => s.build(builder, upstream),
+            LogicalStep::V(s) => s.build(builder, upstream),
         }
     }
 }
@@ -97,6 +128,54 @@ impl CountStep {
         let s = crate::engine::volcano::steps::count::CountStep::new();
         if let Some(up) = upstream {
             s.add_upper(up);
+        }
+        Some(Step::subscribe(&s))
+    }
+}
+
+#[derive(Clone)]
+pub struct VStep {
+    pub ids: Vec<VertexKey>,
+}
+
+impl VStep {
+    pub fn build(&self, _builder: &mut PhysicalPlanBuilder, _upstream: Option<ConsumerIter>) -> Option<ConsumerIter> {
+        // VStep is a source step, it ignores any upstream provided by the builder.
+        let s = crate::engine::volcano::steps::v::VStep::new(self.ids.clone());
+        Some(Step::subscribe(&s))
+    }
+}
+
+impl AddVStep {
+    pub fn build(&self, _builder: &mut PhysicalPlanBuilder, _upstream: Option<ConsumerIter>) -> Option<ConsumerIter> {
+        // AddVStep is a source step, it ignores any upstream provided by the builder.
+        let s =
+            crate::engine::volcano::steps::add_v::AddVStep::new(self.label_id, self.vertex_id, self.properties.clone());
+        Some(Step::subscribe(&s))
+    }
+}
+
+impl AddEStep {
+    pub fn build(&self, _builder: &mut PhysicalPlanBuilder, _upstream: Option<ConsumerIter>) -> Option<ConsumerIter> {
+        // AddEStep is a source step, it ignores any upstream provided by the builder.
+        let s = crate::engine::volcano::steps::add_e::AddEStep::new(
+            self.label_id,
+            self.out_v_id,
+            self.in_v_id,
+            self.properties.clone(),
+        );
+        Some(Step::subscribe(&s))
+    }
+}
+
+impl PropertyStep {
+    pub fn build(&self, _builder: &mut PhysicalPlanBuilder, upstream: Option<ConsumerIter>) -> Option<ConsumerIter> {
+        let s =
+            crate::engine::volcano::steps::property::PropertyStep::new(self.prop_key.clone(), self.prop_value.clone());
+        if let Some(up) = upstream {
+            s.add_upper(up);
+        } else {
+            panic!("LogicalPropertyStep must have an upstream.");
         }
         Some(Step::subscribe(&s))
     }

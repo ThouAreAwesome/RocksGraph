@@ -43,6 +43,7 @@ pub enum StoreError {
     /// An error returned directly by the RocksDB storage engine.
     RocksDb(rocksdb::Error),
     Io(std::io::Error),
+    UnsupportedOperation(String),
     Other(String),
 }
 
@@ -60,6 +61,7 @@ impl fmt::Display for StoreError {
             StoreError::MissingColumnFamily(name) => write!(f, "missing column family: {name}"),
             StoreError::RocksDb(e) => write!(f, "storage engine error: {e}"),
             StoreError::Io(e) => write!(f, "I/O error: {e}"),
+            StoreError::UnsupportedOperation(msg) => write!(f, "unsupported operation: {msg}"),
             StoreError::Other(msg) => write!(f, "{msg}"),
         }
     }
@@ -70,6 +72,7 @@ impl std::error::Error for StoreError {
         match self {
             StoreError::RocksDb(e) => Some(e),
             StoreError::Io(e) => Some(e),
+            StoreError::UnsupportedOperation(_) => None,
             _ => None,
         }
     }

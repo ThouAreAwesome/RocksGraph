@@ -19,7 +19,7 @@ use crate::{
         context::GraphCtx,
         data_flow::group_id::GroupId,
         traverser::Traverser,
-        volcano::steps::traits::{BroadcastState, ConsumerIter, GremlinStep, HasBroadcast, Produce, Pullable},
+        volcano::steps::traits::{BroadcastState, ConsumerIter, GremlinStep, HasBroadcast, Produce},
     },
     types::GValue,
 };

@@ -10,9 +10,8 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::{cell::RefCell, rc::Rc};
-
 use smallvec::{smallvec, SmallVec};
+use std::{cell::RefCell, rc::Rc};
 
 use crate::{
     engine::{
@@ -20,67 +19,60 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{BroadcastState, ConsumerIter, GremlinStep, HasBroadcast, Produce},
     },
-    types::{gvalue::Primitive, prop_key::PropKey, CanonicalKey},
+    types::{gvalue::Primitive, keys::CanonicalKey, prop_key::PropKey, GValue},
 };
 
 struct Inner {
     upstream: Option<ConsumerIter>,
     prop_key: PropKey,
-    expected_value: Primitive,
+    prop_value: Primitive,
 }
 
-pub struct HasPropertyStep {
+pub struct PropertyStep {
     broadcast: RefCell<BroadcastState>,
     inner: RefCell<Inner>,
 }
 
-impl HasPropertyStep {
-    pub fn new(prop_key: PropKey, expected_value: Primitive) -> Rc<Self> {
+impl PropertyStep {
+    pub fn new(prop_key: PropKey, prop_value: Primitive) -> Rc<Self> {
         Rc::new(Self {
             broadcast: RefCell::new(BroadcastState::new()),
-            inner: RefCell::new(Inner { upstream: None, prop_key, expected_value }),
+            inner: RefCell::new(Inner { upstream: None, prop_key, prop_value }),
         })
     }
 }
 
-impl HasBroadcast for HasPropertyStep {
+impl HasBroadcast for PropertyStep {
     fn broadcast(&self) -> &RefCell<BroadcastState> {
         &self.broadcast
     }
 }
 
-impl Produce for HasPropertyStep {
+impl Produce for PropertyStep {
     fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Traverser; 4]>> {
         let inner = self.inner.borrow();
         loop {
-            let t = inner.upstream.as_ref().unwrap().next(ctx)?;
-            match &t.value {
-                crate::types::gvalue::GValue::Vertex(vk) => {
-                    if let Some(vl) = ctx.get_property(CanonicalKey::Vertex(*vk), &inner.prop_key).ok()? {
-                        if vl == inner.expected_value {
-                            return Some(smallvec![t]);
-                        }
-                    }
+            let t = inner.upstream.as_ref()?.next(ctx)?;
+            let canonical_key = match &t.value {
+                GValue::Vertex(v_arc) => CanonicalKey::Vertex(*v_arc),
+                GValue::Edge(e_arc) => CanonicalKey::Edge(e_arc.canonical_edge_key()),
+                _ => {
+                    // If the traverser is not a vertex or edge, we should raise an error. For now, we'll just skip it.
+                    continue;
                 }
-                crate::types::gvalue::GValue::Edge(ek) => {
-                    if let Some(et) =
-                        ctx.get_property(CanonicalKey::Edge(ek.canonical_edge_key()), &inner.prop_key).ok()?
-                    {
-                        if et == inner.expected_value {
-                            return Some(smallvec![t]);
-                        }
-                    }
-                }
-                _ => {}
-            }
+            };
+
+            ctx.set_property(canonical_key, inner.prop_key.clone(), inner.prop_value.clone()).ok()?;
+            return Some(smallvec![t]);
         }
     }
 }
 
-impl GremlinStep for HasPropertyStep {
+impl GremlinStep for PropertyStep {
     fn add_upper(&self, upstream: ConsumerIter) {
         self.inner.borrow_mut().upstream = Some(upstream);
     }
+
     fn reset(&self) {
         self.broadcast.borrow_mut().reset();
         if let Some(up) = &self.inner.borrow().upstream {

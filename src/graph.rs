@@ -252,6 +252,34 @@ impl<S: GraphStore> LogicalGraph<S> {
         Ok(result)
     }
 
+    pub fn get_property(&mut self, key: CanonicalKey, prop: &PropKey) -> Result<Option<Primitive>, StoreError> {
+        match key {
+            CanonicalKey::Vertex(id) => {
+                if self.dirty.get(&key) == Some(&Existence::Tombstone) {
+                    return Ok(None);
+                }
+                match self.vertices.get(&id) {
+                    None => return Ok(None),
+                    Some(arc) => {
+                        let props = arc.props.read().map_err(|_| StoreError::LockError)?;
+                        Ok(props.iter().find(|p| p.key == *prop).map(|p| p.value.clone()))
+                    }
+                }
+            }
+            CanonicalKey::Edge(cek) => {
+                if self.dirty.get(&key) == Some(&Existence::Tombstone) {
+                    return Ok(None);
+                }
+                match self.edges.get(&cek) {
+                    None => return Ok(None),
+                    Some(arc) => {
+                        let props = arc.props.read().map_err(|_| StoreError::LockError)?;
+                        Ok(props.iter().find(|p| p.key == *prop).map(|p| p.value.clone()))
+                    }
+                }
+            }
+        }
+    }
     // ── Mutations ─────────────────────────────────────────────────────────────
 
     /// Add a new vertex with explicit `id` and `label_id` to the overlay.
@@ -272,7 +300,7 @@ impl<S: GraphStore> LogicalGraph<S> {
         let vertex = Arc::new(Vertex { id, label_id, props: RwLock::new(Vec::new()) });
         self.vertices.insert(id, vertex.clone());
         self.vertex_degree.insert(id, (0, 0));
-        self.dirty.insert(CanonicalKey::Vertex(id), Existence::New);
+        self.mark_dirty(CanonicalKey::Vertex(id), Existence::New);
         Ok((id, vertex))
     }
 
@@ -313,7 +341,7 @@ impl<S: GraphStore> LogicalGraph<S> {
                 props: RwLock::new(Vec::new()),
             }),
         );
-        self.dirty.insert(CanonicalKey::Edge(cek), Existence::New);
+        self.mark_dirty(CanonicalKey::Edge(cek), Existence::New);
         Ok((cek.out_key(), self.edges[&cek].clone()))
     }
 
@@ -336,7 +364,6 @@ impl<S: GraphStore> LogicalGraph<S> {
 
                         // 2. Modify in place. No cloning happens!
                         upsert_prop(&mut props, key, prop, value);
-                        // upsert_prop(&mut Arc::make_mut(arc).props, key, prop, value),
                     }
                 }
                 self.mark_dirty(key, Existence::Modified);
@@ -402,14 +429,14 @@ impl<S: GraphStore> LogicalGraph<S> {
                 if out_e > 0 || in_e > 0 {
                     return Err(StoreError::IncidentEdges);
                 }
-                self.dirty.insert(key, Existence::Tombstone);
+                self.mark_dirty(key, Existence::Tombstone);
             }
             CanonicalKey::Edge(cek) => {
                 if !self.edges.contains_key(&cek) {
                     return Err(StoreError::NotFound);
                 }
                 if self.dirty.get(&key) != Some(&Existence::Tombstone) {
-                    self.dirty.insert(key, Existence::Tombstone);
+                    self.mark_dirty(key, Existence::Tombstone);
                     if let Some((mut out_e, in_e)) = self.get_vertex_degree(cek.src_id)? {
                         out_e = out_e.saturating_sub(1);
                         self.vertex_degree.insert(cek.src_id, (out_e, in_e));

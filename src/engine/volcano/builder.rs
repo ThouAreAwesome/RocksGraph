@@ -17,7 +17,7 @@ use crate::engine::{
     logical_step::LogicalPlan,
     traverser::Traverser,
     volcano::steps::{
-        traits::{ConsumerIter, GremlinStep, Step},
+        traits::{ConsumerIter, Step},
         vec_source::VecSourceStep,
     },
 };
@@ -52,6 +52,11 @@ impl PhysicalPlanBuilder {
     pub fn build(&mut self, plan: &LogicalPlan) -> PhysicalPlan {
         let source = VecSourceStep::empty();
         let mut upstream = Some(Step::subscribe(&source));
+
+        if plan.steps.is_empty() {
+            // If there are no logical steps, the plan is just the source step
+            return PhysicalPlan { source: source.clone(), tail: Step::subscribe(&source) };
+        }
 
         for step in &plan.steps {
             upstream = step.build(self, upstream);
