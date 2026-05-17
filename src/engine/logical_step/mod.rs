@@ -193,7 +193,7 @@ impl HasPropertyStep {
 
 impl InEStep {
     pub fn build(&self, _builder: &mut PhysicalPlanBuilder, upstream: Option<ConsumerIter>) -> Option<ConsumerIter> {
-        let s = crate::engine::volcano::steps::in_e::InEStep::new(self.label_filter.clone());
+        let s = crate::engine::volcano::steps::in_e::InEStep::new(self.label_filter);
         if let Some(up) = upstream {
             s.add_upper(up);
         }
@@ -203,7 +203,7 @@ impl InEStep {
 
 impl OutEStep {
     pub fn build(&self, _builder: &mut PhysicalPlanBuilder, upstream: Option<ConsumerIter>) -> Option<ConsumerIter> {
-        let s = crate::engine::volcano::steps::out_e::OutEStep::new(self.label_filter.clone());
+        let s = crate::engine::volcano::steps::out_e::OutEStep::new(self.label_filter);
         if let Some(up) = upstream {
             s.add_upper(up);
         }

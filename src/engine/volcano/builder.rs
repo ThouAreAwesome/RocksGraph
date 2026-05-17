@@ -42,13 +42,10 @@ impl PhysicalPlan {
     }
 }
 
+#[derive(Default)]
 pub struct PhysicalPlanBuilder;
 
 impl PhysicalPlanBuilder {
-    pub fn new() -> Self {
-        Self {}
-    }
-
     pub fn build(&mut self, plan: &LogicalPlan) -> PhysicalPlan {
         let source = VecSourceStep::empty();
         let mut upstream = Some(Step::subscribe(&source));
@@ -93,7 +90,7 @@ mod tests {
         let plan =
             LogicalPlan { steps: vec![LogicalStep::ScalarFilter(ScalarFilterStep { value: Primitive::Int32(2) })] };
 
-        let mut builder = PhysicalPlanBuilder::new();
+        let mut builder = PhysicalPlanBuilder::default();
         let physical_plan = builder.build(&plan);
 
         physical_plan.inject(VecDeque::from(vec![traverser(1), traverser(2), traverser(3)]));
@@ -108,7 +105,7 @@ mod tests {
     fn test_plan_reuse_with_reset() {
         let plan = LogicalPlan { steps: vec![LogicalStep::Count(CountStep {})] };
 
-        let mut builder = PhysicalPlanBuilder::new();
+        let mut builder = PhysicalPlanBuilder::default();
         let physical_plan = builder.build(&plan);
 
         // First run: expect 3 items to be counted
@@ -132,7 +129,7 @@ mod tests {
             LogicalPlan { steps: vec![LogicalStep::ScalarFilter(ScalarFilterStep { value: Primitive::Int32(2) })] };
         let plan = LogicalPlan { steps: vec![LogicalStep::Where(WhereStep { plan: sub_plan })] };
 
-        let mut builder = PhysicalPlanBuilder::new();
+        let mut builder = PhysicalPlanBuilder::default();
         let physical_plan = builder.build(&plan);
 
         physical_plan.inject(VecDeque::from(vec![traverser(1), traverser(2), traverser(3)]));

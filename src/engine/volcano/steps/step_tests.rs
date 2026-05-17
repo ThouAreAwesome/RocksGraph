@@ -442,7 +442,7 @@ mod tests {
             })],
         };
 
-        let mut builder = PhysicalPlanBuilder::new();
+        let mut builder = PhysicalPlanBuilder::default();
         let physical_plan = builder.build(&logical_plan);
         let result = physical_plan.next(&mut graph).unwrap();
 
@@ -490,7 +490,7 @@ mod tests {
             })],
         };
 
-        let mut builder = PhysicalPlanBuilder::new();
+        let mut builder = PhysicalPlanBuilder::default();
         let physical_plan = builder.build(&logical_plan);
         let result = physical_plan.next(&mut graph).unwrap();
         if let GValue::Edge(e_key) = &result.value {
@@ -527,7 +527,7 @@ mod tests {
             ],
         };
 
-        let mut builder = PhysicalPlanBuilder::new();
+        let mut builder = PhysicalPlanBuilder::default();
         let physical_plan = builder.build(&logical_plan);
         let result = physical_plan.next(&mut graph).unwrap();
 
@@ -571,7 +571,7 @@ mod tests {
                 }),
             ],
         };
-        let mut builder = PhysicalPlanBuilder::new();
+        let mut builder = PhysicalPlanBuilder::default();
         let physical_plan = builder.build(&logical_plan);
         let result = physical_plan.next(&mut graph).unwrap();
 
@@ -612,7 +612,7 @@ mod tests {
                 }),
             ],
         };
-        let mut builder = PhysicalPlanBuilder::new();
+        let mut builder = PhysicalPlanBuilder::default();
         let physical_plan = builder.build(&logical_plan);
         let result = physical_plan.next(&mut graph).unwrap();
         if let GValue::Vertex(v_key) = &result.value {
@@ -648,7 +648,7 @@ mod tests {
             ],
         };
 
-        let mut builder = PhysicalPlanBuilder::new();
+        let mut builder = PhysicalPlanBuilder::default();
         let physical_plan = builder.build(&logical_plan);
         let result = physical_plan.next(&mut graph).unwrap();
 
@@ -672,7 +672,7 @@ mod tests {
             ],
         };
 
-        let mut builder = PhysicalPlanBuilder::new();
+        let mut builder = PhysicalPlanBuilder::default();
         let physical_plan = builder.build(&logical_plan);
         let result = physical_plan.next(&mut graph).unwrap();
 
@@ -727,7 +727,7 @@ mod tests {
             ],
         };
 
-        let mut builder = PhysicalPlanBuilder::new();
+        let mut builder = PhysicalPlanBuilder::default();
         let physical_plan = builder.build(&logical_plan);
 
         let mut results = Vec::new();
