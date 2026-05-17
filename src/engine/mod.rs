@@ -12,6 +12,7 @@
 
 pub mod context;
 pub mod data_flow;
+pub mod gremlin_to_logical_plan;
 pub mod logical_step;
 pub mod traverser;
 pub mod volcano;

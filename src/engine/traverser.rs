@@ -15,7 +15,10 @@ use std::sync::Arc;
 use smallvec::SmallVec;
 use smol_str::SmolStr;
 
-use crate::{engine::data_flow::group_id::GroupId, types::GValue};
+use crate::{
+    engine::data_flow::group_id::GroupId,
+    types::{keys::EdgeKey, GValue},
+};
 
 /// The unit of work that flows between steps in a traversal pipeline.
 ///
@@ -44,6 +47,13 @@ impl Traverser {
         Self { value, labels: None, parent: None, group_id: GroupId::noop() }
     }
 
+    /// Creates a new traverser with a new edge value, inheriting parent and labels.
+    pub fn clone_with_edge(&self, edge_key: EdgeKey) -> Self {
+        let mut new_traverser = self.clone();
+        new_traverser.value = GValue::Edge(edge_key);
+        new_traverser.parent = Some(Arc::new(self.clone()));
+        new_traverser
+    }
     /// Collect the full traversal history as `(value, labels)` pairs,
     /// oldest entry first (including the current traverser).
     pub fn collect_path(&self) -> Vec<(GValue, Option<&SmallVec<[SmolStr; 2]>>)> {

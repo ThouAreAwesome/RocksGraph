@@ -10,7 +10,12 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-pub mod codec;
-pub mod http;
+pub mod bytecode_deserializer;
+pub mod gremlin_server;
+pub mod result_serializer;
 pub mod session;
+pub mod test_utils;
 pub mod websocket;
+
+#[cfg(test)]
+mod integration_tests;

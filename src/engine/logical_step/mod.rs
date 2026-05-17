@@ -133,6 +133,20 @@ impl CountStep {
     }
 }
 
+impl InEStep {
+    pub fn build(&self, _builder: &mut PhysicalPlanBuilder, upstream: Option<ConsumerIter>) -> Option<ConsumerIter> {
+        let s = crate::engine::volcano::steps::in_e::InEStep::new(self.label_filter);
+        if let Some(up) = upstream {
+            s.add_upper(up);
+        } else {
+            // InE can be a source if it's the first step after V(), but it always needs an upstream from V()
+            // So, it should always have an upstream.
+            panic!("LogicalInEStep must have an upstream.");
+        }
+        Some(Step::subscribe(&s))
+    }
+}
+
 #[derive(Clone)]
 pub struct VStep {
     pub ids: Vec<VertexKey>,
@@ -184,16 +198,6 @@ impl PropertyStep {
 impl HasPropertyStep {
     pub fn build(&self, _builder: &mut PhysicalPlanBuilder, upstream: Option<ConsumerIter>) -> Option<ConsumerIter> {
         let s = crate::engine::volcano::steps::has_property::HasPropertyStep::new(self.key.clone(), self.value.clone());
-        if let Some(up) = upstream {
-            s.add_upper(up);
-        }
-        Some(Step::subscribe(&s))
-    }
-}
-
-impl InEStep {
-    pub fn build(&self, _builder: &mut PhysicalPlanBuilder, upstream: Option<ConsumerIter>) -> Option<ConsumerIter> {
-        let s = crate::engine::volcano::steps::in_e::InEStep::new(self.label_filter);
         if let Some(up) = upstream {
             s.add_upper(up);
         }

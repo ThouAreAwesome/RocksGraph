@@ -9,3 +9,5 @@
 // License, use of this software will be governed by the Apache License 2.0.
 //
 // SPDX-License-Identifier: BUSL-1.1
+
+pub mod gremlin_client;

@@ -10,7 +10,7 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::{cell::RefCell, rc::Rc, sync::Arc};
+use std::{cell::RefCell, rc::Rc};
 
 use smallvec::SmallVec;
 
@@ -65,18 +65,7 @@ impl Produce for OutEStep {
                     if filtered_edges.is_empty() {
                         continue;
                     }
-
-                    return Some(
-                        filtered_edges
-                            .into_iter()
-                            .map(|e| {
-                                let mut edge = t.clone();
-                                edge.value = crate::types::gvalue::GValue::Edge(e);
-                                edge.parent = Some(Arc::new(t.clone()));
-                                edge
-                            })
-                            .collect(),
-                    );
+                    return Some(filtered_edges.into_iter().map(|e| t.clone_with_edge(e)).collect());
                 }
                 _ => continue,
             }
