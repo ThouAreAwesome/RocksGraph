@@ -1,9 +1,34 @@
+// Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
+//
+// This file is part of MultiGraph.
+//
+// Use of this software is governed by the Business Source License 1.1
+// included in the LICENSE file at the root of this repository.
+//
+// As of the Change Date (2030-01-01), in accordance with the Business Source
+// License, use of this software will be governed by the Apache License 2.0.
+//
+// SPDX-License-Identifier: BUSL-1.1
+
+//! Translates a deserialized Gremlin [`GremlinQueryAst`] into a [`LogicalPlan`].
+//!
+//! This is the bridge between the server's transport layer and the planner IR.
+//! It resolves string label names to numeric [`LabelId`]s and converts
+//! [`GremlinArgument`] values to typed [`Primitive`]s.
+//!
+//! Label resolution is currently hard-coded (see [`resolve_label_name`]); in a
+//! production system this would delegate to a schema manager.
+//!
+//! [`GremlinQueryAst`]: crate::server::bytecode_deserializer::GremlinQueryAst
+//! [`LabelId`]: crate::types::LabelId
+//! [`Primitive`]: crate::types::gvalue::Primitive
+//! [`GremlinArgument`]: crate::server::bytecode_deserializer::GremlinArgument
+
 use smol_str::SmolStr;
 
 use crate::{
-    engine::logical_step::{
-        CountStep as LogicalCountStep, HasPropertyStep as LogicalHasPropertyStep, InEStep as LogicalInEStep,
-        LogicalPlan, LogicalStep, OutEStep as LogicalOutEStep, UnionStep as LogicalUnionStep, VStep as LogicalVStep,
+    planner::logical_step::{
+        CountStep, HasPropertyStep, InEStep, LogicalPlan, LogicalStep, OutEStep, UnionStep, VStep,
     },
     server::bytecode_deserializer::{GremlinArgument, GremlinQueryAst, ParsedGremlinStep},
     types::{gvalue::Primitive, keys::LabelId, VertexKey},
@@ -32,12 +57,10 @@ impl TryFrom<GremlinQueryAst> for LogicalPlan {
     fn try_from(ast: GremlinQueryAst) -> Result<Self, Self::Error> {
         let mut logical_steps = Vec::new();
 
-        // Handle source steps (e.g., g.V())
         for parsed_step in ast.source {
             logical_steps.push(translate_parsed_step(parsed_step)?);
         }
 
-        // Handle regular steps
         for parsed_step in ast.step {
             logical_steps.push(translate_parsed_step(parsed_step)?);
         }
@@ -57,7 +80,7 @@ fn translate_parsed_step(parsed_step: ParsedGremlinStep) -> Result<LogicalStep, 
                     _ => Err(TranslationError::InvalidArguments("V step expects integer IDs".to_string())),
                 })
                 .collect::<Result<Vec<VertexKey>, TranslationError>>()?;
-            Ok(LogicalStep::V(LogicalVStep { ids }))
+            Ok(LogicalStep::V(VStep { ids }))
         }
         "has" => {
             if parsed_step.arguments.len() != 2 {
@@ -74,7 +97,7 @@ fn translate_parsed_step(parsed_step: ParsedGremlinStep) -> Result<LogicalStep, 
                 GremlinArgument::Bool(b) => Primitive::Bool(*b),
                 _ => return Err(TranslationError::PrimitiveConversionError("unsupported primitive type".to_string())),
             };
-            Ok(LogicalStep::HasProperty(LogicalHasPropertyStep { key: prop_key, value: prop_value }))
+            Ok(LogicalStep::HasProperty(HasPropertyStep { key: prop_key, value: prop_value }))
         }
         "outE" => {
             let label_filter = if parsed_step.arguments.is_empty() {
@@ -91,7 +114,7 @@ fn translate_parsed_step(parsed_step: ParsedGremlinStep) -> Result<LogicalStep, 
             } else {
                 return Err(TranslationError::InvalidArguments("outE step expects 0 or 1 argument".to_string()));
             };
-            Ok(LogicalStep::OutE(LogicalOutEStep { label_filter }))
+            Ok(LogicalStep::OutE(OutEStep { label_filter }))
         }
         "inE" => {
             let label_filter = if parsed_step.arguments.is_empty() {
@@ -106,9 +129,9 @@ fn translate_parsed_step(parsed_step: ParsedGremlinStep) -> Result<LogicalStep, 
             } else {
                 return Err(TranslationError::InvalidArguments("inE step expects 0 or 1 argument".to_string()));
             };
-            Ok(LogicalStep::InE(LogicalInEStep { label_filter }))
+            Ok(LogicalStep::InE(InEStep { label_filter }))
         }
-        "count" => Ok(LogicalStep::Count(LogicalCountStep {})),
+        "count" => Ok(LogicalStep::Count(CountStep {})),
         "union" => {
             let plans: Vec<LogicalPlan> = parsed_step
                 .arguments
@@ -118,14 +141,12 @@ fn translate_parsed_step(parsed_step: ParsedGremlinStep) -> Result<LogicalStep, 
                     _ => Err(TranslationError::NestedPlanError("union step expects nested bytecode".to_string())),
                 })
                 .collect::<Result<Vec<LogicalPlan>, TranslationError>>()?;
-            Ok(LogicalStep::Union(LogicalUnionStep { plans }))
+            Ok(LogicalStep::Union(UnionStep { plans }))
         }
-        // Add other Gremlin steps here
         _ => Err(TranslationError::UnsupportedGremlinStep(parsed_step.name)),
     }
 }
 
-// Helper to resolve label names to LabelIds. In a real system, this would query a schema manager.
 fn resolve_label_name(name: &str) -> Result<LabelId, TranslationError> {
     match name {
         "person" => Ok(PERSON_LABEL_ID),
@@ -140,7 +161,8 @@ fn resolve_label_name(name: &str) -> Result<LabelId, TranslationError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::logical_step::LogicalStep;
+    use crate::planner::logical_step::LogicalStep;
+    use crate::server::bytecode_deserializer::{GremlinArgument, GremlinQueryAst, ParsedGremlinStep};
 
     #[test]
     fn test_translate_v_step() {

@@ -5,9 +5,10 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 
 use crate::{
-    engine::{logical_step::LogicalPlan, volcano::builder::PhysicalPlanBuilder},
-    optimizer::optimize,
+    engine::volcano::builder::PhysicalPlanBuilder,
     graph::LogicalGraph,
+    optimizer::optimize,
+    planner::logical_step::LogicalPlan,
     server::{
         bytecode_deserializer::{deserialize_bytecode, GremlinQueryAst},
         result_serializer::serialize_results,

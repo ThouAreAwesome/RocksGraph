@@ -16,7 +16,7 @@ use smallvec::SmallVec;
 use smol_str::SmolStr;
 
 use crate::{
-    engine::data_flow::group_id::GroupId,
+    engine::group_id::GroupId,
     types::{keys::EdgeKey, GValue},
 };
 
@@ -35,8 +35,8 @@ pub struct Traverser {
     pub value: GValue,
     /// Back-pointer to the spawning traverser — `Some` only when path tracking is active.
     pub parent: Option<Arc<Traverser>>,
-    // which group this traverser belongs to, only used data_flow engine to track group membership for grouping and
-    // co-grouping steps
+    /// Hierarchical group identity assigned by source steps. Used by both engines to
+    /// correlate traversers across split streams (e.g. `where`, co-group steps).
     pub group_id: GroupId,
     /// Labels assigned to the current step via `as(…)`.  `None` = no labels.
     pub labels: Option<SmallVec<[SmolStr; 2]>>,

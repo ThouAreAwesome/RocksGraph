@@ -10,17 +10,15 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-// hierarchical group identity
-// carried by every traverser in the stream
+// Hierarchical group identity carried by every traverser in the stream.
 // depth-1: single flat group id
-// depth-2: (outer_id, inner_id)
 // depth-N: Vec of ids, one per nesting level
 
 use smallvec::{smallvec, SmallVec};
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct GroupId {
-    path: SmallVec<[u32; 4]>, // u32 per level, inline for depth <= 4
+    path: SmallVec<[u32; 4]>,
 }
 
 impl GroupId {

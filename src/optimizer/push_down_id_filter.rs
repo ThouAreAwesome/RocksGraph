@@ -11,7 +11,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 use crate::{
-    engine::logical_step::{LogicalStep, VStep},
+    planner::logical_step::{LogicalStep, VStep},
     types::{gvalue::Primitive, keys::VertexKey},
 };
 
@@ -56,7 +56,7 @@ mod tests {
     use smol_str::SmolStr;
 
     use super::*;
-    use crate::engine::logical_step::{HasPropertyStep, VStep};
+    use crate::planner::logical_step::{HasPropertyStep, VStep};
     use crate::types::gvalue::Primitive;
 
     fn v_all() -> LogicalStep {

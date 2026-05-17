@@ -10,10 +10,35 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
+//! MultiGraph — a Gremlin-compatible graph database engine.
+//!
+//! ## Architecture
+//!
+//! ```text
+//! client  ──►  server  ──►  planner  ──►  optimizer  ──►  engine/{volcano,data_flow}
+//!                              │                                     │
+//!                         logical IR                            graph / store
+//! ```
+//!
+//! | Module      | Role |
+//! |-------------|------|
+//! [`planner`]   | Translates a Gremlin AST into engine-agnostic [`LogicalPlan`] IR. |
+//! [`optimizer`] | Rewrites a `LogicalPlan` into a more efficient equivalent. |
+//! [`engine`]    | Execution engines (`volcano`, `data_flow`) and their shared primitives (`GraphCtx`, `Traverser`, `GroupId`). |
+//! [`graph`]     | Query-scoped in-memory overlay over a `GraphStore` transaction. |
+//! [`store`]     | Pluggable storage backends (RocksDB, distributed). |
+//! [`server`]    | WebSocket/Gremlin server and bytecode deserializer. |
+//! [`client`]    | Lightweight Gremlin WebSocket client. |
+//! [`schema`]    | Schema definitions and validation. |
+//! [`types`]     | Shared value types (`GValue`, `Primitive`, keys). |
+//!
+//! [`LogicalPlan`]: planner::logical_step::LogicalPlan
+
 pub mod client;
 pub mod engine;
 pub mod graph;
 pub mod optimizer;
+pub mod planner;
 pub mod schema;
 pub mod server;
 pub mod store;

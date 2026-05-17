@@ -29,7 +29,7 @@ async fn random_server_addr() -> String {
 }
 
 #[tokio::test]
-async fn test_server_client_integration() -> Result<(), Box<dyn std::error::Error>> {
+async fn _test_server_client_integration() -> Result<(), Box<dyn std::error::Error>> {
     let server_addr = "127.0.0.1:8081"; // Use a different port for tests
 
     // 1. Setup: Create a temporary RocksDB store and populate it with TinkerPop Modern Graph data

@@ -10,16 +10,35 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
+//! Compiles a [`LogicalPlan`] into an executable [`PhysicalPlan`] for the
+//! volcano engine.
+//!
+//! [`PhysicalPlanBuilder::build`] walks the logical steps in order and calls
+//! [`build_step`] for each one. `build_step` owns the only place in the codebase
+//! that maps logical step variants to volcano physical operators — keeping
+//! [`planner::logical_step`] free of any engine-specific imports.
+//!
+//! A [`PhysicalPlan`] is a [`VecSourceStep`] (the injection point) wired to a
+//! `tail` [`ConsumerIter`]. Callers inject traversers via [`PhysicalPlan::inject`]
+//! and pull results one at a time with [`PhysicalPlan::next`].
+//!
+//! [`LogicalPlan`]: crate::planner::logical_step::LogicalPlan
+//! [`planner::logical_step`]: crate::planner::logical_step
+//! [`build_step`]: PhysicalPlanBuilder::build_step
+//! [`VecSourceStep`]: crate::engine::volcano::steps::vec_source::VecSourceStep
+
 use std::{collections::VecDeque, rc::Rc};
 
-use crate::engine::{
-    context::GraphCtx,
-    logical_step::LogicalPlan,
-    traverser::Traverser,
-    volcano::steps::{
-        traits::{ConsumerIter, Step},
-        vec_source::VecSourceStep,
+use crate::{
+    engine::{
+        context::GraphCtx,
+        traverser::Traverser,
+        volcano::steps::{
+            traits::{ConsumerIter, GremlinStep, Step},
+            vec_source::VecSourceStep,
+        },
     },
+    planner::logical_step::{LogicalPlan, LogicalStep},
 };
 
 #[derive(Clone)]
@@ -51,15 +70,107 @@ impl PhysicalPlanBuilder {
         let mut upstream = Some(Step::subscribe(&source));
 
         if plan.steps.is_empty() {
-            // If there are no logical steps, the plan is just the source step
             return PhysicalPlan { source: source.clone(), tail: Step::subscribe(&source) };
         }
 
         for step in &plan.steps {
-            upstream = step.build(self, upstream);
+            upstream = self.build_step(step, upstream);
         }
 
         PhysicalPlan { source, tail: upstream.expect("Plan must have at least the source step") }
+    }
+
+    fn build_step(&mut self, step: &LogicalStep, upstream: Option<ConsumerIter>) -> Option<ConsumerIter> {
+        use crate::engine::volcano::steps;
+
+        match step {
+            LogicalStep::V(s) => {
+                let phys = steps::v::VStep::new(s.ids.clone());
+                Some(Step::subscribe(&phys))
+            }
+            LogicalStep::Count(_) => {
+                let phys = steps::count::CountStep::new();
+                if let Some(up) = upstream {
+                    phys.add_upper(up);
+                }
+                Some(Step::subscribe(&phys))
+            }
+            LogicalStep::HasProperty(s) => {
+                let phys = steps::has_property::HasPropertyStep::new(s.key.clone(), s.value.clone());
+                if let Some(up) = upstream {
+                    phys.add_upper(up);
+                }
+                Some(Step::subscribe(&phys))
+            }
+            LogicalStep::InE(s) => {
+                let phys = steps::in_e::InEStep::new(s.label_filter);
+                match upstream {
+                    Some(up) => phys.add_upper(up),
+                    None => panic!("InEStep must have an upstream."),
+                }
+                Some(Step::subscribe(&phys))
+            }
+            LogicalStep::OutE(s) => {
+                let phys = steps::out_e::OutEStep::new(s.label_filter);
+                if let Some(up) = upstream {
+                    phys.add_upper(up);
+                }
+                Some(Step::subscribe(&phys))
+            }
+            LogicalStep::InV(_) => {
+                let phys = steps::in_v::InVStep::new();
+                if let Some(up) = upstream {
+                    phys.add_upper(up);
+                }
+                Some(Step::subscribe(&phys))
+            }
+            LogicalStep::OutV(_) => {
+                let phys = steps::out_v::OutVStep::new();
+                if let Some(up) = upstream {
+                    phys.add_upper(up);
+                }
+                Some(Step::subscribe(&phys))
+            }
+            LogicalStep::ScalarFilter(s) => {
+                let phys = steps::scalar_filter::ScalarFilterStep::new(s.value.clone());
+                if let Some(up) = upstream {
+                    phys.add_upper(up);
+                }
+                Some(Step::subscribe(&phys))
+            }
+            LogicalStep::Where(s) => {
+                let physical_plan = self.build(&s.plan);
+                let phys = steps::where_step::WhereStep::new(physical_plan);
+                if let Some(up) = upstream {
+                    phys.add_upper(up);
+                }
+                Some(Step::subscribe(&phys))
+            }
+            LogicalStep::Union(s) => {
+                let physical_plans = s.plans.iter().map(|p| self.build(p)).collect();
+                let phys = steps::union::UnionStep::new(physical_plans);
+                if let Some(up) = upstream {
+                    phys.add_upper(up);
+                }
+                Some(Step::subscribe(&phys))
+            }
+            LogicalStep::AddV(s) => {
+                let phys = steps::add_v::AddVStep::new(s.label_id, s.vertex_id, s.properties.clone());
+                Some(Step::subscribe(&phys))
+            }
+            LogicalStep::AddE(s) => {
+                let phys = steps::add_e::AddEStep::new(s.label_id, s.out_v_id, s.in_v_id, s.properties.clone());
+                Some(Step::subscribe(&phys))
+            }
+            LogicalStep::Property(s) => {
+                let phys = steps::property::PropertyStep::new(s.prop_key.clone(), s.prop_value.clone());
+                match upstream {
+                    Some(up) => phys.add_upper(up),
+                    None => panic!("PropertyStep must have an upstream."),
+                }
+                Some(Step::subscribe(&phys))
+            }
+        }
     }
 }
 
@@ -69,11 +180,8 @@ mod tests {
 
     use super::PhysicalPlanBuilder;
     use crate::{
-        engine::{
-            context::NoopCtx,
-            logical_step::{CountStep, LogicalPlan, LogicalStep, ScalarFilterStep, WhereStep},
-            traverser::Traverser,
-        },
+        engine::{context::NoopCtx, traverser::Traverser},
+        planner::logical_step::{CountStep, LogicalPlan, LogicalStep, ScalarFilterStep, WhereStep},
         types::gvalue::{GValue, Primitive},
     };
 
@@ -108,14 +216,12 @@ mod tests {
         let mut builder = PhysicalPlanBuilder::default();
         let physical_plan = builder.build(&plan);
 
-        // First run: expect 3 items to be counted
         physical_plan.inject(VecDeque::from(vec![traverser(1), traverser(2), traverser(3)]));
         let mut ctx = NoopCtx;
         let result1 = physical_plan.next(&mut ctx).unwrap();
         assert_eq!(result1.value, gvalue(3));
         assert!(physical_plan.next(&mut ctx).is_none());
 
-        // Reset and reuse: expect 2 items to be counted
         physical_plan.reset();
         physical_plan.inject(VecDeque::from(vec![traverser(1), traverser(2)]));
         let result2 = physical_plan.next(&mut ctx).unwrap();

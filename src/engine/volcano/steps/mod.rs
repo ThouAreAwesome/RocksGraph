@@ -1,4 +1,18 @@
-// ── Pull-based runtime steps ──────────────────────────────────────────────────
+//! Pull-based physical operators for the volcano execution engine.
+//!
+//! Each submodule is one physical step. Steps are wired into a chain by
+//! [`PhysicalPlanBuilder`]: every step holds an optional upstream [`ConsumerIter`]
+//! that it pulls from, and exposes a new `ConsumerIter` downstream callers pull
+//! from in turn.
+//!
+//! The shared wiring protocol lives in [`traits`]:
+//! - [`GremlinStep`] — the `Rc<RefCell<…>>` wrapper + `subscribe` factory.
+//! - [`ConsumerIter`] — the opaque `Rc<dyn Step>` handle passed between steps.
+//! - [`Step`] — the core pull trait: `next`, `reset`, `add_upper`.
+//!
+//! [`PhysicalPlanBuilder`]: crate::engine::volcano::builder::PhysicalPlanBuilder
+
+// ── Physical step submodules ───────────────────────────────────────────────────
 pub mod add_e;
 pub mod add_v;
 pub mod both;

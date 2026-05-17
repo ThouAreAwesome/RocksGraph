@@ -13,17 +13,14 @@
 #[cfg(test)]
 mod tests {
     use crate::{
-        engine::{
-            context::GraphCtx,
-            logical_step::{
-                AddEStep as LogicalAddEStep, AddVStep as LogicalAddVStep, CountStep as LogicalCountStep,
-                HasPropertyStep as LogicalHasPropertyStep, InEStep as LogicalInEStep, LogicalPlan, LogicalStep,
-                OutEStep as LogicalOutEStep, PropertyStep as LogicalPropertyStep, UnionStep as LogicalUnionStep,
-                VStep as LogicalVStep,
-            },
-            volcano::builder::PhysicalPlanBuilder,
-        },
+        engine::{context::GraphCtx, volcano::builder::PhysicalPlanBuilder},
         graph::LogicalGraph,
+        planner::logical_step::{
+            AddEStep as LogicalAddEStep, AddVStep as LogicalAddVStep, CountStep as LogicalCountStep,
+            HasPropertyStep as LogicalHasPropertyStep, InEStep as LogicalInEStep, LogicalPlan, LogicalStep,
+            OutEStep as LogicalOutEStep, PropertyStep as LogicalPropertyStep, UnionStep as LogicalUnionStep,
+            VStep as LogicalVStep,
+        },
         store::{GraphStore, RocksStorage}, // Assuming RocksStorage is in src/store.rs
         types::{
             gvalue::Primitive,

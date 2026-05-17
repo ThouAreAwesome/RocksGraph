@@ -17,10 +17,10 @@ use smallvec::{smallvec, SmallVec};
 use crate::engine::{
     context::GraphCtx,
     data_flow::{
-        group_id::GroupId,
         message::Message,
         steps::traits::{BroadcastState, ConsumerIter, GremlinStep, HasBroadcast, Produce},
     },
+    group_id::GroupId,
     traverser::Traverser,
 };
 

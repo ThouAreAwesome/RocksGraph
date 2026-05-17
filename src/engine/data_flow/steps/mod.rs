@@ -47,10 +47,14 @@
 //! ### Template
 //!
 //! ```rust,ignore
+//! use smallvec::smallvec;
 //! use std::{cell::RefCell, rc::Rc};
-//! use crate::engine::data_flow::{
+//! use crate::engine::{
 //!     context::GraphCtx,
-//!     steps::traits::{BroadcastState, ConsumerIter, GremlinStep, HasBroadcast, Produce},
+//!     data_flow::{
+//!         message::Message,
+//!         steps::traits::{BroadcastState, ConsumerIter, GremlinStep, HasBroadcast, Produce},
+//!     },
 //!     traverser::Traverser,
 //! };
 //!
@@ -79,26 +83,22 @@
 //! }
 //!
 //! impl Produce for MyStep {
-//!     fn produce(&self, ctx: &dyn GraphCtx) -> Option<Vec<Traverser>> {
-//!         let inner = self.inner.borrow();
+//!     fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Message; 4]>> {
+//!         let mut inner = self.inner.borrow_mut();
 //!
-//!         // ── Transform step: pull one traverser from upstream. ─────────────
-//!         let item = inner.upstream.as_ref().unwrap().next(ctx)?;
+//!         // ── Transform step: pull one Message from upstream. ───────────────
+//!         let msg = inner.upstream.as_ref().unwrap().next(ctx)?;
 //!         // `?` propagates upstream exhaustion as None to the caller.
 //!
 //!         // ── Source step: produce from internal state instead. ─────────────
 //!         // let item = inner.items.pop_front()?;
+//!         // return Some(smallvec![Message::Traverser(item)]);
 //!
-//!         // Apply a transform here, or return multiple items (e.g. one vertex → many edges):
-//!         //   return Some(ctx.out_edges(&item, filter));
-//!         //
-//!         // For a filter, loop until a match or upstream is exhausted:
-//!         //   loop {
-//!         //       let item = inner.upstream.as_ref().unwrap().next(ctx)?;
-//!         //       if predicate(&item) { return Some(vec![item]); }
-//!         //   }
+//!         // Pass the message downstream, transform, or filter:
+//!         //   For a filter: loop { let msg = ...; if keep(&msg) { return Some(...); } }
+//!         //   For fan-out:  return Some(smallvec![msg1, msg2]);
 //!
-//!         Some(vec![item])
+//!         Some(smallvec![msg])
 //!     }
 //! }
 //!
@@ -120,11 +120,11 @@
 //!
 //! let b = StepB::new(/* ... */);
 //! b.add_upper(a_out, "upstream");      // label matters only for multi-input steps
-//! let b_out = StepB::subscribe(&b);    // obtain the handle to pass further downstream
+//! let b_out = StepB::subscribe(&b);
 //!
-//! let ctx = NoopCtx;
-//! while let Some(t) = b_out.next(&ctx) {
-//!     // process traverser t
+//! let mut ctx = NoopCtx;
+//! while let Some(msg) = b_out.next(&mut ctx) {
+//!     if let Message::Traverser(t) = msg { /* process traverser t */ }
 //! }
 //! ```
 
@@ -154,7 +154,6 @@ mod tests {
         engine::{
             context::NoopCtx,
             data_flow::{
-                group_id::GroupId,
                 message::Message,
                 steps::{
                     scalar_filter::ScalarFilterStep,
@@ -164,6 +163,7 @@ mod tests {
                     where_exit::WhereExitStep,
                 },
             },
+            group_id::GroupId,
         },
         types::{gvalue::Primitive, GValue},
     };

@@ -13,7 +13,7 @@
 use std::sync::Arc;
 
 use crate::{
-    graph::LogicalGraph, // Assuming LogicalGraph is in src/graph.rs
+    graph::LogicalGraph,
     store::traits::GraphStore,
     types::{
         element::{Edge, Vertex},

@@ -10,6 +10,5 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-pub mod group_id;
 pub mod message;
 pub mod steps;

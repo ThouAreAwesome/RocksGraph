@@ -10,9 +10,23 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
+//! Logical plan rewriter — transforms a [`LogicalPlan`] into a semantically
+//! equivalent but more efficient form before physical planning.
+//!
+//! Each rewrite rule lives in its own submodule. [`optimize`] applies them in
+//! order; adding a new rule means creating a new file and one extra call here.
+//!
+//! ## Current rules
+//!
+//! | Rule | File | Effect |
+//! |------|------|--------|
+//! | ID filter pushdown | [`push_down_id_filter`] | `V().has("id", N)` → `V(N)` |
+//!
+//! [`LogicalPlan`]: crate::planner::logical_step::LogicalPlan
+
 mod push_down_id_filter;
 
-use crate::engine::logical_step::LogicalPlan;
+use crate::planner::logical_step::LogicalPlan;
 use push_down_id_filter::push_down_id_filter;
 
 /// Rewrites a `LogicalPlan` into a more efficient equivalent before physical planning.

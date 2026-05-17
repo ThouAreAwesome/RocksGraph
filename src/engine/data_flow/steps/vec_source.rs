@@ -18,10 +18,10 @@ use crate::{
     engine::{
         context::GraphCtx,
         data_flow::{
-            group_id::GroupId,
             message::Message,
             steps::traits::{BroadcastState, ConsumerIter, HasBroadcast, Produce, Pullable},
         },
+        group_id::GroupId,
         traverser::Traverser,
     },
     types::GValue,

@@ -10,7 +10,7 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use crate::engine::{data_flow::group_id::GroupId, traverser::Traverser};
+use crate::engine::{group_id::GroupId, traverser::Traverser};
 
 #[derive(Debug, Clone)]
 pub enum Message {
