@@ -84,12 +84,33 @@ impl PhysicalPlanBuilder {
         use crate::engine::volcano::steps;
 
         match step {
+            LogicalStep::Both(s) => {
+                let phys = steps::both::BothStep::new(s.label_ids.clone());
+                if let Some(up) = upstream {
+                    phys.add_upper(up);
+                }
+                Some(Step::subscribe(&phys))
+            }
+            LogicalStep::BothE(s) => {
+                let phys = steps::both_e::BothEStep::new(s.label_ids.clone());
+                if let Some(up) = upstream {
+                    phys.add_upper(up);
+                }
+                Some(Step::subscribe(&phys))
+            }
             LogicalStep::V(s) => {
                 let phys = steps::v::VStep::new(s.ids.clone());
                 Some(Step::subscribe(&phys))
             }
             LogicalStep::Count(_) => {
                 let phys = steps::count::CountStep::new();
+                if let Some(up) = upstream {
+                    phys.add_upper(up);
+                }
+                Some(Step::subscribe(&phys))
+            }
+            LogicalStep::HasLabel(s) => {
+                let phys = steps::has_label::HasLabelStep::new(s.label_ids.clone());
                 if let Some(up) = upstream {
                     phys.add_upper(up);
                 }
@@ -102,16 +123,32 @@ impl PhysicalPlanBuilder {
                 }
                 Some(Step::subscribe(&phys))
             }
+            LogicalStep::In(s) => {
+                let phys = steps::r#in::InStep::new(s.label_ids.clone());
+                match upstream {
+                    Some(up) => phys.add_upper(up),
+                    None => panic!("InStep must have an upstream."),
+                }
+                Some(Step::subscribe(&phys))
+            }
             LogicalStep::InE(s) => {
-                let phys = steps::in_e::InEStep::new(s.label_filter);
+                let phys = steps::in_e::InEStep::new(s.label_ids.clone());
                 match upstream {
                     Some(up) => phys.add_upper(up),
                     None => panic!("InEStep must have an upstream."),
                 }
                 Some(Step::subscribe(&phys))
             }
+            LogicalStep::Out(s) => {
+                let phys = steps::out::OutStep::new(s.label_ids.clone());
+                match upstream {
+                    Some(up) => phys.add_upper(up),
+                    None => panic!("OutStep must have an upstream."),
+                }
+                Some(Step::subscribe(&phys))
+            }
             LogicalStep::OutE(s) => {
-                let phys = steps::out_e::OutEStep::new(s.label_filter);
+                let phys = steps::out_e::OutEStep::new(s.label_ids.clone());
                 if let Some(up) = upstream {
                     phys.add_upper(up);
                 }
@@ -119,6 +156,13 @@ impl PhysicalPlanBuilder {
             }
             LogicalStep::InV(_) => {
                 let phys = steps::in_v::InVStep::new();
+                if let Some(up) = upstream {
+                    phys.add_upper(up);
+                }
+                Some(Step::subscribe(&phys))
+            }
+            LogicalStep::OtherV(_) => {
+                let phys = steps::other_v::OtherVStep::new();
                 if let Some(up) = upstream {
                     phys.add_upper(up);
                 }
@@ -133,6 +177,13 @@ impl PhysicalPlanBuilder {
             }
             LogicalStep::ScalarFilter(s) => {
                 let phys = steps::scalar_filter::ScalarFilterStep::new(s.value.clone());
+                if let Some(up) = upstream {
+                    phys.add_upper(up);
+                }
+                Some(Step::subscribe(&phys))
+            }
+            LogicalStep::Values(s) => {
+                let phys = steps::values::ValuesStep::new(s.property_keys.clone());
                 if let Some(up) = upstream {
                     phys.add_upper(up);
                 }

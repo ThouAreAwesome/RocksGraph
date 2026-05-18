@@ -4,6 +4,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 /// A simplified representation of Gremlin Bytecode for client-side construction.
 /// This mirrors the server's `GremlinQueryAst` for easy serialization.
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum GremlinArgument {
     String(String),
     Int(i32),
@@ -93,11 +94,11 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 1: g.V(1, 4)
     let query_v = GremlinQueryAst {
-        source: vec![ParsedGremlinStep {
+        source: vec![],
+        step: vec![ParsedGremlinStep {
             name: "V".to_string(),
             arguments: vec![GremlinArgument::Int(1), GremlinArgument::Int(4)],
         }],
-        step: vec![],
     };
     println!("\nSending query: g.V(1, 4)");
     let response_v = client.send_query(query_v).await?;
@@ -105,8 +106,9 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 2: g.V().has('name', 'marko').outE().count()
     let query_marko_out_count = GremlinQueryAst {
-        source: vec![ParsedGremlinStep { name: "V".to_string(), arguments: vec![] }],
+        source: vec![],
         step: vec![
+            ParsedGremlinStep { name: "V".to_string(), arguments: vec![] },
             ParsedGremlinStep {
                 name: "has".to_string(),
                 arguments: vec![

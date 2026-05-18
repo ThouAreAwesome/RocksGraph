@@ -18,9 +18,7 @@ use crate::{
     types::{
         element::{Edge, Vertex},
         gvalue::Primitive,
-        keys::CanonicalKey,
-        keys::LabelId,
-        keys::VertexKey,
+        keys::{CanonicalKey, LabelId, VertexKey},
         prop_key::PropKey,
         EdgeKey, StoreError,
     },
@@ -30,17 +28,47 @@ use crate::{
 ///
 /// Steps receive a `&mut dyn GraphCtx` rather than holding a stored reference,
 /// which avoids `Rc<RefCell<…>>` and gives compile-time borrow guarantees.
-/// Methods will be added here as step implementations are fleshed out
-/// (e.g. `get_out_edges`, `get_property`).
+///
+/// # Existence checks and locking — contract summary
+///
+/// The trait itself is a thin facade; the real invariants live in
+/// `LogicalGraph`.  See `graph.rs` for the authoritative details.  The table
+/// below gives a quick reference for callers of this trait.
+///
+/// **Not every method is precondition-free.**  All vertex-targeting operations
+/// auto-load from the store when the overlay is cold.  Edge operations (other
+/// than `get_edge` / `get_edges`) are overlay-only — the caller must call
+/// `get_edge` or `get_edges` first.
+///
+/// | Method                  | Store fallback (vertex) | Store fallback (edge) | Lock acquired            | Precondition                  |
+/// |-------------------------|:-----------------------:|:---------------------:|:------------------------:|-------------------------------|
+/// | `get_vertex`            | ✅ on miss               | n/a                   | none                     | none                          |
+/// | `get_edge`              | n/a                     | ✅ on miss             | none                     | none                          |
+/// | `get_outs` / `get_ins`  | n/a                     | ✅ merged              | none                     | none                          |
+/// | `get_property` (vertex) | ✅ via `get_vertex`      | —                     | `RwLock::read` on props  | none                          |
+/// | `get_property` (edge)   | —                       | ✗ overlay-only        | `RwLock::read` on props  | ⚠ **edge must be pre-loaded** |
+/// | `add_vertex`            | ✅ via degree record     | n/a                   | none                     | none                          |
+/// | `add_edge`              | ✅ via degree record     | ✅ via OUT record      | none                     | none                          |
+/// | `set_property` (vertex) | ✅ auto-load             | —                     | `RwLock::write` on props | none                          |
+/// | `set_property` (edge)   | —                       | ✗ overlay-only        | `RwLock::write` on props | ⚠ **edge must be pre-loaded** |
 pub trait GraphCtx {
     fn get_vertex(&mut self, key: VertexKey) -> Result<Option<Arc<Vertex>>, StoreError>;
     fn get_edge(&mut self, key: EdgeKey) -> Result<Option<Arc<Edge>>, StoreError>;
-    fn get_outs(&mut self, vertex_key: VertexKey) -> Result<Vec<VertexKey>, StoreError>;
-    fn get_out_edges(&mut self, vertex_key: VertexKey) -> Result<Vec<EdgeKey>, StoreError>;
-    fn get_ins(&mut self, vertex_key: VertexKey) -> Result<Vec<VertexKey>, StoreError>;
-    fn get_in_edges(&mut self, vertex_key: VertexKey) -> Result<Vec<EdgeKey>, StoreError>;
+    fn get_outs(&mut self, vertex_key: VertexKey, label: Option<LabelId>) -> Result<Vec<VertexKey>, StoreError>;
+    fn get_out_edges(&mut self, vertex_key: VertexKey, label: Option<LabelId>) -> Result<Vec<EdgeKey>, StoreError>;
+    fn get_ins(&mut self, vertex_key: VertexKey, label: Option<LabelId>) -> Result<Vec<VertexKey>, StoreError>;
+    fn get_in_edges(&mut self, vertex_key: VertexKey, label: Option<LabelId>) -> Result<Vec<EdgeKey>, StoreError>;
+    /// Insert a vertex.  See `LogicalGraph::add_vertex` for existence-check and
+    /// locking details.
     fn add_vertex(&mut self, id: VertexKey, label_id: LabelId) -> Result<VertexKey, StoreError>;
+    /// Insert an edge.  Both endpoint vertices must already exist (overlay or
+    /// store).  See `LogicalGraph::add_edge` for existence-check and locking
+    /// details.
     fn add_edge(&mut self, cek: EdgeKey) -> Result<EdgeKey, StoreError>;
+    /// Upsert a property.  For vertices the element is auto-loaded from the store
+    /// if absent from the overlay (no precondition).  For edges the edge must
+    /// already be in the overlay — call `get_edge` first.  Acquires
+    /// `RwLock::write` on `props` briefly.
     fn set_property(&mut self, key: CanonicalKey, prop: PropKey, value: Primitive) -> Result<(), StoreError>;
     fn get_property(&mut self, key: CanonicalKey, prop: &PropKey) -> Result<Option<Primitive>, StoreError>;
 }
@@ -54,16 +82,16 @@ impl GraphCtx for NoopCtx {
     fn get_edge(&mut self, _key: EdgeKey) -> Result<Option<Arc<Edge>>, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support get_edge".to_string()))
     }
-    fn get_outs(&mut self, _vertex_key: VertexKey) -> Result<Vec<VertexKey>, StoreError> {
+    fn get_outs(&mut self, _vertex_key: VertexKey, _label: Option<LabelId>) -> Result<Vec<VertexKey>, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support get_outs".to_string()))
     }
-    fn get_out_edges(&mut self, _vertex_key: VertexKey) -> Result<Vec<EdgeKey>, StoreError> {
+    fn get_out_edges(&mut self, _vertex_key: VertexKey, _label: Option<LabelId>) -> Result<Vec<EdgeKey>, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support get_out_edges".to_string()))
     }
-    fn get_ins(&mut self, _vertex_key: VertexKey) -> Result<Vec<VertexKey>, StoreError> {
+    fn get_ins(&mut self, _vertex_key: VertexKey, _label: Option<LabelId>) -> Result<Vec<VertexKey>, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support get_ins".to_string()))
     }
-    fn get_in_edges(&mut self, _vertex_key: VertexKey) -> Result<Vec<EdgeKey>, StoreError> {
+    fn get_in_edges(&mut self, _vertex_key: VertexKey, _label: Option<LabelId>) -> Result<Vec<EdgeKey>, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support get_in_edges".to_string()))
     }
     fn add_vertex(&mut self, _id: VertexKey, _label_id: LabelId) -> Result<VertexKey, StoreError> {
@@ -87,20 +115,20 @@ impl<S: GraphStore> GraphCtx for LogicalGraph<S> {
     fn get_edge(&mut self, key: EdgeKey) -> Result<Option<Arc<Edge>>, StoreError> {
         LogicalGraph::get_edge(self, key.canonical_edge_key())
     }
-    fn get_outs(&mut self, vertex_key: VertexKey) -> Result<Vec<VertexKey>, StoreError> {
-        let edges = self.get_edges(vertex_key, crate::types::Direction::OUT, None, None)?;
+    fn get_outs(&mut self, vertex_key: VertexKey, label: Option<LabelId>) -> Result<Vec<VertexKey>, StoreError> {
+        let edges = self.get_edges(vertex_key, crate::types::Direction::OUT, label, None)?;
         Ok(edges.into_iter().map(|(ek, _)| ek.secondary_id).collect())
     }
-    fn get_out_edges(&mut self, vertex_key: VertexKey) -> Result<Vec<EdgeKey>, StoreError> {
-        let edges = self.get_edges(vertex_key, crate::types::Direction::OUT, None, None)?;
+    fn get_out_edges(&mut self, vertex_key: VertexKey, label: Option<LabelId>) -> Result<Vec<EdgeKey>, StoreError> {
+        let edges = self.get_edges(vertex_key, crate::types::Direction::OUT, label, None)?;
         Ok(edges.into_iter().map(|(ek, _)| ek).collect())
     }
-    fn get_ins(&mut self, vertex_key: VertexKey) -> Result<Vec<VertexKey>, StoreError> {
-        let edges = self.get_edges(vertex_key, crate::types::Direction::IN, None, None)?;
+    fn get_ins(&mut self, vertex_key: VertexKey, label: Option<LabelId>) -> Result<Vec<VertexKey>, StoreError> {
+        let edges = self.get_edges(vertex_key, crate::types::Direction::IN, label, None)?;
         Ok(edges.into_iter().map(|(ek, _)| ek.secondary_id).collect())
     }
-    fn get_in_edges(&mut self, vertex_key: VertexKey) -> Result<Vec<EdgeKey>, StoreError> {
-        let edges = self.get_edges(vertex_key, crate::types::Direction::IN, None, None)?;
+    fn get_in_edges(&mut self, vertex_key: VertexKey, label: Option<LabelId>) -> Result<Vec<EdgeKey>, StoreError> {
+        let edges = self.get_edges(vertex_key, crate::types::Direction::IN, label, None)?;
         Ok(edges.into_iter().map(|(ek, _)| ek).collect())
     }
     fn add_vertex(&mut self, id: VertexKey, label_id: LabelId) -> Result<VertexKey, StoreError> {

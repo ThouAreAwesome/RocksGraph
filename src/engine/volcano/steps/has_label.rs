@@ -24,7 +24,7 @@ use crate::{
 
 struct Inner {
     upstream: Option<ConsumerIter>,
-    label_id: LabelId,
+    label_ids: Vec<LabelId>,
 }
 
 pub struct HasLabelStep {
@@ -33,10 +33,10 @@ pub struct HasLabelStep {
 }
 
 impl HasLabelStep {
-    pub fn new(label_id: LabelId) -> Rc<Self> {
+    pub fn new(label_ids: Vec<LabelId>) -> Rc<Self> {
         Rc::new(Self {
             broadcast: RefCell::new(BroadcastState::new()),
-            inner: RefCell::new(Inner { upstream: None, label_id }),
+            inner: RefCell::new(Inner { upstream: None, label_ids }),
         })
     }
 }
@@ -55,9 +55,9 @@ impl Produce for HasLabelStep {
             let matched = match &t.value {
                 GValue::Vertex(v_arc) => {
                     let vertex = ctx.get_vertex(*v_arc).ok()??;
-                    vertex.label_id == inner.label_id
+                    inner.label_ids.contains(&vertex.label_id)
                 }
-                GValue::Edge(e_arc) => e_arc.label_id == inner.label_id,
+                GValue::Edge(e_arc) => inner.label_ids.contains(&e_arc.label_id),
                 _ => false,
             };
             if matched {

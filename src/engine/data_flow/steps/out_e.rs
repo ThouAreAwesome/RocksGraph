@@ -58,19 +58,14 @@ impl Produce for OutEStep {
             if let Message::Traverser(t) = &item {
                 match &t.value {
                     crate::types::gvalue::GValue::Vertex(vk) => {
-                        let edges = ctx.get_out_edges(*vk).unwrap();
-                        let filtered_edges: SmallVec<[_; 8]> = if let Some(label_id) = inner.label_filter {
-                            edges.into_iter().filter(|e| e.label_id == label_id).collect()
-                        } else {
-                            edges.into()
-                        };
+                        let edges = ctx.get_out_edges(*vk, inner.label_filter).unwrap();
 
-                        if filtered_edges.is_empty() {
+                        if edges.is_empty() {
                             continue;
                         }
 
                         return Some(
-                            filtered_edges
+                            edges
                                 .into_iter()
                                 .map(|e| {
                                     let mut edge = t.clone();

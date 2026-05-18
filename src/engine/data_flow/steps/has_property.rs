@@ -22,7 +22,7 @@ use crate::{
             steps::traits::{BroadcastState, ConsumerIter, GremlinStep, HasBroadcast, Produce},
         },
     },
-    types::{gvalue::Primitive, prop_key::PropKey},
+    types::{gvalue::Primitive, prop_key::PropKey, CanonicalKey},
 };
 
 struct Inner {
@@ -59,15 +59,17 @@ impl Produce for HasPropertyStep {
             if let Message::Traverser(t) = &item {
                 match &t.value {
                     crate::types::gvalue::GValue::Vertex(vk) => {
-                        if let Some(vt) = ctx.get_vertex(*vk).unwrap() {
-                            if vt.get_property(&inner.prop_key) == Some(inner.expected_value.clone()) {
+                        if let Some(pv) = ctx.get_property(CanonicalKey::Vertex(*vk), &inner.prop_key).unwrap() {
+                            if pv == inner.expected_value {
                                 return Some(smallvec![item]);
                             }
                         }
                     }
                     crate::types::gvalue::GValue::Edge(ek) => {
-                        if let Some(et) = ctx.get_edge(*ek).unwrap() {
-                            if et.get_property(&inner.prop_key) == Some(inner.expected_value.clone()) {
+                        if let Some(pv) =
+                            ctx.get_property(CanonicalKey::Edge(ek.canonical_edge_key()), &inner.prop_key).unwrap()
+                        {
+                            if pv == inner.expected_value {
                                 return Some(smallvec![item]);
                             }
                         }

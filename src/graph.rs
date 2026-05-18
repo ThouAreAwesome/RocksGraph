@@ -252,14 +252,27 @@ impl<S: GraphStore> LogicalGraph<S> {
         Ok(result)
     }
 
+    /// Read a single property from a vertex or edge.
+    ///
+    /// # Vertex — no precondition
+    /// Delegates to `get_vertex`, which loads from the store on a cache miss and
+    /// returns `None` for absent or tombstoned vertices.  The returned `Arc` is
+    /// owned, so the property read does not borrow the overlay map.
+    ///
+    /// # Edge — overlay-only (precondition: edge must be in overlay)
+    /// The edge must already be in the overlay (populated via a prior `get_edge`
+    /// / `get_edges` call); returns `None` if absent.  Consistent with the
+    /// overlay-only policy for all other edge operations.
+    ///
+    /// # Locking
+    /// Acquires `RwLock::read` on `element.props` briefly; returns
+    /// `StoreError::LockError` if the lock is poisoned.
     pub fn get_property(&mut self, key: CanonicalKey, prop: &PropKey) -> Result<Option<Primitive>, StoreError> {
         match key {
             CanonicalKey::Vertex(id) => {
-                if self.dirty.get(&key) == Some(&Existence::Tombstone) {
-                    return Ok(None);
-                }
-                match self.vertices.get(&id) {
-                    None => return Ok(None),
+                // get_vertex handles tombstone check + store fallback.
+                match self.get_vertex(id)? {
+                    None => Ok(None),
                     Some(arc) => {
                         let props = arc.props.read().map_err(|_| StoreError::LockError)?;
                         Ok(props.iter().find(|p| p.key == *prop).map(|p| p.value.clone()))
@@ -271,7 +284,7 @@ impl<S: GraphStore> LogicalGraph<S> {
                     return Ok(None);
                 }
                 match self.edges.get(&cek) {
-                    None => return Ok(None),
+                    None => Ok(None),
                     Some(arc) => {
                         let props = arc.props.read().map_err(|_| StoreError::LockError)?;
                         Ok(props.iter().find(|p| p.key == *prop).map(|p| p.value.clone()))
@@ -281,19 +294,61 @@ impl<S: GraphStore> LogicalGraph<S> {
         }
     }
     // ── Mutations ─────────────────────────────────────────────────────────────
+    //
+    // Not every method is precondition-free.  Vertex operations are fully
+    // self-sufficient — they reach the store automatically when the overlay is
+    // cold.  Edge operations (except get_edge / get_edges) are overlay-only:
+    // the caller must ensure the edge is in the overlay via a prior get_edge /
+    // get_edges call before invoking set_property, drop_property, get_property,
+    // or drop_element on an edge key.
+    //
+    //   Method                  Precondition
+    //   ──────────────────────  ────────────────────────────────────────────
+    //   get_vertex              none  (store fallback on miss)
+    //   get_edge                none  (store fallback on miss)
+    //   get_edges               none  (store merged with overlay)
+    //   get_property (vertex)   none  (delegates to get_vertex)
+    //   get_property (edge)     ⚠ edge must be in overlay
+    //   add_vertex              none  (get_vertex_degree checks overlay+store)
+    //   add_edge                none  (overlay+store for edge; get_vertex_degree
+    //                                  for endpoints)
+    //   set_property (vertex)   none  (auto-load from store)
+    //   set_property (edge)     ⚠ edge must be in overlay
+    //   drop_property (vertex)  none  (auto-load from store)
+    //   drop_property (edge)    ⚠ edge must be in overlay
+    //   drop_element (vertex)   none  (get_vertex_degree checks overlay+store)
+    //   drop_element (edge)     ⚠ edge must be in overlay
 
     /// Add a new vertex with explicit `id` and `label_id` to the overlay.
     ///
     /// Returns `Result<(VertexKey, Arc<Vertex>), StoreError>` — the returned
     /// Arc gives immediate read access within this context.
-    /// Note:
-    ///     1. the vertex existence check is performed against both the overlay and the store to prevent duplicates.
+    ///
+    /// # Existence check
+    /// Duplicate detection is a single call to `get_vertex_degree(id)`, which
+    /// first checks the in-memory `vertex_degree` overlay and then falls back to
+    /// the store.  Using the lightweight degree record avoids loading the full
+    /// vertex body.  Both newly-created and pre-existing (persisted) vertices are
+    /// covered by this single path, so **no precondition is required of the
+    /// caller**.
+    ///
+    /// **Gap — TOCTOU between check and commit:** another concurrent transaction
+    /// could insert the same `id` between this check and `commit()`.  That race
+    /// is not caught here; it is detected by the store's OCC conflict check at
+    /// commit time, which returns `StoreError::Conflict`.
+    ///
+    /// **Gap — delete-then-add in the same transaction:** a tombstoned vertex
+    /// still has a degree record in the overlay, so `get_vertex_degree` returns
+    /// `Some` and this method returns `StoreError::DuplicateVertex`.
+    /// Re-inserting a deleted vertex within one transaction is not supported.
+    ///
+    /// # Locking
+    /// No lock is acquired.  The new vertex's `props` field is an empty
+    /// `RwLock<Vec<Property>>`; no concurrent reader can observe it before this
+    /// method returns its `Arc`.
     pub fn add_vertex(&mut self, id: VertexKey, label_id: LabelId) -> Result<(VertexKey, Arc<Vertex>), StoreError> {
-        if self.vertices.contains_key(&id) {
-            return Err(StoreError::DuplicateVertex(id));
-        }
-        // Use get_vertex_degree for a more efficient existence check.
-        if self.store.get_vertex_degree(id)?.is_some() {
+        // Single-call check: covers both overlay (vertex_degree map) and store.
+        if self.get_vertex_degree(id)?.is_some() {
             return Err(StoreError::DuplicateVertex(id));
         }
 
@@ -307,17 +362,49 @@ impl<S: GraphStore> LogicalGraph<S> {
     /// Register a new directed edge identified by `cek`.
     ///
     /// Returns `(EdgeKey, Arc<Edge>)` in Out orientation.
-    /// Returns `StoreError::DuplicateEdge` if the key already exists in the overlay or store.
+    ///
+    /// # Existence check — no precondition required
+    /// Duplicate detection is two-phase:
+    /// 1. Overlay check — `self.edges.contains_key(&cek)`. Detects edges already
+    ///    inserted (or tombstoned but still in the overlay) within this transaction.
+    /// 2. Store check — `store.get_edge(cek, OUT)`. Detects persisted edges not
+    ///    yet loaded into the overlay.
+    ///
+    /// **Gap — TOCTOU:** same as `add_vertex`; concurrent inserts of the same edge
+    /// are caught at commit time via OCC, not here.
+    ///
+    /// **Gap — re-adding a tombstoned edge:** a tombstoned edge remains in
+    /// `self.edges`, so the overlay check fires and returns
+    /// `StoreError::DuplicateEdge`.  Re-inserting a deleted edge within one
+    /// transaction is not supported.
+    ///
+    /// # Endpoint existence check — no precondition required
+    /// Both endpoint vertices must exist, but the caller does not need to
+    /// pre-load them.  `get_vertex_degree` is called for both `src_id` and
+    /// `dst_id`; it checks the in-memory overlay first and falls back to the
+    /// store automatically.  A missing endpoint returns `StoreError::NotFound`
+    /// before any state is mutated.
+    ///
+    /// # Degree counter update
+    /// After the existence checks, `src.out_degree` and `dst.in_degree` are
+    /// incremented atomically within the overlay and marked `CounterOnly` dirty.
+    /// This prevents `drop_element` from deleting either endpoint while this edge
+    /// is live, because the degree check in `drop_element` will see a non-zero
+    /// counter.
+    ///
+    /// # Locking
+    /// No lock is acquired.  The new edge's `props` field starts empty; no
+    /// concurrent reader can observe it before this method returns its `Arc`.
     pub fn add_edge(&mut self, cek: CanonicalEdgeKey) -> Result<(EdgeKey, Arc<Edge>), StoreError> {
         if self.edges.contains_key(&cek) {
             return Err(StoreError::DuplicateEdge(cek));
         }
-        // 1. try to retrieve edge from store to check for duplicates before allocation.
+        // Check store for a persisted edge not yet in the overlay.
         if self.store.get_edge(cek, Direction::OUT)?.is_some() {
             return Err(StoreError::DuplicateEdge(cek));
         }
 
-        // Ensure vertices exist and update their edge counters
+        // Verify both endpoints exist (overlay-first via get_vertex_degree, then store).
         let (mut src_out, src_in) = self.get_vertex_degree(cek.src_id)?.ok_or(StoreError::NotFound)?;
         let (dst_out, mut dst_in) = self.get_vertex_degree(cek.dst_id)?.ok_or(StoreError::NotFound)?;
 
@@ -347,24 +434,39 @@ impl<S: GraphStore> LogicalGraph<S> {
 
     /// Upsert a property on a vertex or edge.
     ///
-    /// The element identified by `key` must have been previously loaded or
-    /// created in this context.  Returns an error for unknown or tombstoned
-    /// elements.
+    /// # Existence check
+    /// 1. Tombstone guard — if the element's dirty state is `Tombstone`, returns
+    ///    `StoreError::Tombstoned` immediately.
+    /// 2. For **vertices**: if the vertex is not yet in the overlay it is loaded
+    ///    from the store automatically.  `StoreError::NotFound` is returned only
+    ///    if the store also has no record.  **No precondition required.**
+    /// 3. For **edges**: overlay-only.  The edge must already be in the overlay
+    ///    (populated via a prior `get_edge` call); if absent `StoreError::NotFound`
+    ///    is returned.  **Caller must pre-load the edge.**
+    ///
+    /// # Locking
+    /// Acquires `RwLock::write()` on `element.props` for the duration of the
+    /// upsert, then releases it immediately — not held across any store or I/O
+    /// call.  Returns `StoreError::LockError` if the lock is poisoned.
     pub fn set_property(&mut self, key: CanonicalKey, prop: PropKey, value: Primitive) -> Result<(), StoreError> {
         match key {
             CanonicalKey::Vertex(id) => {
                 if self.dirty.get(&key) == Some(&Existence::Tombstone) {
                     return Err(StoreError::Tombstoned);
                 }
-                match self.vertices.get_mut(&id) {
-                    None => return Err(StoreError::NotFound),
-                    Some(arc) => {
-                        // 1. Acquire a write lock on the properties
-                        let mut props = arc.props.write().map_err(|_| StoreError::LockError)?;
-
-                        // 2. Modify in place. No cloning happens!
-                        upsert_prop(&mut props, key, prop, value);
+                // Auto-load from store if not yet in overlay.
+                if !self.vertices.contains_key(&id) {
+                    match self.store.get_vertex(id)? {
+                        None => return Err(StoreError::NotFound),
+                        Some(arc) => {
+                            self.vertices.insert(id, arc);
+                        }
                     }
+                }
+                {
+                    let arc = self.vertices.get_mut(&id).expect("just loaded");
+                    let mut props = arc.props.write().map_err(|_| StoreError::LockError)?;
+                    upsert_prop(&mut props, key, prop, value);
                 }
                 self.mark_dirty(key, Existence::Modified);
             }
@@ -386,18 +488,31 @@ impl<S: GraphStore> LogicalGraph<S> {
     }
 
     /// Remove a property from a vertex or edge.
+    ///
+    /// # Existence check and locking
+    /// Same semantics as `set_property`: tombstone guard first, then
+    /// auto-load-from-store for vertices (no precondition), overlay-only check
+    /// for edges (caller must pre-load).  Acquires a short-lived
+    /// `RwLock::write()` on `props` to perform the removal.
     pub fn drop_property(&mut self, key: CanonicalKey, prop: &PropKey) -> Result<(), StoreError> {
         match key {
             CanonicalKey::Vertex(id) => {
                 if self.dirty.get(&key) == Some(&Existence::Tombstone) {
                     return Err(StoreError::Tombstoned);
                 }
-                match self.vertices.get_mut(&id) {
-                    None => return Err(StoreError::NotFound),
-                    Some(arc) => {
-                        let mut props = arc.props.write().map_err(|_| StoreError::LockError)?;
-                        props.retain(|p| &p.key != prop);
+                // Auto-load from store if not yet in overlay.
+                if !self.vertices.contains_key(&id) {
+                    match self.store.get_vertex(id)? {
+                        None => return Err(StoreError::NotFound),
+                        Some(arc) => {
+                            self.vertices.insert(id, arc);
+                        }
                     }
+                }
+                {
+                    let arc = self.vertices.get_mut(&id).expect("just loaded");
+                    let mut props = arc.props.write().map_err(|_| StoreError::LockError)?;
+                    props.retain(|p| &p.key != prop);
                 }
                 self.mark_dirty(key, Existence::Modified);
             }
@@ -418,10 +533,52 @@ impl<S: GraphStore> LogicalGraph<S> {
         Ok(())
     }
 
-    /// Mark a vertex or edge as deleted.
+    /// Mark a vertex or edge as deleted in the overlay (tombstoned).
     ///
-    /// Note:
-    ///     1.The element must have been previously loaded or created in this context.
+    /// The physical delete is deferred to `commit()`.
+    ///
+    /// # Vertex — existence check
+    /// Existence is verified via `get_vertex_degree`, which checks the overlay
+    /// first and then falls back to the store.  Returns `StoreError::NotFound`
+    /// if neither source has a record.
+    ///
+    /// **Gap — already-tombstoned vertex:** if the vertex was tombstoned earlier
+    /// in this transaction its degree record is still present (in `vertex_degree`
+    /// or the store), so the existence check succeeds and the tombstone is applied
+    /// a second time — a no-op thanks to `Existence::merge`, but no error is
+    /// returned.  Callers that need idempotency-free semantics must check the
+    /// dirty map themselves.
+    ///
+    /// # Vertex — incident-edge guard
+    /// Before tombstoning, the method reads the current degree `(out_e, in_e)`.
+    /// If either is non-zero, `StoreError::IncidentEdges` is returned and the
+    /// vertex is left unchanged.  All incident edges (including those added in
+    /// this transaction) must be tombstoned first.
+    ///
+    /// **Gap — race with concurrent edge inserts:** another transaction could
+    /// insert an edge incident to this vertex after the degree check passes here
+    /// but before `commit()`.  The OCC check at commit time does not
+    /// automatically detect this graph-level invariant violation; it would
+    /// require a store-level constraint or a re-check inside the commit path.
+    ///
+    /// # Edge — existence check (precondition: edge must be in overlay)
+    /// The check is **overlay-only**: `self.edges.contains_key(&cek)`.  If the
+    /// edge exists in the store but has not been loaded into the overlay yet,
+    /// this method returns `StoreError::NotFound`.  Unlike vertex operations,
+    /// there is no auto-load fallback here; callers must call `get_edge` first
+    /// to populate the overlay before dropping an edge.  This asymmetry is
+    /// intentional: dropping an edge that was never read in this transaction is
+    /// unusual and likely a caller bug.
+    ///
+    /// # Edge — degree counter update
+    /// When an edge is tombstoned `src.out_degree` and `dst.in_degree` are
+    /// decremented in the overlay (using `saturating_sub` to avoid underflow).
+    /// This update is idempotent — if the edge is already tombstoned the degree
+    /// adjustment is skipped.
+    ///
+    /// # Locking
+    /// No lock is acquired.  Property data is not read or modified during a drop;
+    /// the element is only marked in the dirty map.
     pub fn drop_element(&mut self, key: CanonicalKey) -> Result<(), StoreError> {
         match key {
             CanonicalKey::Vertex(id) => {
@@ -765,11 +922,9 @@ mod tests {
         let (key, _) = c1.add_vertex(100, 1).unwrap();
         c1.commit().unwrap();
 
-        // Two contexts load the same vertex, then concurrently update the same property key with different values.
+        // Two contexts concurrently update the same property key with different values.
         let mut c2 = ctx(&store);
         let mut c3 = ctx(&store);
-        c2.get_vertex(key).unwrap();
-        c3.get_vertex(key).unwrap();
         c2.set_property(CanonicalKey::Vertex(key), SmolStr::new("x"), Primitive::Int32(1)).unwrap();
         c3.set_property(CanonicalKey::Vertex(key), SmolStr::new("x"), Primitive::Int32(2)).unwrap();
 
@@ -846,8 +1001,6 @@ mod tests {
 
         let mut c2 = ctx(&store);
         let mut c3 = ctx(&store);
-        let _ = c2.get_vertex(key).unwrap();
-        let _ = c3.get_vertex(key).unwrap();
         c2.drop_property(CanonicalKey::Vertex(key), &SmolStr::new("x")).unwrap();
         c3.set_property(CanonicalKey::Vertex(key), SmolStr::new("x"), Primitive::Int32(2)).unwrap();
 
@@ -867,8 +1020,6 @@ mod tests {
 
         let mut c2 = ctx(&store);
         let mut c3 = ctx(&store);
-        let _ = c2.get_vertex(key).unwrap();
-        let _ = c3.get_vertex(key).unwrap();
         c2.set_property(CanonicalKey::Vertex(key), SmolStr::new("x"), Primitive::Int32(2)).unwrap();
         c3.drop_property(CanonicalKey::Vertex(key), &SmolStr::new("x")).unwrap();
 
@@ -970,7 +1121,6 @@ mod tests {
         c.commit().unwrap();
 
         let mut c2 = ctx(&store);
-        let _e = c2.get_vertex(v1).unwrap().unwrap();
         let err = c2.drop_element(CanonicalKey::Vertex(v1));
         assert!(err.is_err());
         assert_eq!(err.unwrap_err().to_string(), "cannot drop vertex with incident edges");
@@ -1020,10 +1170,6 @@ mod tests {
         let mut c3 = ctx(&store);
 
         let k = cek(v1, 5, v2);
-        let _ = c2.get_vertex(v1).unwrap().unwrap();
-        let _ = c2.get_vertex(v2).unwrap().unwrap();
-        let _ = c3.get_vertex(v1).unwrap().unwrap();
-
         c2.add_edge(k).unwrap();
         c3.drop_element(CanonicalKey::Vertex(v1)).unwrap();
 
@@ -1045,10 +1191,6 @@ mod tests {
         let mut c3 = ctx(&store);
 
         let k = cek(v1, 5, v2);
-        let _ = c2.get_vertex(v1).unwrap().unwrap();
-        let _ = c2.get_vertex(v2).unwrap().unwrap();
-        let _ = c3.get_vertex(v1).unwrap().unwrap();
-
         c2.add_edge(k).unwrap();
         c3.drop_element(CanonicalKey::Vertex(v1)).unwrap();
 
@@ -1070,10 +1212,6 @@ mod tests {
         let mut c3 = ctx(&store);
 
         let k = cek(v1, 5, v2);
-        let _ = c2.get_vertex(v1).unwrap().unwrap();
-        let _ = c2.get_vertex(v2).unwrap().unwrap();
-        let _ = c3.get_vertex(v2).unwrap().unwrap();
-
         c2.add_edge(k).unwrap();
         c3.drop_element(CanonicalKey::Vertex(v2)).unwrap();
 
@@ -1095,10 +1233,6 @@ mod tests {
         let mut c3 = ctx(&store);
 
         let k = cek(v1, 5, v2);
-        let _ = c2.get_vertex(v1).unwrap().unwrap();
-        let _ = c2.get_vertex(v2).unwrap().unwrap();
-        let _ = c3.get_vertex(v2).unwrap().unwrap();
-
         c2.add_edge(k).unwrap();
         c3.drop_element(CanonicalKey::Vertex(v2)).unwrap();
 

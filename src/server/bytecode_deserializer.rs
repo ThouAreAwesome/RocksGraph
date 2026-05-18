@@ -31,15 +31,15 @@ pub struct GremlinQueryAst {
     pub step: Vec<ParsedGremlinStep>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum DeserializationError {
-    Json(serde_json::Error),
+    Json(String),
     InvalidFormat(String),
 }
 
 /// Deserializes a byte slice (expected to be JSON) into a GremlinQueryAst.
 pub fn deserialize_bytecode(bytes: &[u8]) -> Result<GremlinQueryAst, DeserializationError> {
-    serde_json::from_slice(bytes).map_err(DeserializationError::Json)
+    serde_json::from_slice(bytes).map_err(|e| DeserializationError::Json(e.to_string()))
 }
 
 #[cfg(test)]
@@ -49,10 +49,9 @@ mod tests {
     #[test]
     fn test_deserialize_simple_query() {
         let json_bytecode = r#"{
-            "source": [
-                {"name": "V", "arguments": [1]}
-            ],
+            "source": [],
             "step": [
+                {"name": "V", "arguments": [1]},
                 {"name": "has", "arguments": ["name", "marko"]},
                 {"name": "count", "arguments": []}
             ]
@@ -60,30 +59,30 @@ mod tests {
 
         let ast = deserialize_bytecode(json_bytecode.as_bytes()).unwrap();
 
-        assert_eq!(ast.source.len(), 1);
-        assert_eq!(ast.source[0].name, "V");
-        assert_eq!(ast.source[0].arguments.len(), 1);
-        if let GremlinArgument::Int(id) = ast.source[0].arguments[0] {
+        assert!(ast.source.is_empty());
+        assert_eq!(ast.step.len(), 3);
+        assert_eq!(ast.step[0].name, "V");
+        assert_eq!(ast.step[0].arguments.len(), 1);
+        if let GremlinArgument::Int(id) = ast.step[0].arguments[0] {
             assert_eq!(id, 1);
         } else {
             panic!("Expected Int argument");
         }
 
-        assert_eq!(ast.step.len(), 2);
-        assert_eq!(ast.step[0].name, "has");
-        assert_eq!(ast.step[0].arguments.len(), 2);
-        if let GremlinArgument::String(key) = &ast.step[0].arguments[0] {
+        assert_eq!(ast.step[1].name, "has");
+        assert_eq!(ast.step[1].arguments.len(), 2);
+        if let GremlinArgument::String(key) = &ast.step[1].arguments[0] {
             assert_eq!(key, "name");
         } else {
             panic!("Expected String argument");
         }
-        if let GremlinArgument::String(value) = &ast.step[0].arguments[1] {
+        if let GremlinArgument::String(value) = &ast.step[1].arguments[1] {
             assert_eq!(value, "marko");
         } else {
             panic!("Expected String argument");
         }
-        assert_eq!(ast.step[1].name, "count");
-        assert!(ast.step[1].arguments.is_empty());
+        assert_eq!(ast.step[2].name, "count");
+        assert!(ast.step[2].arguments.is_empty());
     }
 
     #[test]
@@ -166,7 +165,7 @@ mod tests {
 
     #[test]
     fn test_deserialize_invalid_json() {
-        let json_bytecode = r#"{ "source": [ { "name": "V", "#;
+        let json_bytecode = r#"{ "step": [ { "name": "V", "#;
         let result = deserialize_bytecode(json_bytecode.as_bytes());
         assert!(result.is_err());
     }

@@ -11,15 +11,19 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 #[cfg(test)]
-mod tests {
+mod cases {
     use crate::{
         engine::{context::GraphCtx, volcano::builder::PhysicalPlanBuilder},
         graph::LogicalGraph,
         planner::logical_step::{
-            AddEStep as LogicalAddEStep, AddVStep as LogicalAddVStep, CountStep as LogicalCountStep,
-            HasPropertyStep as LogicalHasPropertyStep, InEStep as LogicalInEStep, LogicalPlan, LogicalStep,
-            OutEStep as LogicalOutEStep, PropertyStep as LogicalPropertyStep, UnionStep as LogicalUnionStep,
-            VStep as LogicalVStep,
+            AddEStep as LogicalAddEStep, AddVStep as LogicalAddVStep, BothEStep as LogicalBothEStep,
+            BothStep as LogicalBothStep, CountStep as LogicalCountStep, HasLabelStep as LogicalHasLabelStep,
+            HasPropertyStep as LogicalHasPropertyStep, InEStep as LogicalInEStep, InStep as LogicalInStep,
+            InVStep as LogicalInVStep, LogicalPlan, LogicalStep, OtherVStep as LogicalOtherVStep,
+            OutEStep as LogicalOutEStep, OutStep as LogicalOutStep, OutVStep as LogicalOutVStep,
+            PropertyStep as LogicalPropertyStep, ScalarFilterStep as LogicalScalarFilterStep,
+            UnionStep as LogicalUnionStep, VStep as LogicalVStep, ValuesStep as LogicalValuesStep,
+            WhereStep as LogicalWhereStep,
         },
         store::{GraphStore, RocksStorage}, // Assuming RocksStorage is in src/store.rs
         types::{
@@ -378,7 +382,7 @@ mod tests {
         println!("\nEdges:");
         // Iterate through all vertices to get their outgoing edges
         for src_id in 1..=6 {
-            if let Ok(out_edges) = graph.get_out_edges(src_id) {
+            if let Ok(out_edges) = graph.get_out_edges(src_id, None) {
                 for edge_key in out_edges {
                     if let Ok(Some(edge)) = graph.get_edge(edge_key.canonical_edge_key()) {
                         let label_name = get_label_name(edge.label_id);
@@ -557,7 +561,7 @@ mod tests {
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: vec![marko_id] }),
-                LogicalStep::OutE(LogicalOutEStep { label_filter: Some(knows_edge_key.label_id) }),
+                LogicalStep::OutE(LogicalOutEStep { label_ids: vec![knows_edge_key.label_id] }),
                 LogicalStep::HasProperty(LogicalHasPropertyStep {
                     key: SmolStr::new("weight"),
                     value: Primitive::Float64(1.0),
@@ -637,7 +641,7 @@ mod tests {
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: vec![marko_id, josh_id] }), // Start from Marko and Josh
-                LogicalStep::OutE(LogicalOutEStep { label_filter: Some(CREATED_LABEL_ID) }), // Get all outgoing edges
+                LogicalStep::OutE(LogicalOutEStep { label_ids: vec![CREATED_LABEL_ID] }), // Get all outgoing edges
                 LogicalStep::HasProperty(LogicalHasPropertyStep {
                     key: SmolStr::new("weight"),
                     value: Primitive::Float64(1.0),
@@ -661,7 +665,7 @@ mod tests {
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: vec![marko_id, josh_id] }), // Start from Marko and Josh
-                LogicalStep::OutE(LogicalOutEStep { label_filter: None }),     // Get all outgoing edges
+                LogicalStep::OutE(LogicalOutEStep { label_ids: vec![] }),      // Get all outgoing edges
                 LogicalStep::HasProperty(LogicalHasPropertyStep {
                     key: SmolStr::new("weight"),
                     value: Primitive::Float64(1.0),
@@ -703,7 +707,7 @@ mod tests {
         // Sub-plan 1: outE().count()
         let out_e_count_sub_plan = LogicalPlan {
             steps: vec![
-                LogicalStep::OutE(LogicalOutEStep { label_filter: None }),
+                LogicalStep::OutE(LogicalOutEStep { label_ids: vec![] }),
                 LogicalStep::Count(LogicalCountStep {}),
             ],
         };
@@ -711,7 +715,7 @@ mod tests {
         // Sub-plan 2: inE().count()
         let in_e_count_sub_plan = LogicalPlan {
             steps: vec![
-                LogicalStep::InE(LogicalInEStep { label_filter: None }),
+                LogicalStep::InE(LogicalInEStep { label_ids: vec![] }),
                 LogicalStep::Count(LogicalCountStep {}),
             ],
         };
@@ -736,5 +740,279 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert!(results.contains(&GValue::Scalar(Primitive::Int32(3))));
         assert!(results.contains(&GValue::Scalar(Primitive::Int32(0))));
+    }
+
+    #[test]
+    fn test_out_step() {
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+        let marko_id = graph.get_vertex(1).unwrap().unwrap().id;
+
+        let logical_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: vec![marko_id] }),
+                LogicalStep::Out(LogicalOutStep { label_ids: vec![] }),
+            ],
+        };
+        let mut builder = PhysicalPlanBuilder::default();
+        let physical_plan = builder.build(&logical_plan);
+        let mut results = Vec::new();
+        while let Some(t) = physical_plan.next(&mut graph) {
+            results.push(t.value);
+        }
+        assert_eq!(results.len(), 3);
+        assert!(results.contains(&GValue::Vertex(2)));
+        assert!(results.contains(&GValue::Vertex(3)));
+        assert!(results.contains(&GValue::Vertex(4)));
+    }
+
+    #[test]
+    fn test_in_step() {
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+        let lop_id = graph.get_vertex(3).unwrap().unwrap().id;
+
+        let logical_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: vec![lop_id] }),
+                LogicalStep::In(LogicalInStep { label_ids: vec![] }),
+            ],
+        };
+        let mut builder = PhysicalPlanBuilder::default();
+        let physical_plan = builder.build(&logical_plan);
+        let mut results = Vec::new();
+        while let Some(t) = physical_plan.next(&mut graph) {
+            results.push(t.value);
+        }
+        assert_eq!(results.len(), 3);
+        assert!(results.contains(&GValue::Vertex(1)));
+        assert!(results.contains(&GValue::Vertex(4)));
+        assert!(results.contains(&GValue::Vertex(6)));
+    }
+
+    #[test]
+    fn test_out_v_in_v_step() {
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+        let marko_id = graph.get_vertex(1).unwrap().unwrap().id;
+
+        // V(1).outE().inV() equivalent to V(1).out()
+        let logical_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: vec![marko_id] }),
+                LogicalStep::OutE(LogicalOutEStep { label_ids: vec![] }),
+                LogicalStep::InV(LogicalInVStep {}),
+            ],
+        };
+        let mut builder = PhysicalPlanBuilder::default();
+        let physical_plan = builder.build(&logical_plan);
+        let mut results = Vec::new();
+        while let Some(t) = physical_plan.next(&mut graph) {
+            results.push(t.value);
+        }
+        assert_eq!(results.len(), 3);
+        assert!(results.contains(&GValue::Vertex(2)));
+        assert!(results.contains(&GValue::Vertex(3)));
+        assert!(results.contains(&GValue::Vertex(4)));
+
+        // V(1).outE().outV() should return Marko 3 times
+        let logical_plan2 = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: vec![marko_id] }),
+                LogicalStep::OutE(LogicalOutEStep { label_ids: vec![] }),
+                LogicalStep::OutV(LogicalOutVStep {}),
+            ],
+        };
+        let mut builder2 = PhysicalPlanBuilder::default();
+        let physical_plan2 = builder2.build(&logical_plan2);
+        let mut results2 = Vec::new();
+        while let Some(t) = physical_plan2.next(&mut graph) {
+            results2.push(t.value);
+        }
+        assert_eq!(results2.len(), 3);
+        assert!(results2.iter().all(|v| v == &GValue::Vertex(1)));
+    }
+
+    #[test]
+    fn test_both_and_both_e_step() {
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+        let josh_id = graph.get_vertex(4).unwrap().unwrap().id;
+
+        let logical_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: vec![josh_id] }),
+                LogicalStep::Both(LogicalBothStep { label_ids: vec![] }),
+            ],
+        };
+        let mut builder = PhysicalPlanBuilder::default();
+        let physical_plan = builder.build(&logical_plan);
+        let mut results = Vec::new();
+        while let Some(t) = physical_plan.next(&mut graph) {
+            results.push(t.value);
+        }
+        assert_eq!(results.len(), 3);
+        assert!(results.contains(&GValue::Vertex(1)));
+        assert!(results.contains(&GValue::Vertex(3)));
+        assert!(results.contains(&GValue::Vertex(5)));
+
+        let logical_plan_e = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: vec![josh_id] }),
+                LogicalStep::BothE(LogicalBothEStep { label_ids: vec![] }),
+            ],
+        };
+        let physical_plan_e = builder.build(&logical_plan_e);
+        let mut results_e = Vec::new();
+        while let Some(t) = physical_plan_e.next(&mut graph) {
+            results_e.push(t.value);
+        }
+        assert_eq!(results_e.len(), 3);
+    }
+
+    #[test]
+    fn test_has_label_step() {
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+        let marko_id = graph.get_vertex(1).unwrap().unwrap().id;
+
+        let logical_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: vec![marko_id] }),
+                LogicalStep::Out(LogicalOutStep { label_ids: vec![] }),
+                LogicalStep::HasLabel(LogicalHasLabelStep { label_ids: vec![SOFTWARE_LABEL_ID] }),
+            ],
+        };
+        let mut builder = PhysicalPlanBuilder::default();
+        let physical_plan = builder.build(&logical_plan);
+        let mut results = Vec::new();
+        while let Some(t) = physical_plan.next(&mut graph) {
+            results.push(t.value);
+        }
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0], GValue::Vertex(3)); // Lop
+    }
+
+    #[test]
+    fn test_other_v_step() {
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+        let marko_id = graph.get_vertex(1).unwrap().unwrap().id;
+
+        let logical_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: vec![marko_id] }),
+                LogicalStep::OutE(LogicalOutEStep { label_ids: vec![] }),
+                LogicalStep::OtherV(LogicalOtherVStep {}),
+            ],
+        };
+        let mut builder = PhysicalPlanBuilder::default();
+        let physical_plan = builder.build(&logical_plan);
+        let mut results = Vec::new();
+        while let Some(t) = physical_plan.next(&mut graph) {
+            results.push(t.value);
+        }
+        assert_eq!(results.len(), 3);
+        assert!(results.contains(&GValue::Vertex(2)));
+        assert!(results.contains(&GValue::Vertex(3)));
+        assert!(results.contains(&GValue::Vertex(4)));
+    }
+
+    #[test]
+    fn test_values_step() {
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+        let marko_id = graph.get_vertex(1).unwrap().unwrap().id;
+
+        let logical_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: vec![marko_id] }),
+                LogicalStep::Values(LogicalValuesStep {
+                    property_keys: vec![SmolStr::new("name"), SmolStr::new("age")],
+                }),
+            ],
+        };
+        let mut builder = PhysicalPlanBuilder::default();
+        let physical_plan = builder.build(&logical_plan);
+        let mut results = Vec::new();
+        while let Some(t) = physical_plan.next(&mut graph) {
+            results.push(t.value);
+        }
+        assert_eq!(results.len(), 2);
+        assert!(results.contains(&GValue::Scalar(Primitive::String(SmolStr::new("marko")))));
+        assert!(results.contains(&GValue::Scalar(Primitive::Int32(29))));
+    }
+
+    #[test]
+    fn test_scalar_filter_step() {
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+        let marko_id = graph.get_vertex(1).unwrap().unwrap().id;
+
+        let logical_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: vec![marko_id] }),
+                LogicalStep::Values(LogicalValuesStep { property_keys: vec![SmolStr::new("age")] }),
+                LogicalStep::ScalarFilter(LogicalScalarFilterStep { value: Primitive::Int32(29) }),
+            ],
+        };
+        let mut builder = PhysicalPlanBuilder::default();
+        let physical_plan = builder.build(&logical_plan);
+        let mut results = Vec::new();
+        while let Some(t) = physical_plan.next(&mut graph) {
+            results.push(t.value);
+        }
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0], GValue::Scalar(Primitive::Int32(29)));
+    }
+
+    #[test]
+    fn test_where_step() {
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+
+        let sub_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::Out(LogicalOutStep { label_ids: vec![] }),
+                LogicalStep::HasLabel(LogicalHasLabelStep { label_ids: vec![SOFTWARE_LABEL_ID] }),
+            ],
+        };
+        let logical_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: vec![1, 2, 3, 4, 5, 6] }),
+                LogicalStep::Where(LogicalWhereStep { plan: sub_plan }),
+            ],
+        };
+        let mut builder = PhysicalPlanBuilder::default();
+        let physical_plan = builder.build(&logical_plan);
+        let mut results = Vec::new();
+        while let Some(t) = physical_plan.next(&mut graph) {
+            results.push(t.value);
+        }
+        assert_eq!(results.len(), 3);
+        assert!(results.contains(&GValue::Vertex(1)));
+        assert!(results.contains(&GValue::Vertex(4)));
+        assert!(results.contains(&GValue::Vertex(6)));
+    }
+
+    #[test]
+    fn test_out_multiple_labels() {
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+        let marko_id = graph.get_vertex(1).unwrap().unwrap().id;
+
+        let logical_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: vec![marko_id] }),
+                LogicalStep::Out(LogicalOutStep { label_ids: vec![KNOWS_LABEL_ID, CREATED_LABEL_ID] }),
+            ],
+        };
+        let mut builder = PhysicalPlanBuilder::default();
+        let physical_plan = builder.build(&logical_plan);
+        let mut results = Vec::new();
+        while let Some(t) = physical_plan.next(&mut graph) {
+            results.push(t.value);
+        }
+        assert_eq!(results.len(), 3); // 2 knows + 1 created
     }
 }

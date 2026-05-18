@@ -20,12 +20,14 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{BroadcastState, ConsumerIter, GremlinStep, HasBroadcast, Produce},
     },
-    types::LabelId,
+    types::{GValue, LabelId},
 };
 
 struct Inner {
     upstream: Option<ConsumerIter>,
-    label_filter: Option<LabelId>,
+    label_ids: Vec<LabelId>,
+    current_input: Option<Traverser>,
+    current_label_idx: usize,
 }
 
 pub struct InEStep {
@@ -34,10 +36,10 @@ pub struct InEStep {
 }
 
 impl InEStep {
-    pub fn new(label_filter: Option<LabelId>) -> Rc<Self> {
+    pub fn new(label_ids: Vec<LabelId>) -> Rc<Self> {
         Rc::new(Self {
             broadcast: RefCell::new(BroadcastState::new()),
-            inner: RefCell::new(Inner { upstream: None, label_filter }),
+            inner: RefCell::new(Inner { upstream: None, label_ids, current_input: None, current_label_idx: 0 }),
         })
     }
 }
@@ -50,25 +52,35 @@ impl HasBroadcast for InEStep {
 
 impl Produce for InEStep {
     fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Traverser; 4]>> {
-        let inner = self.inner.borrow();
+        let mut inner = self.inner.borrow_mut();
         loop {
-            let t = inner.upstream.as_ref().unwrap().next(ctx)?;
-            match &t.value {
-                crate::types::gvalue::GValue::Vertex(vk) => {
-                    let edges = ctx.get_in_edges(*vk).unwrap();
-                    let filtered_edges: SmallVec<[_; 8]> = if let Some(label_id) = inner.label_filter {
-                        edges.into_iter().filter(|e| e.label_id == label_id).collect()
-                    } else {
-                        edges.into()
-                    };
-
-                    if filtered_edges.is_empty() {
-                        continue;
-                    }
-
-                    return Some(filtered_edges.into_iter().map(|e| t.clone_with_edge(e)).collect());
+            if inner.current_input.is_none() {
+                let t = inner.upstream.as_ref()?.next(ctx)?;
+                if matches!(t.value, GValue::Vertex(_)) {
+                    inner.current_input = Some(t);
+                    inner.current_label_idx = 0;
+                } else {
+                    continue;
                 }
-                _ => continue,
+            }
+
+            let t = inner.current_input.as_ref().unwrap().clone();
+            if let GValue::Vertex(vk) = &t.value {
+                let label =
+                    if inner.label_ids.is_empty() { None } else { Some(inner.label_ids[inner.current_label_idx]) };
+
+                let in_edges = ctx.get_in_edges(*vk, label).ok().unwrap_or_default();
+                let results: SmallVec<[_; 4]> = in_edges.into_iter().map(|e| t.clone_with_edge(e)).collect();
+
+                inner.current_label_idx += 1;
+                if inner.label_ids.is_empty() || inner.current_label_idx >= inner.label_ids.len() {
+                    inner.current_input = None;
+                }
+                if !results.is_empty() {
+                    return Some(results);
+                }
+            } else {
+                inner.current_input = None;
             }
         }
     }
@@ -80,8 +92,11 @@ impl GremlinStep for InEStep {
     }
     fn reset(&self) {
         self.broadcast.borrow_mut().reset();
-        if let Some(up) = &self.inner.borrow().upstream {
+        let mut inner = self.inner.borrow_mut();
+        if let Some(up) = &inner.upstream {
             up.reset();
         }
+        inner.current_input = None;
+        inner.current_label_idx = 0;
     }
 }

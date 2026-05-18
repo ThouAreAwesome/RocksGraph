@@ -14,10 +14,13 @@ use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use smallvec::{smallvec, SmallVec};
 
-use crate::engine::{
-    context::GraphCtx,
-    traverser::Traverser,
-    volcano::steps::traits::{BroadcastState, ConsumerIter, GremlinStep, HasBroadcast, Produce},
+use crate::{
+    engine::{
+        context::GraphCtx,
+        traverser::Traverser,
+        volcano::steps::traits::{BroadcastState, ConsumerIter, GremlinStep, HasBroadcast, Produce},
+    },
+    types::GValue,
 };
 
 struct Inner {
@@ -46,17 +49,18 @@ impl Produce for InVStep {
         let inner = self.inner.borrow();
         loop {
             let t = inner.upstream.as_ref().unwrap().next(ctx)?;
-            match &t.value {
-                crate::types::gvalue::GValue::Edge(ek) => {
-                    let vk = ek.canonical_edge_key().dst_id;
+            if let GValue::Edge(ek) = &t.value {
+                let vk = ek.canonical_edge_key().dst_id;
 
-                    let mut vertex_traverser = t.clone();
-                    vertex_traverser.value = crate::types::gvalue::GValue::Vertex(vk);
-                    vertex_traverser.parent = Some(Arc::new(t.clone()));
+                let mut vertex_traverser = t.clone();
+                vertex_traverser.value = GValue::Vertex(vk);
+                vertex_traverser.parent = Some(Arc::new(t.clone()));
 
-                    return Some(smallvec![vertex_traverser]);
-                }
-                _ => continue,
+                return Some(smallvec![vertex_traverser]);
+            } else {
+                // TODO: check if traverser value is not edge, we'd better raise an error instead of silently ignoring
+                // it
+                continue;
             }
         }
     }

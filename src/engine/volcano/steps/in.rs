@@ -11,7 +11,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 use smallvec::SmallVec;
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use crate::{
     engine::{
@@ -27,46 +27,37 @@ struct Inner {
     label_ids: Vec<LabelId>,
     current_input: Option<Traverser>,
     current_label_idx: usize,
-    current_direction: u8,
 }
 
-pub struct BothEStep {
+pub struct InStep {
     broadcast: RefCell<BroadcastState>,
     inner: RefCell<Inner>,
 }
 
-impl BothEStep {
+impl InStep {
     pub fn new(label_ids: Vec<LabelId>) -> Rc<Self> {
         Rc::new(Self {
             broadcast: RefCell::new(BroadcastState::new()),
-            inner: RefCell::new(Inner {
-                upstream: None,
-                label_ids,
-                current_input: None,
-                current_label_idx: 0,
-                current_direction: 0,
-            }),
+            inner: RefCell::new(Inner { upstream: None, label_ids, current_input: None, current_label_idx: 0 }),
         })
     }
 }
 
-impl HasBroadcast for BothEStep {
+impl HasBroadcast for InStep {
     fn broadcast(&self) -> &RefCell<BroadcastState> {
         &self.broadcast
     }
 }
 
-impl Produce for BothEStep {
+impl Produce for InStep {
     fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Traverser; 4]>> {
         let mut inner = self.inner.borrow_mut();
-
         loop {
             if inner.current_input.is_none() {
                 let t = inner.upstream.as_ref()?.next(ctx)?;
                 if matches!(t.value, GValue::Vertex(_)) {
                     inner.current_input = Some(t);
                     inner.current_label_idx = 0;
-                    inner.current_direction = 0;
                 } else {
                     continue;
                 }
@@ -77,31 +68,21 @@ impl Produce for BothEStep {
                 let label =
                     if inner.label_ids.is_empty() { None } else { Some(inner.label_ids[inner.current_label_idx]) };
 
+                let in_edges = ctx.get_in_edges(*vk, label).ok().unwrap_or_default();
                 let mut results = SmallVec::new();
-                if inner.current_direction == 0 {
-                    let out_edges = ctx.get_out_edges(*vk, label).ok().unwrap_or_default();
-                    for edge in out_edges {
-                        results.push(t.clone_with_edge(edge));
-                    }
-                    inner.current_direction = 1;
-                    if !results.is_empty() {
-                        return Some(results);
-                    }
+                for edge in in_edges {
+                    let mut new_t = t.clone();
+                    new_t.value = GValue::Vertex(edge.secondary_id);
+                    new_t.parent = Some(Arc::new(t.clone()));
+                    results.push(new_t);
                 }
 
-                if inner.current_direction == 1 {
-                    let in_edges = ctx.get_in_edges(*vk, label).ok().unwrap_or_default();
-                    for edge in in_edges {
-                        results.push(t.clone_with_edge(edge));
-                    }
-                    inner.current_direction = 0;
-                    inner.current_label_idx += 1;
-                    if inner.label_ids.is_empty() || inner.current_label_idx >= inner.label_ids.len() {
-                        inner.current_input = None;
-                    }
-                    if !results.is_empty() {
-                        return Some(results);
-                    }
+                inner.current_label_idx += 1;
+                if inner.label_ids.is_empty() || inner.current_label_idx >= inner.label_ids.len() {
+                    inner.current_input = None;
+                }
+                if !results.is_empty() {
+                    return Some(results);
                 }
             } else {
                 inner.current_input = None;
@@ -110,7 +91,7 @@ impl Produce for BothEStep {
     }
 }
 
-impl GremlinStep for BothEStep {
+impl GremlinStep for InStep {
     fn add_upper(&self, upstream: ConsumerIter) {
         self.inner.borrow_mut().upstream = Some(upstream);
     }
@@ -122,6 +103,5 @@ impl GremlinStep for BothEStep {
         }
         inner.current_input = None;
         inner.current_label_idx = 0;
-        inner.current_direction = 0;
     }
 }

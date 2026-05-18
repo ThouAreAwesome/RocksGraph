@@ -29,13 +29,20 @@ pub struct LogicalPlan {
 
 #[derive(Clone)]
 pub enum LogicalStep {
+    Both(BothStep),
+    BothE(BothEStep),
     Count(CountStep),
+    HasLabel(HasLabelStep),
     HasProperty(HasPropertyStep),
+    In(InStep),
     InE(InEStep),
+    Out(OutStep),
     OutE(OutEStep),
     InV(InVStep),
+    OtherV(OtherVStep),
     OutV(OutVStep),
     ScalarFilter(ScalarFilterStep),
+    Values(ValuesStep),
     Where(WhereStep),
     Union(UnionStep),
     AddV(AddVStep),
@@ -48,23 +55,51 @@ pub enum LogicalStep {
 pub struct CountStep {}
 
 #[derive(Clone)]
+pub struct BothStep {
+    pub label_ids: Vec<LabelId>,
+}
+
+#[derive(Clone)]
+pub struct BothEStep {
+    pub label_ids: Vec<LabelId>,
+}
+
+#[derive(Clone)]
+pub struct HasLabelStep {
+    pub label_ids: Vec<LabelId>,
+}
+
+#[derive(Clone)]
 pub struct HasPropertyStep {
     pub key: PropKey,
     pub value: Primitive,
 }
 
 #[derive(Clone)]
+pub struct InStep {
+    pub label_ids: Vec<LabelId>,
+}
+
+#[derive(Clone)]
 pub struct InEStep {
-    pub label_filter: Option<LabelId>,
+    pub label_ids: Vec<LabelId>,
+}
+
+#[derive(Clone)]
+pub struct OutStep {
+    pub label_ids: Vec<LabelId>,
 }
 
 #[derive(Clone)]
 pub struct OutEStep {
-    pub label_filter: Option<LabelId>,
+    pub label_ids: Vec<LabelId>,
 }
 
 #[derive(Clone)]
 pub struct InVStep {}
+
+#[derive(Clone)]
+pub struct OtherVStep {}
 
 #[derive(Clone)]
 pub struct OutVStep {}
@@ -72,6 +107,11 @@ pub struct OutVStep {}
 #[derive(Clone)]
 pub struct ScalarFilterStep {
     pub value: Primitive,
+}
+
+#[derive(Clone)]
+pub struct ValuesStep {
+    pub property_keys: Vec<PropKey>,
 }
 
 #[derive(Clone)]
