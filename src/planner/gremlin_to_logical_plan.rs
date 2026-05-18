@@ -76,7 +76,12 @@ fn parse_optional_labels(args: &[GremlinArgument]) -> Result<Vec<LabelId>, Trans
     for arg in args {
         match arg {
             GremlinArgument::String(s) => label_ids.push(resolve_label_name(s)?),
-            _ => return Err(TranslationError::InvalidArguments("label filter arguments must be strings".to_string())),
+            GremlinArgument::Int(i) => label_ids.push(*i as LabelId),
+            _ => {
+                return Err(TranslationError::InvalidArguments(
+                    "label filter arguments must be strings or integers".to_string(),
+                ))
+            }
         }
     }
     Ok(label_ids)
@@ -120,20 +125,13 @@ fn translate_parsed_step(parsed_step: ParsedGremlinStep) -> Result<Vec<LogicalSt
             Ok(vec![LogicalStep::HasProperty(HasPropertyStep { key: prop_key, value: prop_value })])
         }
         "hasLabel" => {
-            if parsed_step.arguments.is_empty() {
-                return Err(TranslationError::InvalidArguments("hasLabel expects at least 1 argument".to_string()));
-            }
-            let mut label_ids = Vec::new();
-            for arg in &parsed_step.arguments {
-                let label_id = match arg {
-                    GremlinArgument::String(s) => resolve_label_name(s)?,
-                    _ => {
-                        return Err(TranslationError::InvalidArguments(
-                            "hasLabel arguments must be strings".to_string(),
-                        ))
-                    }
-                };
-                label_ids.push(label_id);
+            let label_ids = parse_optional_labels(&parsed_step.arguments)?; // parse_optional_labels already handles empty case
+                                                                            // The `hasLabel` step in the Volcano engine expects a non-empty list of label_ids.
+                                                                            // An empty list would mean "has any label", which is not currently supported.
+            if label_ids.is_empty() {
+                return Err(TranslationError::InvalidArguments(
+                    "hasLabel expects at least 1 label argument".to_string(),
+                ));
             }
             Ok(vec![LogicalStep::HasLabel(HasLabelStep { label_ids })])
         }
@@ -230,15 +228,15 @@ fn translate_parsed_step(parsed_step: ParsedGremlinStep) -> Result<Vec<LogicalSt
         }
         "addV" => {
             let mut args = parsed_step.arguments.into_iter();
-            let label_name = match args.next() {
-                Some(GremlinArgument::String(s)) => s,
+            let label_id = match args.next() {
+                Some(GremlinArgument::String(s)) => resolve_label_name(&s)?,
+                Some(GremlinArgument::Int(i)) => i as LabelId,
                 _ => {
                     return Err(TranslationError::InvalidArguments(
-                        "addV expects a string label as first argument".to_string(),
+                        "addV expects a string or integer label as first argument".to_string(),
                     ))
                 }
             };
-            let label_id = resolve_label_name(&label_name)?;
 
             let vertex_id = match args.next() {
                 Some(GremlinArgument::Int(i)) => i as VertexKey,
@@ -278,15 +276,15 @@ fn translate_parsed_step(parsed_step: ParsedGremlinStep) -> Result<Vec<LogicalSt
         }
         "addE" => {
             let mut args = parsed_step.arguments.into_iter();
-            let label_name = match args.next() {
-                Some(GremlinArgument::String(s)) => s,
+            let label_id = match args.next() {
+                Some(GremlinArgument::String(s)) => resolve_label_name(&s)?,
+                Some(GremlinArgument::Int(i)) => i as LabelId,
                 _ => {
                     return Err(TranslationError::InvalidArguments(
-                        "addE expects a string label as first argument".to_string(),
+                        "addE expects a string or integer label as first argument".to_string(),
                     ))
                 }
             };
-            let label_id = resolve_label_name(&label_name)?;
 
             let out_v_id = match args.next() {
                 Some(GremlinArgument::Int(i)) => i as VertexKey,

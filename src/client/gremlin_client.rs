@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize}; // `Value` is not used, `json!` is used in 
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 /// A simplified representation of Gremlin Bytecode for client-side construction.
 /// This mirrors the server's `GremlinQueryAst` for easy serialization.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(untagged)]
 pub enum GremlinArgument {
     String(String),
@@ -16,7 +16,7 @@ pub enum GremlinArgument {
     Map(std::collections::HashMap<String, GremlinArgument>),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ParsedGremlinStep {
     pub name: String,
@@ -24,7 +24,7 @@ pub struct ParsedGremlinStep {
     pub arguments: Vec<GremlinArgument>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct GremlinQueryAst {
     #[serde(default)]
@@ -86,6 +86,189 @@ impl GremlinClient<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
     }
 }
 
+// ── Fluent Query Builder ──────────────────────────────────────────────────────
+
+/// Entry point for the fluent query builder.
+pub fn g() -> GraphTraversalSource {
+    GraphTraversalSource {}
+}
+
+pub struct GraphTraversalSource {}
+
+impl GraphTraversalSource {
+    /// Spawns a traversal with the `V()` step.
+    pub fn V(self, ids: Vec<i32>) -> GraphTraversal {
+        let arguments = ids.into_iter().map(GremlinArgument::Int).collect();
+        GraphTraversal {
+            ast: GremlinQueryAst { source: vec![], step: vec![ParsedGremlinStep { name: "V".to_string(), arguments }] },
+        }
+    }
+}
+
+/// Entry point for anonymous traversals (sub-traversals).
+/// Mimics Gremlin's `__` (double underscore) for nested traversals.
+pub fn __() -> GraphTraversal {
+    GraphTraversal { ast: GremlinQueryAst { source: vec![], step: vec![] } }
+}
+
+pub struct GraphTraversal {
+    ast: GremlinQueryAst,
+}
+
+impl GraphTraversal {
+    pub fn has(mut self, key: &str, value: GremlinArgument) -> Self {
+        self.ast.step.push(ParsedGremlinStep {
+            name: "has".to_string(),
+            arguments: vec![GremlinArgument::String(key.to_string()), value],
+        });
+        self
+    }
+
+    /// Spawns a traversal with the `V()` step.
+    /// This method is available on `GraphTraversal` for sub-traversals (e.g., `__.V()`).
+    pub fn V(mut self, ids: Vec<i32>) -> Self {
+        let arguments = ids.into_iter().map(GremlinArgument::Int).collect();
+        self.ast.step.push(ParsedGremlinStep { name: "V".to_string(), arguments });
+        self
+    }
+
+    pub fn out(mut self, labels: &[u32]) -> Self {
+        let arguments = labels.iter().map(|&l| GremlinArgument::Int(l as i32)).collect();
+        self.ast.step.push(ParsedGremlinStep { name: "out".to_string(), arguments });
+        self
+    }
+
+    pub fn outE(mut self, labels: &[u32]) -> Self {
+        let arguments = labels.iter().map(|&l| GremlinArgument::Int(l as i32)).collect();
+        self.ast.step.push(ParsedGremlinStep { name: "outE".to_string(), arguments });
+        self
+    }
+
+    pub fn r#in(mut self, labels: &[u32]) -> Self {
+        let arguments = labels.iter().map(|&l| GremlinArgument::Int(l as i32)).collect();
+        self.ast.step.push(ParsedGremlinStep { name: "in".to_string(), arguments });
+        self
+    }
+
+    pub fn inE(mut self, labels: &[u32]) -> Self {
+        let arguments = labels.iter().map(|&l| GremlinArgument::Int(l as i32)).collect();
+        self.ast.step.push(ParsedGremlinStep { name: "inE".to_string(), arguments });
+        self
+    }
+
+    pub fn both(mut self, labels: &[u32]) -> Self {
+        let arguments = labels.iter().map(|&l| GremlinArgument::Int(l as i32)).collect();
+        self.ast.step.push(ParsedGremlinStep { name: "both".to_string(), arguments });
+        self
+    }
+
+    pub fn bothE(mut self, labels: &[u32]) -> Self {
+        let arguments = labels.iter().map(|&l| GremlinArgument::Int(l as i32)).collect();
+        self.ast.step.push(ParsedGremlinStep { name: "bothE".to_string(), arguments });
+        self
+    }
+
+    pub fn count(mut self) -> Self {
+        self.ast.step.push(ParsedGremlinStep { name: "count".to_string(), arguments: vec![] });
+        self
+    }
+
+    pub fn hasLabel(mut self, labels: &[u32]) -> Self {
+        let arguments = labels.iter().map(|&l| GremlinArgument::Int(l as i32)).collect();
+        self.ast.step.push(ParsedGremlinStep { name: "hasLabel".to_string(), arguments });
+        self
+    }
+
+    pub fn inV(mut self) -> Self {
+        self.ast.step.push(ParsedGremlinStep { name: "inV".to_string(), arguments: vec![] });
+        self
+    }
+
+    pub fn otherV(mut self) -> Self {
+        self.ast.step.push(ParsedGremlinStep { name: "otherV".to_string(), arguments: vec![] });
+        self
+    }
+
+    pub fn outV(mut self) -> Self {
+        self.ast.step.push(ParsedGremlinStep { name: "outV".to_string(), arguments: vec![] });
+        self
+    }
+
+    pub fn is(mut self, value: GremlinArgument) -> Self {
+        self.ast.step.push(ParsedGremlinStep { name: "is".to_string(), arguments: vec![value] });
+        self
+    }
+
+    pub fn property(mut self, key: &str, value: GremlinArgument) -> Self {
+        self.ast.step.push(ParsedGremlinStep {
+            name: "property".to_string(),
+            arguments: vec![GremlinArgument::String(key.to_string()), value],
+        });
+        self
+    }
+
+    pub fn addV(
+        mut self,
+        label_id: u32,
+        vertex_id: i32,
+        properties: std::collections::HashMap<String, GremlinArgument>,
+    ) -> Self {
+        self.ast.step.push(ParsedGremlinStep {
+            name: "addV".to_string(),
+            arguments: vec![
+                GremlinArgument::Int(label_id as i32),
+                GremlinArgument::Int(vertex_id),
+                GremlinArgument::Map(properties),
+            ],
+        });
+        self
+    }
+
+    pub fn addE(
+        mut self,
+        label_id: u32,
+        out_v_id: i32,
+        in_v_id: i32,
+        properties: std::collections::HashMap<String, GremlinArgument>,
+    ) -> Self {
+        self.ast.step.push(ParsedGremlinStep {
+            name: "addE".to_string(),
+            arguments: vec![
+                GremlinArgument::Int(label_id as i32),
+                GremlinArgument::Int(out_v_id),
+                GremlinArgument::Int(in_v_id),
+                GremlinArgument::Map(properties),
+            ],
+        });
+        self
+    }
+
+    pub fn values(mut self, keys: &[&str]) -> Self {
+        let arguments = keys.iter().map(|&s| GremlinArgument::String(s.to_string())).collect();
+        self.ast.step.push(ParsedGremlinStep { name: "values".to_string(), arguments });
+        self
+    }
+
+    pub fn r#where(mut self, traversal: GraphTraversal) -> Self {
+        self.ast.step.push(ParsedGremlinStep {
+            name: "where".to_string(),
+            arguments: vec![GremlinArgument::NestedBytecode(traversal.build())],
+        });
+        self
+    }
+
+    pub fn union(mut self, traversals: Vec<GraphTraversal>) -> Self {
+        let arguments = traversals.into_iter().map(|t| GremlinArgument::NestedBytecode(t.build())).collect();
+        self.ast.step.push(ParsedGremlinStep { name: "union".to_string(), arguments });
+        self
+    }
+
+    /// Extracts the fully built AST to send over the network.
+    pub fn build(self) -> GremlinQueryAst {
+        self.ast
+    }
+}
+
 /// Example usage of the Gremlin client.
 #[tokio::main(flavor = "current_thread")]
 pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -93,36 +276,179 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut client = GremlinClient::connect(server_addr).await?;
 
     // Example 1: g.V(1, 4)
-    let query_v = GremlinQueryAst {
-        source: vec![],
-        step: vec![ParsedGremlinStep {
-            name: "V".to_string(),
-            arguments: vec![GremlinArgument::Int(1), GremlinArgument::Int(4)],
-        }],
-    };
+    let query_v = g().V(vec![1, 4]).build();
     println!("\nSending query: g.V(1, 4)");
     let response_v = client.send_query(query_v).await?;
     println!("Response: {}", response_v);
 
     // Example 2: g.V().has('name', 'marko').outE().count()
-    let query_marko_out_count = GremlinQueryAst {
-        source: vec![],
-        step: vec![
-            ParsedGremlinStep { name: "V".to_string(), arguments: vec![] },
-            ParsedGremlinStep {
-                name: "has".to_string(),
-                arguments: vec![
-                    GremlinArgument::String("name".to_string()),
-                    GremlinArgument::String("marko".to_string()),
-                ],
-            },
-            ParsedGremlinStep { name: "outE".to_string(), arguments: vec![] },
-            ParsedGremlinStep { name: "count".to_string(), arguments: vec![] },
-        ],
-    };
+    let query_marko_out_count =
+        g().V(vec![]).has("name", GremlinArgument::String("marko".to_string())).outE(&[]).count().build(); // outE with empty labels still works
     println!("\nSending query: g.V().has('name', 'marko').outE().count()");
     let response_marko_out_count = client.send_query(query_marko_out_count).await?;
     println!("Response: {}", response_marko_out_count);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fluent_builder_serialization_deserialization() {
+        let query = g()
+            .V(vec![1, 4])
+            .has("name", GremlinArgument::String("marko".to_string())) // Corrected to pass GremlinArgument
+            .out(&[3])
+            .outE(&[4, 5])
+            .r#in(&[])
+            .inE(&[1])
+            .both(&[2])
+            .bothE(&[])
+            .values(&["age", "name"]) // Corrected to pass slice
+            .count()
+            .build();
+
+        // 1. Serialize the query AST to a JSON string (Client side behavior)
+        let json = serde_json::to_string(&query).expect("Failed to serialize query AST");
+
+        // 2. Deserialize it back (Simulating Server side receiving the JSON bytecode)
+        let deserialized: GremlinQueryAst = serde_json::from_str(&json).expect("Failed to deserialize query AST");
+
+        assert_eq!(deserialized.step.len(), 10);
+
+        // Verify V
+        assert_eq!(deserialized.step[0].name, "V");
+        assert!(matches!(&deserialized.step[0].arguments[0], GremlinArgument::Int(1)));
+        assert!(matches!(&deserialized.step[0].arguments[1], GremlinArgument::Int(4)));
+
+        // Verify has
+        assert_eq!(deserialized.step[1].name, "has");
+        assert!(matches!(&deserialized.step[1].arguments[0], GremlinArgument::String(s) if s == "name"));
+        assert!(matches!(&deserialized.step[1].arguments[1], GremlinArgument::String(s) if s == "marko"));
+
+        // Verify out
+        assert_eq!(deserialized.step[2].name, "out");
+        assert!(matches!(&deserialized.step[2].arguments[0], GremlinArgument::Int(3)));
+
+        // Verify outE
+        assert_eq!(deserialized.step[3].name, "outE");
+        assert!(matches!(&deserialized.step[3].arguments[0], GremlinArgument::Int(4)));
+        assert!(matches!(&deserialized.step[3].arguments[1], GremlinArgument::Int(5)));
+
+        // Verify empty labels
+        assert_eq!(deserialized.step[4].name, "in");
+        assert!(deserialized.step[4].arguments.is_empty());
+
+        // Verify values
+        assert_eq!(deserialized.step[8].name, "values");
+        assert!(matches!(&deserialized.step[8].arguments[0], GremlinArgument::String(s) if s == "age"));
+        assert!(matches!(&deserialized.step[8].arguments[1], GremlinArgument::String(s) if s == "name"));
+
+        // Verify count
+        assert_eq!(deserialized.step[9].name, "count");
+        assert!(deserialized.step[9].arguments.is_empty());
+    }
+
+    #[test]
+    fn test_fluent_builder_complex_query_serialization_deserialization() {
+        use std::collections::HashMap;
+        let mut props = HashMap::new();
+        props.insert("name".to_string(), GremlinArgument::String("Alice".to_string()));
+        props.insert("age".to_string(), GremlinArgument::Int(30));
+
+        // Sub-traversals now correctly use __()
+        let sub_traversal_where = __().V(vec![]).hasLabel(&[1]); // __.V().hasLabel(1)
+        let sub_traversal_union_1 = __().out(&[3]).count(); // __.out(3).count()
+        let sub_traversal_union_2 = __().r#in(&[4]).values(&["name"]); // __.in(4).values("name")
+        let query = g()
+            .V(vec![100])
+            .addV(1, 101, props) // person, id 101, name Alice, age 30
+            .addE(3, 101, 102, HashMap::from([("weight".to_string(), GremlinArgument::Float(0.5))])) // knows, from 101 to 102, weight 0.5
+            .has("status", GremlinArgument::String("active".to_string()))
+            .hasLabel(&[1, 2]) // person or software
+            .inV()
+            .otherV()
+            .outV()
+            .is(GremlinArgument::Int(101))
+            .property("last_updated", GremlinArgument::Int(2023))
+            .r#where(sub_traversal_where)
+            .union(vec![sub_traversal_union_1, sub_traversal_union_2])
+            .build();
+
+        let json = serde_json::to_string(&query).expect("Failed to serialize complex query AST");
+        let deserialized: GremlinQueryAst =
+            serde_json::from_str(&json).expect("Failed to deserialize complex query AST");
+
+        assert_eq!(deserialized.step.len(), 14);
+
+        // Verify addV
+        assert_eq!(deserialized.step[1].name, "addV");
+        assert!(matches!(&deserialized.step[1].arguments[0], GremlinArgument::Int(1)));
+        assert!(matches!(&deserialized.step[1].arguments[1], GremlinArgument::Int(101)));
+        assert!(matches!(&deserialized.step[1].arguments[2], GremlinArgument::Map(_)));
+
+        // Verify addE
+        assert_eq!(deserialized.step[2].name, "addE");
+        assert!(matches!(&deserialized.step[2].arguments[0], GremlinArgument::Int(3)));
+        assert!(matches!(&deserialized.step[2].arguments[1], GremlinArgument::Int(101)));
+        assert!(matches!(&deserialized.step[2].arguments[2], GremlinArgument::Int(102)));
+        assert!(matches!(&deserialized.step[2].arguments[3], GremlinArgument::Map(_)));
+
+        // Verify has with GremlinArgument
+        assert_eq!(deserialized.step[3].name, "has");
+        assert!(matches!(&deserialized.step[3].arguments[0], GremlinArgument::String(s) if s == "status"));
+        assert!(matches!(&deserialized.step[3].arguments[1], GremlinArgument::String(s) if s == "active"));
+
+        // Verify hasLabel
+        assert_eq!(deserialized.step[4].name, "hasLabel");
+        assert!(matches!(&deserialized.step[4].arguments[0], GremlinArgument::Int(1)));
+        assert!(matches!(&deserialized.step[4].arguments[1], GremlinArgument::Int(2)));
+
+        // Verify inV, otherV, outV
+        assert_eq!(deserialized.step[5].name, "inV");
+        assert_eq!(deserialized.step[6].name, "otherV");
+        assert_eq!(deserialized.step[7].name, "outV");
+
+        // Verify is
+        assert_eq!(deserialized.step[8].name, "is");
+        assert!(matches!(&deserialized.step[8].arguments[0], GremlinArgument::Int(101)));
+
+        // Verify property
+        assert_eq!(deserialized.step[9].name, "property");
+        assert!(matches!(&deserialized.step[9].arguments[0], GremlinArgument::String(s) if s == "last_updated"));
+        assert!(matches!(&deserialized.step[9].arguments[1], GremlinArgument::Int(2023)));
+
+        // Verify where
+        assert_eq!(deserialized.step[10].name, "where");
+        if let GremlinArgument::NestedBytecode(nested_ast) = &deserialized.step[10].arguments[0] {
+            assert_eq!(nested_ast.step.len(), 2);
+            assert_eq!(nested_ast.step[0].name, "V"); // V is valid in sub-traversals
+            assert_eq!(nested_ast.step[1].name, "hasLabel");
+            assert!(matches!(&nested_ast.step[1].arguments[0], GremlinArgument::Int(1)));
+        } else {
+            panic!("Expected NestedBytecode for where step");
+        }
+
+        // Verify union
+        assert_eq!(deserialized.step[11].name, "union");
+        if let GremlinArgument::NestedBytecode(nested_ast_1) = &deserialized.step[11].arguments[0] {
+            assert_eq!(nested_ast_1.step.len(), 2);
+            assert_eq!(nested_ast_1.step[0].name, "out");
+            assert!(matches!(&nested_ast_1.step[0].arguments[0], GremlinArgument::Int(3)));
+            assert_eq!(nested_ast_1.step[1].name, "count");
+        } else {
+            panic!("Expected NestedBytecode for union sub-traversal 1");
+        }
+        if let GremlinArgument::NestedBytecode(nested_ast_2) = &deserialized.step[11].arguments[1] {
+            assert_eq!(nested_ast_2.step.len(), 2);
+            assert_eq!(nested_ast_2.step[0].name, "in");
+            assert!(matches!(&nested_ast_2.step[0].arguments[0], GremlinArgument::Int(4)));
+            assert_eq!(nested_ast_2.step[1].name, "values");
+            assert!(matches!(&nested_ast_2.step[1].arguments[0], GremlinArgument::String(s) if s == "name"));
+        } else {
+            panic!("Expected NestedBytecode for union sub-traversal 2");
+        }
+    }
 }
