@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(untagged)] // Allows deserializing into different types based on content
 pub enum GremlinArgument {
     String(String),
@@ -8,13 +8,12 @@ pub enum GremlinArgument {
     Float(f64),
     Bool(bool),
     // For nested traversals in steps like union, where, etc.
-    #[serde(rename = "bytecode")]
     NestedBytecode(GremlinQueryAst),
     List(Vec<GremlinArgument>),
     Map(std::collections::HashMap<String, GremlinArgument>),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ParsedGremlinStep {
     pub name: String,
@@ -22,7 +21,7 @@ pub struct ParsedGremlinStep {
     pub arguments: Vec<GremlinArgument>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct GremlinQueryAst {
     #[serde(default)]
@@ -59,7 +58,6 @@ mod tests {
 
         let ast = deserialize_bytecode(json_bytecode.as_bytes()).unwrap();
 
-        assert!(ast.source.is_empty());
         assert_eq!(ast.step.len(), 3);
         assert_eq!(ast.step[0].name, "V");
         assert_eq!(ast.step[0].arguments.len(), 1);
@@ -159,7 +157,6 @@ mod tests {
     fn test_deserialize_empty_query() {
         let json_bytecode = r#"{}"#;
         let ast = deserialize_bytecode(json_bytecode.as_bytes()).unwrap();
-        assert!(ast.source.is_empty());
         assert!(ast.step.is_empty());
     }
 

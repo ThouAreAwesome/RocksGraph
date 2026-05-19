@@ -90,22 +90,14 @@ fn parse_optional_labels(args: &[GremlinArgument]) -> Result<Vec<LabelId>, Trans
 fn translate_parsed_step(parsed_step: ParsedGremlinStep) -> Result<Vec<LogicalStep>, TranslationError> {
     match parsed_step.name.as_str() {
         "V" => {
-            let mut steps = vec![LogicalStep::V(VStep { ids: vec![] })];
+            let mut ids = Vec::new();
             for arg in parsed_step.arguments {
-                let value = match arg {
-                    GremlinArgument::Int(i) => Primitive::Int32(i),
-                    GremlinArgument::String(s) => Primitive::String(SmolStr::new(s)),
-                    GremlinArgument::Float(f) => Primitive::Float64(f),
-                    GremlinArgument::Bool(b) => Primitive::Bool(b),
-                    _ => {
-                        return Err(TranslationError::PrimitiveConversionError(
-                            "unsupported primitive type".to_string(),
-                        ))
-                    }
-                };
-                steps.push(LogicalStep::HasProperty(HasPropertyStep { key: SmolStr::new("id"), value }));
+                match arg {
+                    GremlinArgument::Int(i) => ids.push(i as VertexKey),
+                    _ => return Err(TranslationError::InvalidArguments("V step expects integer IDs".to_string())),
+                }
             }
-            Ok(steps)
+            Ok(vec![LogicalStep::V(VStep { ids })])
         }
         "has" => {
             if parsed_step.arguments.len() != 2 {
@@ -365,23 +357,11 @@ mod tests {
         };
 
         let plan = LogicalPlan::try_from(ast).unwrap();
-        assert_eq!(plan.steps.len(), 3);
+        assert_eq!(plan.steps.len(), 1);
         if let LogicalStep::V(s) = &plan.steps[0] {
-            assert!(s.ids.is_empty());
+            assert_eq!(s.ids, vec![1, 2]);
         } else {
             panic!("Expected VStep");
-        }
-        if let LogicalStep::HasProperty(s) = &plan.steps[1] {
-            assert_eq!(s.key, "id");
-            assert_eq!(s.value, Primitive::Int32(1));
-        } else {
-            panic!("Expected HasProperty");
-        }
-        if let LogicalStep::HasProperty(s) = &plan.steps[2] {
-            assert_eq!(s.key, "id");
-            assert_eq!(s.value, Primitive::Int32(2));
-        } else {
-            panic!("Expected HasProperty");
         }
     }
 
