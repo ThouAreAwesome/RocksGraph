@@ -54,7 +54,7 @@ pub(crate) trait Produce {
 
 // ── Pullable ──────────────────────────────────────────────────────────────────
 
-pub(crate) trait Pullable {
+pub trait Pullable {
     fn pull(&self, ctx: &mut dyn GraphCtx) -> Option<Traverser>;
     fn reset_step(&self);
 }

@@ -104,7 +104,7 @@ pub(crate) trait Produce {
 /// Steps do **not** implement this directly — the blanket impl below handles
 /// the `needs_more` / `push` / `advance` pattern uniformly.  `Rc<dyn Pullable>`
 /// requires `&self` (not `&mut self`), so interior mutability via `RefCell` is used.
-pub(crate) trait Pullable {
+pub trait Pullable {
     fn pull(&self, id: ConsumerId, ctx: &mut dyn GraphCtx) -> Option<Message>;
     fn register(&self) -> ConsumerId;
 }

@@ -58,7 +58,6 @@ async fn handle_connection(stream: TcpStream, graph_store: Arc<RocksStorage>) {
             Message::Text(text) => {
                 // For simplicity, we'll treat text messages as JSON-encoded bytecode
                 // In a real TinkerPop server, this would be binary Gryo.
-                println!("Received text message (assuming JSON bytecode): {}", text);
                 let response = process_query_message(text.as_bytes(), &mut logical_graph);
                 if let Err(e) = sender.send(Message::Text(response.into())).await {
                     eprintln!("Error sending response: {:?}", e);
@@ -66,7 +65,6 @@ async fn handle_connection(stream: TcpStream, graph_store: Arc<RocksStorage>) {
                 }
             }
             Message::Binary(bytes) => {
-                println!("Received binary message (assuming Gryo bytecode): {:?}", bytes);
                 let response = process_query_message(&bytes, &mut logical_graph);
                 if let Err(e) = sender.send(Message::Text(response.into())).await {
                     eprintln!("Error sending response: {:?}", e);
