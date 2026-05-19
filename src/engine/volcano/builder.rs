@@ -249,7 +249,7 @@ mod tests {
         let plan =
             LogicalPlan { steps: vec![LogicalStep::ScalarFilter(ScalarFilterStep { value: Primitive::Int32(2) })] };
 
-        let mut builder = PhysicalPlanBuilder::default();
+        let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&plan);
 
         physical_plan.inject(VecDeque::from(vec![traverser(1), traverser(2), traverser(3)]));
@@ -264,7 +264,7 @@ mod tests {
     fn test_plan_reuse_with_reset() {
         let plan = LogicalPlan { steps: vec![LogicalStep::Count(CountStep {})] };
 
-        let mut builder = PhysicalPlanBuilder::default();
+        let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&plan);
 
         physical_plan.inject(VecDeque::from(vec![traverser(1), traverser(2), traverser(3)]));
@@ -286,7 +286,7 @@ mod tests {
             LogicalPlan { steps: vec![LogicalStep::ScalarFilter(ScalarFilterStep { value: Primitive::Int32(2) })] };
         let plan = LogicalPlan { steps: vec![LogicalStep::Where(WhereStep { plan: sub_plan })] };
 
-        let mut builder = PhysicalPlanBuilder::default();
+        let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&plan);
 
         physical_plan.inject(VecDeque::from(vec![traverser(1), traverser(2), traverser(3)]));

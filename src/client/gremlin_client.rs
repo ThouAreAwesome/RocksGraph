@@ -61,9 +61,8 @@ impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> GremlinClient<S> {
     pub async fn send_ping(&mut self, payload: Vec<u8>) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         self.ws_sender.send(Message::Ping(payload.into())).await?;
         while let Some(msg) = self.ws_receiver.next().await {
-            match msg? {
-                Message::Pong(pong_payload) => return Ok(pong_payload.to_vec()),
-                _ => {}
+            if let Message::Pong(pong_payload) = msg? {
+                return Ok(pong_payload.to_vec());
             }
         }
         Err("Connection closed before receiving pong".into())

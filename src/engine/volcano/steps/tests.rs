@@ -443,7 +443,7 @@ mod cases {
             })],
         };
 
-        let mut builder = PhysicalPlanBuilder::default();
+        let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
         let result = physical_plan.next(&mut graph).unwrap();
 
@@ -491,7 +491,7 @@ mod cases {
             })],
         };
 
-        let mut builder = PhysicalPlanBuilder::default();
+        let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
         let result = physical_plan.next(&mut graph).unwrap();
         if let GValue::Edge(e_key) = &result.value {
@@ -528,7 +528,7 @@ mod cases {
             ],
         };
 
-        let mut builder = PhysicalPlanBuilder::default();
+        let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
         let result = physical_plan.next(&mut graph).unwrap();
 
@@ -572,7 +572,7 @@ mod cases {
                 }),
             ],
         };
-        let mut builder = PhysicalPlanBuilder::default();
+        let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
         let result = physical_plan.next(&mut graph).unwrap();
 
@@ -613,7 +613,7 @@ mod cases {
                 }),
             ],
         };
-        let mut builder = PhysicalPlanBuilder::default();
+        let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
         let result = physical_plan.next(&mut graph).unwrap();
         if let GValue::Vertex(v_key) = &result.value {
@@ -649,7 +649,7 @@ mod cases {
             ],
         };
 
-        let mut builder = PhysicalPlanBuilder::default();
+        let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
         let result = physical_plan.next(&mut graph).unwrap();
 
@@ -673,14 +673,14 @@ mod cases {
             ],
         };
 
-        let mut builder = PhysicalPlanBuilder::default();
-        let physical_plan = builder.build(&logical_plan);
-        let result = physical_plan.next(&mut graph).unwrap();
-
-        let expected_edge_keys = vec![
+        let expected_edge_keys = [
             CanonicalEdgeKey { src_id: marko_id, label_id: KNOWS_LABEL_ID, rank: 0, dst_id: josh_id }, /* Marko created Lop with weight 0.4 */
             CanonicalEdgeKey { src_id: josh_id, label_id: CREATED_LABEL_ID, rank: 0, dst_id: ripple_id }, /* Josh created Lop with weight 0.4 */
         ];
+
+        let mut builder: PhysicalPlanBuilder = Default::default();
+        let physical_plan = builder.build(&logical_plan);
+        let result = physical_plan.next(&mut graph).unwrap();
 
         if let GValue::Edge(e_key) = &result.value {
             assert_eq!(e_key.canonical_edge_key(), expected_edge_keys[0]); // Josh created Ripple with weight 1.0
@@ -728,7 +728,7 @@ mod cases {
             ],
         };
 
-        let mut builder = PhysicalPlanBuilder::default();
+        let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
 
         let mut results = Vec::new();
@@ -754,7 +754,7 @@ mod cases {
                 LogicalStep::Out(LogicalOutStep { label_ids: vec![] }),
             ],
         };
-        let mut builder = PhysicalPlanBuilder::default();
+        let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
         let mut results = Vec::new();
         while let Some(t) = physical_plan.next(&mut graph) {
@@ -778,7 +778,7 @@ mod cases {
                 LogicalStep::In(LogicalInStep { label_ids: vec![] }),
             ],
         };
-        let mut builder = PhysicalPlanBuilder::default();
+        let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
         let mut results = Vec::new();
         while let Some(t) = physical_plan.next(&mut graph) {
@@ -804,7 +804,7 @@ mod cases {
                 LogicalStep::InV(LogicalInVStep {}),
             ],
         };
-        let mut builder = PhysicalPlanBuilder::default();
+        let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
         let mut results = Vec::new();
         while let Some(t) = physical_plan.next(&mut graph) {
@@ -823,7 +823,7 @@ mod cases {
                 LogicalStep::OutV(LogicalOutVStep {}),
             ],
         };
-        let mut builder2 = PhysicalPlanBuilder::default();
+        let mut builder2: PhysicalPlanBuilder = Default::default();
         let physical_plan2 = builder2.build(&logical_plan2);
         let mut results2 = Vec::new();
         while let Some(t) = physical_plan2.next(&mut graph) {
@@ -845,7 +845,7 @@ mod cases {
                 LogicalStep::Both(LogicalBothStep { label_ids: vec![] }),
             ],
         };
-        let mut builder = PhysicalPlanBuilder::default();
+        let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
         let mut results = Vec::new();
         while let Some(t) = physical_plan.next(&mut graph) {
@@ -862,6 +862,7 @@ mod cases {
                 LogicalStep::BothE(LogicalBothEStep { label_ids: vec![] }),
             ],
         };
+        let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan_e = builder.build(&logical_plan_e);
         let mut results_e = Vec::new();
         while let Some(t) = physical_plan_e.next(&mut graph) {
@@ -883,7 +884,7 @@ mod cases {
                 LogicalStep::HasLabel(LogicalHasLabelStep { label_ids: vec![SOFTWARE_LABEL_ID] }),
             ],
         };
-        let mut builder = PhysicalPlanBuilder::default();
+        let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
         let mut results = Vec::new();
         while let Some(t) = physical_plan.next(&mut graph) {
@@ -906,7 +907,7 @@ mod cases {
                 LogicalStep::OtherV(LogicalOtherVStep {}),
             ],
         };
-        let mut builder = PhysicalPlanBuilder::default();
+        let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
         let mut results = Vec::new();
         while let Some(t) = physical_plan.next(&mut graph) {
@@ -932,7 +933,7 @@ mod cases {
                 }),
             ],
         };
-        let mut builder = PhysicalPlanBuilder::default();
+        let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
         let mut results = Vec::new();
         while let Some(t) = physical_plan.next(&mut graph) {
@@ -956,7 +957,7 @@ mod cases {
                 LogicalStep::ScalarFilter(LogicalScalarFilterStep { value: Primitive::Int32(29) }),
             ],
         };
-        let mut builder = PhysicalPlanBuilder::default();
+        let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
         let mut results = Vec::new();
         while let Some(t) = physical_plan.next(&mut graph) {
@@ -983,7 +984,7 @@ mod cases {
                 LogicalStep::Where(LogicalWhereStep { plan: sub_plan }),
             ],
         };
-        let mut builder = PhysicalPlanBuilder::default();
+        let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
         let mut results = Vec::new();
         while let Some(t) = physical_plan.next(&mut graph) {
@@ -1007,7 +1008,7 @@ mod cases {
                 LogicalStep::Out(LogicalOutStep { label_ids: vec![KNOWS_LABEL_ID, CREATED_LABEL_ID] }),
             ],
         };
-        let mut builder = PhysicalPlanBuilder::default();
+        let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
         let mut results = Vec::new();
         while let Some(t) = physical_plan.next(&mut graph) {

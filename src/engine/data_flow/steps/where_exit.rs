@@ -71,10 +71,8 @@ impl Produce for WhereExitStep {
                 inner.origin_group.insert(gid.clone(), t_org.clone());
 
                 // Advance sub by one; it may consume ahead of origin via its own filter.
-                if let Some(msg_sub) = inner.sub.as_ref().unwrap().next(ctx) {
-                    if let Message::Traverser(t_sub) = msg_sub {
-                        inner.sub_group.insert(t_sub.group_id.clone(), true);
-                    }
+                if let Some(Message::Traverser(t_sub)) = inner.sub.as_ref().unwrap().next(ctx) {
+                    inner.sub_group.insert(t_sub.group_id.clone(), true);
                 }
 
                 // sub_group accumulates across iterations, so out-of-phase matches work.
