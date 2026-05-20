@@ -33,7 +33,7 @@ rocksdb = "0.22"
 # Bidirectional hash map — used by Schema for label_id ↔ label_string lookup
 bimap = "0.6"
 # tokio tasks
-tokio = { version = "1.52.3", features = ["sync", "rt", "macros", "time"] }
+tokio = { version = "1.52.3", features = ["sync", "rt", "rt-multi-thread", "macros", "time"] }
 async-trait = "0.1.89"
 futures-util = "0.3.32"
 tokio-tungstenite = "0.29.0"

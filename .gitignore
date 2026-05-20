@@ -2,4 +2,6 @@
 target/
 
 # files
+src/.DS_Store
+Cargo.lock
 **/*.rs.bk

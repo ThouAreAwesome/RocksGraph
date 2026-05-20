@@ -10,7 +10,6 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-pub mod bench;
 pub mod bytecode_deserializer;
 pub mod gremlin_server;
 pub mod result_serializer;
