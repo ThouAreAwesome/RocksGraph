@@ -16,7 +16,7 @@ use crate::{
     graph::LogicalGraph,
     store::traits::GraphStore,
     types::{
-        element::{Edge, Vertex},
+        element::{Edge, Property, Vertex},
         gvalue::Primitive,
         keys::{CanonicalKey, LabelId, VertexKey},
         prop_key::PropKey,
@@ -58,6 +58,7 @@ pub trait GraphCtx {
     fn get_out_edges(&mut self, vertex_key: VertexKey, label: Option<LabelId>) -> Result<Vec<EdgeKey>, StoreError>;
     fn get_ins(&mut self, vertex_key: VertexKey, label: Option<LabelId>) -> Result<Vec<VertexKey>, StoreError>;
     fn get_in_edges(&mut self, vertex_key: VertexKey, label: Option<LabelId>) -> Result<Vec<EdgeKey>, StoreError>;
+    fn get_property(&mut self, key: CanonicalKey, prop: &PropKey) -> Result<Option<Primitive>, StoreError>;
     /// Insert a vertex.  See `LogicalGraph::add_vertex` for existence-check and
     /// locking details.
     fn add_vertex(&mut self, id: VertexKey, label_id: LabelId) -> Result<VertexKey, StoreError>;
@@ -69,8 +70,8 @@ pub trait GraphCtx {
     /// if absent from the overlay (no precondition).  For edges the edge must
     /// already be in the overlay — call `get_edge` first.  Acquires
     /// `RwLock::write` on `props` briefly.
-    fn set_property(&mut self, key: CanonicalKey, prop: PropKey, value: Primitive) -> Result<(), StoreError>;
-    fn get_property(&mut self, key: CanonicalKey, prop: &PropKey) -> Result<Option<Primitive>, StoreError>;
+    fn set_property(&mut self, prop: &Property) -> Result<(), StoreError>;
+    fn drop_property(&mut self, prop: &Property) -> Result<(), StoreError>;
 }
 
 /// Zero-cost context used in unit tests where no real graph is needed.
@@ -94,17 +95,20 @@ impl GraphCtx for NoopCtx {
     fn get_in_edges(&mut self, _vertex_key: VertexKey, _label: Option<LabelId>) -> Result<Vec<EdgeKey>, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support get_in_edges".to_string()))
     }
+    fn get_property(&mut self, _key: CanonicalKey, _prop: &PropKey) -> Result<Option<Primitive>, StoreError> {
+        Err(StoreError::UnsupportedOperation("NoopCtx does not support get_property".to_string()))
+    }
     fn add_vertex(&mut self, _id: VertexKey, _label_id: LabelId) -> Result<VertexKey, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support add_vertex".to_string()))
     }
     fn add_edge(&mut self, _cek: EdgeKey) -> Result<EdgeKey, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support add_edge".to_string()))
     }
-    fn set_property(&mut self, _key: CanonicalKey, _prop: PropKey, _value: Primitive) -> Result<(), StoreError> {
+    fn set_property(&mut self, _prop: &Property) -> Result<(), StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support set_property".to_string()))
     }
-    fn get_property(&mut self, _key: CanonicalKey, _prop: &PropKey) -> Result<Option<Primitive>, StoreError> {
-        Err(StoreError::UnsupportedOperation("NoopCtx does not support get_property".to_string()))
+    fn drop_property(&mut self, _prop: &Property) -> Result<(), StoreError> {
+        Err(StoreError::UnsupportedOperation("NoopCtx does not support drop_property".to_string()))
     }
 }
 
@@ -131,6 +135,9 @@ impl<S: GraphStore> GraphCtx for LogicalGraph<S> {
         let edges = self.get_edges(vertex_key, crate::types::Direction::IN, label, None)?;
         Ok(edges.into_iter().map(|(ek, _)| ek).collect())
     }
+    fn get_property(&mut self, key: CanonicalKey, prop: &PropKey) -> Result<Option<Primitive>, StoreError> {
+        self.get_property(key, prop)
+    }
     fn add_vertex(&mut self, id: VertexKey, label_id: LabelId) -> Result<VertexKey, StoreError> {
         let (vertex_key, _vertex_arc) = self.add_vertex(id, label_id)?;
         Ok(vertex_key)
@@ -139,11 +146,11 @@ impl<S: GraphStore> GraphCtx for LogicalGraph<S> {
         self.add_edge(cek.canonical_edge_key())?;
         Ok(cek)
     }
-    fn set_property(&mut self, key: CanonicalKey, prop: PropKey, value: Primitive) -> Result<(), StoreError> {
-        self.set_property(key, prop, value)?;
+    fn set_property(&mut self, prop: &Property) -> Result<(), StoreError> {
+        self.set_property(prop)?;
         Ok(())
     }
-    fn get_property(&mut self, key: CanonicalKey, prop: &PropKey) -> Result<Option<Primitive>, StoreError> {
-        self.get_property(key, prop)
+    fn drop_property(&mut self, prop: &Property) -> Result<(), StoreError> {
+        self.drop_property(prop)
     }
 }

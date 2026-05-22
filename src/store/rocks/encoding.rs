@@ -35,7 +35,10 @@
 //! | `vertex_id`     | 8     | all incident edges (`bothE`)          |
 //! | `vertex_id \| label_id` | 10 | `outE(label)` / `inE(label)`    |
 
-use crate::types::{CanonicalEdgeKey, LabelId, Rank, VertexKey};
+use crate::types::{
+    CanonicalEdgeKey, CanonicalKey, Edge, LabelId, Primitive, PropKey, Property, Rank, StoreError, Vertex, VertexKey,
+};
+use std::sync::RwLock;
 
 // ── Scan helpers ──────────────────────────────────────────────────────────────
 
@@ -221,6 +224,171 @@ impl EdgeValue {
     }
 }
 
+// ── Property codec ────────────────────────────────────────────────────────────
+
+/// Serialize a property list to the binary format described in the module comment.
+pub(super) fn encode_props(props: &[Property]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&(props.len() as u16).to_be_bytes());
+    for prop in props {
+        let kb = prop.key.as_bytes();
+        buf.extend_from_slice(&(kb.len() as u16).to_be_bytes());
+        buf.extend_from_slice(kb);
+        match &prop.value {
+            Primitive::Bool(b) => {
+                buf.push(0);
+                buf.push(*b as u8);
+            }
+            Primitive::Int32(n) => {
+                buf.push(1);
+                buf.extend_from_slice(&n.to_be_bytes());
+            }
+            Primitive::Int64(n) => {
+                buf.push(2);
+                buf.extend_from_slice(&n.to_be_bytes());
+            }
+            Primitive::Float32(f) => {
+                buf.push(3);
+                buf.extend_from_slice(&f.to_bits().to_be_bytes());
+            }
+            Primitive::Float64(f) => {
+                buf.push(4);
+                buf.extend_from_slice(&f.to_bits().to_be_bytes());
+            }
+            Primitive::String(s) => {
+                buf.push(5);
+                let sb = s.as_bytes();
+                buf.extend_from_slice(&(sb.len() as u16).to_be_bytes());
+                buf.extend_from_slice(sb);
+            }
+            Primitive::Uuid(u) => {
+                buf.push(6);
+                buf.extend_from_slice(&u.to_be_bytes());
+            }
+            Primitive::Null => {
+                buf.push(7);
+            }
+        }
+    }
+    buf
+}
+
+/// Deserialize a property blob produced by `encode_props`.  Returns `None` on
+/// any structural error so callers can surface a `StoreError::CorruptData`.
+pub(super) fn decode_props(blob: &[u8], owner: CanonicalKey) -> Option<Vec<Property>> {
+    if blob.len() < 2 {
+        return None;
+    }
+    let count = u16::from_be_bytes(blob[0..2].try_into().ok()?) as usize;
+    let mut pos = 2;
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        if pos + 2 > blob.len() {
+            return None;
+        }
+        let klen = u16::from_be_bytes(blob[pos..pos + 2].try_into().ok()?) as usize;
+        pos += 2;
+        if pos + klen > blob.len() {
+            return None;
+        }
+        let key: PropKey = smol_str::SmolStr::new(std::str::from_utf8(&blob[pos..pos + klen]).ok()?);
+        pos += klen;
+        if pos >= blob.len() {
+            return None;
+        }
+        let tag = blob[pos];
+        pos += 1;
+        let val = match tag {
+            0 => {
+                if pos >= blob.len() {
+                    return None;
+                }
+                let b = blob[pos] != 0;
+                pos += 1;
+                Primitive::Bool(b)
+            }
+            1 => {
+                if pos + 4 > blob.len() {
+                    return None;
+                }
+                let n = i32::from_be_bytes(blob[pos..pos + 4].try_into().ok()?);
+                pos += 4;
+                Primitive::Int32(n)
+            }
+            2 => {
+                if pos + 8 > blob.len() {
+                    return None;
+                }
+                let n = i64::from_be_bytes(blob[pos..pos + 8].try_into().ok()?);
+                pos += 8;
+                Primitive::Int64(n)
+            }
+            3 => {
+                if pos + 4 > blob.len() {
+                    return None;
+                }
+                let bits = u32::from_be_bytes(blob[pos..pos + 4].try_into().ok()?);
+                pos += 4;
+                Primitive::Float32(f32::from_bits(bits))
+            }
+            4 => {
+                if pos + 8 > blob.len() {
+                    return None;
+                }
+                let bits = u64::from_be_bytes(blob[pos..pos + 8].try_into().ok()?);
+                pos += 8;
+                Primitive::Float64(f64::from_bits(bits))
+            }
+            5 => {
+                if pos + 2 > blob.len() {
+                    return None;
+                }
+                let slen = u16::from_be_bytes(blob[pos..pos + 2].try_into().ok()?) as usize;
+                pos += 2;
+                if pos + slen > blob.len() {
+                    return None;
+                }
+                let s = std::str::from_utf8(&blob[pos..pos + slen]).ok()?;
+                pos += slen;
+                Primitive::String(smol_str::SmolStr::new(s))
+            }
+            6 => {
+                if pos + 16 > blob.len() {
+                    return None;
+                }
+                let u = u128::from_be_bytes(blob[pos..pos + 16].try_into().ok()?);
+                pos += 16;
+                Primitive::Uuid(u)
+            }
+            7 => Primitive::Null,
+            _ => return None,
+        };
+        out.push(Property { owner, key, value: val });
+    }
+    Some(out)
+}
+
+// ── Element builders ──────────────────────────────────────────────────────────
+
+/// Decode a `VertexValue` from storage into a `Vertex`.
+pub(super) fn build_full_vertex(id: VertexKey, vv: &VertexValue) -> Result<Vertex, StoreError> {
+    let owner = CanonicalKey::Vertex(id);
+    let props = decode_props(&vv.property_blob, owner).ok_or(StoreError::CorruptData("vertex property blob"))?;
+    Ok(Vertex { id, label_id: vv.label_id, props: RwLock::new(props) })
+}
+
+/// Decode an `EdgeValue` from storage into an `Edge`.
+pub(super) fn build_full_edge(cek: CanonicalEdgeKey, ev: &EdgeValue) -> Result<Edge, StoreError> {
+    let owner = CanonicalKey::Edge(cek);
+    let props = decode_props(&ev.property_blob, owner).ok_or(StoreError::CorruptData("edge property blob"))?;
+    Ok(Edge {
+        src_id: cek.src_id,
+        label_id: cek.label_id,
+        dst_id: cek.dst_id,
+        props: RwLock::new(props),
+        rank: cek.rank,
+    })
+}
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

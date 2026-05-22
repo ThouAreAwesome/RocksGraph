@@ -41,8 +41,8 @@ pub enum Direction {
 pub struct CanonicalEdgeKey {
     pub src_id: VertexKey,
     pub label_id: LabelId,
-    pub rank: Rank,
     pub dst_id: VertexKey,
+    pub rank: Rank,
 }
 
 impl CanonicalEdgeKey {
@@ -138,6 +138,7 @@ impl EdgeKey {
 /// Used in `Property.owner` and the transaction dirty set.  All variants are `Copy`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CanonicalKey {
+    Empty, // Used for properties that haven't been assigned an owner yet (e.g. in AddVStep)
     Vertex(VertexKey),
     Edge(CanonicalEdgeKey),
 }

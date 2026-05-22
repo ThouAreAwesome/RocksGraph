@@ -21,7 +21,7 @@
 //! [`engine::volcano::builder`]: crate::engine::volcano::builder
 
 use crate::types::{gvalue::Primitive, keys::VertexKey, prop_key::PropKey, LabelId};
-
+use std::collections::HashMap;
 #[derive(Clone)]
 pub struct LogicalPlan {
     pub steps: Vec<LogicalStep>,
@@ -128,7 +128,7 @@ pub struct UnionStep {
 pub struct AddVStep {
     pub label_id: LabelId,
     pub vertex_id: VertexKey,
-    pub properties: std::collections::HashMap<PropKey, Primitive>,
+    pub properties: HashMap<PropKey, Primitive>,
 }
 
 #[derive(Clone)]
@@ -136,7 +136,7 @@ pub struct AddEStep {
     pub label_id: LabelId,
     pub out_v_id: VertexKey,
     pub in_v_id: VertexKey,
-    pub properties: std::collections::HashMap<PropKey, Primitive>,
+    pub properties: HashMap<PropKey, Primitive>,
 }
 
 #[derive(Clone)]

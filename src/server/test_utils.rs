@@ -6,6 +6,7 @@ use crate::{
     graph::LogicalGraph,
     store::{GraphStore, RocksStorage}, // Added for gvalue_to_json_value
     types::{
+        element::Property,
         gvalue::Primitive,
         keys::{CanonicalEdgeKey, CanonicalKey, LabelId},
     },
@@ -33,90 +34,165 @@ pub fn create_tinkerpop_modern_graph_for_server_test(store: Arc<RocksStorage>) {
 
     // Add Vertices
     let (v_marko_key, _) = graph.add_vertex(1, PERSON_LABEL_ID).unwrap();
+    let peter_name = Property {
+        owner: CanonicalKey::Vertex(v_marko_key),
+        key: SmolStr::new("name"),
+        value: Primitive::String(SmolStr::new("marko")),
+    };
+    graph.set_property(&peter_name).unwrap();
     graph
-        .set_property(CanonicalKey::Vertex(v_marko_key), SmolStr::new("name"), Primitive::String(SmolStr::new("marko")))
+        .set_property(&Property {
+            owner: CanonicalKey::Vertex(v_marko_key),
+            key: SmolStr::new("age"),
+            value: Primitive::Int32(29),
+        })
         .unwrap();
-    graph.set_property(CanonicalKey::Vertex(v_marko_key), SmolStr::new("age"), Primitive::Int32(29)).unwrap();
 
     let (v_vadas_key, _) = graph.add_vertex(2, PERSON_LABEL_ID).unwrap();
     graph
-        .set_property(CanonicalKey::Vertex(v_vadas_key), SmolStr::new("name"), Primitive::String(SmolStr::new("vadas")))
+        .set_property(&Property {
+            owner: CanonicalKey::Vertex(v_vadas_key),
+            key: SmolStr::new("name"),
+            value: Primitive::String(SmolStr::new("vadas")),
+        })
         .unwrap();
-    graph.set_property(CanonicalKey::Vertex(v_vadas_key), SmolStr::new("age"), Primitive::Int32(27)).unwrap();
+    graph
+        .set_property(&Property {
+            owner: CanonicalKey::Vertex(v_vadas_key),
+            key: SmolStr::new("age"),
+            value: Primitive::Int32(27),
+        })
+        .unwrap();
 
     let (v_lop_key, _) = graph.add_vertex(3, SOFTWARE_LABEL_ID).unwrap();
     graph
-        .set_property(CanonicalKey::Vertex(v_lop_key), SmolStr::new("name"), Primitive::String(SmolStr::new("lop")))
+        .set_property(&Property {
+            owner: CanonicalKey::Vertex(v_lop_key),
+            key: SmolStr::new("name"),
+            value: Primitive::String(SmolStr::new("lop")),
+        })
         .unwrap();
     graph
-        .set_property(CanonicalKey::Vertex(v_lop_key), SmolStr::new("lang"), Primitive::String(SmolStr::new("java")))
+        .set_property(&Property {
+            owner: CanonicalKey::Vertex(v_lop_key),
+            key: SmolStr::new("lang"),
+            value: Primitive::String(SmolStr::new("java")),
+        })
         .unwrap();
 
     let (v_josh_key, _) = graph.add_vertex(4, PERSON_LABEL_ID).unwrap();
     graph
-        .set_property(CanonicalKey::Vertex(v_josh_key), SmolStr::new("name"), Primitive::String(SmolStr::new("josh")))
+        .set_property(&Property {
+            owner: CanonicalKey::Vertex(v_josh_key),
+            key: SmolStr::new("name"),
+            value: Primitive::String(SmolStr::new("josh")),
+        })
         .unwrap();
-    graph.set_property(CanonicalKey::Vertex(v_josh_key), SmolStr::new("age"), Primitive::Int32(32)).unwrap();
+    graph
+        .set_property(&Property {
+            owner: CanonicalKey::Vertex(v_josh_key),
+            key: SmolStr::new("age"),
+            value: Primitive::Int32(32),
+        })
+        .unwrap();
 
     let (v_ripple_key, _) = graph.add_vertex(5, SOFTWARE_LABEL_ID).unwrap();
     graph
-        .set_property(
-            CanonicalKey::Vertex(v_ripple_key),
-            SmolStr::new("name"),
-            Primitive::String(SmolStr::new("ripple")),
-        )
+        .set_property(&Property {
+            owner: CanonicalKey::Vertex(v_ripple_key),
+            key: SmolStr::new("name"),
+            value: Primitive::String(SmolStr::new("ripple")),
+        })
         .unwrap();
     graph
-        .set_property(CanonicalKey::Vertex(v_ripple_key), SmolStr::new("lang"), Primitive::String(SmolStr::new("java")))
+        .set_property(&Property {
+            owner: CanonicalKey::Vertex(v_ripple_key),
+            key: SmolStr::new("lang"),
+            value: Primitive::String(SmolStr::new("java")),
+        })
         .unwrap();
 
     let (v_peter_key, _) = graph.add_vertex(6, PERSON_LABEL_ID).unwrap();
     graph
-        .set_property(CanonicalKey::Vertex(v_peter_key), SmolStr::new("name"), Primitive::String(SmolStr::new("peter")))
+        .set_property(&Property {
+            owner: CanonicalKey::Vertex(v_peter_key),
+            key: SmolStr::new("name"),
+            value: Primitive::String(SmolStr::new("peter")),
+        })
         .unwrap();
-    graph.set_property(CanonicalKey::Vertex(v_peter_key), SmolStr::new("age"), Primitive::Int32(35)).unwrap();
+    graph
+        .set_property(&Property {
+            owner: CanonicalKey::Vertex(v_peter_key),
+            key: SmolStr::new("age"),
+            value: Primitive::Int32(35),
+        })
+        .unwrap();
 
     // Add Edges
     let (e1_key, _) = graph
         .add_edge(CanonicalEdgeKey { src_id: v_marko_key, label_id: KNOWS_LABEL_ID, rank: 0, dst_id: v_vadas_key })
         .unwrap();
     graph
-        .set_property(CanonicalKey::Edge(e1_key.canonical_edge_key()), SmolStr::new("weight"), Primitive::Float64(0.5))
+        .set_property(&Property {
+            owner: CanonicalKey::Edge(e1_key.canonical_edge_key()),
+            key: SmolStr::new("weight"),
+            value: Primitive::Float64(0.5),
+        })
         .unwrap();
 
     let (e2_key, _) = graph
         .add_edge(CanonicalEdgeKey { src_id: v_marko_key, label_id: KNOWS_LABEL_ID, rank: 0, dst_id: v_josh_key })
         .unwrap();
     graph
-        .set_property(CanonicalKey::Edge(e2_key.canonical_edge_key()), SmolStr::new("weight"), Primitive::Float64(1.0))
+        .set_property(&Property {
+            owner: CanonicalKey::Edge(e2_key.canonical_edge_key()),
+            key: SmolStr::new("weight"),
+            value: Primitive::Float64(1.0),
+        })
         .unwrap();
 
     let (e3_key, _) = graph
         .add_edge(CanonicalEdgeKey { src_id: v_marko_key, label_id: CREATED_LABEL_ID, rank: 0, dst_id: v_lop_key })
         .unwrap();
     graph
-        .set_property(CanonicalKey::Edge(e3_key.canonical_edge_key()), SmolStr::new("weight"), Primitive::Float64(0.4))
+        .set_property(&Property {
+            owner: CanonicalKey::Edge(e3_key.canonical_edge_key()),
+            key: SmolStr::new("weight"),
+            value: Primitive::Float64(0.4),
+        })
         .unwrap();
 
     let (e4_key, _) = graph
         .add_edge(CanonicalEdgeKey { src_id: v_josh_key, label_id: CREATED_LABEL_ID, rank: 0, dst_id: v_ripple_key })
         .unwrap();
     graph
-        .set_property(CanonicalKey::Edge(e4_key.canonical_edge_key()), SmolStr::new("weight"), Primitive::Float64(1.0))
+        .set_property(&Property {
+            owner: CanonicalKey::Edge(e4_key.canonical_edge_key()),
+            key: SmolStr::new("weight"),
+            value: Primitive::Float64(1.0),
+        })
         .unwrap();
 
     let (e5_key, _) = graph
         .add_edge(CanonicalEdgeKey { src_id: v_josh_key, label_id: CREATED_LABEL_ID, rank: 0, dst_id: v_lop_key })
         .unwrap();
     graph
-        .set_property(CanonicalKey::Edge(e5_key.canonical_edge_key()), SmolStr::new("weight"), Primitive::Float64(0.4))
+        .set_property(&Property {
+            owner: CanonicalKey::Edge(e5_key.canonical_edge_key()),
+            key: SmolStr::new("weight"),
+            value: Primitive::Float64(0.4),
+        })
         .unwrap();
 
     let (e6_key, _) = graph
         .add_edge(CanonicalEdgeKey { src_id: v_peter_key, label_id: CREATED_LABEL_ID, rank: 0, dst_id: v_lop_key })
         .unwrap();
     graph
-        .set_property(CanonicalKey::Edge(e6_key.canonical_edge_key()), SmolStr::new("weight"), Primitive::Float64(0.2))
+        .set_property(&Property {
+            owner: CanonicalKey::Edge(e6_key.canonical_edge_key()),
+            key: SmolStr::new("weight"),
+            value: Primitive::Float64(0.2),
+        })
         .unwrap();
 
     graph.commit().unwrap();

@@ -21,9 +21,9 @@ use crate::{
     },
     types::{
         gvalue::Primitive,
-        keys::{CanonicalKey, EdgeKey, LabelId, VertexKey},
+        keys::{CanonicalKey, Direction, EdgeKey, LabelId, VertexKey},
         prop_key::PropKey,
-        GValue,
+        CanonicalEdgeKey, GValue, Property,
     },
 };
 
@@ -31,7 +31,7 @@ struct Inner {
     label_id: LabelId,
     out_v_id: VertexKey,
     in_v_id: VertexKey,
-    properties: HashMap<PropKey, Primitive>,
+    properties: SmallVec<[Property; 8]>,
     emitted: bool, // AddE is a source step that typically emits only once
 }
 
@@ -47,6 +47,19 @@ impl AddEStep {
         in_v_id: VertexKey,
         properties: HashMap<PropKey, Primitive>,
     ) -> Rc<Self> {
+        let properties = properties
+            .into_iter()
+            .map(|(key, value)| Property {
+                owner: CanonicalKey::Edge(CanonicalEdgeKey {
+                    src_id: out_v_id,
+                    label_id,
+                    dst_id: in_v_id,
+                    rank: 0, // Assuming rank 0 for now; can be enhanced to support user-specified ranks
+                }),
+                key,
+                value,
+            })
+            .collect();
         Rc::new(Self {
             broadcast: RefCell::new(BroadcastState::new()),
             inner: RefCell::new(Inner { label_id, out_v_id, in_v_id, properties, emitted: false }),
@@ -67,11 +80,17 @@ impl Produce for AddEStep {
             return None; // Only emit once
         }
 
-        let edge_key = EdgeKey::out_e(inner.out_v_id, inner.label_id, inner.in_v_id, 0); // Assuming rank 0 for now
+        let edge_key = EdgeKey {
+            primary_id: inner.out_v_id,
+            direction: Direction::OUT,
+            label_id: inner.label_id,
+            secondary_id: inner.in_v_id,
+            rank: 0,
+        };
         let new_edge_arc = ctx.add_edge(edge_key).ok()?;
 
-        for (prop_key, prop_value) in inner.properties.drain() {
-            ctx.set_property(CanonicalKey::Edge(edge_key.canonical_edge_key()), prop_key, prop_value).ok()?;
+        for property in inner.properties.drain(..) {
+            ctx.set_property(&property).ok()?;
         }
 
         inner.emitted = true;

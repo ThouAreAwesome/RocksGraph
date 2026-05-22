@@ -19,13 +19,12 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{BroadcastState, ConsumerIter, GremlinStep, HasBroadcast, Produce},
     },
-    types::{gvalue::Primitive, keys::CanonicalKey, prop_key::PropKey, GValue},
+    types::{element::Property, gvalue::Primitive, keys::CanonicalKey, prop_key::PropKey, GValue},
 };
 
 struct Inner {
     upstream: Option<ConsumerIter>,
-    prop_key: PropKey,
-    prop_value: Primitive,
+    prop: Property,
 }
 
 pub struct PropertyStep {
@@ -37,7 +36,10 @@ impl PropertyStep {
     pub fn new(prop_key: PropKey, prop_value: Primitive) -> Rc<Self> {
         Rc::new(Self {
             broadcast: RefCell::new(BroadcastState::new()),
-            inner: RefCell::new(Inner { upstream: None, prop_key, prop_value }),
+            inner: RefCell::new(Inner {
+                upstream: None,
+                prop: Property { owner: CanonicalKey::Empty, key: prop_key, value: prop_value },
+            }),
         })
     }
 }
@@ -61,8 +63,9 @@ impl Produce for PropertyStep {
                     continue;
                 }
             };
-
-            ctx.set_property(canonical_key, inner.prop_key.clone(), inner.prop_value.clone()).ok()?;
+            let mut prop = inner.prop.clone();
+            prop.owner = canonical_key;
+            ctx.set_property(&prop).ok()?;
             return Some(smallvec![t]);
         }
     }

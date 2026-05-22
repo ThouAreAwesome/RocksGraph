@@ -11,12 +11,13 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 use crate::types::{
-    gvalue::Property,
-    keys::{CanonicalEdgeKey, LabelId, Rank, VertexKey},
+    gvalue::Primitive,
+    keys::{CanonicalEdgeKey, CanonicalKey, LabelId, Rank, VertexKey},
     prop_key::PropKey,
-    Primitive,
 };
 use std::sync::RwLock;
+
+use std::hash::{Hash, Hasher};
 
 // ── Vertex ────────────────────────────────────────────────────────────────
 
@@ -34,9 +35,9 @@ pub struct Vertex {
 }
 
 impl Vertex {
-    pub fn get_property(&self, key: &PropKey) -> Option<Primitive> {
+    pub fn get_property(&self, key: &PropKey) -> Option<Property> {
         let props = self.props.read().unwrap();
-        props.iter().find(|p| p.key == *key).map(|p| p.value.clone())
+        props.iter().find(|p| p.key == *key).cloned()
     }
 }
 // ── Edge ──────────────────────────────────────────────────────────────────
@@ -49,9 +50,9 @@ impl Vertex {
 pub struct Edge {
     pub src_id: VertexKey,
     pub label_id: LabelId,
-    pub rank: Rank,
     pub dst_id: VertexKey,
     pub props: RwLock<Vec<Property>>,
+    pub rank: Rank,
 }
 
 impl Edge {
@@ -60,9 +61,9 @@ impl Edge {
         CanonicalEdgeKey { src_id: self.src_id, label_id: self.label_id, rank: self.rank, dst_id: self.dst_id }
     }
 
-    pub fn get_property(&self, key: &PropKey) -> Option<Primitive> {
+    pub fn get_property(&self, key: &PropKey) -> Option<Property> {
         let props = self.props.read().unwrap();
-        props.iter().find(|p| p.key == *key).map(|p| p.value.clone())
+        props.iter().find(|p| p.key == *key).cloned()
     }
 }
 
@@ -101,3 +102,24 @@ impl PartialEq for Edge {
 }
 
 impl Eq for Edge {}
+
+// ── Property ─────────────────────────────────────────────────────────────────
+
+/// A single property value together with its owning element.
+///
+/// `owner` identifies the vertex or edge this property belongs to.  The engine
+/// uses `owner` to call mutation methods on the transaction (e.g. for `drop()`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Property {
+    pub owner: CanonicalKey,
+    pub key: PropKey,
+    pub value: Primitive,
+}
+
+impl Hash for Property {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.owner.hash(state);
+        self.key.hash(state);
+        self.value.hash(state);
+    }
+}

@@ -20,6 +20,7 @@ use crate::{
         volcano::steps::traits::{BroadcastState, ConsumerIter, GremlinStep, HasBroadcast, Produce},
     },
     types::{
+        element::Property,
         gvalue::Primitive,
         keys::{CanonicalKey, LabelId, VertexKey},
         prop_key::PropKey,
@@ -29,9 +30,9 @@ use crate::{
 
 struct Inner {
     label_id: LabelId,
-    vertex_id: VertexKey,                    // Will be set when the vertex is created
-    properties: HashMap<PropKey, Primitive>, // Changed to PropKey, Primitive
-    emitted: bool,                           // AddV is a source step that typically emits only once
+    vertex_id: VertexKey,                // Will be set when the vertex is created
+    properties: SmallVec<[Property; 8]>, // Changed to PropKey, Primitive
+    emitted: bool,                       // AddV is a source step that typically emits only once
 }
 
 pub struct AddVStep {
@@ -41,6 +42,10 @@ pub struct AddVStep {
 
 impl AddVStep {
     pub fn new(label_id: LabelId, vk: VertexKey, properties: HashMap<PropKey, Primitive>) -> Rc<Self> {
+        let properties = properties
+            .into_iter()
+            .map(|(key, value)| Property { owner: CanonicalKey::Vertex(vk), key, value })
+            .collect();
         Rc::new(Self {
             broadcast: RefCell::new(BroadcastState::new()),
             inner: RefCell::new(Inner { label_id, vertex_id: vk, properties, emitted: false }),
@@ -63,8 +68,8 @@ impl Produce for AddVStep {
 
         let added_vertex_key = ctx.add_vertex(inner.vertex_id, inner.label_id).ok()?;
 
-        for (prop_key, prop_value) in inner.properties.drain() {
-            ctx.set_property(CanonicalKey::Vertex(added_vertex_key), prop_key, prop_value).ok()?;
+        for property in inner.properties.drain(..) {
+            ctx.set_property(&property).ok()?;
         }
         inner.emitted = true;
         Some(smallvec![Traverser::new(GValue::Vertex(added_vertex_key))])

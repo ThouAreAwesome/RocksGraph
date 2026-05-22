@@ -11,16 +11,16 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 use std::{
+    collections::HashMap,
     hash::{Hash, Hasher},
     sync::Arc,
 };
 
-use indexmap::IndexMap;
 use smol_str::SmolStr;
 
 use crate::types::{
-    keys::{CanonicalKey, EdgeKey, VertexKey},
-    prop_key::PropKey,
+    element::Property,
+    keys::{EdgeKey, VertexKey},
 };
 
 // ── Primitive ────────────────────────────────────────────────────────────────
@@ -72,27 +72,6 @@ impl Hash for Primitive {
     }
 }
 
-// ── Property ─────────────────────────────────────────────────────────────────
-
-/// A single property value together with its owning element.
-///
-/// `owner` identifies the vertex or edge this property belongs to.  The engine
-/// uses `owner` to call mutation methods on the transaction (e.g. for `drop()`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Property {
-    pub owner: CanonicalKey,
-    pub key: PropKey,
-    pub value: Primitive,
-}
-
-impl Hash for Property {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.owner.hash(state);
-        self.key.hash(state);
-        self.value.hash(state);
-    }
-}
-
 // ── GValue ───────────────────────────────────────────────────────────────────
 
 /// The universal in-memory value type flowing through a traversal pipeline.
@@ -113,7 +92,7 @@ pub enum GValue {
     Property(Property),
     Scalar(Primitive),
     List(Arc<Vec<GValue>>),
-    Map(Arc<IndexMap<GValue, GValue>>),
+    Map(Arc<HashMap<GValue, GValue>>),
     Path(Arc<Vec<GValue>>),
 }
 

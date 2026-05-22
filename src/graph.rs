@@ -75,8 +75,8 @@ use std::{
 use crate::{
     store::traits::{GraphStore, GraphTransaction},
     types::{
-        element::{Edge, Vertex},
-        gvalue::{Primitive, Property},
+        element::{Edge, Property, Vertex},
+        gvalue::Primitive,
         keys::{CanonicalEdgeKey, CanonicalKey, Direction, EdgeKey, LabelId, VertexKey},
         prop_key::PropKey,
         StoreError,
@@ -291,6 +291,7 @@ impl<S: GraphStore> LogicalGraph<S> {
                     }
                 }
             }
+            CanonicalKey::Empty => Err(StoreError::RuntimeError("Property owner cannot be empty".to_string())),
         }
     }
     // ── Mutations ─────────────────────────────────────────────────────────────
@@ -365,10 +366,9 @@ impl<S: GraphStore> LogicalGraph<S> {
     ///
     /// # Existence check — no precondition required
     /// Duplicate detection is two-phase:
-    /// 1. Overlay check — `self.edges.contains_key(&cek)`. Detects edges already
-    ///    inserted (or tombstoned but still in the overlay) within this transaction.
-    /// 2. Store check — `store.get_edge(cek, OUT)`. Detects persisted edges not
-    ///    yet loaded into the overlay.
+    /// 1. Overlay check — `self.edges.contains_key(&cek)`. Detects edges already inserted (or tombstoned but still in
+    ///    the overlay) within this transaction.
+    /// 2. Store check — `store.get_edge(cek, OUT)`. Detects persisted edges not yet loaded into the overlay.
     ///
     /// **Gap — TOCTOU:** same as `add_vertex`; concurrent inserts of the same edge
     /// are caught at commit time via OCC, not here.
@@ -435,20 +435,18 @@ impl<S: GraphStore> LogicalGraph<S> {
     /// Upsert a property on a vertex or edge.
     ///
     /// # Existence check
-    /// 1. Tombstone guard — if the element's dirty state is `Tombstone`, returns
-    ///    `StoreError::Tombstoned` immediately.
-    /// 2. For **vertices**: if the vertex is not yet in the overlay it is loaded
-    ///    from the store automatically.  `StoreError::NotFound` is returned only
-    ///    if the store also has no record.  **No precondition required.**
-    /// 3. For **edges**: overlay-only.  The edge must already be in the overlay
-    ///    (populated via a prior `get_edge` call); if absent `StoreError::NotFound`
-    ///    is returned.  **Caller must pre-load the edge.**
+    /// 1. Tombstone guard — if the element's dirty state is `Tombstone`, returns `StoreError::Tombstoned` immediately.
+    /// 2. For **vertices**: if the vertex is not yet in the overlay it is loaded from the store automatically.
+    ///    `StoreError::NotFound` is returned only if the store also has no record.  **No precondition required.**
+    /// 3. For **edges**: overlay-only.  The edge must already be in the overlay (populated via a prior `get_edge`
+    ///    call); if absent `StoreError::NotFound` is returned.  **Caller must pre-load the edge.**
     ///
     /// # Locking
     /// Acquires `RwLock::write()` on `element.props` for the duration of the
     /// upsert, then releases it immediately — not held across any store or I/O
     /// call.  Returns `StoreError::LockError` if the lock is poisoned.
-    pub fn set_property(&mut self, key: CanonicalKey, prop: PropKey, value: Primitive) -> Result<(), StoreError> {
+    pub fn set_property(&mut self, prop: &Property) -> Result<(), StoreError> {
+        let key = prop.owner;
         match key {
             CanonicalKey::Vertex(id) => {
                 if self.dirty.get(&key) == Some(&Existence::Tombstone) {
@@ -466,7 +464,7 @@ impl<S: GraphStore> LogicalGraph<S> {
                 {
                     let arc = self.vertices.get_mut(&id).expect("just loaded");
                     let mut props = arc.props.write().map_err(|_| StoreError::LockError)?;
-                    upsert_prop(&mut props, key, prop, value);
+                    upsert_prop(&mut props, prop);
                 }
                 self.mark_dirty(key, Existence::Modified);
             }
@@ -478,10 +476,13 @@ impl<S: GraphStore> LogicalGraph<S> {
                     None => return Err(StoreError::NotFound),
                     Some(arc) => {
                         let mut props = arc.props.write().map_err(|_| StoreError::LockError)?;
-                        upsert_prop(&mut props, key, prop, value);
+                        upsert_prop(&mut props, prop);
                     }
                 }
                 self.mark_dirty(key, Existence::Modified);
+            }
+            CanonicalKey::Empty => {
+                return Err(StoreError::RuntimeError("Property owner cannot be empty".to_string()));
             }
         }
         Ok(())
@@ -494,7 +495,8 @@ impl<S: GraphStore> LogicalGraph<S> {
     /// auto-load-from-store for vertices (no precondition), overlay-only check
     /// for edges (caller must pre-load).  Acquires a short-lived
     /// `RwLock::write()` on `props` to perform the removal.
-    pub fn drop_property(&mut self, key: CanonicalKey, prop: &PropKey) -> Result<(), StoreError> {
+    pub fn drop_property(&mut self, prop: &Property) -> Result<(), StoreError> {
+        let key = prop.owner;
         match key {
             CanonicalKey::Vertex(id) => {
                 if self.dirty.get(&key) == Some(&Existence::Tombstone) {
@@ -512,7 +514,7 @@ impl<S: GraphStore> LogicalGraph<S> {
                 {
                     let arc = self.vertices.get_mut(&id).expect("just loaded");
                     let mut props = arc.props.write().map_err(|_| StoreError::LockError)?;
-                    props.retain(|p| &p.key != prop);
+                    props.retain(|p| p.key != prop.key);
                 }
                 self.mark_dirty(key, Existence::Modified);
             }
@@ -524,10 +526,13 @@ impl<S: GraphStore> LogicalGraph<S> {
                     None => return Err(StoreError::NotFound),
                     Some(arc) => {
                         let mut props = arc.props.write().map_err(|_| StoreError::LockError)?;
-                        props.retain(|p| &p.key != prop);
+                        props.retain(|p| p.key != prop.key);
                     }
                 }
                 self.mark_dirty(key, Existence::Modified);
+            }
+            CanonicalKey::Empty => {
+                return Err(StoreError::RuntimeError("Property owner cannot be empty".to_string()));
             }
         }
         Ok(())
@@ -606,6 +611,9 @@ impl<S: GraphStore> LogicalGraph<S> {
                     }
                 }
             }
+            CanonicalKey::Empty => {
+                return Err(StoreError::RuntimeError("Element key cannot be empty".to_string()));
+            }
         }
         Ok(())
     }
@@ -662,6 +670,9 @@ impl<S: GraphStore> LogicalGraph<S> {
                     self.store.delete_edge(cek, Direction::OUT)?;
                     self.store.delete_edge(cek, Direction::IN)?;
                 }
+                (CanonicalKey::Empty, _) => {
+                    return Err(StoreError::RuntimeError("Element key cannot be empty".to_string()));
+                }
             }
         }
         self.store.commit()?;
@@ -685,11 +696,11 @@ impl<S: GraphStore> LogicalGraph<S> {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn upsert_prop(props: &mut Vec<Property>, owner: CanonicalKey, key: PropKey, value: Primitive) {
-    if let Some(p) = props.iter_mut().find(|p| p.key == key) {
-        p.value = value;
+fn upsert_prop(props: &mut Vec<Property>, prop: &Property) {
+    if let Some(p) = props.iter_mut().find(|p| p.key == prop.key) {
+        p.value = prop.value.clone();
     } else {
-        props.push(Property { owner, key, value });
+        props.push(prop.clone());
     }
 }
 
@@ -737,7 +748,7 @@ mod tests {
     use crate::{
         store::RocksStorage,
         types::{
-            element::{Edge, Vertex},
+            element::{Edge, Property, Vertex},
             gvalue::Primitive,
             keys::{CanonicalEdgeKey, CanonicalKey, Direction},
             StoreError,
@@ -868,7 +879,8 @@ mod tests {
         let mut c = ctx(&store);
         let (key, fv) = c.add_vertex(100, 1).unwrap();
 
-        c.set_property(CanonicalKey::Vertex(key), SmolStr::new("age"), Primitive::Int32(42)).unwrap();
+        let prop = Property { owner: CanonicalKey::Vertex(key), key: SmolStr::new("age"), value: Primitive::Int32(42) };
+        c.set_property(&prop).unwrap();
 
         let v = c.get_vertex(key).unwrap().unwrap();
         let fv_props = v.props.read().map_err(|_| StoreError::LockError).unwrap();
@@ -889,8 +901,10 @@ mod tests {
         let mut c = ctx(&store);
         let (key, _) = c.add_vertex(100, 1).unwrap();
 
-        c.set_property(CanonicalKey::Vertex(key), SmolStr::new("x"), Primitive::Int32(1)).unwrap();
-        c.set_property(CanonicalKey::Vertex(key), SmolStr::new("x"), Primitive::Int32(2)).unwrap();
+        let prop1 = Property { owner: CanonicalKey::Vertex(key), key: SmolStr::new("x"), value: Primitive::Int32(1) };
+        let prop2 = Property { owner: CanonicalKey::Vertex(key), key: SmolStr::new("x"), value: Primitive::Int32(2) };
+        c.set_property(&prop1).unwrap();
+        c.set_property(&prop2).unwrap();
 
         let v = c.get_vertex(key).unwrap().unwrap();
         let v_props = v.props.read().map_err(|_| StoreError::LockError).unwrap();
@@ -907,7 +921,8 @@ mod tests {
         let k = cek(v1, 5, v2);
         c.add_edge(k).unwrap();
 
-        c.set_property(CanonicalKey::Edge(k), SmolStr::new("w"), Primitive::Float64(1.5)).unwrap();
+        let prop = Property { owner: CanonicalKey::Edge(k), key: SmolStr::new("w"), value: Primitive::Float64(1.5) };
+        c.set_property(&prop).unwrap();
 
         let e = c.get_edge(k).unwrap().unwrap();
         let e_props = e.props.read().map_err(|_| StoreError::LockError).unwrap();
@@ -925,8 +940,10 @@ mod tests {
         // Two contexts concurrently update the same property key with different values.
         let mut c2 = ctx(&store);
         let mut c3 = ctx(&store);
-        c2.set_property(CanonicalKey::Vertex(key), SmolStr::new("x"), Primitive::Int32(1)).unwrap();
-        c3.set_property(CanonicalKey::Vertex(key), SmolStr::new("x"), Primitive::Int32(2)).unwrap();
+        let prop1 = Property { owner: CanonicalKey::Vertex(key), key: SmolStr::new("x"), value: Primitive::Int32(1) };
+        let prop2 = Property { owner: CanonicalKey::Vertex(key), key: SmolStr::new("x"), value: Primitive::Int32(2) };
+        c2.set_property(&prop1).unwrap();
+        c3.set_property(&prop2).unwrap();
 
         c2.commit().unwrap();
 
@@ -953,8 +970,10 @@ mod tests {
         let mut c3 = ctx(&store);
         c2.get_edge(k).unwrap();
         c3.get_edge(k).unwrap();
-        c2.set_property(CanonicalKey::Edge(k), SmolStr::new("x"), Primitive::Int32(1)).unwrap();
-        c3.set_property(CanonicalKey::Edge(k), SmolStr::new("x"), Primitive::Int32(2)).unwrap();
+        let prop1 = Property { owner: CanonicalKey::Edge(k), key: SmolStr::new("x"), value: Primitive::Int32(1) };
+        let prop2 = Property { owner: CanonicalKey::Edge(k), key: SmolStr::new("x"), value: Primitive::Int32(2) };
+        c2.set_property(&prop1).unwrap();
+        c3.set_property(&prop2).unwrap();
 
         c2.commit().unwrap();
 
@@ -970,9 +989,12 @@ mod tests {
         let mut c = ctx(&store);
         let (key, _) = c.add_vertex(100, 1).unwrap();
 
-        c.set_property(CanonicalKey::Vertex(key), SmolStr::new("a"), Primitive::Int32(1)).unwrap();
-        c.set_property(CanonicalKey::Vertex(key), SmolStr::new("b"), Primitive::Int32(2)).unwrap();
-        c.drop_property(CanonicalKey::Vertex(key), &SmolStr::new("a")).unwrap();
+        let prop1 = Property { owner: CanonicalKey::Vertex(key), key: SmolStr::new("a"), value: Primitive::Int32(1) };
+        let prop2 = Property { owner: CanonicalKey::Vertex(key), key: SmolStr::new("b"), value: Primitive::Int32(2) };
+        c.set_property(&prop1).unwrap();
+        c.set_property(&prop2).unwrap();
+        c.drop_property(&Property { owner: CanonicalKey::Vertex(key), key: SmolStr::new("a"), value: Primitive::Null })
+            .unwrap();
 
         let v = c.get_vertex(key).unwrap().unwrap();
         let v_props = v.props.read().map_err(|_| StoreError::LockError).unwrap();
@@ -985,7 +1007,12 @@ mod tests {
         let (store, _dir) = open();
         let mut c = ctx(&store);
         let (key, _) = c.add_vertex(100, 1).unwrap();
-        c.drop_property(CanonicalKey::Vertex(key), &SmolStr::new("nonexistent")).unwrap();
+        c.drop_property(&Property {
+            owner: CanonicalKey::Vertex(key),
+            key: SmolStr::new("nonexistent"),
+            value: Primitive::Null,
+        })
+        .unwrap();
         let v = c.get_vertex(key).unwrap().unwrap();
         let v_props = v.props.read().map_err(|_| StoreError::LockError).unwrap();
         assert!(v_props.is_empty());
@@ -996,13 +1023,20 @@ mod tests {
         let (store, _dir) = open();
         let mut c1 = ctx(&store);
         let (key, _) = c1.add_vertex(100, 1).unwrap();
-        c1.set_property(CanonicalKey::Vertex(key), SmolStr::new("x"), Primitive::Int32(1)).unwrap();
+        let prop = Property { owner: CanonicalKey::Vertex(key), key: SmolStr::new("x"), value: Primitive::Int32(1) };
+        c1.set_property(&prop).unwrap();
         c1.commit().unwrap();
 
         let mut c2 = ctx(&store);
         let mut c3 = ctx(&store);
-        c2.drop_property(CanonicalKey::Vertex(key), &SmolStr::new("x")).unwrap();
-        c3.set_property(CanonicalKey::Vertex(key), SmolStr::new("x"), Primitive::Int32(2)).unwrap();
+        c2.drop_property(&Property {
+            owner: CanonicalKey::Vertex(key),
+            key: SmolStr::new("x"),
+            value: Primitive::Null,
+        })
+        .unwrap();
+        let prop = Property { owner: CanonicalKey::Vertex(key), key: SmolStr::new("x"), value: Primitive::Int32(2) };
+        c3.set_property(&prop).unwrap();
 
         c2.commit().unwrap();
 
@@ -1015,13 +1049,20 @@ mod tests {
         let (store, _dir) = open();
         let mut c1 = ctx(&store);
         let (key, _) = c1.add_vertex(100, 1).unwrap();
-        c1.set_property(CanonicalKey::Vertex(key), SmolStr::new("x"), Primitive::Int32(1)).unwrap();
+        let prop1 = Property { owner: CanonicalKey::Vertex(key), key: SmolStr::new("x"), value: Primitive::Int32(1) };
+        c1.set_property(&prop1).unwrap();
         c1.commit().unwrap();
 
         let mut c2 = ctx(&store);
         let mut c3 = ctx(&store);
-        c2.set_property(CanonicalKey::Vertex(key), SmolStr::new("x"), Primitive::Int32(2)).unwrap();
-        c3.drop_property(CanonicalKey::Vertex(key), &SmolStr::new("x")).unwrap();
+        let prop2 = Property { owner: CanonicalKey::Vertex(key), key: SmolStr::new("x"), value: Primitive::Int32(2) };
+        c2.set_property(&prop2).unwrap();
+        c3.drop_property(&Property {
+            owner: CanonicalKey::Vertex(key),
+            key: SmolStr::new("x"),
+            value: Primitive::Null,
+        })
+        .unwrap();
 
         c2.commit().unwrap();
 
@@ -1037,15 +1078,18 @@ mod tests {
         let (v2, _) = c1.add_vertex(2, 1).unwrap();
         let k = cek(v1, 5, v2);
         c1.add_edge(k).unwrap();
-        c1.set_property(CanonicalKey::Edge(k), SmolStr::new("x"), Primitive::Int32(1)).unwrap();
+        let prop1 = Property { owner: CanonicalKey::Edge(k), key: SmolStr::new("x"), value: Primitive::Int32(1) };
+        c1.set_property(&prop1).unwrap();
         c1.commit().unwrap();
 
         let mut c2 = ctx(&store);
         let mut c3 = ctx(&store);
         let _ = c2.get_edge(k).unwrap();
         let _ = c3.get_edge(k).unwrap();
-        c2.drop_property(CanonicalKey::Edge(k), &SmolStr::new("x")).unwrap();
-        c3.set_property(CanonicalKey::Edge(k), SmolStr::new("x"), Primitive::Int32(2)).unwrap();
+        c2.drop_property(&Property { owner: CanonicalKey::Edge(k), key: SmolStr::new("x"), value: Primitive::Null })
+            .unwrap();
+        let prop2 = Property { owner: CanonicalKey::Edge(k), key: SmolStr::new("x"), value: Primitive::Int32(2) };
+        c3.set_property(&prop2).unwrap();
 
         c2.commit().unwrap();
 
@@ -1061,15 +1105,18 @@ mod tests {
         let (v2, _) = c1.add_vertex(2, 1).unwrap();
         let k = cek(v1, 5, v2);
         c1.add_edge(k).unwrap();
-        c1.set_property(CanonicalKey::Edge(k), SmolStr::new("x"), Primitive::Int32(1)).unwrap();
+        let prop1 = Property { owner: CanonicalKey::Edge(k), key: SmolStr::new("x"), value: Primitive::Int32(1) };
+        c1.set_property(&prop1).unwrap();
         c1.commit().unwrap();
 
         let mut c2 = ctx(&store);
         let mut c3 = ctx(&store);
         let _ = c2.get_edge(k).unwrap();
         let _ = c3.get_edge(k).unwrap();
-        c2.set_property(CanonicalKey::Edge(k), SmolStr::new("x"), Primitive::Int32(2)).unwrap();
-        c3.drop_property(CanonicalKey::Edge(k), &SmolStr::new("x")).unwrap();
+        let prop2 = Property { owner: CanonicalKey::Edge(k), key: SmolStr::new("x"), value: Primitive::Int32(2) };
+        c2.set_property(&prop2).unwrap();
+        let prop3 = Property { owner: CanonicalKey::Edge(k), key: SmolStr::new("x"), value: Primitive::Null };
+        c3.drop_property(&prop3).unwrap();
 
         c2.commit().unwrap();
 
@@ -1132,7 +1179,8 @@ mod tests {
         let mut c = ctx(&store);
         let (key, _) = c.add_vertex(100, 1).unwrap();
         c.drop_element(CanonicalKey::Vertex(key)).unwrap();
-        let err = c.set_property(CanonicalKey::Vertex(key), SmolStr::new("x"), Primitive::Int32(1));
+        let prop = Property { owner: CanonicalKey::Vertex(key), key: SmolStr::new("x"), value: Primitive::Int32(1) };
+        let err = c.set_property(&prop);
         assert!(err.is_err());
         assert_eq!(err.unwrap_err().to_string(), "element is tombstoned");
     }
@@ -1256,8 +1304,10 @@ mod tests {
         let mut c3 = ctx(&store);
         let _ = c2.get_edge(k).unwrap();
         let _ = c3.get_edge(k).unwrap();
-        c2.set_property(CanonicalKey::Edge(k), SmolStr::new("x"), Primitive::Int32(1)).unwrap();
-        c3.drop_element(CanonicalKey::Edge(k)).unwrap();
+        let prop1 = Property { owner: CanonicalKey::Edge(k), key: SmolStr::new("x"), value: Primitive::Int32(1) };
+        c2.set_property(&prop1).unwrap();
+        let prop2 = Property { owner: CanonicalKey::Edge(k), key: SmolStr::new("x"), value: Primitive::Null };
+        c3.drop_property(&prop2).unwrap();
 
         c2.commit().unwrap();
 
@@ -1279,8 +1329,9 @@ mod tests {
         let mut c3 = ctx(&store);
         let _ = c2.get_edge(k).unwrap();
         let _ = c3.get_edge(k).unwrap();
+        let prop1 = Property { owner: CanonicalKey::Edge(k), key: SmolStr::new("x"), value: Primitive::Int32(1) };
         c2.drop_element(CanonicalKey::Edge(k)).unwrap();
-        c3.set_property(CanonicalKey::Edge(k), SmolStr::new("x"), Primitive::Int32(1)).unwrap();
+        c3.set_property(&prop1).unwrap();
 
         c2.commit().unwrap();
 
@@ -1296,8 +1347,12 @@ mod tests {
         let id = {
             let mut c = ctx(&store);
             let (key, _) = c.add_vertex(77, 7).unwrap();
-            c.set_property(CanonicalKey::Vertex(key), SmolStr::new("name"), Primitive::String(SmolStr::new("Alice")))
-                .unwrap();
+            let prop = Property {
+                owner: CanonicalKey::Vertex(key),
+                key: SmolStr::new("name"),
+                value: Primitive::String(SmolStr::new("Alice")),
+            };
+            c.set_property(&prop).unwrap();
             c.commit().unwrap();
             key
         };
@@ -1323,7 +1378,8 @@ mod tests {
         {
             let mut c = ctx(&store);
             c.add_edge(k).unwrap();
-            c.set_property(CanonicalKey::Edge(k), SmolStr::new("w"), Primitive::Int32(99)).unwrap();
+            let prop = Property { owner: CanonicalKey::Edge(k), key: SmolStr::new("w"), value: Primitive::Int32(99) };
+            c.set_property(&prop).unwrap();
             c.commit().unwrap();
         }
 
@@ -1742,7 +1798,12 @@ mod tests {
                 },
                 |c, (v1, _)| {
                     c.get_vertex(v1).unwrap();
-                    c.set_property(CanonicalKey::Vertex(v1), SmolStr::new("x"), Primitive::Int32(1)).unwrap();
+                    let prop = Property {
+                        owner: CanonicalKey::Vertex(v1),
+                        key: SmolStr::new("x"),
+                        value: Primitive::Int32(1),
+                    };
+                    c.set_property(&prop).unwrap();
                 },
             );
         }
@@ -1752,7 +1813,12 @@ mod tests {
             run_non_conflict(
                 |c| {
                     let (v1, _) = c.add_vertex(1, 1).unwrap();
-                    c.set_property(CanonicalKey::Vertex(v1), SmolStr::new("x"), Primitive::Int32(1)).unwrap();
+                    let prop = Property {
+                        owner: CanonicalKey::Vertex(v1),
+                        key: SmolStr::new("x"),
+                        value: Primitive::Int32(1),
+                    };
+                    c.set_property(&prop).unwrap();
                     let (v2, _) = c.add_vertex(2, 1).unwrap();
                     (v1, v2)
                 },
@@ -1761,7 +1827,12 @@ mod tests {
                 },
                 |c, (v1, _)| {
                     c.get_vertex(v1).unwrap();
-                    c.drop_property(CanonicalKey::Vertex(v1), &SmolStr::new("x")).unwrap();
+                    c.drop_property(&Property {
+                        owner: CanonicalKey::Vertex(v1),
+                        key: SmolStr::new("x"),
+                        value: Primitive::Null,
+                    })
+                    .unwrap();
                 },
             );
         }
@@ -1845,7 +1916,9 @@ mod tests {
                 },
                 |c, e| {
                     c.get_edge(e).unwrap();
-                    c.set_property(CanonicalKey::Edge(e), SmolStr::new("x"), Primitive::Int32(1)).unwrap();
+                    let prop =
+                        Property { owner: CanonicalKey::Edge(e), key: SmolStr::new("x"), value: Primitive::Int32(1) };
+                    c.set_property(&prop).unwrap();
                 },
             );
         }
@@ -1858,7 +1931,9 @@ mod tests {
                     let (v2, _) = c.add_vertex(2, 1).unwrap();
                     let e = cek(v1, 5, v2);
                     c.add_edge(e).unwrap();
-                    c.set_property(CanonicalKey::Edge(e), SmolStr::new("x"), Primitive::Int32(1)).unwrap();
+                    let prop =
+                        Property { owner: CanonicalKey::Edge(e), key: SmolStr::new("x"), value: Primitive::Int32(1) };
+                    c.set_property(&prop).unwrap();
                     e
                 },
                 |c, e| {
@@ -1867,7 +1942,12 @@ mod tests {
                 },
                 |c, e| {
                     c.get_edge(e).unwrap();
-                    c.drop_property(CanonicalKey::Edge(e), &SmolStr::new("x")).unwrap();
+                    c.drop_property(&Property {
+                        owner: CanonicalKey::Edge(e),
+                        key: SmolStr::new("x"),
+                        value: Primitive::Null,
+                    })
+                    .unwrap();
                 },
             );
         }
@@ -1888,7 +1968,12 @@ mod tests {
                 },
                 |c, (v1, _)| {
                     c.get_vertex(v1).unwrap();
-                    c.set_property(CanonicalKey::Vertex(v1), SmolStr::new("x"), Primitive::Int32(1)).unwrap();
+                    let prop = Property {
+                        owner: CanonicalKey::Vertex(v1),
+                        key: SmolStr::new("x"),
+                        value: Primitive::Int32(1),
+                    };
+                    c.set_property(&prop).unwrap();
                 },
             );
         }
@@ -1898,7 +1983,12 @@ mod tests {
             run_non_conflict(
                 |c| {
                     let (v1, _) = c.add_vertex(1, 1).unwrap();
-                    c.set_property(CanonicalKey::Vertex(v1), SmolStr::new("x"), Primitive::Int32(1)).unwrap();
+                    let prop = Property {
+                        owner: CanonicalKey::Vertex(v1),
+                        key: SmolStr::new("x"),
+                        value: Primitive::Int32(1),
+                    };
+                    c.set_property(&prop).unwrap();
                     let (v2, _) = c.add_vertex(2, 1).unwrap();
                     let e = cek(v1, 5, v2);
                     c.add_edge(e).unwrap();
@@ -1910,7 +2000,12 @@ mod tests {
                 },
                 |c, (v1, _)| {
                     c.get_vertex(v1).unwrap();
-                    c.drop_property(CanonicalKey::Vertex(v1), &SmolStr::new("x")).unwrap();
+                    c.drop_property(&Property {
+                        owner: CanonicalKey::Vertex(v1),
+                        key: SmolStr::new("x"),
+                        value: Primitive::Null,
+                    })
+                    .unwrap();
                 },
             );
         }
@@ -1927,11 +2022,15 @@ mod tests {
                 },
                 |c, e| {
                     c.get_edge(e).unwrap();
-                    c.set_property(CanonicalKey::Edge(e), SmolStr::new("x"), Primitive::Int32(1)).unwrap();
+                    let prop =
+                        Property { owner: CanonicalKey::Edge(e), key: SmolStr::new("x"), value: Primitive::Int32(1) };
+                    c.set_property(&prop).unwrap();
                 },
                 |c, e| {
                     c.get_edge(e).unwrap();
-                    c.set_property(CanonicalKey::Edge(e), SmolStr::new("x"), Primitive::Int32(2)).unwrap();
+                    let prop =
+                        Property { owner: CanonicalKey::Edge(e), key: SmolStr::new("x"), value: Primitive::Int32(2) };
+                    c.set_property(&prop).unwrap();
                 },
             );
         }
@@ -1951,11 +2050,15 @@ mod tests {
                 },
                 |c, (e1, _e2): (CanonicalEdgeKey, CanonicalEdgeKey)| {
                     c.get_edge(e1).unwrap();
-                    c.set_property(CanonicalKey::Edge(e1), SmolStr::new("x"), Primitive::Int32(1)).unwrap();
+                    let prop =
+                        Property { owner: CanonicalKey::Edge(e1), key: SmolStr::new("x"), value: Primitive::Int32(1) };
+                    c.set_property(&prop).unwrap();
                 },
                 |c, (_e1, e2): (CanonicalEdgeKey, CanonicalEdgeKey)| {
                     c.get_edge(e2).unwrap();
-                    c.set_property(CanonicalKey::Edge(e2), SmolStr::new("y"), Primitive::Int32(2)).unwrap();
+                    let prop =
+                        Property { owner: CanonicalKey::Edge(e2), key: SmolStr::new("y"), value: Primitive::Int32(2) };
+                    c.set_property(&prop).unwrap();
                 },
             );
         }
@@ -1968,16 +2071,22 @@ mod tests {
                     let (v2, _) = c.add_vertex(2, 1).unwrap();
                     let e = cek(v1, 5, v2);
                     c.add_edge(e).unwrap();
-                    c.set_property(CanonicalKey::Edge(e), SmolStr::new("x"), Primitive::Int32(1)).unwrap();
+                    let prop =
+                        Property { owner: CanonicalKey::Edge(e), key: SmolStr::new("x"), value: Primitive::Int32(1) };
+                    c.set_property(&prop).unwrap();
                     e
                 },
                 |c, e| {
                     c.get_edge(e).unwrap();
-                    c.set_property(CanonicalKey::Edge(e), SmolStr::new("x"), Primitive::Int32(2)).unwrap();
+                    let prop =
+                        Property { owner: CanonicalKey::Edge(e), key: SmolStr::new("x"), value: Primitive::Null };
+                    c.drop_property(&prop).unwrap();
                 },
                 |c, e| {
                     c.get_edge(e).unwrap();
-                    c.drop_property(CanonicalKey::Edge(e), &SmolStr::new("x")).unwrap();
+                    let prop =
+                        Property { owner: CanonicalKey::Edge(e), key: SmolStr::new("x"), value: Primitive::Null };
+                    c.drop_property(&prop).unwrap();
                 },
             );
         }
@@ -1993,17 +2102,25 @@ mod tests {
                     let e2 = cek(v1, 6, v3);
                     c.add_edge(e).unwrap();
                     c.add_edge(e2).unwrap();
-                    c.set_property(CanonicalKey::Edge(e), SmolStr::new("x"), Primitive::Int32(1)).unwrap();
-                    c.set_property(CanonicalKey::Edge(e2), SmolStr::new("y"), Primitive::Int32(2)).unwrap();
+                    let prop1 =
+                        Property { owner: CanonicalKey::Edge(e), key: SmolStr::new("x"), value: Primitive::Int32(1) };
+                    let prop2 =
+                        Property { owner: CanonicalKey::Edge(e2), key: SmolStr::new("y"), value: Primitive::Int32(2) };
+                    c.set_property(&prop1).unwrap();
+                    c.set_property(&prop2).unwrap();
                     (e, e2)
                 },
                 |c, (e1, _e2): (CanonicalEdgeKey, CanonicalEdgeKey)| {
                     c.get_edge(e1).unwrap();
-                    c.set_property(CanonicalKey::Edge(e1), SmolStr::new("x"), Primitive::Int32(2)).unwrap();
+                    let prop =
+                        Property { owner: CanonicalKey::Edge(e1), key: SmolStr::new("x"), value: Primitive::Null };
+                    c.drop_property(&prop).unwrap();
                 },
                 |c, (_e1, e2): (CanonicalEdgeKey, CanonicalEdgeKey)| {
                     c.get_edge(e2).unwrap();
-                    c.drop_property(CanonicalKey::Edge(e2), &SmolStr::new("y")).unwrap();
+                    let prop =
+                        Property { owner: CanonicalKey::Edge(e2), key: SmolStr::new("y"), value: Primitive::Null };
+                    c.drop_property(&prop).unwrap();
                 },
             );
         }
@@ -2016,16 +2133,22 @@ mod tests {
                     let (v2, _) = c.add_vertex(2, 1).unwrap();
                     let e = cek(v1, 5, v2);
                     c.add_edge(e).unwrap();
-                    c.set_property(CanonicalKey::Edge(e), SmolStr::new("x"), Primitive::Int32(1)).unwrap();
+                    let prop =
+                        Property { owner: CanonicalKey::Edge(e), key: SmolStr::new("x"), value: Primitive::Int32(1) };
+                    c.set_property(&prop).unwrap();
                     e
                 },
                 |c, e| {
                     c.get_edge(e).unwrap();
-                    c.drop_property(CanonicalKey::Edge(e), &SmolStr::new("x")).unwrap();
+                    let edge = c.get_edge(e).unwrap().unwrap();
+                    let prop = edge.get_property(&SmolStr::new("x")).unwrap();
+                    c.drop_property(&prop).unwrap();
                 },
                 |c, e| {
                     c.get_edge(e).unwrap();
-                    c.drop_property(CanonicalKey::Edge(e), &SmolStr::new("x")).unwrap();
+                    let edge = c.get_edge(e).unwrap().unwrap();
+                    let prop = edge.get_property(&SmolStr::new("x")).unwrap();
+                    c.drop_property(&prop).unwrap();
                 },
             );
         }
@@ -2041,17 +2164,24 @@ mod tests {
                     let e2 = cek(v1, 6, v3);
                     c.add_edge(e).unwrap();
                     c.add_edge(e2).unwrap();
-                    c.set_property(CanonicalKey::Edge(e), SmolStr::new("x"), Primitive::Int32(1)).unwrap();
-                    c.set_property(CanonicalKey::Edge(e2), SmolStr::new("y"), Primitive::Int32(2)).unwrap();
+                    let prop1 =
+                        Property { owner: CanonicalKey::Edge(e), key: SmolStr::new("x"), value: Primitive::Int32(1) };
+                    let prop2 =
+                        Property { owner: CanonicalKey::Edge(e2), key: SmolStr::new("y"), value: Primitive::Int32(2) };
+                    c.set_property(&prop1).unwrap();
+                    c.set_property(&prop2).unwrap();
                     (e, e2)
                 },
                 |c, (e1, _e2): (CanonicalEdgeKey, CanonicalEdgeKey)| {
-                    c.get_edge(e1).unwrap();
-                    c.drop_property(CanonicalKey::Edge(e1), &SmolStr::new("x")).unwrap();
+                    let edge = c.get_edge(e1).unwrap().unwrap();
+                    let prop = edge.get_property(&SmolStr::new("x")).unwrap();
+                    assert_eq!(prop.value, Primitive::Int32(1));
+                    c.drop_property(&prop).unwrap();
                 },
                 |c, (_e1, e2): (CanonicalEdgeKey, CanonicalEdgeKey)| {
-                    c.get_edge(e2).unwrap();
-                    c.drop_property(CanonicalKey::Edge(e2), &SmolStr::new("y")).unwrap();
+                    let edge = c.get_edge(e2).unwrap().unwrap();
+                    let prop = edge.get_property(&SmolStr::new("y")).unwrap();
+                    c.drop_property(&prop).unwrap();
                 },
             );
         }
@@ -2065,11 +2195,15 @@ mod tests {
                 },
                 |c, v| {
                     c.get_vertex(v).unwrap();
-                    c.set_property(CanonicalKey::Vertex(v), SmolStr::new("x"), Primitive::Int32(1)).unwrap();
+                    let prop =
+                        Property { owner: CanonicalKey::Vertex(v), key: SmolStr::new("x"), value: Primitive::Int32(1) };
+                    c.set_property(&prop).unwrap();
                 },
                 |c, v| {
                     c.get_vertex(v).unwrap();
-                    c.set_property(CanonicalKey::Vertex(v), SmolStr::new("x"), Primitive::Int32(2)).unwrap();
+                    let prop =
+                        Property { owner: CanonicalKey::Vertex(v), key: SmolStr::new("x"), value: Primitive::Int32(2) };
+                    c.set_property(&prop).unwrap();
                 },
             );
         }
@@ -2079,16 +2213,22 @@ mod tests {
             run_conflict(
                 |c| {
                     let (v, _) = c.add_vertex(100, 1).unwrap();
-                    c.set_property(CanonicalKey::Vertex(v), SmolStr::new("x"), Primitive::Int32(1)).unwrap();
+                    let prop =
+                        Property { owner: CanonicalKey::Vertex(v), key: SmolStr::new("x"), value: Primitive::Int32(1) };
+                    c.set_property(&prop).unwrap();
                     v
                 },
                 |c, v| {
                     c.get_vertex(v).unwrap();
-                    c.set_property(CanonicalKey::Vertex(v), SmolStr::new("x"), Primitive::Int32(2)).unwrap();
+                    let prop =
+                        Property { owner: CanonicalKey::Vertex(v), key: SmolStr::new("x"), value: Primitive::Int32(2) };
+                    c.set_property(&prop).unwrap();
                 },
                 |c, v| {
-                    c.get_vertex(v).unwrap();
-                    c.drop_property(CanonicalKey::Vertex(v), &SmolStr::new("x")).unwrap();
+                    let vt = c.get_vertex(v).unwrap().unwrap();
+                    let prop = vt.get_property(&SmolStr::new("x")).unwrap();
+                    assert_eq!(prop.value, Primitive::Int32(1));
+                    c.drop_property(&prop).unwrap();
                 },
             );
         }
@@ -2102,7 +2242,9 @@ mod tests {
                 },
                 |c, v| {
                     c.get_vertex(v).unwrap();
-                    c.set_property(CanonicalKey::Vertex(v), SmolStr::new("x"), Primitive::Int32(1)).unwrap();
+                    let prop =
+                        Property { owner: CanonicalKey::Vertex(v), key: SmolStr::new("x"), value: Primitive::Int32(1) };
+                    c.set_property(&prop).unwrap();
                 },
                 |c, v| {
                     c.get_vertex(v).unwrap();
@@ -2116,16 +2258,28 @@ mod tests {
             run_conflict(
                 |c| {
                     let (v, _) = c.add_vertex(100, 1).unwrap();
-                    c.set_property(CanonicalKey::Vertex(v), SmolStr::new("x"), Primitive::Int32(1)).unwrap();
+                    let prop =
+                        Property { owner: CanonicalKey::Vertex(v), key: SmolStr::new("x"), value: Primitive::Int32(1) };
+                    c.set_property(&prop).unwrap();
                     v
                 },
                 |c, v| {
                     c.get_vertex(v).unwrap();
-                    c.drop_property(CanonicalKey::Vertex(v), &SmolStr::new("x")).unwrap();
+                    c.drop_property(&Property {
+                        owner: CanonicalKey::Vertex(v),
+                        key: SmolStr::new("x"),
+                        value: Primitive::Null,
+                    })
+                    .unwrap();
                 },
                 |c, v| {
                     c.get_vertex(v).unwrap();
-                    c.drop_property(CanonicalKey::Vertex(v), &SmolStr::new("x")).unwrap();
+                    c.drop_property(&Property {
+                        owner: CanonicalKey::Vertex(v),
+                        key: SmolStr::new("x"),
+                        value: Primitive::Null,
+                    })
+                    .unwrap();
                 },
             );
         }
@@ -2135,12 +2289,19 @@ mod tests {
             run_conflict(
                 |c| {
                     let (v, _) = c.add_vertex(100, 1).unwrap();
-                    c.set_property(CanonicalKey::Vertex(v), SmolStr::new("x"), Primitive::Int32(1)).unwrap();
+                    let prop =
+                        Property { owner: CanonicalKey::Vertex(v), key: SmolStr::new("x"), value: Primitive::Int32(1) };
+                    c.set_property(&prop).unwrap();
                     v
                 },
                 |c, v| {
                     c.get_vertex(v).unwrap();
-                    c.drop_property(CanonicalKey::Vertex(v), &SmolStr::new("x")).unwrap();
+                    c.drop_property(&Property {
+                        owner: CanonicalKey::Vertex(v),
+                        key: SmolStr::new("x"),
+                        value: Primitive::Null,
+                    })
+                    .unwrap();
                 },
                 |c, v| {
                     c.get_vertex(v).unwrap();
@@ -2225,9 +2386,15 @@ mod tests {
         let mut c1 = ctx(&store);
         let alice = {
             let (key, _) = c1.add_vertex(101, 1).unwrap();
-            c1.set_property(CanonicalKey::Vertex(key), SmolStr::new("name"), Primitive::String(SmolStr::new("Alice")))
-                .unwrap();
-            c1.set_property(CanonicalKey::Vertex(key), SmolStr::new("age"), Primitive::Int32(30)).unwrap();
+            let name_prop = Property {
+                owner: CanonicalKey::Vertex(key),
+                key: SmolStr::new("name"),
+                value: Primitive::String(SmolStr::new("Alice")),
+            };
+            c1.set_property(&name_prop).unwrap();
+            let age_prop =
+                Property { owner: CanonicalKey::Vertex(key), key: SmolStr::new("age"), value: Primitive::Int32(30) };
+            c1.set_property(&age_prop).unwrap();
             key
         };
 
@@ -2235,9 +2402,15 @@ mod tests {
         let mut c2 = ctx(&store);
         let bob = {
             let (key, _) = c2.add_vertex(102, 1).unwrap();
-            c2.set_property(CanonicalKey::Vertex(key), SmolStr::new("name"), Primitive::String(SmolStr::new("Bob")))
-                .unwrap();
-            c2.set_property(CanonicalKey::Vertex(key), SmolStr::new("age"), Primitive::Int32(25)).unwrap();
+            let name_prop = Property {
+                owner: CanonicalKey::Vertex(key),
+                key: SmolStr::new("name"),
+                value: Primitive::String(SmolStr::new("Bob")),
+            };
+            c2.set_property(&name_prop).unwrap();
+            let age_prop =
+                Property { owner: CanonicalKey::Vertex(key), key: SmolStr::new("age"), value: Primitive::Int32(25) };
+            c2.set_property(&age_prop).unwrap();
             key
         };
 
@@ -2248,20 +2421,24 @@ mod tests {
         let london = {
             let mut c = ctx(&store);
             let (city_key, _) = c.add_vertex(201, 2).unwrap();
-            c.set_property(
-                CanonicalKey::Vertex(city_key),
-                SmolStr::new("name"),
-                Primitive::String(SmolStr::new("London")),
-            )
-            .unwrap();
+            let name_prop = Property {
+                owner: CanonicalKey::Vertex(city_key),
+                key: SmolStr::new("name"),
+                value: Primitive::String(SmolStr::new("London")),
+            };
+            c.set_property(&name_prop).unwrap();
             // Alice -> London
             let e1 = cek(alice, 2, city_key);
             c.add_edge(e1).unwrap();
-            c.set_property(CanonicalKey::Edge(e1), SmolStr::new("since"), Primitive::Int32(2015)).unwrap();
+            let since_prop =
+                Property { owner: CanonicalKey::Edge(e1), key: SmolStr::new("since"), value: Primitive::Int32(2015) };
+            c.set_property(&since_prop).unwrap();
             // Bob -> London
             let e2 = cek(bob, 2, city_key);
             c.add_edge(e2).unwrap();
-            c.set_property(CanonicalKey::Edge(e2), SmolStr::new("since"), Primitive::Int32(2019)).unwrap();
+            let since_prop2 =
+                Property { owner: CanonicalKey::Edge(e2), key: SmolStr::new("since"), value: Primitive::Int32(2019) };
+            c.set_property(&since_prop2).unwrap();
             c.commit().unwrap();
             city_key
         };
@@ -2316,8 +2493,12 @@ mod tests {
         // step 1, insert a vertex and set properties, commit the transaction txn1
         let mut txn1 = ctx(&store);
         let (v1, _) = txn1.add_vertex(1, 1).unwrap();
-        txn1.set_property(CanonicalKey::Vertex(v1), SmolStr::new("name"), Primitive::String(SmolStr::new("Alice")))
-            .unwrap();
+        let name_prop = Property {
+            owner: CanonicalKey::Vertex(v1),
+            key: SmolStr::new("name"),
+            value: Primitive::String(SmolStr::new("Alice")),
+        };
+        txn1.set_property(&name_prop).unwrap();
         txn1.commit().unwrap();
 
         // step 2, in a new Transaction txn2, get_vertex

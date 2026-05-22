@@ -44,6 +44,7 @@ pub enum StoreError {
     RocksDb(rocksdb::Error),
     Io(std::io::Error),
     UnsupportedOperation(String),
+    RuntimeError(String),
     Other(String),
 }
 
@@ -62,6 +63,7 @@ impl fmt::Display for StoreError {
             StoreError::RocksDb(e) => write!(f, "storage engine error: {e}"),
             StoreError::Io(e) => write!(f, "I/O error: {e}"),
             StoreError::UnsupportedOperation(msg) => write!(f, "unsupported operation: {msg}"),
+            StoreError::RuntimeError(msg) => write!(f, "runtime error: {msg}"),
             StoreError::Other(msg) => write!(f, "{msg}"),
         }
     }
@@ -72,6 +74,7 @@ impl std::error::Error for StoreError {
         match self {
             StoreError::RocksDb(e) => Some(e),
             StoreError::Io(e) => Some(e),
+            StoreError::RuntimeError(_) => None,
             StoreError::UnsupportedOperation(_) => None,
             _ => None,
         }

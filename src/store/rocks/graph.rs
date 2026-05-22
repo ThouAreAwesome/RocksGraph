@@ -23,194 +23,24 @@
 //! Tags: `0`=Bool(1B) `1`=Int32(4B) `2`=Int64(8B) `3`=Float32(4B)
 //!       `4`=Float64(8B) `5`=String(len:u16 + UTF-8) `6`=Uuid(16B) `7`=Null(0B)
 
-use std::{collections::HashSet, sync::RwLock};
+use std::collections::HashSet;
 
 use rocksdb::{Direction as ScanDir, IteratorMode, ReadOptions, WriteBatchWithTransaction};
 
 use crate::{
     store::rocks::{
         encoding::{
-            decode_edge_key_in, decode_edge_key_out, edge_scan_prefix, encode_edge_key_in, encode_edge_key_out,
-            encode_vertex_key, prefix_upper_bound, EdgeValue, VertexDegree, VertexValue, CF_EDGES_IN, CF_EDGES_OUT,
-            CF_VERTEX_DEGREE, CF_VERTICES,
+            build_full_edge, build_full_vertex, decode_edge_key_in, decode_edge_key_out, edge_scan_prefix,
+            encode_edge_key_in, encode_edge_key_out, encode_props, encode_vertex_key, prefix_upper_bound, EdgeValue,
+            VertexDegree, VertexValue, CF_EDGES_IN, CF_EDGES_OUT, CF_VERTEX_DEGREE, CF_VERTICES,
         },
         store::RocksStorage,
     },
-    types::{
-        gvalue::{Primitive, Property},
-        prop_key::PropKey,
-        CanonicalEdgeKey, CanonicalKey, Direction, Edge, LabelId, StoreError, Vertex, VertexKey,
-    },
+    types::{CanonicalEdgeKey, Direction, Edge, LabelId, StoreError, Vertex, VertexKey},
 };
 
 #[allow(dead_code)]
 type EdgeKeyDecoder = fn(&[u8]) -> Option<CanonicalEdgeKey>;
-
-// ── Property codec ────────────────────────────────────────────────────────────
-
-/// Serialize a property list to the binary format described in the module comment.
-pub(super) fn encode_props(props: &[Property]) -> Vec<u8> {
-    let mut buf = Vec::new();
-    buf.extend_from_slice(&(props.len() as u16).to_be_bytes());
-    for prop in props {
-        let kb = prop.key.as_bytes();
-        buf.extend_from_slice(&(kb.len() as u16).to_be_bytes());
-        buf.extend_from_slice(kb);
-        match &prop.value {
-            Primitive::Bool(b) => {
-                buf.push(0);
-                buf.push(*b as u8);
-            }
-            Primitive::Int32(n) => {
-                buf.push(1);
-                buf.extend_from_slice(&n.to_be_bytes());
-            }
-            Primitive::Int64(n) => {
-                buf.push(2);
-                buf.extend_from_slice(&n.to_be_bytes());
-            }
-            Primitive::Float32(f) => {
-                buf.push(3);
-                buf.extend_from_slice(&f.to_bits().to_be_bytes());
-            }
-            Primitive::Float64(f) => {
-                buf.push(4);
-                buf.extend_from_slice(&f.to_bits().to_be_bytes());
-            }
-            Primitive::String(s) => {
-                buf.push(5);
-                let sb = s.as_bytes();
-                buf.extend_from_slice(&(sb.len() as u16).to_be_bytes());
-                buf.extend_from_slice(sb);
-            }
-            Primitive::Uuid(u) => {
-                buf.push(6);
-                buf.extend_from_slice(&u.to_be_bytes());
-            }
-            Primitive::Null => {
-                buf.push(7);
-            }
-        }
-    }
-    buf
-}
-
-/// Deserialize a property blob produced by `encode_props`.  Returns `None` on
-/// any structural error so callers can surface a `StoreError::CorruptData`.
-pub(super) fn decode_props(blob: &[u8], owner: CanonicalKey) -> Option<Vec<Property>> {
-    if blob.len() < 2 {
-        return None;
-    }
-    let count = u16::from_be_bytes(blob[0..2].try_into().ok()?) as usize;
-    let mut pos = 2;
-    let mut out = Vec::with_capacity(count);
-    for _ in 0..count {
-        if pos + 2 > blob.len() {
-            return None;
-        }
-        let klen = u16::from_be_bytes(blob[pos..pos + 2].try_into().ok()?) as usize;
-        pos += 2;
-        if pos + klen > blob.len() {
-            return None;
-        }
-        let key: PropKey = smol_str::SmolStr::new(std::str::from_utf8(&blob[pos..pos + klen]).ok()?);
-        pos += klen;
-        if pos >= blob.len() {
-            return None;
-        }
-        let tag = blob[pos];
-        pos += 1;
-        let val = match tag {
-            0 => {
-                if pos >= blob.len() {
-                    return None;
-                }
-                let b = blob[pos] != 0;
-                pos += 1;
-                Primitive::Bool(b)
-            }
-            1 => {
-                if pos + 4 > blob.len() {
-                    return None;
-                }
-                let n = i32::from_be_bytes(blob[pos..pos + 4].try_into().ok()?);
-                pos += 4;
-                Primitive::Int32(n)
-            }
-            2 => {
-                if pos + 8 > blob.len() {
-                    return None;
-                }
-                let n = i64::from_be_bytes(blob[pos..pos + 8].try_into().ok()?);
-                pos += 8;
-                Primitive::Int64(n)
-            }
-            3 => {
-                if pos + 4 > blob.len() {
-                    return None;
-                }
-                let bits = u32::from_be_bytes(blob[pos..pos + 4].try_into().ok()?);
-                pos += 4;
-                Primitive::Float32(f32::from_bits(bits))
-            }
-            4 => {
-                if pos + 8 > blob.len() {
-                    return None;
-                }
-                let bits = u64::from_be_bytes(blob[pos..pos + 8].try_into().ok()?);
-                pos += 8;
-                Primitive::Float64(f64::from_bits(bits))
-            }
-            5 => {
-                if pos + 2 > blob.len() {
-                    return None;
-                }
-                let slen = u16::from_be_bytes(blob[pos..pos + 2].try_into().ok()?) as usize;
-                pos += 2;
-                if pos + slen > blob.len() {
-                    return None;
-                }
-                let s = std::str::from_utf8(&blob[pos..pos + slen]).ok()?;
-                pos += slen;
-                Primitive::String(smol_str::SmolStr::new(s))
-            }
-            6 => {
-                if pos + 16 > blob.len() {
-                    return None;
-                }
-                let u = u128::from_be_bytes(blob[pos..pos + 16].try_into().ok()?);
-                pos += 16;
-                Primitive::Uuid(u)
-            }
-            7 => Primitive::Null,
-            _ => return None,
-        };
-        out.push(Property { owner, key, value: val });
-    }
-    Some(out)
-}
-
-// ── Element builders ──────────────────────────────────────────────────────────
-
-/// Decode a `VertexValue` from storage into a `Vertex`.
-pub(super) fn build_full_vertex(id: VertexKey, vv: &VertexValue) -> Result<Vertex, StoreError> {
-    let owner = CanonicalKey::Vertex(id);
-    let props = decode_props(&vv.property_blob, owner).ok_or(StoreError::CorruptData("vertex property blob"))?;
-    Ok(Vertex { id, label_id: vv.label_id, props: RwLock::new(props) })
-}
-
-/// Decode an `EdgeValue` from storage into an `Edge`.
-pub(super) fn build_full_edge(cek: CanonicalEdgeKey, ev: &EdgeValue) -> Result<Edge, StoreError> {
-    let owner = CanonicalKey::Edge(cek);
-    let props = decode_props(&ev.property_blob, owner).ok_or(StoreError::CorruptData("edge property blob"))?;
-    Ok(Edge {
-        src_id: cek.src_id,
-        label_id: cek.label_id,
-        rank: cek.rank,
-        dst_id: cek.dst_id,
-        props: RwLock::new(props),
-    })
-}
 
 // ── Admin reads / writes ──────────────────────────────────────────────────────
 // These methods are used in tests and admin tooling.  They are pub(crate) but
@@ -374,8 +204,8 @@ mod tests {
     use crate::{
         store::rocks::store::RocksStorage,
         types::{
-            element::{Edge, Vertex},
-            gvalue::{Primitive, Property},
+            element::{Edge, Property, Vertex},
+            gvalue::Primitive,
             CanonicalEdgeKey, CanonicalKey, Direction, StoreError,
         },
     };

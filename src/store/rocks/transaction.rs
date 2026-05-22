@@ -51,17 +51,14 @@ use rocksdb::{Direction as ScanDir, IteratorMode, OptimisticTransactionDB, ReadO
 
 use crate::{
     store::{
-        rocks::{
-            encoding::{
-                decode_edge_key_in, decode_edge_key_out, edge_scan_prefix, encode_edge_key_in, encode_edge_key_out,
-                encode_vertex_key, prefix_upper_bound, EdgeValue, VertexDegree, VertexValue, CF_EDGES_IN, CF_EDGES_OUT,
-                CF_VERTEX_DEGREE, CF_VERTICES,
-            },
-            graph::{build_full_edge, build_full_vertex, encode_props},
+        rocks::encoding::{
+            build_full_edge, build_full_vertex, decode_edge_key_in, decode_edge_key_out, edge_scan_prefix,
+            encode_edge_key_in, encode_edge_key_out, encode_props, encode_vertex_key, prefix_upper_bound, EdgeValue,
+            VertexDegree, VertexValue, CF_EDGES_IN, CF_EDGES_OUT, CF_VERTEX_DEGREE, CF_VERTICES,
         },
         traits::GraphTransaction,
     },
-    types::{gvalue::Property, CanonicalEdgeKey, Direction, Edge, LabelId, StoreError, Vertex, VertexKey},
+    types::{element::Property, CanonicalEdgeKey, Direction, Edge, LabelId, StoreError, Vertex, VertexKey},
 };
 
 type EdgeKeyDecoder = fn(&[u8]) -> Option<CanonicalEdgeKey>;
@@ -274,5 +271,63 @@ impl GraphTransaction for Transaction {
             let _ = txn.rollback();
         }
         self.db_txn = Some(begin_txn(&self.db));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use rocksdb::{DBCommon, OptimisticTransactionDB, Options, SingleThreaded, DB};
+
+    /// This test simulates a read-write conflict between two transactions (`txn1` and `txn2`) on the same keys in a
+    /// RocksDB database using `OptimisticTransactionDB`. The test verifies that if `txn2` commits first after
+    /// modifying a key that `txn1` has read, then `txn1` should fail to commit due to a conflict.
+    #[test]
+    fn test_read_write_conflict() {
+        let dir = tempfile::tempdir().unwrap();
+        // fix this
+        let db: DBCommon<SingleThreaded, _> = OptimisticTransactionDB::open_default(dir.path()).unwrap();
+
+        let txn = db.transaction();
+        // Seed initial values
+        txn.put(b"Key_A", b"initial_A").unwrap();
+        txn.put(b"Key_B", b"initial_B").unwrap();
+        txn.commit().unwrap();
+
+        let snapshot = false; // Required to track read/write conflict baselines
+
+        // ==========================================
+        // STEP-BY-STEP TIMELINE EXECUTION
+        // ==========================================
+
+        // Time 0: txn1 begins
+        let txn1 = db.transaction();
+        println!("[Time 0] txn1 started.");
+
+        // Time 1: txn2 begins
+        let txn2 = db.transaction();
+        println!("[Time 1] txn2 started.");
+
+        // Time 2: txn1 reads A & B, modifies B
+        let _ = txn1.get_for_update(b"Key_A", snapshot).unwrap();
+        let _ = txn1.get_for_update(b"Key_B", snapshot).unwrap();
+        txn1.put(b"Key_B", b"new_value_1").unwrap();
+        println!("[Time 2] txn1 executed GetForUpdate(A, B) and Put(B).");
+
+        // Time 3: txn2 reads A, modifies A
+        let _ = txn2.get_for_update(b"Key_A", snapshot).unwrap();
+        txn2.put(b"Key_A", b"new_value_2").unwrap();
+        println!("[Time 3] txn2 executed GetForUpdate(A) and Put(A).");
+
+        // Scenario B: txn2 races ahead and commits first
+        println!("\n--- Entering Commit Phase (Scenario B) ---");
+
+        assert!(txn2.commit().is_ok(), "[Result] txn2 failed to commit! (Unexpected)");
+        print!("[Result] txn2 committed successfully. ");
+
+        assert!(txn1.commit().is_err(), "[Result] txn1 successfully committed! (Unexpected)");
+        print!("[Result] txn1 failed to commit as expected due to conflict.");
+        // Clean up
+        let _ = DB::destroy(&Options::default(), dir.path());
     }
 }

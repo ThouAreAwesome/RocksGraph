@@ -37,7 +37,7 @@
 //! never cross the `GraphTransaction` boundary.
 use std::sync::Arc;
 
-use crate::types::{gvalue::Property, CanonicalEdgeKey, Direction, Edge, LabelId, StoreError, Vertex, VertexKey};
+use crate::types::{element::Property, CanonicalEdgeKey, Direction, Edge, LabelId, StoreError, Vertex, VertexKey};
 
 // ── GraphTransaction ──────────────────────────────────────────────────────────
 

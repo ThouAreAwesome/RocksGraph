@@ -17,9 +17,9 @@ pub mod keys;
 pub mod label;
 pub mod prop_key;
 
-pub use element::{Edge, Vertex};
+pub use element::{Edge, Property, Vertex};
 pub use error::StoreError;
-pub use gvalue::{GValue, Primitive, Property};
+pub use gvalue::{GValue, Primitive};
 pub use keys::{CanonicalEdgeKey, CanonicalKey, Direction, EdgeKey, LabelId, Rank, VertexKey};
 pub use label::Label;
 pub use prop_key::PropKey;
