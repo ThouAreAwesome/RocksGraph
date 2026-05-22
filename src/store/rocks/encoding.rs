@@ -21,8 +21,8 @@
 //! |-----------------|------------------------------------------|-------------------------------------|
 //! | `vertices`      | `[ VertexId:u64 ]`                       | `[ label_id:u16 \| props ]`         |
 //! | `vertex_degree` | `[ VertexId:u64 ]`                       | `[ out_e_cnt:u32 \| in_e_cnt:u32 ]` |
-//! | `edges_out`     | `[ SrcId:u64 \| LabelId:u16 \| Rank:u16 \| DstId:u64 ]` | `[ props ]` |
-//! | `edges_in`      | `[ DstId:u64 \| LabelId:u16 \| Rank:u16 \| SrcId:u64 ]` | `[ props ]` |
+//! | `edges_out`     | `[ SrcId:u64 \| LabelId:u16 \| DstId:u64 \| Rank:u16 ]` | `[ props ]` |
+//! | `edges_in`      | `[ DstId:u64 \| LabelId:u16 \| SrcId:u64 \| Rank:u16 ]` | `[ props ]` |
 //!
 //! Edge properties are duplicated across `edges_out` and `edges_in`.
 //! The direction byte present in previous versions has been removed; each CF
@@ -75,7 +75,7 @@ pub const CF_EDGES_IN: &str = "edges_in";
 // ── Size constants ────────────────────────────────────────────────────────────
 
 pub const VERTEX_KEY_SIZE: usize = 8;
-/// Edge key: 8 (vertex) + 2 (label) + 2 (rank) + 8 (vertex) = 20 bytes.
+/// Edge key: 8 (vertex) + 2 (label) + 8 (vertex) + 2 (rank) = 20 bytes.
 /// No direction byte — each CF encodes direction implicitly.
 pub const EDGE_KEY_SIZE: usize = 20;
 
@@ -92,32 +92,32 @@ pub fn decode_vertex_key(bytes: &[u8]) -> Option<VertexKey> {
 
 // ── Edge key encoding ─────────────────────────────────────────────────────────
 //
-// edges_out layout:  [ SrcId:u64 | LabelId:u16 | Rank:u16 | DstId:u64 ]
-// edges_in  layout:  [ DstId:u64 | LabelId:u16 | Rank:u16 | SrcId:u64 ]
+// edges_out layout:  [ SrcId:u64 | LabelId:u16 | DstId:u64 | Rank:u16 ]
+// edges_in  layout:  [ DstId:u64 | LabelId:u16 | SrcId:u64 | Rank:u16 ]
 //
 // Both are encoded with the same physical byte format; only the semantic
 // meaning of the first and last u64 differs by CF.
 
-fn encode_edge_key_raw(a: VertexKey, label: LabelId, rank: Rank, b: VertexKey) -> [u8; EDGE_KEY_SIZE] {
+fn encode_edge_key_raw(a: VertexKey, label: LabelId, b: VertexKey, rank: Rank) -> [u8; EDGE_KEY_SIZE] {
     let mut buf = [0u8; EDGE_KEY_SIZE];
     buf[0..8].copy_from_slice(&a.to_be_bytes());
     buf[8..10].copy_from_slice(&label.to_be_bytes());
-    buf[10..12].copy_from_slice(&rank.to_be_bytes());
-    buf[12..20].copy_from_slice(&b.to_be_bytes());
+    buf[10..18].copy_from_slice(&b.to_be_bytes());
+    buf[18..20].copy_from_slice(&rank.to_be_bytes());
     buf
 }
 
-/// Encode a `CanonicalEdgeKey` for the `edges_out` CF: `[ src | label | rank | dst ]`.
+/// Encode a `CanonicalEdgeKey` for the `edges_out` CF: `[ src | label | dst | rank ]`.
 pub fn encode_edge_key_out(k: CanonicalEdgeKey) -> [u8; EDGE_KEY_SIZE] {
-    encode_edge_key_raw(k.src_id, k.label_id, k.rank, k.dst_id)
+    encode_edge_key_raw(k.src_id, k.label_id, k.dst_id, k.rank)
 }
 
-/// Encode a `CanonicalEdgeKey` for the `edges_in` CF: `[ dst | label | rank | src ]`.
+/// Encode a `CanonicalEdgeKey` for the `edges_in` CF: `[ dst | label | src | rank ]`.
 pub fn encode_edge_key_in(k: CanonicalEdgeKey) -> [u8; EDGE_KEY_SIZE] {
-    encode_edge_key_raw(k.dst_id, k.label_id, k.rank, k.src_id)
+    encode_edge_key_raw(k.dst_id, k.label_id, k.src_id, k.rank)
 }
 
-/// Decode a 20-byte `edges_out` key: `[ src | label | rank | dst ]`.
+/// Decode a 20-byte `edges_out` key: `[ src | label | dst | rank ]`.
 pub fn decode_edge_key_out(bytes: &[u8]) -> Option<CanonicalEdgeKey> {
     if bytes.len() < EDGE_KEY_SIZE {
         return None;
@@ -125,21 +125,21 @@ pub fn decode_edge_key_out(bytes: &[u8]) -> Option<CanonicalEdgeKey> {
     Some(CanonicalEdgeKey {
         src_id: u64::from_be_bytes(bytes[0..8].try_into().ok()?),
         label_id: u16::from_be_bytes(bytes[8..10].try_into().ok()?) as LabelId,
-        rank: u16::from_be_bytes(bytes[10..12].try_into().ok()?) as Rank,
-        dst_id: u64::from_be_bytes(bytes[12..20].try_into().ok()?),
+        dst_id: u64::from_be_bytes(bytes[10..18].try_into().ok()?),
+        rank: u16::from_be_bytes(bytes[18..20].try_into().ok()?) as Rank,
     })
 }
 
-/// Decode a 20-byte `edges_in` key: `[ dst | label | rank | src ]` → canonical.
+/// Decode a 20-byte `edges_in` key: `[ dst | label | src | rank ]` → canonical.
 pub fn decode_edge_key_in(bytes: &[u8]) -> Option<CanonicalEdgeKey> {
     if bytes.len() < EDGE_KEY_SIZE {
         return None;
     }
     Some(CanonicalEdgeKey {
-        src_id: u64::from_be_bytes(bytes[12..20].try_into().ok()?),
+        src_id: u64::from_be_bytes(bytes[10..18].try_into().ok()?),
         label_id: u16::from_be_bytes(bytes[8..10].try_into().ok()?) as LabelId,
-        rank: u16::from_be_bytes(bytes[10..12].try_into().ok()?) as Rank,
         dst_id: u64::from_be_bytes(bytes[0..8].try_into().ok()?),
+        rank: u16::from_be_bytes(bytes[18..20].try_into().ok()?) as Rank,
     })
 }
 
