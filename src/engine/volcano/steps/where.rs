@@ -46,7 +46,7 @@ impl CoreStep for WhereStep {
             let physical_sub_plan = &self.physical_plans;
 
             physical_sub_plan.reset();
-            physical_sub_plan.inject(std::collections::VecDeque::from(vec![Rc::clone(&t)]));
+            physical_sub_plan.inject(smallvec![Rc::clone(&t)]);
 
             // Sub pipeline evaluates properly — if sub-traversal yields at least one item, original goes through
             if physical_sub_plan.next(ctx).is_some() {

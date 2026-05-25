@@ -10,14 +10,17 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::{collections::VecDeque, rc::Rc};
+use std::rc::Rc;
 
 use smallvec::{smallvec, SmallVec};
 
 use crate::engine::{
     context::GraphCtx,
     traverser::Traverser,
-    volcano::{builder::PhysicalPlan, steps::traits::{CoreStep, StepRef}},
+    volcano::{
+        builder::PhysicalPlan,
+        steps::traits::{CoreStep, StepRef},
+    },
 };
 
 pub struct UnionStep {
@@ -47,7 +50,7 @@ impl CoreStep for UnionStep {
                 if !self.physical_plans.is_empty() {
                     let p = &self.physical_plans[0];
                     p.reset();
-                    p.inject(VecDeque::from(vec![Rc::clone(&t)]));
+                    p.inject(smallvec![Rc::clone(&t)]);
                 }
             }
 
@@ -65,7 +68,7 @@ impl CoreStep for UnionStep {
             if self.current_plan_idx < self.physical_plans.len() {
                 let next_p = &self.physical_plans[self.current_plan_idx];
                 next_p.reset();
-                next_p.inject(VecDeque::from(vec![Rc::clone(self.current_input.as_ref().unwrap())]));
+                next_p.inject(smallvec![Rc::clone(self.current_input.as_ref().unwrap())]);
             } else {
                 self.current_input = None;
             }

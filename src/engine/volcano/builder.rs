@@ -27,7 +27,9 @@
 //! [`build_step`]: PhysicalPlanBuilder::build_step
 //! [`VecSourceStep`]: crate::engine::volcano::steps::vec_source::VecSourceStep
 
-use std::{collections::VecDeque, rc::Rc};
+use std::rc::Rc;
+
+use smallvec::SmallVec;
 
 use crate::{
     engine::{
@@ -48,7 +50,7 @@ pub struct PhysicalPlan {
 }
 
 impl PhysicalPlan {
-    pub fn inject(&self, items: VecDeque<Rc<Traverser>>) {
+    pub fn inject(&self, items: SmallVec<[Rc<Traverser>; 4]>) {
         self.source.inner.borrow_mut().core.inject(items);
     }
 
@@ -167,7 +169,12 @@ impl PhysicalPlanBuilder {
             }
             LogicalStep::AddE(s) => {
                 wire!(
-                    BufferedStep::new(steps::add_e::AddEStep::new(s.label_id, s.out_v_id, s.in_v_id, s.properties.clone())),
+                    BufferedStep::new(steps::add_e::AddEStep::new(
+                        s.label_id,
+                        s.out_v_id,
+                        s.in_v_id,
+                        s.properties.clone()
+                    )),
                     None::<StepRef>
                 )
             }
@@ -188,8 +195,7 @@ impl PhysicalPlanBuilder {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::VecDeque;
-
+    use smallvec::smallvec;
     use std::rc::Rc;
 
     use super::PhysicalPlanBuilder;
@@ -215,7 +221,7 @@ mod tests {
         let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&plan);
 
-        physical_plan.inject(VecDeque::from(vec![traverser(1), traverser(2), traverser(3)]));
+        physical_plan.inject(smallvec![traverser(1), traverser(2), traverser(3)]);
 
         let mut ctx = NoopCtx;
         let result = physical_plan.next(&mut ctx).expect("Expected one result");
@@ -230,14 +236,14 @@ mod tests {
         let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&plan);
 
-        physical_plan.inject(VecDeque::from(vec![traverser(1), traverser(2), traverser(3)]));
+        physical_plan.inject(smallvec![traverser(1), traverser(2), traverser(3)]);
         let mut ctx = NoopCtx;
         let result1 = physical_plan.next(&mut ctx).unwrap();
         assert_eq!(result1.as_ref().value, gvalue(3));
         assert!(physical_plan.next(&mut ctx).is_none());
 
         physical_plan.reset();
-        physical_plan.inject(VecDeque::from(vec![traverser(1), traverser(2)]));
+        physical_plan.inject(smallvec![traverser(1), traverser(2)]);
         let result2 = physical_plan.next(&mut ctx).unwrap();
         assert_eq!(result2.as_ref().value, gvalue(2));
         assert!(physical_plan.next(&mut ctx).is_none());
@@ -252,7 +258,7 @@ mod tests {
         let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&plan);
 
-        physical_plan.inject(VecDeque::from(vec![traverser(1), traverser(2), traverser(3)]));
+        physical_plan.inject(smallvec![traverser(1), traverser(2), traverser(3)]);
 
         let mut ctx = NoopCtx;
         let result = physical_plan.next(&mut ctx).expect("Expected one result");

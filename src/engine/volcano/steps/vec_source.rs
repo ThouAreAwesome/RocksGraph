@@ -10,9 +10,9 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::{collections::VecDeque, rc::Rc};
+use std::rc::Rc;
 
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 
 use crate::engine::{
     context::GraphCtx,
@@ -21,18 +21,16 @@ use crate::engine::{
 };
 
 pub struct VecSourceStep {
-    items: VecDeque<Rc<Traverser>>,
-    items_backup: VecDeque<Rc<Traverser>>,
+    items: SmallVec<[Rc<Traverser>; 4]>,
 }
 
 impl VecSourceStep {
     pub fn empty() -> Self {
-        Self { items: VecDeque::new(), items_backup: VecDeque::new() }
+        Self { items: SmallVec::new() }
     }
 
-    pub fn inject(&mut self, items: VecDeque<Rc<Traverser>>) {
-        self.items = items.clone();
-        self.items_backup = items;
+    pub fn inject(&mut self, items: SmallVec<[Rc<Traverser>; 4]>) {
+        self.items.extend(items);
     }
 }
 
@@ -42,11 +40,14 @@ impl CoreStep for VecSourceStep {
     }
 
     fn produce(&mut self, _ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
-        let item = self.items.pop_front()?;
-        Some(smallvec![item])
+        if !self.items.is_empty() {
+            Some(self.items.drain(..).collect())
+        } else {
+            None
+        }
     }
 
     fn reset(&mut self) {
-        self.items = self.items_backup.clone();
+        self.items.clear();
     }
 }
