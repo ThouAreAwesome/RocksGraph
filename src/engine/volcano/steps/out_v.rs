@@ -23,14 +23,9 @@ use crate::{
     types::GValue,
 };
 
+#[derive(Default)]
 pub struct OutVStep {
     upstream: Option<StepRef>,
-}
-
-impl OutVStep {
-    pub fn new() -> Self {
-        Self { upstream: None }
-    }
 }
 
 impl CoreStep for OutVStep {

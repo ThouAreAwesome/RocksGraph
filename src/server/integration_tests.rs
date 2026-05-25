@@ -10,7 +10,7 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 use tokio::time::{sleep, Duration};
 
 use crate::{
@@ -33,7 +33,7 @@ async fn test_server_client_integration() -> Result<(), Box<dyn std::error::Erro
     let server_addr = random_server_addr().await;
     let server_addr_clone = server_addr.clone();
     // 1. Setup: Create a temporary RocksDB store and populate it with TinkerPop Modern Graph data
-    let (graph_store, _dir) = test_utils::open_rocks_store();
+    let graph_store = gremlin_server::open_rocks_store(None::<&Path>);
     test_utils::create_tinkerpop_modern_graph_for_server_test(Arc::clone(&graph_store));
 
     // 2. Start the Gremlin server in a background task
@@ -191,7 +191,7 @@ async fn test_sequential_modifications() -> Result<(), Box<dyn std::error::Error
     let server_addr = random_server_addr().await;
 
     // 1. Setup: Create a temporary, empty RocksDB store
-    let (graph_store, _dir) = test_utils::open_rocks_store();
+    let graph_store = gremlin_server::open_rocks_store(None::<&Path>);
 
     // 2. Start the Gremlin server in a background task
     let addr_clone = server_addr.clone();
@@ -294,7 +294,7 @@ async fn test_websocket_ping_pong() -> Result<(), Box<dyn std::error::Error>> {
     let server_addr = random_server_addr().await;
 
     // An empty store is sufficient; ping-pong never touches the graph.
-    let (graph_store, _dir) = test_utils::open_rocks_store();
+    let graph_store = gremlin_server::open_rocks_store(None::<&Path>);
     let addr_clone = server_addr.clone();
     tokio::spawn(async move {
         gremlin_server::start_server(&addr_clone, graph_store).await.expect("Server failed to start");

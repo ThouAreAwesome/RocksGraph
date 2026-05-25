@@ -1,6 +1,6 @@
 use multigraph::{
     client::gremlin_client::{self, GremlinArgument},
-    server::{gremlin_server, test_utils},
+    server::gremlin_server,
 };
 
 use rand::Rng;
@@ -8,17 +8,17 @@ use std::{
     collections::HashMap,
     fs::File,
     io::{BufRead, BufReader},
+    path::PathBuf,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
+    time::Instant,
 };
 use tokio::{
     sync::mpsc,
     time::{sleep, Duration},
 };
-
-use std::time::Instant;
 
 const MAX_RETRIES: usize = 3;
 const RETRY_DELAY_MS: u64 = 5;
@@ -112,8 +112,10 @@ async fn create_edge_with_retry(
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let server_addr = random_server_addr().await;
 
+    let path_str = "./bench_data/rocksdb_data";
+    let path = PathBuf::from(path_str);
     // 1. Setup: Create a temporary, empty RocksDB store
-    let (graph_store, _dir) = test_utils::open_rocks_store();
+    let graph_store = gremlin_server::open_rocks_store(Some(&path));
 
     // 2. Start the Gremlin server in a background task
     let addr_clone = server_addr.clone();
@@ -195,11 +197,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         mutation_counter.fetch_add(1, Ordering::Relaxed);
                     }
 
-                    match create_edge_with_retry(&mut g, parts[0], parts[1], 2, MAX_RETRIES).await {
-                        Ok(_) => {
-                            mutation_counter.fetch_add(1, Ordering::Relaxed);
-                        }
-                        Err(_) => {}
+                    if create_edge_with_retry(&mut g, parts[0], parts[1], 2, MAX_RETRIES).await.is_ok() {
+                        mutation_counter.fetch_add(1, Ordering::Relaxed);
+                    } else {
+                        continue;
                     }
                 }
             })

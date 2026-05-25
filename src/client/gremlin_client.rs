@@ -149,7 +149,7 @@ impl<'a, S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> GraphTraversal
     /// Spawns a traversal with the `V()` step.
     /// This method is available on `GraphTraversal` for sub-traversals (e.g., `__.V()`).
     pub fn V(&mut self, ids: &[i64]) -> &mut Self {
-        let arguments = ids.iter().map(|&i| GremlinArgument::Int(i as i64)).collect();
+        let arguments = ids.iter().map(|&i| GremlinArgument::Int(i)).collect();
         self.ast.step.push(ParsedGremlinStep { name: "V".to_string(), arguments });
         self
     }
@@ -312,8 +312,7 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Example 2: g.V().has('name', 'marko').outE().count()
     println!("\nSending query: g.V().has('name', 'marko').outE().count()");
     g.reset();
-    let count_data =
-        g.V(&[]).has("name", GremlinArgument::String("marko".to_string())).outE(&[]).count().execute().await?;
+    let count_data = g.V(&[]).has("name", GremlinArgument::String("marko".into())).outE(&[]).count().execute().await?;
     println!("Count result: {}", count_data);
 
     Ok(())
@@ -328,7 +327,7 @@ mod tests {
         let mut builder = __();
         let query = builder
             .V(&[1, 4])
-            .has("name", GremlinArgument::String("marko".to_string())) // Corrected to pass GremlinArgument
+            .has("name", GremlinArgument::String("marko".into())) // Corrected to pass GremlinArgument
             .out(&[3])
             .outE(&[4, 5])
             .r#in(&[])

@@ -23,15 +23,10 @@ use crate::{
     types::gvalue::{GValue, Primitive},
 };
 
+#[derive(Default)]
 pub struct CountStep {
     upstream: Option<StepRef>,
     done: bool,
-}
-
-impl CountStep {
-    pub fn new() -> Self {
-        Self { upstream: None, done: false }
-    }
 }
 
 impl CoreStep for CountStep {

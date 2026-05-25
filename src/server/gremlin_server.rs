@@ -1,9 +1,3 @@
-use std::sync::Arc;
-
-use futures_util::{SinkExt, StreamExt};
-use tokio::net::{TcpListener, TcpStream};
-use tokio_tungstenite::{accept_async, tungstenite::Message};
-
 use crate::{
     engine::volcano::builder::PhysicalPlanBuilder,
     graph::LogicalGraph,
@@ -15,6 +9,20 @@ use crate::{
     },
     store::{GraphStore, RocksStorage},
 };
+use futures_util::{SinkExt, StreamExt};
+use std::{path::Path, sync::Arc};
+use tokio::net::{TcpListener, TcpStream};
+use tokio_tungstenite::{accept_async, tungstenite::Message};
+
+pub fn open_rocks_store<P: AsRef<Path>>(path: Option<P>) -> Arc<RocksStorage> {
+    match path {
+        Some(pth) => Arc::new(RocksStorage::open(pth).unwrap()),
+        None => {
+            let dir = tempfile::tempdir().unwrap();
+            Arc::new(RocksStorage::open(dir.path()).unwrap())
+        }
+    }
+}
 
 /// Starts the Gremlin WebSocket server.
 pub async fn start_server(addr: &str, graph_store: Arc<RocksStorage>) -> Result<(), Box<dyn std::error::Error>> {

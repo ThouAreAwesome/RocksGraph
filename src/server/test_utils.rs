@@ -19,12 +19,6 @@ pub const KNOWS_LABEL_ID: LabelId = 3;
 pub const CREATED_LABEL_ID: LabelId = 4;
 pub const FRIENDS_LABEL_ID: LabelId = 5;
 
-pub fn open_rocks_store() -> (Arc<RocksStorage>, tempfile::TempDir) {
-    let dir = tempfile::tempdir().unwrap();
-    let store = Arc::new(RocksStorage::open(dir.path()).unwrap());
-    (store, dir)
-}
-
 /// Creates a standard TinkerPop Modern Graph with predefined vertices and edges.
 /// This graph is used as a common baseline for various test cases.
 ///

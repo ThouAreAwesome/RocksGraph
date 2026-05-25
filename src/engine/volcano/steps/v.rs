@@ -10,7 +10,7 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::{collections::VecDeque, rc::Rc};
+use std::rc::Rc;
 
 use smallvec::{smallvec, SmallVec};
 
@@ -24,13 +24,13 @@ use crate::{
 };
 
 pub struct VStep {
-    vertex_ids: VecDeque<VertexKey>,
-    initial_ids: Vec<VertexKey>,
+    vertex_ids: Vec<VertexKey>,
+    current_idx: usize,
 }
 
 impl VStep {
     pub fn new(vertex_ids: Vec<VertexKey>) -> Self {
-        Self { vertex_ids: VecDeque::from(vertex_ids.clone()), initial_ids: vertex_ids }
+        Self { vertex_ids, current_idx: 0 }
     }
 }
 
@@ -40,12 +40,19 @@ impl CoreStep for VStep {
     }
 
     fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
-        let id = self.vertex_ids.pop_front()?;
-        let vertex_arc = ctx.get_vertex(id).ok()??;
-        Some(smallvec![Traverser::new_rc(GValue::Vertex(vertex_arc.id))])
+        loop {
+            if self.current_idx >= self.vertex_ids.len() {
+                return None;
+            }
+            let id = self.vertex_ids[self.current_idx];
+            self.current_idx += 1;
+            if let Some(vertex_arc) = ctx.get_vertex(id).ok()? {
+                return Some(smallvec![Traverser::new_rc(GValue::Vertex(vertex_arc.id))]);
+            }
+        }
     }
 
     fn reset(&mut self) {
-        self.vertex_ids = VecDeque::from(self.initial_ids.clone());
+        self.current_idx = 0;
     }
 }

@@ -108,23 +108,32 @@ impl PhysicalPlanBuilder {
 
         match step {
             LogicalStep::Both(s) => {
-                wire!(BufferedStep::new(steps::both::BothStep::new(s.label_ids.clone())), upstream)
+                wire_required!(BufferedStep::new(steps::both::BothStep::new(s.label_ids.clone())), upstream, "BothStep")
             }
             LogicalStep::BothE(s) => {
-                wire!(BufferedStep::new(steps::both_e::BothEStep::new(s.label_ids.clone())), upstream)
+                wire_required!(
+                    BufferedStep::new(steps::both_e::BothEStep::new(s.label_ids.clone())),
+                    upstream,
+                    "BothEStep"
+                )
             }
             LogicalStep::V(s) => {
                 wire!(BufferedStep::new(steps::v::VStep::new(s.ids.clone())), None::<StepRef>)
             }
             LogicalStep::Count(_) => {
-                wire_required!(BufferedStep::new(steps::count::CountStep::new()), upstream, "CountStep")
+                wire_required!(BufferedStep::new(steps::count::CountStep::default()), upstream, "CountStep")
             }
             LogicalStep::HasLabel(s) => {
-                wire!(BufferedStep::new(steps::has_label::HasLabelStep::new(s.label_ids.clone())), upstream)
+                wire_required!(
+                    BufferedStep::new(steps::has_label::HasLabelStep::new(s.label_ids.clone())),
+                    upstream,
+                    "HasLabelStep"
+                )
             }
-            LogicalStep::HasProperty(s) => wire!(
+            LogicalStep::HasProperty(s) => wire_required!(
                 BufferedStep::new(steps::has_property::HasPropertyStep::new(s.key.clone(), s.value.clone())),
-                upstream
+                upstream,
+                "HasPropertyStep"
             ),
             LogicalStep::In(s) => {
                 wire_required!(BufferedStep::new(steps::r#in::InStep::new(s.label_ids.clone())), upstream, "InStep")
@@ -136,30 +145,42 @@ impl PhysicalPlanBuilder {
                 wire_required!(BufferedStep::new(steps::out::OutStep::new(s.label_ids.clone())), upstream, "OutStep")
             }
             LogicalStep::OutE(s) => {
-                wire!(BufferedStep::new(steps::out_e::OutEStep::new(s.label_ids.clone())), upstream)
+                wire_required!(
+                    BufferedStep::new(steps::out_e::OutEStep::new(s.label_ids.clone())),
+                    upstream,
+                    "OutEStep"
+                )
             }
             LogicalStep::InV(_) => {
-                wire!(BufferedStep::new(steps::in_v::InVStep::new()), upstream)
+                wire_required!(BufferedStep::new(steps::in_v::InVStep::default()), upstream, "InVStep")
             }
             LogicalStep::OtherV(_) => {
-                wire!(BufferedStep::new(steps::other_v::OtherVStep::new()), upstream)
+                wire_required!(BufferedStep::new(steps::other_v::OtherVStep::default()), upstream, "OtherVStep")
             }
             LogicalStep::OutV(_) => {
-                wire!(BufferedStep::new(steps::out_v::OutVStep::new()), upstream)
+                wire_required!(BufferedStep::new(steps::out_v::OutVStep::default()), upstream, "OutVStep")
             }
             LogicalStep::ScalarFilter(s) => {
-                wire!(BufferedStep::new(steps::scalar_filter::ScalarFilterStep::new(s.value.clone())), upstream)
+                wire_required!(
+                    BufferedStep::new(steps::scalar_filter::ScalarFilterStep::new(s.value.clone())),
+                    upstream,
+                    "ScalarFilterStep"
+                )
             }
             LogicalStep::Values(s) => {
-                wire!(BufferedStep::new(steps::values::ValuesStep::new(s.property_keys.clone())), upstream)
+                wire_required!(
+                    BufferedStep::new(steps::values::ValuesStep::new(s.property_keys.clone())),
+                    upstream,
+                    "ValuesStep"
+                )
             }
             LogicalStep::Where(s) => {
                 let physical_plan = self.build(&s.plan);
-                wire!(BufferedStep::new(steps::r#where::WhereStep::new(physical_plan)), upstream)
+                wire_required!(BufferedStep::new(steps::r#where::WhereStep::new(physical_plan)), upstream, "WhereStep")
             }
             LogicalStep::Union(s) => {
                 let physical_plans = s.plans.iter().map(|p| self.build(p)).collect();
-                wire!(BufferedStep::new(steps::union::UnionStep::new(physical_plans)), upstream)
+                wire_required!(BufferedStep::new(steps::union::UnionStep::new(physical_plans)), upstream, "UnionStep")
             }
             LogicalStep::AddV(s) => {
                 wire!(
@@ -184,10 +205,10 @@ impl PhysicalPlanBuilder {
                 "PropertyStep"
             ),
             LogicalStep::Limit(s) => {
-                wire!(BufferedStep::new(steps::limit::LimitStep::new(s.limit)), upstream)
+                wire_required!(BufferedStep::new(steps::limit::LimitStep::new(s.limit)), upstream, "LimitStep")
             }
             LogicalStep::HasId(s) => {
-                wire!(BufferedStep::new(steps::has_id::HasIdStep::new(s.ids.clone())), upstream)
+                wire_required!(BufferedStep::new(steps::has_id::HasIdStep::new(s.ids.clone())), upstream, "HasIdStep")
             }
         }
     }
