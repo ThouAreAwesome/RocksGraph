@@ -44,7 +44,7 @@ pub fn create_tinkerpop_modern_graph_for_server_test(store: Arc<RocksStorage>) {
         .set_property(&Property {
             owner: CanonicalKey::Vertex(v_marko_key),
             key: SmolStr::new("age"),
-            value: Primitive::Int32(29),
+            value: Primitive::Int64(29),
         })
         .unwrap();
 
@@ -60,7 +60,7 @@ pub fn create_tinkerpop_modern_graph_for_server_test(store: Arc<RocksStorage>) {
         .set_property(&Property {
             owner: CanonicalKey::Vertex(v_vadas_key),
             key: SmolStr::new("age"),
-            value: Primitive::Int32(27),
+            value: Primitive::Int64(27),
         })
         .unwrap();
 
@@ -92,7 +92,7 @@ pub fn create_tinkerpop_modern_graph_for_server_test(store: Arc<RocksStorage>) {
         .set_property(&Property {
             owner: CanonicalKey::Vertex(v_josh_key),
             key: SmolStr::new("age"),
-            value: Primitive::Int32(32),
+            value: Primitive::Int64(32),
         })
         .unwrap();
 
@@ -124,7 +124,7 @@ pub fn create_tinkerpop_modern_graph_for_server_test(store: Arc<RocksStorage>) {
         .set_property(&Property {
             owner: CanonicalKey::Vertex(v_peter_key),
             key: SmolStr::new("age"),
-            value: Primitive::Int32(35),
+            value: Primitive::Int64(35),
         })
         .unwrap();
 

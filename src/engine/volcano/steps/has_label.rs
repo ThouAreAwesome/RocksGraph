@@ -10,54 +10,44 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
+use std::rc::Rc;
+
 use smallvec::{smallvec, SmallVec};
-use std::{cell::RefCell, rc::Rc};
 
 use crate::{
     engine::{
         context::GraphCtx,
         traverser::Traverser,
-        volcano::steps::traits::{BroadcastState, ConsumerIter, GremlinStep, HasBroadcast, Produce},
+        volcano::steps::traits::{CoreStep, StepRef},
     },
     types::{keys::LabelId, GValue},
 };
 
-struct Inner {
-    upstream: Option<ConsumerIter>,
+pub struct HasLabelStep {
+    upstream: Option<StepRef>,
     label_ids: Vec<LabelId>,
 }
 
-pub struct HasLabelStep {
-    broadcast: RefCell<BroadcastState>,
-    inner: RefCell<Inner>,
-}
-
 impl HasLabelStep {
-    pub fn new(label_ids: Vec<LabelId>) -> Rc<Self> {
-        Rc::new(Self {
-            broadcast: RefCell::new(BroadcastState::new()),
-            inner: RefCell::new(Inner { upstream: None, label_ids }),
-        })
+    pub fn new(label_ids: Vec<LabelId>) -> Self {
+        Self { upstream: None, label_ids }
     }
 }
 
-impl HasBroadcast for HasLabelStep {
-    fn broadcast(&self) -> &RefCell<BroadcastState> {
-        &self.broadcast
+impl CoreStep for HasLabelStep {
+    fn add_upper(&mut self, upstream: StepRef) {
+        self.upstream = Some(upstream);
     }
-}
 
-impl Produce for HasLabelStep {
-    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
-        let inner = self.inner.borrow();
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
         loop {
-            let t = inner.upstream.as_ref()?.next(ctx)?;
+            let t = self.upstream.as_ref()?.next(ctx)?;
             let matched = match &t.value {
                 GValue::Vertex(v_arc) => {
                     let vertex = ctx.get_vertex(*v_arc).ok()??;
-                    inner.label_ids.contains(&vertex.label_id)
+                    self.label_ids.contains(&vertex.label_id)
                 }
-                GValue::Edge(e_arc) => inner.label_ids.contains(&e_arc.label_id),
+                GValue::Edge(e_arc) => self.label_ids.contains(&e_arc.label_id),
                 _ => false,
             };
             if matched {
@@ -65,15 +55,9 @@ impl Produce for HasLabelStep {
             }
         }
     }
-}
 
-impl GremlinStep for HasLabelStep {
-    fn add_upper(&self, upstream: ConsumerIter) {
-        self.inner.borrow_mut().upstream = Some(upstream);
-    }
-    fn reset(&self) {
-        self.broadcast.borrow_mut().reset();
-        if let Some(up) = &self.inner.borrow().upstream {
+    fn reset(&mut self) {
+        if let Some(up) = &self.upstream {
             up.reset();
         }
     }

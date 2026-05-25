@@ -10,7 +10,7 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::{cell::RefCell, rc::Rc};
+use std::rc::Rc;
 
 use smallvec::{smallvec, SmallVec};
 
@@ -18,55 +18,38 @@ use crate::{
     engine::{
         context::GraphCtx,
         traverser::Traverser,
-        volcano::steps::traits::{BroadcastState, ConsumerIter, GremlinStep, HasBroadcast, Produce},
+        volcano::steps::traits::{CoreStep, StepRef},
     },
     types::{GValue, Primitive},
 };
 
-struct Inner {
-    upstream: Option<ConsumerIter>,
+pub struct ScalarFilterStep {
+    upstream: Option<StepRef>,
     expected: Primitive,
 }
 
-pub struct ScalarFilterStep {
-    broadcast: RefCell<BroadcastState>,
-    inner: RefCell<Inner>,
-}
-
 impl ScalarFilterStep {
-    pub fn new(expected: Primitive) -> Rc<Self> {
-        Rc::new(Self {
-            broadcast: RefCell::new(BroadcastState::new()),
-            inner: RefCell::new(Inner { upstream: None, expected }),
-        })
+    pub fn new(expected: Primitive) -> Self {
+        Self { upstream: None, expected }
     }
 }
 
-impl HasBroadcast for ScalarFilterStep {
-    fn broadcast(&self) -> &RefCell<BroadcastState> {
-        &self.broadcast
+impl CoreStep for ScalarFilterStep {
+    fn add_upper(&mut self, upstream: StepRef) {
+        self.upstream = Some(upstream);
     }
-}
 
-impl Produce for ScalarFilterStep {
-    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
-        let inner = self.inner.borrow();
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
         loop {
-            let t = inner.upstream.as_ref().unwrap().next(ctx)?;
-            if matches!(&t.value, GValue::Scalar(p) if p == &inner.expected) {
+            let t = self.upstream.as_ref()?.next(ctx)?;
+            if matches!(&t.value, GValue::Scalar(p) if p == &self.expected) {
                 return Some(smallvec![Rc::clone(&t)]);
             }
         }
     }
-}
 
-impl GremlinStep for ScalarFilterStep {
-    fn add_upper(&self, upstream: ConsumerIter) {
-        self.inner.borrow_mut().upstream = Some(upstream);
-    }
-    fn reset(&self) {
-        self.broadcast.borrow_mut().reset();
-        if let Some(up) = &self.inner.borrow().upstream {
+    fn reset(&mut self) {
+        if let Some(up) = &self.upstream {
             up.reset();
         }
     }

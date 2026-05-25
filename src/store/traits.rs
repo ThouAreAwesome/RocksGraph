@@ -83,12 +83,14 @@ pub trait GraphTransaction {
     ///
     /// - `label`: restrict to edges with this label id when `Some`.
     /// - `dst`:   restrict to edges whose remote endpoint is in the slice when `Some`.
+    /// - `limit`: limit the number of returned edges when `Some`.
     fn get_edges(
         &mut self,
         vertex: VertexKey,
         direction: Direction,
         label: Option<LabelId>,
         dst: Option<&[VertexKey]>,
+        limit: Option<u32>,
     ) -> Result<Vec<Arc<Edge>>, StoreError>;
 
     // ── Writes ────────────────────────────────────────────────────────────────

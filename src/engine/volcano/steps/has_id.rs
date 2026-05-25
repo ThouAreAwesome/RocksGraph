@@ -20,20 +20,21 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::GValue,
+    types::{gvalue::GValue, keys::VertexKey},
 };
 
-pub struct OtherVStep {
+pub struct HasIdStep {
     upstream: Option<StepRef>,
+    target_ids: Vec<VertexKey>,
 }
 
-impl OtherVStep {
-    pub fn new() -> Self {
-        Self { upstream: None }
+impl HasIdStep {
+    pub fn new(target_ids: Vec<VertexKey>) -> Self {
+        Self { upstream: None, target_ids }
     }
 }
 
-impl CoreStep for OtherVStep {
+impl CoreStep for HasIdStep {
     fn add_upper(&mut self, upstream: StepRef) {
         self.upstream = Some(upstream);
     }
@@ -41,10 +42,11 @@ impl CoreStep for OtherVStep {
     fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
         loop {
             let t = self.upstream.as_ref()?.next(ctx)?;
-            if let GValue::Edge(ek) = &t.value {
-                return Some(smallvec![Traverser::new_rc(GValue::Vertex(ek.secondary_id))]);
+            if let GValue::Vertex(vk) = &t.value {
+                if self.target_ids.contains(vk) {
+                    return Some(smallvec![t]);
+                }
             }
-            // TODO: raise an error for non-edge traversers instead of silently skipping
         }
     }
 

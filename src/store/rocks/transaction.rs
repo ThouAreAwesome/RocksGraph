@@ -167,6 +167,7 @@ impl GraphTransaction for Transaction {
         direction: Direction,
         label: Option<LabelId>,
         dst: Option<&[VertexKey]>,
+        limit: Option<u32>,
     ) -> Result<Vec<Arc<Edge>>, StoreError> {
         let (cf_name, decode_fn): (&str, EdgeKeyDecoder) = match direction {
             Direction::OUT => (CF_EDGES_OUT, decode_edge_key_out),
@@ -202,6 +203,11 @@ impl GraphTransaction for Transaction {
                 }
             }
             result.push(Arc::new(build_full_edge(cek, &EdgeValue::decode(&val_bytes))?));
+            if let Some(max) = limit {
+                if result.len() >= max as usize {
+                    break;
+                }
+            }
         }
         Ok(result)
     }

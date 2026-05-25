@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 #[serde(untagged)] // Allows deserializing into different types based on content
 pub enum GremlinArgument {
     String(String),
-    Int(i32),
+    Int(i64),
     Float(f64),
     Bool(bool),
     // For nested traversals in steps like union, where, etc.

@@ -10,14 +10,15 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
+use std::{collections::HashMap, rc::Rc};
+
 use smallvec::{smallvec, SmallVec};
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::{
     engine::{
         context::GraphCtx,
         traverser::Traverser,
-        volcano::steps::traits::{BroadcastState, ConsumerIter, GremlinStep, HasBroadcast, Produce},
+        volcano::steps::traits::{CoreStep, StepRef},
     },
     types::{
         gvalue::Primitive,
@@ -27,17 +28,12 @@ use crate::{
     },
 };
 
-struct Inner {
+pub struct AddEStep {
     label_id: LabelId,
     out_v_id: VertexKey,
     in_v_id: VertexKey,
     properties: SmallVec<[Property; 8]>,
-    emitted: bool, // AddE is a source step that typically emits only once
-}
-
-pub struct AddEStep {
-    broadcast: RefCell<BroadcastState>,
-    inner: RefCell<Inner>,
+    emitted: bool,
 }
 
 impl AddEStep {
@@ -46,7 +42,7 @@ impl AddEStep {
         out_v_id: VertexKey,
         in_v_id: VertexKey,
         properties: HashMap<PropKey, Primitive>,
-    ) -> Rc<Self> {
+    ) -> Self {
         let properties = properties
             .into_iter()
             .map(|(key, value)| Property {
@@ -54,58 +50,41 @@ impl AddEStep {
                     src_id: out_v_id,
                     label_id,
                     dst_id: in_v_id,
-                    rank: 0, // Assuming rank 0 for now; can be enhanced to support user-specified ranks
+                    rank: 0,
                 }),
                 key,
                 value,
             })
             .collect();
-        Rc::new(Self {
-            broadcast: RefCell::new(BroadcastState::new()),
-            inner: RefCell::new(Inner { label_id, out_v_id, in_v_id, properties, emitted: false }),
-        })
+        Self { label_id, out_v_id, in_v_id, properties, emitted: false }
     }
 }
 
-impl HasBroadcast for AddEStep {
-    fn broadcast(&self) -> &RefCell<BroadcastState> {
-        &self.broadcast
-    }
-}
-
-impl Produce for AddEStep {
-    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
-        let mut inner = self.inner.borrow_mut();
-        if inner.emitted {
-            return None; // Only emit once
-        }
-
-        let edge_key = EdgeKey {
-            primary_id: inner.out_v_id,
-            direction: Direction::OUT,
-            label_id: inner.label_id,
-            secondary_id: inner.in_v_id,
-            rank: 0,
-        };
-        let new_edge_arc = ctx.add_edge(edge_key).ok()?;
-
-        for property in inner.properties.drain(..) {
-            ctx.set_property(&property).ok()?;
-        }
-
-        inner.emitted = true;
-        Some(smallvec![Traverser::new_rc(GValue::Edge(new_edge_arc))])
-    }
-}
-
-impl GremlinStep for AddEStep {
-    fn add_upper(&self, _upstream: ConsumerIter) {
+impl CoreStep for AddEStep {
+    fn add_upper(&mut self, _upstream: StepRef) {
         panic!("AddEStep is a source step and cannot have an upstream");
     }
 
-    fn reset(&self) {
-        self.broadcast.borrow_mut().reset();
-        let mut inner = self.inner.borrow_mut();
-        inner.emitted = false;
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
+        if self.emitted {
+            return None;
+        }
+        let edge_key = EdgeKey {
+            primary_id: self.out_v_id,
+            direction: Direction::OUT,
+            label_id: self.label_id,
+            secondary_id: self.in_v_id,
+            rank: 0,
+        };
+        let new_edge = ctx.add_edge(edge_key).ok()?;
+        for property in &self.properties {
+            ctx.set_property(property).ok()?;
+        }
+        self.emitted = true;
+        Some(smallvec![Traverser::new_rc(GValue::Edge(new_edge))])
+    }
+
+    fn reset(&mut self) {
+        self.emitted = false;
     }
 }

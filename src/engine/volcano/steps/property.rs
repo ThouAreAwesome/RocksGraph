@@ -10,75 +10,56 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
+use std::rc::Rc;
+
 use smallvec::{smallvec, SmallVec};
-use std::{cell::RefCell, rc::Rc};
 
 use crate::{
     engine::{
         context::GraphCtx,
         traverser::Traverser,
-        volcano::steps::traits::{BroadcastState, ConsumerIter, GremlinStep, HasBroadcast, Produce},
+        volcano::steps::traits::{CoreStep, StepRef},
     },
     types::{element::Property, gvalue::Primitive, keys::CanonicalKey, prop_key::PropKey, GValue},
 };
 
-struct Inner {
-    upstream: Option<ConsumerIter>,
+pub struct PropertyStep {
+    upstream: Option<StepRef>,
     prop: Property,
 }
 
-pub struct PropertyStep {
-    broadcast: RefCell<BroadcastState>,
-    inner: RefCell<Inner>,
-}
-
 impl PropertyStep {
-    pub fn new(prop_key: PropKey, prop_value: Primitive) -> Rc<Self> {
-        Rc::new(Self {
-            broadcast: RefCell::new(BroadcastState::new()),
-            inner: RefCell::new(Inner {
-                upstream: None,
-                prop: Property { owner: CanonicalKey::Empty, key: prop_key, value: prop_value },
-            }),
-        })
+    pub fn new(prop_key: PropKey, prop_value: Primitive) -> Self {
+        Self {
+            upstream: None,
+            prop: Property { owner: CanonicalKey::Empty, key: prop_key, value: prop_value },
+        }
     }
 }
 
-impl HasBroadcast for PropertyStep {
-    fn broadcast(&self) -> &RefCell<BroadcastState> {
-        &self.broadcast
+impl CoreStep for PropertyStep {
+    fn add_upper(&mut self, upstream: StepRef) {
+        self.upstream = Some(upstream);
     }
-}
 
-impl Produce for PropertyStep {
-    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
-        let inner = self.inner.borrow();
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
         loop {
-            let t = inner.upstream.as_ref()?.next(ctx)?;
+            let t = self.upstream.as_ref()?.next(ctx)?;
             let canonical_key = match &t.value {
                 GValue::Vertex(v_arc) => CanonicalKey::Vertex(*v_arc),
                 GValue::Edge(e_arc) => CanonicalKey::Edge(e_arc.canonical_edge_key()),
-                _ => {
-                    // If the traverser is not a vertex or edge, we should raise an error. For now, we'll just skip it.
-                    continue;
-                }
+                // TODO: raise an error if it's not a vertex or edge
+                _ => continue,
             };
-            let mut prop = inner.prop.clone();
+            let mut prop = self.prop.clone();
             prop.owner = canonical_key;
             ctx.set_property(&prop).ok()?;
             return Some(smallvec![Rc::clone(&t)]);
         }
     }
-}
 
-impl GremlinStep for PropertyStep {
-    fn add_upper(&self, upstream: ConsumerIter) {
-        self.inner.borrow_mut().upstream = Some(upstream);
-    }
-
-    fn reset(&self) {
-        self.broadcast.borrow_mut().reset();
-        if let Some(up) = &self.inner.borrow().upstream {
+    fn reset(&mut self) {
+        if let Some(up) = &self.upstream {
             up.reset();
         }
     }

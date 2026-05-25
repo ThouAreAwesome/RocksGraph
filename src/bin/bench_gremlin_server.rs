@@ -22,7 +22,7 @@ use std::time::Instant;
 
 const MAX_RETRIES: usize = 3;
 const RETRY_DELAY_MS: u64 = 5;
-const PARALLELISM: usize = 10;
+const PARALLELISM: usize = 20;
 
 async fn random_server_addr() -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -53,7 +53,7 @@ fn generate_random_edge_properties() -> HashMap<String, GremlinArgument> {
 
 async fn check_vertex_exists(
     g: &mut gremlin_client::GraphTraversal<'_>,
-    vertex_id: i32,
+    vertex_id: i64,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let result = g.reset().V(&[vertex_id]).execute().await?;
     Ok(!result.as_array().unwrap().is_empty())
@@ -61,7 +61,7 @@ async fn check_vertex_exists(
 
 async fn create_vertex_with_retry(
     g: &mut gremlin_client::GraphTraversal<'_>,
-    vertex_id: i32,
+    vertex_id: i64,
     max_retries: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     for attempt in 0..max_retries {
@@ -80,8 +80,8 @@ async fn create_vertex_with_retry(
 
 async fn create_edge_with_retry(
     g: &mut gremlin_client::GraphTraversal<'_>,
-    src: i32,
-    dst: i32,
+    src: i64,
+    dst: i64,
     edge_type: u32,
     max_retries: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -173,8 +173,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         None => break, // Channel closed
                     };
 
-                    let parts: Vec<i32> =
-                        line.split_whitespace().map(|s| s.parse::<i32>()).filter_map(Result::ok).collect();
+                    let parts: Vec<i64> =
+                        line.split_whitespace().map(|s| s.parse::<i64>()).filter_map(Result::ok).collect();
 
                     if parts.len() != 2 {
                         continue;

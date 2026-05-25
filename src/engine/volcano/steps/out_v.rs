@@ -10,7 +10,7 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::{cell::RefCell, rc::Rc};
+use std::rc::Rc;
 
 use smallvec::{smallvec, SmallVec};
 
@@ -18,56 +18,39 @@ use crate::{
     engine::{
         context::GraphCtx,
         traverser::Traverser,
-        volcano::steps::traits::{BroadcastState, ConsumerIter, GremlinStep, HasBroadcast, Produce},
+        volcano::steps::traits::{CoreStep, StepRef},
     },
     types::GValue,
 };
 
-struct Inner {
-    upstream: Option<ConsumerIter>,
-}
-
 pub struct OutVStep {
-    broadcast: RefCell<BroadcastState>,
-    inner: RefCell<Inner>,
+    upstream: Option<StepRef>,
 }
 
 impl OutVStep {
-    pub fn new() -> Rc<Self> {
-        Rc::new(Self { broadcast: RefCell::new(BroadcastState::new()), inner: RefCell::new(Inner { upstream: None }) })
+    pub fn new() -> Self {
+        Self { upstream: None }
     }
 }
 
-impl HasBroadcast for OutVStep {
-    fn broadcast(&self) -> &RefCell<BroadcastState> {
-        &self.broadcast
+impl CoreStep for OutVStep {
+    fn add_upper(&mut self, upstream: StepRef) {
+        self.upstream = Some(upstream);
     }
-}
 
-impl Produce for OutVStep {
-    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
-        let inner = self.inner.borrow();
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
         loop {
-            let t = inner.upstream.as_ref().unwrap().next(ctx)?;
+            let t = self.upstream.as_ref()?.next(ctx)?;
             if let GValue::Edge(ek) = &t.value {
                 let vk = ek.canonical_edge_key().src_id;
-
                 return Some(smallvec![Traverser::new_rc_with_parent(GValue::Vertex(vk), Rc::clone(&t))]);
-            } else {
-                // TODO: consider returning an error here instead of silently skipping non-edge traversers
-                continue;
             }
+            // TODO: consider returning an error here instead of silently skipping non-edge traversers
         }
     }
-}
 
-impl GremlinStep for OutVStep {
-    fn add_upper(&self, upstream: ConsumerIter) {
-        self.inner.borrow_mut().upstream = Some(upstream);
-    }
-    fn reset(&self) {
-        self.broadcast.borrow_mut().reset();
-        if let Some(up) = &self.inner.borrow().upstream {
+    fn reset(&mut self) {
+        if let Some(up) = &self.upstream {
             up.reset();
         }
     }

@@ -84,7 +84,7 @@ async fn test_server_client_integration() -> Result<(), Box<dyn std::error::Erro
     assert_eq!(data_marko_knows_count.as_array().unwrap().len(), 1); //
     assert_eq!(
         data_marko_knows_count[0],
-        test_utils::gvalue_to_json_value(&crate::types::GValue::Scalar(Primitive::Int32(2)))
+        test_utils::gvalue_to_json_value(&crate::types::GValue::Scalar(Primitive::Int64(2)))
     );
 
     // --- Test Case 5: g.V(1).out() ---
@@ -118,7 +118,7 @@ async fn test_server_client_integration() -> Result<(), Box<dyn std::error::Erro
     println!("\n--- Testing g.V(1).values('age').is(29) ---");
     let data_is = g.reset().V(&[1]).values(&["age"]).is(GremlinArgument::Int(29)).execute().await?;
     assert_eq!(data_is.as_array().unwrap().len(), 1);
-    assert_eq!(data_is[0], test_utils::gvalue_to_json_value(&crate::types::GValue::Scalar(Primitive::Int32(29))));
+    assert_eq!(data_is[0], test_utils::gvalue_to_json_value(&crate::types::GValue::Scalar(Primitive::Int64(29))));
 
     // --- Test Case 10: g.V(1).where(out().hasLabel('software')) ---
     println!("\n--- Testing g.V(1).where(out().hasLabel('software')) ---");
@@ -158,6 +158,30 @@ async fn test_server_client_integration() -> Result<(), Box<dyn std::error::Erro
     println!("\n--- Testing g.V(4).both() ---");
     let data_both = g.reset().V(&[4]).both(&[]).execute().await?;
     assert_eq!(data_both.as_array().unwrap().len(), 3);
+
+    // --- Test Case 17: g.V(1).out().limit(2) ---
+    println!("\n--- Testing g.V(1).out().limit(2) ---");
+    let data_limit = g.reset().V(&[1]).out(&[]).limit(2).execute().await?;
+    assert_eq!(data_limit.as_array().unwrap().len(), 2);
+
+    // --- Test Case 18: g.V().hasId(1, 2) ---
+    println!("\n--- Testing g.V(1, 2, 3).hasId(1, 2) ---");
+    let data_has_id = g.reset().V(&[1, 2, 3]).hasId(&[1, 2]).execute().await?;
+    assert_eq!(data_has_id.as_array().unwrap().len(), 2);
+
+    // --- Test Case 19: g.V(4).both().limit(2) ---
+    println!("\n--- Testing g.V(4).both().limit(2) ---");
+    let data_both = g.reset().V(&[4]).both(&[]).limit(2).execute().await?;
+    assert_eq!(data_both.as_array().unwrap().len(), 2);
+
+    // --- Test Case 20: g.V(1).hasId(1).outE().where(otherV().hasId(2, 3)).count() ---
+    println!("\n--- Testing g.V(1).hasId(1).outE().where(otherV().hasId(2, 3)).count() ---");
+    let mut sub_query_other = gremlin_client::__();
+    sub_query_other.otherV().hasId(&[2, 3]);
+    let data_complex =
+        g.reset().V(&[1, 2, 3]).hasId(&[1]).outE(&[]).r#where(&mut sub_query_other).count().execute().await?;
+    assert_eq!(data_complex.as_array().unwrap().len(), 1);
+    assert_eq!(data_complex[0], test_utils::gvalue_to_json_value(&crate::types::GValue::Scalar(Primitive::Int64(2))));
 
     Ok(())
 }
@@ -248,7 +272,7 @@ async fn test_sequential_modifications() -> Result<(), Box<dyn std::error::Error
     let data_edge_update = g.reset().V(&[101]).outE(&[3]).values(&["since"]).execute().await?;
     assert_eq!(
         data_edge_update[0],
-        test_utils::gvalue_to_json_value(&crate::types::GValue::Scalar(Primitive::Int32(2022)))
+        test_utils::gvalue_to_json_value(&crate::types::GValue::Scalar(Primitive::Int64(2022)))
     );
 
     Ok(())

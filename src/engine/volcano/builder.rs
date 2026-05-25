@@ -19,7 +19,7 @@
 //! [`planner::logical_step`] free of any engine-specific imports.
 //!
 //! A [`PhysicalPlan`] is a [`VecSourceStep`] (the injection point) wired to a
-//! `tail` [`ConsumerIter`]. Callers inject traversers via [`PhysicalPlan::inject`]
+//! `tail` [`StepRef`]. Callers inject traversers via [`PhysicalPlan::inject`]
 //! and pull results one at a time with [`PhysicalPlan::next`].
 //!
 //! [`LogicalPlan`]: crate::planner::logical_step::LogicalPlan
@@ -34,7 +34,7 @@ use crate::{
         context::GraphCtx,
         traverser::Traverser,
         volcano::steps::{
-            traits::{ConsumerIter, GremlinStep, Step},
+            traits::{BufferedStep, GremlinStep, StepRef},
             vec_source::VecSourceStep,
         },
     },
@@ -43,13 +43,13 @@ use crate::{
 
 #[derive(Clone)]
 pub struct PhysicalPlan {
-    pub source: Rc<VecSourceStep>,
-    pub tail: ConsumerIter,
+    pub source: Rc<BufferedStep<VecSourceStep>>,
+    pub tail: StepRef,
 }
 
 impl PhysicalPlan {
     pub fn inject(&self, items: VecDeque<Rc<Traverser>>) {
-        self.source.inject(items);
+        self.source.inner.borrow_mut().core.inject(items);
     }
 
     pub fn next(&self, ctx: &mut dyn GraphCtx) -> Option<Rc<Traverser>> {
@@ -66,160 +66,121 @@ pub struct PhysicalPlanBuilder;
 
 impl PhysicalPlanBuilder {
     pub fn build(&mut self, plan: &LogicalPlan) -> PhysicalPlan {
-        let source = VecSourceStep::empty();
-        let mut upstream = Some(Step::subscribe(&source));
+        let source = BufferedStep::new(VecSourceStep::empty());
 
         if plan.steps.is_empty() {
-            return PhysicalPlan { source: source.clone(), tail: Step::subscribe(&source) };
+            let tail: StepRef = source.clone();
+            return PhysicalPlan { source, tail };
         }
 
+        let mut upstream: Option<StepRef> = Some(source.clone());
         for step in &plan.steps {
             upstream = self.build_step(step, upstream);
         }
 
-        PhysicalPlan { source, tail: upstream.expect("Plan must have at least the source step") }
+        PhysicalPlan { source, tail: upstream.expect("plan must have at least one step") }
     }
 
-    fn build_step(&mut self, step: &LogicalStep, upstream: Option<ConsumerIter>) -> Option<ConsumerIter> {
+    fn build_step(&mut self, step: &LogicalStep, upstream: Option<StepRef>) -> Option<StepRef> {
         use crate::engine::volcano::steps;
+
+        macro_rules! wire {
+            ($phys:expr, $up:expr) => {{
+                let phys = $phys;
+                if let Some(up) = $up {
+                    phys.add_upper(up);
+                }
+                Some(phys as StepRef)
+            }};
+        }
+        macro_rules! wire_required {
+            ($phys:expr, $up:expr, $name:literal) => {{
+                let phys = $phys;
+                match $up {
+                    Some(up) => phys.add_upper(up),
+                    None => panic!(concat!($name, " must have an upstream")),
+                }
+                Some(phys as StepRef)
+            }};
+        }
 
         match step {
             LogicalStep::Both(s) => {
-                let phys = steps::both::BothStep::new(s.label_ids.clone());
-                if let Some(up) = upstream {
-                    phys.add_upper(up);
-                }
-                Some(Step::subscribe(&phys))
+                wire!(BufferedStep::new(steps::both::BothStep::new(s.label_ids.clone())), upstream)
             }
             LogicalStep::BothE(s) => {
-                let phys = steps::both_e::BothEStep::new(s.label_ids.clone());
-                if let Some(up) = upstream {
-                    phys.add_upper(up);
-                }
-                Some(Step::subscribe(&phys))
+                wire!(BufferedStep::new(steps::both_e::BothEStep::new(s.label_ids.clone())), upstream)
             }
             LogicalStep::V(s) => {
-                let phys = steps::v::VStep::new(s.ids.clone());
-                Some(Step::subscribe(&phys))
+                wire!(BufferedStep::new(steps::v::VStep::new(s.ids.clone())), None::<StepRef>)
             }
             LogicalStep::Count(_) => {
-                let phys = steps::count::CountStep::new();
-                if let Some(up) = upstream {
-                    phys.add_upper(up);
-                }
-                Some(Step::subscribe(&phys))
+                wire_required!(BufferedStep::new(steps::count::CountStep::new()), upstream, "CountStep")
             }
             LogicalStep::HasLabel(s) => {
-                let phys = steps::has_label::HasLabelStep::new(s.label_ids.clone());
-                if let Some(up) = upstream {
-                    phys.add_upper(up);
-                }
-                Some(Step::subscribe(&phys))
+                wire!(BufferedStep::new(steps::has_label::HasLabelStep::new(s.label_ids.clone())), upstream)
             }
-            LogicalStep::HasProperty(s) => {
-                let phys = steps::has_property::HasPropertyStep::new(s.key.clone(), s.value.clone());
-                if let Some(up) = upstream {
-                    phys.add_upper(up);
-                }
-                Some(Step::subscribe(&phys))
-            }
+            LogicalStep::HasProperty(s) => wire!(
+                BufferedStep::new(steps::has_property::HasPropertyStep::new(s.key.clone(), s.value.clone())),
+                upstream
+            ),
             LogicalStep::In(s) => {
-                let phys = steps::r#in::InStep::new(s.label_ids.clone());
-                match upstream {
-                    Some(up) => phys.add_upper(up),
-                    None => panic!("InStep must have an upstream."),
-                }
-                Some(Step::subscribe(&phys))
+                wire_required!(BufferedStep::new(steps::r#in::InStep::new(s.label_ids.clone())), upstream, "InStep")
             }
             LogicalStep::InE(s) => {
-                let phys = steps::in_e::InEStep::new(s.label_ids.clone());
-                match upstream {
-                    Some(up) => phys.add_upper(up),
-                    None => panic!("InEStep must have an upstream."),
-                }
-                Some(Step::subscribe(&phys))
+                wire_required!(BufferedStep::new(steps::in_e::InEStep::new(s.label_ids.clone())), upstream, "InEStep")
             }
             LogicalStep::Out(s) => {
-                let phys = steps::out::OutStep::new(s.label_ids.clone());
-                match upstream {
-                    Some(up) => phys.add_upper(up),
-                    None => panic!("OutStep must have an upstream."),
-                }
-                Some(Step::subscribe(&phys))
+                wire_required!(BufferedStep::new(steps::out::OutStep::new(s.label_ids.clone())), upstream, "OutStep")
             }
             LogicalStep::OutE(s) => {
-                let phys = steps::out_e::OutEStep::new(s.label_ids.clone());
-                if let Some(up) = upstream {
-                    phys.add_upper(up);
-                }
-                Some(Step::subscribe(&phys))
+                wire!(BufferedStep::new(steps::out_e::OutEStep::new(s.label_ids.clone())), upstream)
             }
             LogicalStep::InV(_) => {
-                let phys = steps::in_v::InVStep::new();
-                if let Some(up) = upstream {
-                    phys.add_upper(up);
-                }
-                Some(Step::subscribe(&phys))
+                wire!(BufferedStep::new(steps::in_v::InVStep::new()), upstream)
             }
             LogicalStep::OtherV(_) => {
-                let phys = steps::other_v::OtherVStep::new();
-                if let Some(up) = upstream {
-                    phys.add_upper(up);
-                }
-                Some(Step::subscribe(&phys))
+                wire!(BufferedStep::new(steps::other_v::OtherVStep::new()), upstream)
             }
             LogicalStep::OutV(_) => {
-                let phys = steps::out_v::OutVStep::new();
-                if let Some(up) = upstream {
-                    phys.add_upper(up);
-                }
-                Some(Step::subscribe(&phys))
+                wire!(BufferedStep::new(steps::out_v::OutVStep::new()), upstream)
             }
             LogicalStep::ScalarFilter(s) => {
-                let phys = steps::scalar_filter::ScalarFilterStep::new(s.value.clone());
-                if let Some(up) = upstream {
-                    phys.add_upper(up);
-                }
-                Some(Step::subscribe(&phys))
+                wire!(BufferedStep::new(steps::scalar_filter::ScalarFilterStep::new(s.value.clone())), upstream)
             }
             LogicalStep::Values(s) => {
-                let phys = steps::values::ValuesStep::new(s.property_keys.clone());
-                if let Some(up) = upstream {
-                    phys.add_upper(up);
-                }
-                Some(Step::subscribe(&phys))
+                wire!(BufferedStep::new(steps::values::ValuesStep::new(s.property_keys.clone())), upstream)
             }
             LogicalStep::Where(s) => {
                 let physical_plan = self.build(&s.plan);
-                let phys = steps::where_step::WhereStep::new(physical_plan);
-                if let Some(up) = upstream {
-                    phys.add_upper(up);
-                }
-                Some(Step::subscribe(&phys))
+                wire!(BufferedStep::new(steps::r#where::WhereStep::new(physical_plan)), upstream)
             }
             LogicalStep::Union(s) => {
                 let physical_plans = s.plans.iter().map(|p| self.build(p)).collect();
-                let phys = steps::union::UnionStep::new(physical_plans);
-                if let Some(up) = upstream {
-                    phys.add_upper(up);
-                }
-                Some(Step::subscribe(&phys))
+                wire!(BufferedStep::new(steps::union::UnionStep::new(physical_plans)), upstream)
             }
             LogicalStep::AddV(s) => {
-                let phys = steps::add_v::AddVStep::new(s.label_id, s.vertex_id, s.properties.clone());
-                Some(Step::subscribe(&phys))
+                wire!(
+                    BufferedStep::new(steps::add_v::AddVStep::new(s.label_id, s.vertex_id, s.properties.clone())),
+                    None::<StepRef>
+                )
             }
             LogicalStep::AddE(s) => {
-                let phys = steps::add_e::AddEStep::new(s.label_id, s.out_v_id, s.in_v_id, s.properties.clone());
-                Some(Step::subscribe(&phys))
+                wire!(
+                    BufferedStep::new(steps::add_e::AddEStep::new(s.label_id, s.out_v_id, s.in_v_id, s.properties.clone())),
+                    None::<StepRef>
+                )
             }
-            LogicalStep::Property(s) => {
-                let phys = steps::property::PropertyStep::new(s.prop_key.clone(), s.prop_value.clone());
-                match upstream {
-                    Some(up) => phys.add_upper(up),
-                    None => panic!("PropertyStep must have an upstream."),
-                }
-                Some(Step::subscribe(&phys))
+            LogicalStep::Property(s) => wire_required!(
+                BufferedStep::new(steps::property::PropertyStep::new(s.prop_key.clone(), s.prop_value.clone())),
+                upstream,
+                "PropertyStep"
+            ),
+            LogicalStep::Limit(s) => {
+                wire!(BufferedStep::new(steps::limit::LimitStep::new(s.limit)), upstream)
+            }
+            LogicalStep::HasId(s) => {
+                wire!(BufferedStep::new(steps::has_id::HasIdStep::new(s.ids.clone())), upstream)
             }
         }
     }
@@ -238,18 +199,18 @@ mod tests {
         types::gvalue::{GValue, Primitive},
     };
 
-    fn gvalue(value: i32) -> GValue {
-        GValue::Scalar(Primitive::Int32(value))
+    fn gvalue(value: i64) -> GValue {
+        GValue::Scalar(Primitive::Int64(value))
     }
 
-    fn traverser(value: i32) -> Rc<Traverser> {
+    fn traverser(value: i64) -> Rc<Traverser> {
         Traverser::new_rc(gvalue(value))
     }
 
     #[test]
     fn test_simple_filter_plan() {
         let plan =
-            LogicalPlan { steps: vec![LogicalStep::ScalarFilter(ScalarFilterStep { value: Primitive::Int32(2) })] };
+            LogicalPlan { steps: vec![LogicalStep::ScalarFilter(ScalarFilterStep { value: Primitive::Int64(2) })] };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&plan);
@@ -285,7 +246,7 @@ mod tests {
     #[test]
     fn test_where_step_plan() {
         let sub_plan =
-            LogicalPlan { steps: vec![LogicalStep::ScalarFilter(ScalarFilterStep { value: Primitive::Int32(2) })] };
+            LogicalPlan { steps: vec![LogicalStep::ScalarFilter(ScalarFilterStep { value: Primitive::Int64(2) })] };
         let plan = LogicalPlan { steps: vec![LogicalStep::Where(WhereStep { plan: sub_plan })] };
 
         let mut builder: PhysicalPlanBuilder = Default::default();

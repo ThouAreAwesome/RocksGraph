@@ -10,70 +10,54 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
+use std::rc::Rc;
+
 use smallvec::{smallvec, SmallVec};
-use std::{cell::RefCell, rc::Rc};
 
 use crate::{
     engine::{
         context::GraphCtx,
         traverser::Traverser,
-        volcano::steps::traits::{BroadcastState, ConsumerIter, GremlinStep, HasBroadcast, Produce},
+        volcano::steps::traits::{CoreStep, StepRef},
     },
     types::{keys::CanonicalKey, prop_key::PropKey, GValue},
 };
 
-struct Inner {
-    upstream: Option<ConsumerIter>,
+pub struct ValuesStep {
+    upstream: Option<StepRef>,
     property_keys: Vec<PropKey>,
 }
 
-pub struct ValuesStep {
-    broadcast: RefCell<BroadcastState>,
-    inner: RefCell<Inner>,
-}
-
 impl ValuesStep {
-    pub fn new(property_keys: Vec<PropKey>) -> Rc<Self> {
-        Rc::new(Self {
-            broadcast: RefCell::new(BroadcastState::new()),
-            inner: RefCell::new(Inner { upstream: None, property_keys }),
-        })
+    pub fn new(property_keys: Vec<PropKey>) -> Self {
+        Self { upstream: None, property_keys }
     }
 }
 
-impl HasBroadcast for ValuesStep {
-    fn broadcast(&self) -> &RefCell<BroadcastState> {
-        &self.broadcast
+impl CoreStep for ValuesStep {
+    fn add_upper(&mut self, upstream: StepRef) {
+        self.upstream = Some(upstream);
     }
-}
 
-impl Produce for ValuesStep {
-    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
-        let inner = self.inner.borrow();
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
         loop {
-            let t = inner.upstream.as_ref()?.next(ctx)?;
+            let t = self.upstream.as_ref()?.next(ctx)?;
             let canonical_key = match &t.value {
                 GValue::Vertex(v_arc) => CanonicalKey::Vertex(*v_arc),
                 GValue::Edge(e_arc) => CanonicalKey::Edge(e_arc.canonical_edge_key()),
-                // todo: better to raise an error if it's not a vertex or edge, as values() should only be called on
-                // elements. For now, we'll just skip non-element traversers.
-                _ => continue, // Only process vertices and edges
+                // TODO: raise an error if it's not a vertex or edge
+                _ => continue,
             };
 
-            let mut results = smallvec![];
-            if inner.property_keys.is_empty() {
-                // If no specific keys are given, return all values (this is more complex, requires iterating properties
-                // on the element itself) For now, let's skip this case or return an error if no keys
-                // are specified, as GraphCtx::get_property requires a specific key.
-                // A proper implementation would need to fetch the element and iterate its properties.
-                // For simplicity, let's assume property_keys is never empty for now, or handle it as a no-op.
-                // todo: implement fetching all properties if property_keys is empty.
+            if self.property_keys.is_empty() {
+                // TODO: implement fetching all properties if property_keys is empty
                 continue;
-            } else {
-                for key in &inner.property_keys {
-                    if let Some(value) = ctx.get_property(canonical_key, key).ok()? {
-                        results.push(Traverser::new_rc(GValue::Scalar(value)));
-                    }
+            }
+
+            let mut results = smallvec![];
+            for key in &self.property_keys {
+                if let Some(value) = ctx.get_property(canonical_key, key).ok()? {
+                    results.push(Traverser::new_rc(GValue::Scalar(value)));
                 }
             }
             if !results.is_empty() {
@@ -81,15 +65,9 @@ impl Produce for ValuesStep {
             }
         }
     }
-}
 
-impl GremlinStep for ValuesStep {
-    fn add_upper(&self, upstream: ConsumerIter) {
-        self.inner.borrow_mut().upstream = Some(upstream);
-    }
-    fn reset(&self) {
-        self.broadcast.borrow_mut().reset();
-        if let Some(up) = &self.inner.borrow().upstream {
+    fn reset(&mut self) {
+        if let Some(up) = &self.upstream {
             up.reset();
         }
     }

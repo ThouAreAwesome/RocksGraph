@@ -54,10 +54,30 @@ use crate::{
 pub trait GraphCtx {
     fn get_vertex(&mut self, key: VertexKey) -> Result<Option<Arc<Vertex>>, StoreError>;
     fn get_edge(&mut self, key: EdgeKey) -> Result<Option<Arc<Edge>>, StoreError>;
-    fn get_outs(&mut self, vertex_key: VertexKey, label: Option<LabelId>) -> Result<Vec<VertexKey>, StoreError>;
-    fn get_out_edges(&mut self, vertex_key: VertexKey, label: Option<LabelId>) -> Result<Vec<EdgeKey>, StoreError>;
-    fn get_ins(&mut self, vertex_key: VertexKey, label: Option<LabelId>) -> Result<Vec<VertexKey>, StoreError>;
-    fn get_in_edges(&mut self, vertex_key: VertexKey, label: Option<LabelId>) -> Result<Vec<EdgeKey>, StoreError>;
+    fn get_outs(
+        &mut self,
+        vertex_key: VertexKey,
+        label: Option<LabelId>,
+        limit: Option<u32>,
+    ) -> Result<Vec<VertexKey>, StoreError>;
+    fn get_out_edges(
+        &mut self,
+        vertex_key: VertexKey,
+        label: Option<LabelId>,
+        limit: Option<u32>,
+    ) -> Result<Vec<EdgeKey>, StoreError>;
+    fn get_ins(
+        &mut self,
+        vertex_key: VertexKey,
+        label: Option<LabelId>,
+        limit: Option<u32>,
+    ) -> Result<Vec<VertexKey>, StoreError>;
+    fn get_in_edges(
+        &mut self,
+        vertex_key: VertexKey,
+        label: Option<LabelId>,
+        limit: Option<u32>,
+    ) -> Result<Vec<EdgeKey>, StoreError>;
     fn get_property(&mut self, key: CanonicalKey, prop: &PropKey) -> Result<Option<Primitive>, StoreError>;
     /// Insert a vertex.  See `LogicalGraph::add_vertex` for existence-check and
     /// locking details.
@@ -83,16 +103,36 @@ impl GraphCtx for NoopCtx {
     fn get_edge(&mut self, _key: EdgeKey) -> Result<Option<Arc<Edge>>, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support get_edge".to_string()))
     }
-    fn get_outs(&mut self, _vertex_key: VertexKey, _label: Option<LabelId>) -> Result<Vec<VertexKey>, StoreError> {
+    fn get_outs(
+        &mut self,
+        _vertex_key: VertexKey,
+        _label: Option<LabelId>,
+        _limit: Option<u32>,
+    ) -> Result<Vec<VertexKey>, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support get_outs".to_string()))
     }
-    fn get_out_edges(&mut self, _vertex_key: VertexKey, _label: Option<LabelId>) -> Result<Vec<EdgeKey>, StoreError> {
+    fn get_out_edges(
+        &mut self,
+        _vertex_key: VertexKey,
+        _label: Option<LabelId>,
+        _limit: Option<u32>,
+    ) -> Result<Vec<EdgeKey>, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support get_out_edges".to_string()))
     }
-    fn get_ins(&mut self, _vertex_key: VertexKey, _label: Option<LabelId>) -> Result<Vec<VertexKey>, StoreError> {
+    fn get_ins(
+        &mut self,
+        _vertex_key: VertexKey,
+        _label: Option<LabelId>,
+        _limit: Option<u32>,
+    ) -> Result<Vec<VertexKey>, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support get_ins".to_string()))
     }
-    fn get_in_edges(&mut self, _vertex_key: VertexKey, _label: Option<LabelId>) -> Result<Vec<EdgeKey>, StoreError> {
+    fn get_in_edges(
+        &mut self,
+        _vertex_key: VertexKey,
+        _label: Option<LabelId>,
+        _limit: Option<u32>,
+    ) -> Result<Vec<EdgeKey>, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support get_in_edges".to_string()))
     }
     fn get_property(&mut self, _key: CanonicalKey, _prop: &PropKey) -> Result<Option<Primitive>, StoreError> {
@@ -119,20 +159,40 @@ impl<S: GraphStore> GraphCtx for LogicalGraph<S> {
     fn get_edge(&mut self, key: EdgeKey) -> Result<Option<Arc<Edge>>, StoreError> {
         LogicalGraph::get_edge(self, key.canonical_edge_key())
     }
-    fn get_outs(&mut self, vertex_key: VertexKey, label: Option<LabelId>) -> Result<Vec<VertexKey>, StoreError> {
-        let edges = self.get_edges(vertex_key, crate::types::Direction::OUT, label, None)?;
+    fn get_outs(
+        &mut self,
+        vertex_key: VertexKey,
+        label: Option<LabelId>,
+        limit: Option<u32>,
+    ) -> Result<Vec<VertexKey>, StoreError> {
+        let edges = self.get_edges(vertex_key, crate::types::Direction::OUT, label, None, limit)?;
         Ok(edges.into_iter().map(|(ek, _)| ek.secondary_id).collect())
     }
-    fn get_out_edges(&mut self, vertex_key: VertexKey, label: Option<LabelId>) -> Result<Vec<EdgeKey>, StoreError> {
-        let edges = self.get_edges(vertex_key, crate::types::Direction::OUT, label, None)?;
+    fn get_out_edges(
+        &mut self,
+        vertex_key: VertexKey,
+        label: Option<LabelId>,
+        limit: Option<u32>,
+    ) -> Result<Vec<EdgeKey>, StoreError> {
+        let edges = self.get_edges(vertex_key, crate::types::Direction::OUT, label, None, limit)?;
         Ok(edges.into_iter().map(|(ek, _)| ek).collect())
     }
-    fn get_ins(&mut self, vertex_key: VertexKey, label: Option<LabelId>) -> Result<Vec<VertexKey>, StoreError> {
-        let edges = self.get_edges(vertex_key, crate::types::Direction::IN, label, None)?;
+    fn get_ins(
+        &mut self,
+        vertex_key: VertexKey,
+        label: Option<LabelId>,
+        limit: Option<u32>,
+    ) -> Result<Vec<VertexKey>, StoreError> {
+        let edges = self.get_edges(vertex_key, crate::types::Direction::IN, label, None, limit)?;
         Ok(edges.into_iter().map(|(ek, _)| ek.secondary_id).collect())
     }
-    fn get_in_edges(&mut self, vertex_key: VertexKey, label: Option<LabelId>) -> Result<Vec<EdgeKey>, StoreError> {
-        let edges = self.get_edges(vertex_key, crate::types::Direction::IN, label, None)?;
+    fn get_in_edges(
+        &mut self,
+        vertex_key: VertexKey,
+        label: Option<LabelId>,
+        limit: Option<u32>,
+    ) -> Result<Vec<EdgeKey>, StoreError> {
+        let edges = self.get_edges(vertex_key, crate::types::Direction::IN, label, None, limit)?;
         Ok(edges.into_iter().map(|(ek, _)| ek).collect())
     }
     fn get_property(&mut self, key: CanonicalKey, prop: &PropKey) -> Result<Option<Primitive>, StoreError> {

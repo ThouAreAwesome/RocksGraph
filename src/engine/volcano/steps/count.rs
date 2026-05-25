@@ -10,67 +10,50 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
+use std::rc::Rc;
+
 use smallvec::{smallvec, SmallVec};
-use std::{cell::RefCell, rc::Rc};
 
 use crate::{
     engine::{
         context::GraphCtx,
         traverser::Traverser,
-        volcano::steps::traits::{BroadcastState, ConsumerIter, GremlinStep, HasBroadcast, Produce},
+        volcano::steps::traits::{CoreStep, StepRef},
     },
     types::gvalue::{GValue, Primitive},
 };
 
-struct Inner {
-    upstream: Option<ConsumerIter>,
+pub struct CountStep {
+    upstream: Option<StepRef>,
     done: bool,
 }
 
-pub struct CountStep {
-    broadcast: RefCell<BroadcastState>,
-    inner: RefCell<Inner>,
-}
-
 impl CountStep {
-    pub fn new() -> Rc<Self> {
-        Rc::new(Self {
-            broadcast: RefCell::new(BroadcastState::new()),
-            inner: RefCell::new(Inner { upstream: None, done: false }),
-        })
+    pub fn new() -> Self {
+        Self { upstream: None, done: false }
     }
 }
 
-impl HasBroadcast for CountStep {
-    fn broadcast(&self) -> &RefCell<BroadcastState> {
-        &self.broadcast
+impl CoreStep for CountStep {
+    fn add_upper(&mut self, upstream: StepRef) {
+        self.upstream = Some(upstream);
     }
-}
 
-impl Produce for CountStep {
-    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
-        let mut inner = self.inner.borrow_mut();
-        if inner.done {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
+        if self.done {
             return None;
         }
-        let mut count = 0;
-        while inner.upstream.as_ref().unwrap().next(ctx).is_some() {
+        let mut count: u64 = 0;
+        while self.upstream.as_ref()?.next(ctx).is_some() {
             count += 1;
         }
-        inner.done = true;
-        Some(smallvec![Traverser::new_rc(GValue::Scalar(Primitive::Int32(count)))])
+        self.done = true;
+        Some(smallvec![Traverser::new_rc(GValue::Scalar(Primitive::Int64(count as i64)))])
     }
-}
 
-impl GremlinStep for CountStep {
-    fn add_upper(&self, upstream: ConsumerIter) {
-        self.inner.borrow_mut().upstream = Some(upstream);
-    }
-    fn reset(&self) {
-        self.broadcast.borrow_mut().reset();
-        let mut inner = self.inner.borrow_mut();
-        inner.done = false;
-        if let Some(up) = &inner.upstream {
+    fn reset(&mut self) {
+        self.done = false;
+        if let Some(up) = &self.upstream {
             up.reset();
         }
     }

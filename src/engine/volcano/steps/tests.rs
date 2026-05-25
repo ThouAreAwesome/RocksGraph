@@ -390,7 +390,7 @@ mod cases {
         println!("\nEdges:");
         // Iterate through all vertices to get their outgoing edges
         for src_id in 1..=6 {
-            if let Ok(out_edges) = graph.get_out_edges(src_id, None) {
+            if let Ok(out_edges) = graph.get_out_edges(src_id, None, None) {
                 for edge_key in out_edges {
                     if let Ok(Some(edge)) = graph.get_edge(edge_key.canonical_edge_key()) {
                         let label_name = get_label_name(edge.label_id);
@@ -746,8 +746,8 @@ mod cases {
 
         // Marko has 3 outgoing edges and 0 incoming edges in the TinkerPop Modern Graph
         assert_eq!(results.len(), 2);
-        assert!(results.contains(&GValue::Scalar(Primitive::Int32(3))));
-        assert!(results.contains(&GValue::Scalar(Primitive::Int32(0))));
+        assert!(results.contains(&GValue::Scalar(Primitive::Int64(3))));
+        assert!(results.contains(&GValue::Scalar(Primitive::Int64(0))));
     }
 
     #[test]

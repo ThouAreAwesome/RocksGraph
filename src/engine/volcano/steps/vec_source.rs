@@ -10,73 +10,43 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::{cell::RefCell, collections::VecDeque, rc::Rc};
+use std::{collections::VecDeque, rc::Rc};
 
 use smallvec::{smallvec, SmallVec};
 
-use crate::{
-    engine::{
-        context::GraphCtx,
-        traverser::Traverser,
-        volcano::steps::traits::{BroadcastState, ConsumerIter, GremlinStep, HasBroadcast, Produce},
-    },
-    types::GValue,
+use crate::engine::{
+    context::GraphCtx,
+    traverser::Traverser,
+    volcano::steps::traits::{CoreStep, StepRef},
 };
 
-struct Inner {
+pub struct VecSourceStep {
     items: VecDeque<Rc<Traverser>>,
     items_backup: VecDeque<Rc<Traverser>>,
 }
 
-pub struct VecSourceStep {
-    broadcast: RefCell<BroadcastState>,
-    inner: RefCell<Inner>,
-}
-
 impl VecSourceStep {
-    pub fn empty() -> Rc<Self> {
-        Rc::new(Self {
-            broadcast: RefCell::new(BroadcastState::new()),
-            inner: RefCell::new(Inner { items: VecDeque::new(), items_backup: VecDeque::new() }),
-        })
+    pub fn empty() -> Self {
+        Self { items: VecDeque::new(), items_backup: VecDeque::new() }
     }
 
-    pub fn new(items: VecDeque<GValue>) -> Rc<Self> {
-        let traversers: VecDeque<Rc<Traverser>> = items.into_iter().map(Traverser::new_rc).collect();
-
-        Rc::new(Self {
-            broadcast: RefCell::new(BroadcastState::new()),
-            inner: RefCell::new(Inner { items: traversers.clone(), items_backup: traversers }),
-        })
-    }
-
-    pub fn inject(&self, items: VecDeque<Rc<Traverser>>) {
-        let mut inner = self.inner.borrow_mut();
-        inner.items = items.clone();
-        inner.items_backup = items;
+    pub fn inject(&mut self, items: VecDeque<Rc<Traverser>>) {
+        self.items = items.clone();
+        self.items_backup = items;
     }
 }
 
-impl HasBroadcast for VecSourceStep {
-    fn broadcast(&self) -> &RefCell<BroadcastState> {
-        &self.broadcast
-    }
-}
-
-impl Produce for VecSourceStep {
-    fn produce(&self, _ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
-        let item = self.inner.borrow_mut().items.pop_front()?;
-        Some(smallvec![item])
-    }
-}
-
-impl GremlinStep for VecSourceStep {
-    fn add_upper(&self, _upstream: ConsumerIter) {
+impl CoreStep for VecSourceStep {
+    fn add_upper(&mut self, _upstream: StepRef) {
         panic!("VecSourceStep is a source step and cannot have an upstream");
     }
-    fn reset(&self) {
-        self.broadcast.borrow_mut().reset();
-        let mut inner = self.inner.borrow_mut();
-        inner.items = inner.items_backup.clone();
+
+    fn produce(&mut self, _ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
+        let item = self.items.pop_front()?;
+        Some(smallvec![item])
+    }
+
+    fn reset(&mut self) {
+        self.items = self.items_backup.clone();
     }
 }

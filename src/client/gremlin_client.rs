@@ -11,7 +11,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, Web
 #[serde(untagged)]
 pub enum GremlinArgument {
     String(String),
-    Int(i32),
+    Int(i64),
     Float(f64),
     Bool(bool),
     #[serde(rename = "bytecode")]
@@ -148,8 +148,8 @@ impl<'a, S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> GraphTraversal
 
     /// Spawns a traversal with the `V()` step.
     /// This method is available on `GraphTraversal` for sub-traversals (e.g., `__.V()`).
-    pub fn V(&mut self, ids: &[i32]) -> &mut Self {
-        let arguments = ids.iter().map(|&i| GremlinArgument::Int(i)).collect();
+    pub fn V(&mut self, ids: &[i64]) -> &mut Self {
+        let arguments = ids.iter().map(|&i| GremlinArgument::Int(i as i64)).collect();
         self.ast.step.push(ParsedGremlinStep { name: "V".to_string(), arguments });
         self
     }
@@ -157,11 +157,11 @@ impl<'a, S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> GraphTraversal
     pub fn addV(
         &mut self,
         label_id: u32,
-        vertex_id: i32,
+        vertex_id: i64,
         properties: std::collections::HashMap<String, GremlinArgument>,
     ) -> &mut Self {
         let arguments = vec![
-            GremlinArgument::Int(label_id as i32),
+            GremlinArgument::Int(label_id as i64),
             GremlinArgument::Int(vertex_id),
             GremlinArgument::Map(properties),
         ];
@@ -172,12 +172,12 @@ impl<'a, S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> GraphTraversal
     pub fn addE(
         &mut self,
         label_id: u32,
-        out_v_id: i32,
-        in_v_id: i32,
+        out_v_id: i64,
+        in_v_id: i64,
         properties: std::collections::HashMap<String, GremlinArgument>,
     ) -> &mut Self {
         let arguments = vec![
-            GremlinArgument::Int(label_id as i32),
+            GremlinArgument::Int(label_id as i64),
             GremlinArgument::Int(out_v_id),
             GremlinArgument::Int(in_v_id),
             GremlinArgument::Map(properties),
@@ -187,37 +187,37 @@ impl<'a, S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> GraphTraversal
     }
 
     pub fn out(&mut self, labels: &[u32]) -> &mut Self {
-        let arguments = labels.iter().map(|&l| GremlinArgument::Int(l as i32)).collect();
+        let arguments = labels.iter().map(|&l| GremlinArgument::Int(l as i64)).collect();
         self.ast.step.push(ParsedGremlinStep { name: "out".to_string(), arguments });
         self
     }
 
     pub fn outE(&mut self, labels: &[u32]) -> &mut Self {
-        let arguments = labels.iter().map(|&l| GremlinArgument::Int(l as i32)).collect();
+        let arguments = labels.iter().map(|&l| GremlinArgument::Int(l as i64)).collect();
         self.ast.step.push(ParsedGremlinStep { name: "outE".to_string(), arguments });
         self
     }
 
     pub fn r#in(&mut self, labels: &[u32]) -> &mut Self {
-        let arguments = labels.iter().map(|&l| GremlinArgument::Int(l as i32)).collect();
+        let arguments = labels.iter().map(|&l| GremlinArgument::Int(l as i64)).collect();
         self.ast.step.push(ParsedGremlinStep { name: "in".to_string(), arguments });
         self
     }
 
     pub fn inE(&mut self, labels: &[u32]) -> &mut Self {
-        let arguments = labels.iter().map(|&l| GremlinArgument::Int(l as i32)).collect();
+        let arguments = labels.iter().map(|&l| GremlinArgument::Int(l as i64)).collect();
         self.ast.step.push(ParsedGremlinStep { name: "inE".to_string(), arguments });
         self
     }
 
     pub fn both(&mut self, labels: &[u32]) -> &mut Self {
-        let arguments = labels.iter().map(|&l| GremlinArgument::Int(l as i32)).collect();
+        let arguments = labels.iter().map(|&l| GremlinArgument::Int(l as i64)).collect();
         self.ast.step.push(ParsedGremlinStep { name: "both".to_string(), arguments });
         self
     }
 
     pub fn bothE(&mut self, labels: &[u32]) -> &mut Self {
-        let arguments = labels.iter().map(|&l| GremlinArgument::Int(l as i32)).collect();
+        let arguments = labels.iter().map(|&l| GremlinArgument::Int(l as i64)).collect();
         self.ast.step.push(ParsedGremlinStep { name: "bothE".to_string(), arguments });
         self
     }
@@ -228,7 +228,7 @@ impl<'a, S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> GraphTraversal
     }
 
     pub fn hasLabel(&mut self, labels: &[u32]) -> &mut Self {
-        let arguments = labels.iter().map(|&l| GremlinArgument::Int(l as i32)).collect();
+        let arguments = labels.iter().map(|&l| GremlinArgument::Int(l as i64)).collect();
         self.ast.step.push(ParsedGremlinStep { name: "hasLabel".to_string(), arguments });
         self
     }
@@ -280,7 +280,17 @@ impl<'a, S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> GraphTraversal
         self.ast.step.push(ParsedGremlinStep { name: "union".to_string(), arguments });
         self
     }
-
+    pub fn limit(&mut self, limit: u32) -> &mut Self {
+        self.ast
+            .step
+            .push(ParsedGremlinStep { name: "limit".to_string(), arguments: vec![GremlinArgument::Int(limit as i64)] });
+        self
+    }
+    pub fn hasId(&mut self, ids: &[i64]) -> &mut Self {
+        let arguments = ids.iter().map(|&i| GremlinArgument::Int(i)).collect();
+        self.ast.step.push(ParsedGremlinStep { name: "hasId".to_string(), arguments });
+        self
+    }
     /// Extracts the fully built AST to send over the network.
     pub fn build(&self) -> GremlinQueryAst {
         self.ast.clone()

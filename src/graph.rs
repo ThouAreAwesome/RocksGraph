@@ -226,9 +226,10 @@ impl<S: GraphStore> LogicalGraph<S> {
         direction: Direction,
         label: Option<LabelId>,
         dst: Option<&[VertexKey]>,
+        limit: Option<u32>,
     ) -> Result<Vec<(EdgeKey, Arc<Edge>)>, StoreError> {
         // Phase 1: populate overlay from store (mutable).
-        let committed = self.store.get_edges(vertex, direction, label, dst)?;
+        let committed = self.store.get_edges(vertex, direction, label, dst, limit)?;
         for arc in committed {
             let cek = arc.canonical_key();
             self.edges.entry(cek).or_insert(arc);
@@ -237,6 +238,11 @@ impl<S: GraphStore> LogicalGraph<S> {
         let dirty = &self.dirty;
         let mut result = Vec::new();
         for (&cek, arc) in &self.edges {
+            if let Some(l) = limit {
+                if result.len() >= l as usize {
+                    break;
+                }
+            }
             if dirty.get(&CanonicalKey::Edge(cek)) == Some(&Existence::Tombstone) {
                 continue;
             }
@@ -1383,7 +1389,7 @@ mod tests {
             c.commit().unwrap();
         }
 
-        let edges = store.get_edges(v1, Direction::OUT, None, None).unwrap();
+        let edges = store.get_edges(v1, Direction::OUT, None, None, None).unwrap();
         assert_eq!(edges.len(), 1);
         let e = &edges[0];
         let e_props = e.props.read().map_err(|_| StoreError::LockError).unwrap();
@@ -1448,7 +1454,7 @@ mod tests {
         c.add_edge(cek(v1, 1, v10)).unwrap();
         c.add_edge(cek(v1, 1, v20)).unwrap();
 
-        let edges = c.get_edges(v1, Direction::OUT, None, None).unwrap();
+        let edges = c.get_edges(v1, Direction::OUT, None, None, None).unwrap();
         assert_eq!(edges.len(), 2);
     }
 
@@ -1463,7 +1469,7 @@ mod tests {
         c.add_edge(cek(v1, 1, v20)).unwrap();
         c.drop_element(CanonicalKey::Edge(cek(v1, 1, v10))).unwrap();
 
-        let edges = c.get_edges(v1, Direction::OUT, None, None).unwrap();
+        let edges = c.get_edges(v1, Direction::OUT, None, None, None).unwrap();
         assert_eq!(edges.len(), 1);
     }
 
@@ -1475,13 +1481,13 @@ mod tests {
         let (v2, _) = c.add_vertex(2, 1).unwrap();
         c.add_edge(cek(v1, 1, v2)).unwrap();
 
-        let out = c.get_edges(v1, Direction::OUT, None, None).unwrap();
-        let in_ = c.get_edges(v2, Direction::IN, None, None).unwrap();
+        let out = c.get_edges(v1, Direction::OUT, None, None, None).unwrap();
+        let in_ = c.get_edges(v2, Direction::IN, None, None, None).unwrap();
         assert_eq!(out.len(), 1);
         assert_eq!(in_.len(), 1);
         // Vertex v1 has no incoming edges; vertex v2 has no outgoing.
-        assert!(c.get_edges(v1, Direction::IN, None, None).unwrap().is_empty());
-        assert!(c.get_edges(v2, Direction::OUT, None, None).unwrap().is_empty());
+        assert!(c.get_edges(v1, Direction::IN, None, None, None).unwrap().is_empty());
+        assert!(c.get_edges(v2, Direction::OUT, None, None, None).unwrap().is_empty());
     }
 
     #[test]
@@ -1496,11 +1502,11 @@ mod tests {
         c.add_edge(cek(v1, 2, v20)).unwrap();
         c.add_edge(cek(v1, 1, v30)).unwrap();
 
-        let label1 = c.get_edges(v1, Direction::OUT, Some(1), None).unwrap();
+        let label1 = c.get_edges(v1, Direction::OUT, Some(1), None, None).unwrap();
         assert_eq!(label1.len(), 2);
         assert!(label1.iter().all(|(ek, _)| ek.label_id == 1));
 
-        let label2 = c.get_edges(v1, Direction::OUT, Some(2), None).unwrap();
+        let label2 = c.get_edges(v1, Direction::OUT, Some(2), None, None).unwrap();
         assert_eq!(label2.len(), 1);
     }
 
@@ -1516,13 +1522,29 @@ mod tests {
         c.add_edge(cek(v1, 1, v20)).unwrap();
         c.add_edge(cek(v1, 1, v30)).unwrap();
 
-        let result = c.get_edges(v1, Direction::OUT, None, Some(&[v10, v30])).unwrap();
+        let result = c.get_edges(v1, Direction::OUT, None, Some(&[v10, v30]), None).unwrap();
         assert_eq!(result.len(), 2);
         let mut secondaries: Vec<u64> = result.iter().map(|(ek, _)| ek.secondary_id).collect();
         secondaries.sort_unstable();
         let mut expected = vec![v10, v30];
         expected.sort_unstable();
         assert_eq!(secondaries, expected);
+    }
+
+    #[test]
+    fn get_edges_limit_filter() {
+        let (store, _dir) = open();
+        let mut c = ctx(&store);
+        let (v1, _) = c.add_vertex(1, 1).unwrap();
+        let (v10, _) = c.add_vertex(10, 1).unwrap();
+        let (v20, _) = c.add_vertex(20, 1).unwrap();
+        let (v30, _) = c.add_vertex(30, 1).unwrap();
+        c.add_edge(cek(v1, 1, v10)).unwrap();
+        c.add_edge(cek(v1, 1, v20)).unwrap();
+        c.add_edge(cek(v1, 1, v30)).unwrap();
+
+        let result = c.get_edges(v1, Direction::OUT, None, None, Some(2)).unwrap();
+        assert_eq!(result.len(), 2);
     }
 
     #[test]
@@ -1548,7 +1570,7 @@ mod tests {
 
         let mut c = ctx(&store);
         c.add_edge(cek(v1, 1, v20)).unwrap();
-        let edges = c.get_edges(v1, Direction::OUT, None, None).unwrap();
+        let edges = c.get_edges(v1, Direction::OUT, None, None, None).unwrap();
         assert_eq!(edges.len(), 2);
     }
 
@@ -2355,7 +2377,7 @@ mod tests {
 
         // A final context must see all 4 outgoing edges from hub.
         let mut c = ctx(&store);
-        let out = c.get_edges(hub, Direction::OUT, Some(1), None).unwrap();
+        let out = c.get_edges(hub, Direction::OUT, Some(1), None, None).unwrap();
         assert_eq!(out.len(), 4);
 
         // check vertex counter is correct after multiple contexts
@@ -2372,7 +2394,7 @@ mod tests {
 
         // Each spoke has exactly one incoming edge from hub.
         for &spoke in &spokes {
-            let in_edges = c.get_edges(spoke, Direction::IN, Some(1), None).unwrap();
+            let in_edges = c.get_edges(spoke, Direction::IN, Some(1), None, None).unwrap();
             assert_eq!(in_edges.len(), 1);
             assert_eq!(in_edges[0].1.src_id, hub);
         }
@@ -2470,14 +2492,14 @@ mod tests {
         assert_eq!(london_in_e, 2);
 
         // Both outgoing "lives_in" edges from Alice land at London.
-        let alice_out = c.get_edges(alice, Direction::OUT, Some(2), None).unwrap();
+        let alice_out = c.get_edges(alice, Direction::OUT, Some(2), None, None).unwrap();
         assert_eq!(alice_out.len(), 1);
         let (e_idx, fe) = &alice_out[0];
         assert_eq!(e_idx.secondary_id, london);
         assert_eq!(eprop(fe, "since"), Some(Primitive::Int32(2015)));
 
         // London has two incoming edges: one from Alice, one from Bob.
-        let london_in = c.get_edges(london, Direction::IN, Some(2), None).unwrap();
+        let london_in = c.get_edges(london, Direction::IN, Some(2), None, None).unwrap();
         assert_eq!(london_in.len(), 2);
         let mut src_ids: Vec<u64> = london_in.iter().map(|(ek, _)| ek.secondary_id).collect();
         src_ids.sort_unstable();

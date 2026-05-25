@@ -14,41 +14,40 @@ use std::rc::Rc;
 
 use smallvec::{smallvec, SmallVec};
 
-use crate::{
-    engine::{
-        context::GraphCtx,
-        traverser::Traverser,
-        volcano::steps::traits::{CoreStep, StepRef},
-    },
-    types::GValue,
+use crate::engine::{
+    context::GraphCtx,
+    traverser::Traverser,
+    volcano::steps::traits::{CoreStep, StepRef},
 };
 
-pub struct OtherVStep {
+pub struct LimitStep {
     upstream: Option<StepRef>,
+    limit: u32,
+    current_idx: usize,
 }
 
-impl OtherVStep {
-    pub fn new() -> Self {
-        Self { upstream: None }
+impl LimitStep {
+    pub fn new(limit: u32) -> Self {
+        Self { upstream: None, limit, current_idx: 0 }
     }
 }
 
-impl CoreStep for OtherVStep {
+impl CoreStep for LimitStep {
     fn add_upper(&mut self, upstream: StepRef) {
         self.upstream = Some(upstream);
     }
 
     fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
-        loop {
-            let t = self.upstream.as_ref()?.next(ctx)?;
-            if let GValue::Edge(ek) = &t.value {
-                return Some(smallvec![Traverser::new_rc(GValue::Vertex(ek.secondary_id))]);
-            }
-            // TODO: raise an error for non-edge traversers instead of silently skipping
+        if self.current_idx >= self.limit as usize {
+            return None;
         }
+        let t = self.upstream.as_ref()?.next(ctx)?;
+        self.current_idx += 1;
+        Some(smallvec![Rc::clone(&t)])
     }
 
     fn reset(&mut self) {
+        self.current_idx = 0;
         if let Some(up) = &self.upstream {
             up.reset();
         }

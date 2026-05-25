@@ -10,7 +10,7 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::{cell::RefCell, rc::Rc};
+use std::rc::Rc;
 
 use smallvec::SmallVec;
 
@@ -18,88 +18,74 @@ use crate::{
     engine::{
         context::GraphCtx,
         traverser::Traverser,
-        volcano::steps::traits::{BroadcastState, ConsumerIter, GremlinStep, HasBroadcast, Produce},
+        volcano::steps::traits::{CoreStep, StepRef},
     },
     types::{GValue, LabelId},
 };
 
-struct Inner {
-    upstream: Option<ConsumerIter>,
+pub struct OutEStep {
+    upstream: Option<StepRef>,
     label_ids: Vec<LabelId>,
+    limit: Option<u32>,
     current_input: Option<Rc<Traverser>>,
     current_label_idx: usize,
 }
 
-pub struct OutEStep {
-    broadcast: RefCell<BroadcastState>,
-    inner: RefCell<Inner>,
-}
-
 impl OutEStep {
-    pub fn new(label_ids: Vec<LabelId>) -> Rc<Self> {
-        Rc::new(Self {
-            broadcast: RefCell::new(BroadcastState::new()),
-            inner: RefCell::new(Inner { upstream: None, label_ids, current_input: None, current_label_idx: 0 }),
-        })
+    pub fn new(label_ids: Vec<LabelId>) -> Self {
+        Self { upstream: None, label_ids, limit: None, current_input: None, current_label_idx: 0 }
     }
 }
 
-impl HasBroadcast for OutEStep {
-    fn broadcast(&self) -> &RefCell<BroadcastState> {
-        &self.broadcast
+impl CoreStep for OutEStep {
+    fn add_upper(&mut self, upstream: StepRef) {
+        self.upstream = Some(upstream);
     }
-}
 
-impl Produce for OutEStep {
-    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
-        let mut inner = self.inner.borrow_mut();
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
         loop {
-            if inner.current_input.is_none() {
-                let t = inner.upstream.as_ref()?.next(ctx)?;
-                if matches!(&t.value, crate::types::gvalue::GValue::Vertex(_)) {
-                    inner.current_input = Some(t);
-                    inner.current_label_idx = 0;
+            if self.current_input.is_none() {
+                let t = self.upstream.as_ref()?.next(ctx)?;
+                if matches!(&t.value, GValue::Vertex(_)) {
+                    self.current_input = Some(t);
+                    self.current_label_idx = 0;
                 } else {
                     continue;
                 }
             }
 
-            let t = Rc::clone(inner.current_input.as_ref().unwrap());
-            if let crate::types::gvalue::GValue::Vertex(vk) = &t.value {
-                let label =
-                    if inner.label_ids.is_empty() { None } else { Some(inner.label_ids[inner.current_label_idx]) };
+            let t = Rc::clone(self.current_input.as_ref().unwrap());
+            if let GValue::Vertex(vk) = &t.value {
+                let label = if self.label_ids.is_empty() {
+                    None
+                } else {
+                    Some(self.label_ids[self.current_label_idx])
+                };
 
-                let out_edges = ctx.get_out_edges(*vk, label).ok().unwrap_or_default();
+                let out_edges = ctx.get_out_edges(*vk, label, self.limit).ok().unwrap_or_default();
                 let results: SmallVec<[_; 4]> = out_edges
                     .into_iter()
                     .map(|e| Traverser::new_rc_with_parent(GValue::Edge(e), Rc::clone(&t)))
                     .collect();
 
-                inner.current_label_idx += 1;
-                if inner.label_ids.is_empty() || inner.current_label_idx >= inner.label_ids.len() {
-                    inner.current_input = None;
+                self.current_label_idx += 1;
+                if self.label_ids.is_empty() || self.current_label_idx >= self.label_ids.len() {
+                    self.current_input = None;
                 }
                 if !results.is_empty() {
                     return Some(results);
                 }
             } else {
-                inner.current_input = None;
+                self.current_input = None;
             }
         }
     }
-}
 
-impl GremlinStep for OutEStep {
-    fn add_upper(&self, upstream: ConsumerIter) {
-        self.inner.borrow_mut().upstream = Some(upstream);
-    }
-    fn reset(&self) {
-        self.broadcast.borrow_mut().reset();
-        let mut inner = self.inner.borrow_mut();
-        if let Some(up) = &inner.upstream {
+    fn reset(&mut self) {
+        if let Some(up) = &self.upstream {
             up.reset();
         }
-        inner.current_input = None;
-        inner.current_label_idx = 0;
+        self.current_input = None;
+        self.current_label_idx = 0;
     }
 }

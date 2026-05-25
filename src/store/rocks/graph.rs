@@ -91,6 +91,7 @@ impl RocksStorage {
         direction: Direction,
         label: Option<LabelId>,
         dst: Option<&[VertexKey]>,
+        limit: Option<u32>,
     ) -> Result<Vec<Edge>, StoreError> {
         let (cf_name, decode_fn): (&str, EdgeKeyDecoder) = match direction {
             Direction::OUT => (CF_EDGES_OUT, decode_edge_key_out),
@@ -124,6 +125,11 @@ impl RocksStorage {
                 }
             }
             result.push(build_full_edge(cek, &EdgeValue::decode(&val_bytes))?);
+            if let Some(max) = limit {
+                if result.len() >= max as usize {
+                    break;
+                }
+            }
         }
         Ok(result)
     }
@@ -326,7 +332,7 @@ mod tests {
         store
             .insert_edges(&[make_edge(k, vec![(SmolStr::new("weight"), Primitive::Float64(1.5))])], Direction::OUT)
             .unwrap();
-        let edges = store.get_edges(1, Direction::OUT, None, None).unwrap();
+        let edges = store.get_edges(1, Direction::OUT, None, None, None).unwrap();
         assert_eq!(edges.len(), 1);
         let fe = &edges[0];
         assert_eq!(fe.src_id, 1);
@@ -341,7 +347,7 @@ mod tests {
     fn insert_edge_readable_in() {
         let (mut store, _dir) = open_temp_store();
         store.insert_edges(&[make_edge(cek(1, 5, 2), vec![])], Direction::IN).unwrap();
-        let edges = store.get_edges(2, Direction::IN, None, None).unwrap();
+        let edges = store.get_edges(2, Direction::IN, None, None, None).unwrap();
         assert_eq!(edges.len(), 1);
         let fe = &edges[0];
         assert_eq!(fe.src_id, 1);
@@ -358,10 +364,10 @@ mod tests {
                 Direction::OUT,
             )
             .unwrap();
-        let label1 = store.get_edges(1, Direction::OUT, Some(1), None).unwrap();
+        let label1 = store.get_edges(1, Direction::OUT, Some(1), None, None).unwrap();
         assert_eq!(label1.len(), 2);
         assert!(label1.iter().all(|e| e.label_id == 1));
-        let label2 = store.get_edges(1, Direction::OUT, Some(2), None).unwrap();
+        let label2 = store.get_edges(1, Direction::OUT, Some(2), None, None).unwrap();
         assert_eq!(label2.len(), 1);
         assert_eq!(label2[0].dst_id, 20);
     }
@@ -375,7 +381,7 @@ mod tests {
                 Direction::OUT,
             )
             .unwrap();
-        let result = store.get_edges(1, Direction::OUT, None, Some(&[10, 30])).unwrap();
+        let result = store.get_edges(1, Direction::OUT, None, Some(&[10, 30]), None).unwrap();
         assert_eq!(result.len(), 2);
         let mut dst_ids: Vec<u64> = result.iter().map(|e| e.dst_id).collect();
         dst_ids.sort_unstable();
@@ -385,8 +391,8 @@ mod tests {
     #[test]
     fn get_edges_no_match_returns_empty() {
         let (store, _dir) = open_temp_store();
-        assert!(store.get_edges(99, Direction::OUT, None, None).unwrap().is_empty());
-        assert!(store.get_edges(99, Direction::IN, None, None).unwrap().is_empty());
+        assert!(store.get_edges(99, Direction::OUT, None, None, None).unwrap().is_empty());
+        assert!(store.get_edges(99, Direction::IN, None, None, None).unwrap().is_empty());
     }
 
     #[test]
@@ -403,8 +409,34 @@ mod tests {
                 Direction::OUT,
             )
             .unwrap();
-        let edges = store.get_edges(1, Direction::OUT, None, None).unwrap();
+        let edges = store.get_edges(1, Direction::OUT, None, None, None).unwrap();
         assert_eq!(edges.len(), 3);
+        assert!(edges.iter().all(|e| e.src_id == 1));
+    }
+    #[test]
+    fn get_edges_with_limit_from_same_source() {
+        let (mut store, _dir) = open_temp_store();
+        store
+            .insert_edges(
+                &[
+                    make_edge(cek(1, 1, 10), vec![]),
+                    make_edge(cek(1, 1, 20), vec![]),
+                    make_edge(cek(1, 1, 30), vec![]),
+                    make_edge(cek(2, 1, 10), vec![]),
+                ],
+                Direction::OUT,
+            )
+            .unwrap();
+        let edges = store.get_edges(1, Direction::OUT, None, None, Some(3)).unwrap();
+        assert_eq!(edges.len(), 3);
+        assert!(edges.iter().all(|e| e.src_id == 1));
+
+        let edges = store.get_edges(1, Direction::OUT, None, None, Some(2)).unwrap();
+        assert_eq!(edges.len(), 2);
+        assert!(edges.iter().all(|e| e.src_id == 1));
+
+        let edges = store.get_edges(1, Direction::OUT, None, None, Some(1)).unwrap();
+        assert_eq!(edges.len(), 1);
         assert!(edges.iter().all(|e| e.src_id == 1));
     }
 }

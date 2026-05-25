@@ -10,98 +10,76 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
+use std::{collections::VecDeque, rc::Rc};
+
 use smallvec::{smallvec, SmallVec};
-use std::{cell::RefCell, rc::Rc};
 
 use crate::engine::{
     context::GraphCtx,
     traverser::Traverser,
-    volcano::{
-        builder::PhysicalPlan,
-        steps::traits::{BroadcastState, ConsumerIter, GremlinStep, HasBroadcast, Produce},
-    },
+    volcano::{builder::PhysicalPlan, steps::traits::{CoreStep, StepRef}},
 };
 
-struct Inner {
-    upstream: Option<ConsumerIter>,
+pub struct UnionStep {
+    upstream: Option<StepRef>,
     physical_plans: Vec<PhysicalPlan>,
     current_plan_idx: usize,
     current_input: Option<Rc<Traverser>>,
 }
 
-pub struct UnionStep {
-    broadcast: RefCell<BroadcastState>,
-    inner: RefCell<Inner>,
-}
-
 impl UnionStep {
-    pub fn new(physical_plans: Vec<PhysicalPlan>) -> Rc<Self> {
-        Rc::new(Self {
-            broadcast: RefCell::new(BroadcastState::new()),
-            inner: RefCell::new(Inner { upstream: None, physical_plans, current_plan_idx: 0, current_input: None }),
-        })
+    pub fn new(physical_plans: Vec<PhysicalPlan>) -> Self {
+        Self { upstream: None, physical_plans, current_plan_idx: 0, current_input: None }
     }
 }
 
-impl HasBroadcast for UnionStep {
-    fn broadcast(&self) -> &RefCell<BroadcastState> {
-        &self.broadcast
+impl CoreStep for UnionStep {
+    fn add_upper(&mut self, upstream: StepRef) {
+        self.upstream = Some(upstream);
     }
-}
 
-impl Produce for UnionStep {
-    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
-        let mut inner = self.inner.borrow_mut();
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
         loop {
-            if inner.current_input.is_none() {
-                let t = inner.upstream.as_ref().unwrap().next(ctx)?;
-                inner.current_input = Some(Rc::clone(&t));
-                inner.current_plan_idx = 0;
-
-                if !inner.physical_plans.is_empty() {
-                    let p = &inner.physical_plans[0];
+            if self.current_input.is_none() {
+                let t = self.upstream.as_ref()?.next(ctx)?;
+                self.current_input = Some(Rc::clone(&t));
+                self.current_plan_idx = 0;
+                if !self.physical_plans.is_empty() {
+                    let p = &self.physical_plans[0];
                     p.reset();
-                    p.inject(std::collections::VecDeque::from(vec![Rc::clone(&t)]));
+                    p.inject(VecDeque::from(vec![Rc::clone(&t)]));
                 }
             }
-            if inner.physical_plans.is_empty() {
-                inner.current_input = None;
+
+            if self.physical_plans.is_empty() {
+                self.current_input = None;
                 continue;
             }
 
-            let p = &inner.physical_plans[inner.current_plan_idx];
+            let p = &self.physical_plans[self.current_plan_idx];
             if let Some(res) = p.next(ctx) {
                 return Some(smallvec![res]);
+            }
+
+            self.current_plan_idx += 1;
+            if self.current_plan_idx < self.physical_plans.len() {
+                let next_p = &self.physical_plans[self.current_plan_idx];
+                next_p.reset();
+                next_p.inject(VecDeque::from(vec![Rc::clone(self.current_input.as_ref().unwrap())]));
             } else {
-                inner.current_plan_idx += 1;
-                if inner.current_plan_idx < inner.physical_plans.len() {
-                    let next_p = &inner.physical_plans[inner.current_plan_idx];
-                    next_p.reset();
-                    next_p.inject(std::collections::VecDeque::from(vec![Rc::clone(
-                        inner.current_input.as_ref().unwrap(),
-                    )]));
-                } else {
-                    inner.current_input = None;
-                }
+                self.current_input = None;
             }
         }
     }
-}
 
-impl GremlinStep for UnionStep {
-    fn add_upper(&self, upstream: ConsumerIter) {
-        self.inner.borrow_mut().upstream = Some(upstream);
-    }
-    fn reset(&self) {
-        self.broadcast.borrow_mut().reset();
-        let mut inner = self.inner.borrow_mut();
-        if let Some(up) = &inner.upstream {
+    fn reset(&mut self) {
+        if let Some(up) = &self.upstream {
             up.reset();
         }
-        for p in &inner.physical_plans {
+        for p in &self.physical_plans {
             p.reset();
         }
-        inner.current_input = None;
-        inner.current_plan_idx = 0;
+        self.current_input = None;
+        self.current_plan_idx = 0;
     }
 }

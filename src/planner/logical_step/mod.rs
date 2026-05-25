@@ -49,6 +49,8 @@ pub enum LogicalStep {
     AddE(AddEStep),
     Property(PropertyStep),
     V(VStep),
+    Limit(LimitStep),
+    HasId(HasIdStep),
 }
 
 #[derive(Clone)]
@@ -147,5 +149,15 @@ pub struct PropertyStep {
 
 #[derive(Clone)]
 pub struct VStep {
+    pub ids: Vec<VertexKey>,
+}
+
+#[derive(Clone)]
+pub struct LimitStep {
+    pub limit: u32,
+}
+
+#[derive(Clone)]
+pub struct HasIdStep {
     pub ids: Vec<VertexKey>,
 }

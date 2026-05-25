@@ -10,62 +10,42 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
+use std::{collections::VecDeque, rc::Rc};
+
 use smallvec::{smallvec, SmallVec};
-use std::{cell::RefCell, collections::VecDeque, rc::Rc};
 
 use crate::{
     engine::{
         context::GraphCtx,
         traverser::Traverser,
-        volcano::steps::traits::{BroadcastState, ConsumerIter, GremlinStep, HasBroadcast, Produce},
+        volcano::steps::traits::{CoreStep, StepRef},
     },
     types::{keys::VertexKey, GValue},
 };
 
-struct Inner {
-    vertex_ids: VecDeque<VertexKey>, // IDs to emit
-    initial_ids: Vec<VertexKey>,     // To reset
-}
-
 pub struct VStep {
-    broadcast: RefCell<BroadcastState>,
-    inner: RefCell<Inner>,
+    vertex_ids: VecDeque<VertexKey>,
+    initial_ids: Vec<VertexKey>,
 }
 
 impl VStep {
-    pub fn new(vertex_ids: Vec<VertexKey>) -> Rc<Self> {
-        Rc::new(Self {
-            broadcast: RefCell::new(BroadcastState::new()),
-            inner: RefCell::new(Inner { vertex_ids: VecDeque::from(vertex_ids.clone()), initial_ids: vertex_ids }),
-        })
+    pub fn new(vertex_ids: Vec<VertexKey>) -> Self {
+        Self { vertex_ids: VecDeque::from(vertex_ids.clone()), initial_ids: vertex_ids }
     }
 }
 
-impl HasBroadcast for VStep {
-    fn broadcast(&self) -> &RefCell<BroadcastState> {
-        &self.broadcast
-    }
-}
-
-impl Produce for VStep {
-    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
-        let mut inner = self.inner.borrow_mut();
-        if let Some(id) = inner.vertex_ids.pop_front() {
-            if let Some(vertex_arc) = ctx.get_vertex(id).ok()? {
-                return Some(smallvec![Traverser::new_rc(GValue::Vertex(vertex_arc.id))]);
-            }
-        }
-        None
-    }
-}
-
-impl GremlinStep for VStep {
-    fn add_upper(&self, _upstream: ConsumerIter) {
+impl CoreStep for VStep {
+    fn add_upper(&mut self, _upstream: StepRef) {
         panic!("VStep is a source step, it does not have an upstream.");
     }
-    fn reset(&self) {
-        self.broadcast.borrow_mut().reset();
-        let mut inner = self.inner.borrow_mut();
-        inner.vertex_ids = VecDeque::from(inner.initial_ids.clone());
+
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
+        let id = self.vertex_ids.pop_front()?;
+        let vertex_arc = ctx.get_vertex(id).ok()??;
+        Some(smallvec![Traverser::new_rc(GValue::Vertex(vertex_arc.id))])
+    }
+
+    fn reset(&mut self) {
+        self.vertex_ids = VecDeque::from(self.initial_ids.clone());
     }
 }

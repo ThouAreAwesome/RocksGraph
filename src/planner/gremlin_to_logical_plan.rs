@@ -28,9 +28,9 @@ use smol_str::SmolStr;
 
 use crate::{
     planner::logical_step::{
-        AddEStep, AddVStep, BothEStep, BothStep, CountStep, HasLabelStep, HasPropertyStep, InEStep, InStep, InVStep,
-        LogicalPlan, LogicalStep, OtherVStep, OutEStep, OutStep, OutVStep, PropertyStep, ScalarFilterStep, UnionStep,
-        VStep, ValuesStep, WhereStep,
+        AddEStep, AddVStep, BothEStep, BothStep, CountStep, HasIdStep, HasLabelStep, HasPropertyStep, InEStep, InStep,
+        InVStep, LimitStep, LogicalPlan, LogicalStep, OtherVStep, OutEStep, OutStep, OutVStep, PropertyStep,
+        ScalarFilterStep, UnionStep, VStep, ValuesStep, WhereStep,
     },
     server::bytecode_deserializer::{GremlinArgument, GremlinQueryAst, ParsedGremlinStep},
     types::{gvalue::Primitive, keys::LabelId, VertexKey},
@@ -108,7 +108,7 @@ fn translate_parsed_step(parsed_step: ParsedGremlinStep) -> Result<Vec<LogicalSt
                 _ => return Err(TranslationError::InvalidArguments("has step key must be a string".to_string())),
             };
             let prop_value = match &parsed_step.arguments[1] {
-                GremlinArgument::Int(i) => Primitive::Int32(*i),
+                GremlinArgument::Int(i) => Primitive::Int64(*i),
                 GremlinArgument::String(s) => Primitive::String(SmolStr::new(s)),
                 GremlinArgument::Float(f) => Primitive::Float64(*f),
                 GremlinArgument::Bool(b) => Primitive::Bool(*b),
@@ -132,7 +132,7 @@ fn translate_parsed_step(parsed_step: ParsedGremlinStep) -> Result<Vec<LogicalSt
                 return Err(TranslationError::InvalidArguments("is expects 1 argument".to_string()));
             }
             let value = match &parsed_step.arguments[0] {
-                GremlinArgument::Int(i) => Primitive::Int32(*i),
+                GremlinArgument::Int(i) => Primitive::Int64(*i),
                 GremlinArgument::String(s) => Primitive::String(SmolStr::new(s)),
                 GremlinArgument::Float(f) => Primitive::Float64(*f),
                 GremlinArgument::Bool(b) => Primitive::Bool(*b),
@@ -168,6 +168,16 @@ fn translate_parsed_step(parsed_step: ParsedGremlinStep) -> Result<Vec<LogicalSt
         "inV" => Ok(vec![LogicalStep::InV(InVStep {})]),
         "otherV" => Ok(vec![LogicalStep::OtherV(OtherVStep {})]),
         "count" => Ok(vec![LogicalStep::Count(CountStep {})]),
+        "limit" => {
+            if parsed_step.arguments.len() != 1 {
+                return Err(TranslationError::InvalidArguments("limit expects 1 argument".to_string()));
+            }
+            let limit = match &parsed_step.arguments[0] {
+                GremlinArgument::Int(i) => *i as u32,
+                _ => return Err(TranslationError::InvalidArguments("limit argument must be an integer".to_string())),
+            };
+            Ok(vec![LogicalStep::Limit(LimitStep { limit })])
+        }
         "values" => {
             let property_keys = parsed_step
                 .arguments
@@ -190,6 +200,16 @@ fn translate_parsed_step(parsed_step: ParsedGremlinStep) -> Result<Vec<LogicalSt
             };
             Ok(vec![LogicalStep::Where(WhereStep { plan })])
         }
+        "hasId" => {
+            let mut ids = Vec::new();
+            for arg in parsed_step.arguments {
+                match arg {
+                    GremlinArgument::Int(i) => ids.push(i as VertexKey),
+                    _ => return Err(TranslationError::InvalidArguments("hasId step expects integer IDs".to_string())),
+                }
+            }
+            Ok(vec![LogicalStep::HasId(HasIdStep { ids })])
+        }
         "union" => {
             let plans: Vec<LogicalPlan> = parsed_step
                 .arguments
@@ -210,7 +230,7 @@ fn translate_parsed_step(parsed_step: ParsedGremlinStep) -> Result<Vec<LogicalSt
                 _ => return Err(TranslationError::InvalidArguments("property key must be a string".to_string())),
             };
             let prop_value = match &parsed_step.arguments[1] {
-                GremlinArgument::Int(i) => Primitive::Int32(*i),
+                GremlinArgument::Int(i) => Primitive::Int64(*i),
                 GremlinArgument::String(s) => Primitive::String(SmolStr::new(s)),
                 GremlinArgument::Float(f) => Primitive::Float64(*f),
                 GremlinArgument::Bool(b) => Primitive::Bool(*b),
@@ -244,7 +264,7 @@ fn translate_parsed_step(parsed_step: ParsedGremlinStep) -> Result<Vec<LogicalSt
                     let mut props = std::collections::HashMap::new();
                     for (k, v) in m {
                         let val = match v {
-                            GremlinArgument::Int(i) => Primitive::Int32(i),
+                            GremlinArgument::Int(i) => Primitive::Int64(i),
                             GremlinArgument::String(s) => Primitive::String(SmolStr::new(s)),
                             GremlinArgument::Float(f) => Primitive::Float64(f),
                             GremlinArgument::Bool(b) => Primitive::Bool(b),
@@ -301,7 +321,7 @@ fn translate_parsed_step(parsed_step: ParsedGremlinStep) -> Result<Vec<LogicalSt
                     let mut props = std::collections::HashMap::new();
                     for (k, v) in m {
                         let val = match v {
-                            GremlinArgument::Int(i) => Primitive::Int32(i),
+                            GremlinArgument::Int(i) => Primitive::Int64(i),
                             GremlinArgument::String(s) => Primitive::String(SmolStr::new(s)),
                             GremlinArgument::Float(f) => Primitive::Float64(f),
                             GremlinArgument::Bool(b) => Primitive::Bool(b),
@@ -397,7 +417,7 @@ mod tests {
         }
         if let LogicalStep::HasProperty(s) = &plan.steps[1] {
             assert_eq!(s.key, "age");
-            assert_eq!(s.value, Primitive::Int32(29));
+            assert_eq!(s.value, Primitive::Int64(29));
         }
         if let LogicalStep::HasProperty(s) = &plan.steps[2] {
             assert_eq!(s.key, "active");
