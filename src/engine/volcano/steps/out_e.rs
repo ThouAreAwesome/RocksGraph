@@ -20,13 +20,13 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{BroadcastState, ConsumerIter, GremlinStep, HasBroadcast, Produce},
     },
-    types::LabelId,
+    types::{GValue, LabelId},
 };
 
 struct Inner {
     upstream: Option<ConsumerIter>,
     label_ids: Vec<LabelId>,
-    current_input: Option<Traverser>,
+    current_input: Option<Rc<Traverser>>,
     current_label_idx: usize,
 }
 
@@ -51,12 +51,12 @@ impl HasBroadcast for OutEStep {
 }
 
 impl Produce for OutEStep {
-    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Traverser; 4]>> {
+    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
         let mut inner = self.inner.borrow_mut();
         loop {
             if inner.current_input.is_none() {
                 let t = inner.upstream.as_ref()?.next(ctx)?;
-                if matches!(t.value, crate::types::gvalue::GValue::Vertex(_)) {
+                if matches!(&t.value, crate::types::gvalue::GValue::Vertex(_)) {
                     inner.current_input = Some(t);
                     inner.current_label_idx = 0;
                 } else {
@@ -64,13 +64,16 @@ impl Produce for OutEStep {
                 }
             }
 
-            let t = inner.current_input.as_ref().unwrap().clone();
+            let t = Rc::clone(inner.current_input.as_ref().unwrap());
             if let crate::types::gvalue::GValue::Vertex(vk) = &t.value {
                 let label =
                     if inner.label_ids.is_empty() { None } else { Some(inner.label_ids[inner.current_label_idx]) };
 
                 let out_edges = ctx.get_out_edges(*vk, label).ok().unwrap_or_default();
-                let results: SmallVec<[_; 4]> = out_edges.into_iter().map(|e| t.clone_with_edge(e)).collect();
+                let results: SmallVec<[_; 4]> = out_edges
+                    .into_iter()
+                    .map(|e| Traverser::new_rc_with_parent(GValue::Edge(e), Rc::clone(&t)))
+                    .collect();
 
                 inner.current_label_idx += 1;
                 if inner.label_ids.is_empty() || inner.current_label_idx >= inner.label_ids.len() {

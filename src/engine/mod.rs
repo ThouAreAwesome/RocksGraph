@@ -20,15 +20,12 @@
 //! | [`group_id`] | [`GroupId`] — hierarchical group identity carried on every [`Traverser`]. Used by both engines for `where`/co-group correlation. |
 //! | [`traverser`]| [`Traverser`] — the unit of work flowing between steps. |
 //! | [`volcano`]  | Pull-based iterator execution engine. Logical steps are compiled to a chain of physical operators by [`volcano::builder::PhysicalPlanBuilder`]. |
-//! | [`data_flow`]| Message-passing execution engine (work in progress). |
 //!
 //! [`GraphCtx`]: context::GraphCtx
 //! [`GroupId`]: group_id::GroupId
 //! [`Traverser`]: traverser::Traverser
 
 pub mod context;
-pub mod data_flow;
-pub mod group_id;
 pub mod traverser;
 pub mod volcano;
 

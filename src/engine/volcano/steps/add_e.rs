@@ -74,7 +74,7 @@ impl HasBroadcast for AddEStep {
 }
 
 impl Produce for AddEStep {
-    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Traverser; 4]>> {
+    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
         let mut inner = self.inner.borrow_mut();
         if inner.emitted {
             return None; // Only emit once
@@ -94,7 +94,7 @@ impl Produce for AddEStep {
         }
 
         inner.emitted = true;
-        Some(smallvec![Traverser::new(GValue::Edge(new_edge_arc))])
+        Some(smallvec![Traverser::new_rc(GValue::Edge(new_edge_arc))])
     }
 }
 

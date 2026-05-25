@@ -17,7 +17,6 @@ use smallvec::{smallvec, SmallVec};
 use crate::{
     engine::{
         context::GraphCtx,
-        group_id::GroupId,
         traverser::Traverser,
         volcano::steps::traits::{BroadcastState, ConsumerIter, GremlinStep, HasBroadcast, Produce},
     },
@@ -25,8 +24,8 @@ use crate::{
 };
 
 struct Inner {
-    items: VecDeque<Traverser>,
-    items_backup: VecDeque<Traverser>,
+    items: VecDeque<Rc<Traverser>>,
+    items_backup: VecDeque<Rc<Traverser>>,
 }
 
 pub struct VecSourceStep {
@@ -43,15 +42,7 @@ impl VecSourceStep {
     }
 
     pub fn new(items: VecDeque<GValue>) -> Rc<Self> {
-        let traversers: VecDeque<Traverser> = items
-            .into_iter()
-            .enumerate()
-            .map(|(i, val)| {
-                let mut t = Traverser::new(val);
-                t.group_id = GroupId::new(i as u32);
-                t
-            })
-            .collect();
+        let traversers: VecDeque<Rc<Traverser>> = items.into_iter().map(Traverser::new_rc).collect();
 
         Rc::new(Self {
             broadcast: RefCell::new(BroadcastState::new()),
@@ -59,7 +50,7 @@ impl VecSourceStep {
         })
     }
 
-    pub fn inject(&self, items: VecDeque<Traverser>) {
+    pub fn inject(&self, items: VecDeque<Rc<Traverser>>) {
         let mut inner = self.inner.borrow_mut();
         inner.items = items.clone();
         inner.items_backup = items;
@@ -73,7 +64,7 @@ impl HasBroadcast for VecSourceStep {
 }
 
 impl Produce for VecSourceStep {
-    fn produce(&self, _ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Traverser; 4]>> {
+    fn produce(&self, _ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
         let item = self.inner.borrow_mut().items.pop_front()?;
         Some(smallvec![item])
     }

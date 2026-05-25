@@ -10,7 +10,7 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::{cell::RefCell, rc::Rc, sync::Arc};
+use std::{cell::RefCell, rc::Rc};
 
 use smallvec::{smallvec, SmallVec};
 
@@ -45,18 +45,14 @@ impl HasBroadcast for OutVStep {
 }
 
 impl Produce for OutVStep {
-    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Traverser; 4]>> {
+    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
         let inner = self.inner.borrow();
         loop {
             let t = inner.upstream.as_ref().unwrap().next(ctx)?;
             if let GValue::Edge(ek) = &t.value {
                 let vk = ek.canonical_edge_key().src_id;
 
-                let mut vertex_traverser = t.clone();
-                vertex_traverser.value = GValue::Vertex(vk);
-                vertex_traverser.parent = Some(Arc::new(t.clone()));
-
-                return Some(smallvec![vertex_traverser]);
+                return Some(smallvec![Traverser::new_rc_with_parent(GValue::Vertex(vk), Rc::clone(&t))]);
             } else {
                 // TODO: consider returning an error here instead of silently skipping non-edge traversers
                 continue;

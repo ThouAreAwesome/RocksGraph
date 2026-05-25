@@ -48,7 +48,7 @@ impl HasBroadcast for CountStep {
 }
 
 impl Produce for CountStep {
-    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Traverser; 4]>> {
+    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
         let mut inner = self.inner.borrow_mut();
         if inner.done {
             return None;
@@ -58,7 +58,7 @@ impl Produce for CountStep {
             count += 1;
         }
         inner.done = true;
-        Some(smallvec![Traverser::new(GValue::Scalar(Primitive::Int32(count)))])
+        Some(smallvec![Traverser::new_rc(GValue::Scalar(Primitive::Int32(count)))])
     }
 }
 

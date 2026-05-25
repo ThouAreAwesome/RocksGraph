@@ -48,7 +48,7 @@ impl HasBroadcast for HasLabelStep {
 }
 
 impl Produce for HasLabelStep {
-    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Traverser; 4]>> {
+    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
         let inner = self.inner.borrow();
         loop {
             let t = inner.upstream.as_ref()?.next(ctx)?;
@@ -61,7 +61,7 @@ impl Produce for HasLabelStep {
                 _ => false,
             };
             if matched {
-                return Some(smallvec![t]);
+                return Some(smallvec![Rc::clone(&t)]);
             }
         }
     }

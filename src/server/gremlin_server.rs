@@ -113,7 +113,7 @@ fn process_query_message(bytes: &[u8], graph: &mut LogicalGraph<RocksStorage>) -
 
     let mut results = Vec::new();
     while let Some(traverser) = physical_plan.next(graph) {
-        results.push(traverser.value);
+        results.push(traverser.as_ref().value.clone());
     }
 
     // For simplicity, commit after every query. In a real server, this would be explicit.

@@ -51,7 +51,7 @@ impl HasBroadcast for PropertyStep {
 }
 
 impl Produce for PropertyStep {
-    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Traverser; 4]>> {
+    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
         let inner = self.inner.borrow();
         loop {
             let t = inner.upstream.as_ref()?.next(ctx)?;
@@ -66,7 +66,7 @@ impl Produce for PropertyStep {
             let mut prop = inner.prop.clone();
             prop.owner = canonical_key;
             ctx.set_property(&prop).ok()?;
-            return Some(smallvec![t]);
+            return Some(smallvec![Rc::clone(&t)]);
         }
     }
 }

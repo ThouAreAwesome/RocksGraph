@@ -11,7 +11,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 use smallvec::SmallVec;
-use std::{cell::RefCell, rc::Rc, sync::Arc};
+use std::{cell::RefCell, rc::Rc};
 
 use crate::{
     engine::{
@@ -25,7 +25,7 @@ use crate::{
 struct Inner {
     upstream: Option<ConsumerIter>,
     label_ids: Vec<LabelId>,
-    current_input: Option<Traverser>,
+    current_input: Option<Rc<Traverser>>,
     current_label_idx: usize,
     current_direction: u8,
 }
@@ -57,12 +57,12 @@ impl HasBroadcast for BothStep {
 }
 
 impl Produce for BothStep {
-    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Traverser; 4]>> {
+    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
         let mut inner = self.inner.borrow_mut();
         loop {
             if inner.current_input.is_none() {
                 let t = inner.upstream.as_ref()?.next(ctx)?;
-                if matches!(t.value, GValue::Vertex(_)) {
+                if matches!(&t.value, GValue::Vertex(_)) {
                     inner.current_input = Some(t);
                     inner.current_label_idx = 0;
                     inner.current_direction = 0;
@@ -71,7 +71,7 @@ impl Produce for BothStep {
                 }
             }
 
-            let t = inner.current_input.as_ref().unwrap().clone();
+            let t = Rc::clone(inner.current_input.as_ref().unwrap());
             if let GValue::Vertex(vk) = &t.value {
                 let label =
                     if inner.label_ids.is_empty() { None } else { Some(inner.label_ids[inner.current_label_idx]) };
@@ -80,10 +80,7 @@ impl Produce for BothStep {
                 if inner.current_direction == 0 {
                     let out_edges = ctx.get_out_edges(*vk, label).ok().unwrap_or_default();
                     for edge in out_edges {
-                        let mut new_t = t.clone();
-                        new_t.value = GValue::Vertex(edge.secondary_id);
-                        new_t.parent = Some(Arc::new(t.clone()));
-                        results.push(new_t);
+                        results.push(Traverser::new_rc_with_parent(GValue::Vertex(edge.secondary_id), Rc::clone(&t)));
                     }
                     inner.current_direction = 1;
                     if !results.is_empty() {
@@ -94,10 +91,7 @@ impl Produce for BothStep {
                 if inner.current_direction == 1 {
                     let in_edges = ctx.get_in_edges(*vk, label).ok().unwrap_or_default();
                     for edge in in_edges {
-                        let mut new_t = t.clone();
-                        new_t.value = GValue::Vertex(edge.secondary_id);
-                        new_t.parent = Some(Arc::new(t.clone()));
-                        results.push(new_t);
+                        results.push(Traverser::new_rc_with_parent(GValue::Vertex(edge.secondary_id), Rc::clone(&t)));
                     }
                     inner.current_direction = 0;
                     inner.current_label_idx += 1;

@@ -741,7 +741,7 @@ mod cases {
 
         let mut results = Vec::new();
         while let Some(traverser) = physical_plan.next(&mut graph) {
-            results.push(traverser.value);
+            results.push(traverser.as_ref().value.clone());
         }
 
         // Marko has 3 outgoing edges and 0 incoming edges in the TinkerPop Modern Graph
@@ -766,7 +766,7 @@ mod cases {
         let physical_plan = builder.build(&logical_plan);
         let mut results = Vec::new();
         while let Some(t) = physical_plan.next(&mut graph) {
-            results.push(t.value);
+            results.push(t.as_ref().value.clone());
         }
         assert_eq!(results.len(), 3);
         assert!(results.contains(&GValue::Vertex(2)));
@@ -790,7 +790,7 @@ mod cases {
         let physical_plan = builder.build(&logical_plan);
         let mut results = Vec::new();
         while let Some(t) = physical_plan.next(&mut graph) {
-            results.push(t.value);
+            results.push(t.as_ref().value.clone());
         }
         assert_eq!(results.len(), 3);
         assert!(results.contains(&GValue::Vertex(1)));
@@ -816,7 +816,7 @@ mod cases {
         let physical_plan = builder.build(&logical_plan);
         let mut results = Vec::new();
         while let Some(t) = physical_plan.next(&mut graph) {
-            results.push(t.value);
+            results.push(t.as_ref().value.clone());
         }
         assert_eq!(results.len(), 3);
         assert!(results.contains(&GValue::Vertex(2)));
@@ -835,7 +835,7 @@ mod cases {
         let physical_plan2 = builder2.build(&logical_plan2);
         let mut results2 = Vec::new();
         while let Some(t) = physical_plan2.next(&mut graph) {
-            results2.push(t.value);
+            results2.push(t.as_ref().value.clone());
         }
         assert_eq!(results2.len(), 3);
         assert!(results2.iter().all(|v| v == &GValue::Vertex(1)));
@@ -857,7 +857,7 @@ mod cases {
         let physical_plan = builder.build(&logical_plan);
         let mut results = Vec::new();
         while let Some(t) = physical_plan.next(&mut graph) {
-            results.push(t.value);
+            results.push(t.as_ref().value.clone());
         }
         assert_eq!(results.len(), 3);
         assert!(results.contains(&GValue::Vertex(1)));
@@ -874,7 +874,7 @@ mod cases {
         let physical_plan_e = builder.build(&logical_plan_e);
         let mut results_e = Vec::new();
         while let Some(t) = physical_plan_e.next(&mut graph) {
-            results_e.push(t.value);
+            results_e.push(t.as_ref().value.clone());
         }
         assert_eq!(results_e.len(), 3);
     }
@@ -896,7 +896,7 @@ mod cases {
         let physical_plan = builder.build(&logical_plan);
         let mut results = Vec::new();
         while let Some(t) = physical_plan.next(&mut graph) {
-            results.push(t.value);
+            results.push(t.as_ref().value.clone());
         }
         assert_eq!(results.len(), 1);
         assert_eq!(results[0], GValue::Vertex(3)); // Lop
@@ -919,7 +919,7 @@ mod cases {
         let physical_plan = builder.build(&logical_plan);
         let mut results = Vec::new();
         while let Some(t) = physical_plan.next(&mut graph) {
-            results.push(t.value);
+            results.push(t.as_ref().value.clone());
         }
         assert_eq!(results.len(), 3);
         assert!(results.contains(&GValue::Vertex(2)));
@@ -945,7 +945,7 @@ mod cases {
         let physical_plan = builder.build(&logical_plan);
         let mut results = Vec::new();
         while let Some(t) = physical_plan.next(&mut graph) {
-            results.push(t.value);
+            results.push(t.as_ref().value.clone());
         }
         assert_eq!(results.len(), 2);
         assert!(results.contains(&GValue::Scalar(Primitive::String(SmolStr::new("marko")))));
@@ -969,7 +969,7 @@ mod cases {
         let physical_plan = builder.build(&logical_plan);
         let mut results = Vec::new();
         while let Some(t) = physical_plan.next(&mut graph) {
-            results.push(t.value);
+            results.push(t.as_ref().value.clone());
         }
         assert_eq!(results.len(), 1);
         assert_eq!(results[0], GValue::Scalar(Primitive::Int32(29)));
@@ -996,7 +996,7 @@ mod cases {
         let physical_plan = builder.build(&logical_plan);
         let mut results = Vec::new();
         while let Some(t) = physical_plan.next(&mut graph) {
-            results.push(t.value);
+            results.push(t.as_ref().value.clone());
         }
         assert_eq!(results.len(), 3);
         assert!(results.contains(&GValue::Vertex(1)));
@@ -1020,7 +1020,7 @@ mod cases {
         let physical_plan = builder.build(&logical_plan);
         let mut results = Vec::new();
         while let Some(t) = physical_plan.next(&mut graph) {
-            results.push(t.value);
+            results.push(t.as_ref().value.clone());
         }
         assert_eq!(results.len(), 3); // 2 knows + 1 created
     }

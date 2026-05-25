@@ -48,7 +48,7 @@ impl HasBroadcast for ValuesStep {
 }
 
 impl Produce for ValuesStep {
-    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Traverser; 4]>> {
+    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
         let inner = self.inner.borrow();
         loop {
             let t = inner.upstream.as_ref()?.next(ctx)?;
@@ -72,7 +72,7 @@ impl Produce for ValuesStep {
             } else {
                 for key in &inner.property_keys {
                     if let Some(value) = ctx.get_property(canonical_key, key).ok()? {
-                        results.push(Traverser::new(GValue::Scalar(value)));
+                        results.push(Traverser::new_rc(GValue::Scalar(value)));
                     }
                 }
             }

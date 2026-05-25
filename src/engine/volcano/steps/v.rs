@@ -48,11 +48,11 @@ impl HasBroadcast for VStep {
 }
 
 impl Produce for VStep {
-    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Traverser; 4]>> {
+    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
         let mut inner = self.inner.borrow_mut();
         if let Some(id) = inner.vertex_ids.pop_front() {
             if let Some(vertex_arc) = ctx.get_vertex(id).ok()? {
-                return Some(smallvec![Traverser::new(GValue::Vertex(vertex_arc.id))]);
+                return Some(smallvec![Traverser::new_rc(GValue::Vertex(vertex_arc.id))]);
             }
         }
         None

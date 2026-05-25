@@ -10,15 +10,12 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::sync::Arc;
+use std::rc::Rc;
 
 use smallvec::SmallVec;
 use smol_str::SmolStr;
 
-use crate::{
-    engine::group_id::GroupId,
-    types::{keys::EdgeKey, GValue},
-};
+use crate::types::GValue;
 
 /// The unit of work that flows between steps in a traversal pipeline.
 ///
@@ -34,26 +31,25 @@ pub struct Traverser {
     /// The current value carried by this traverser.
     pub value: GValue,
     /// Back-pointer to the spawning traverser — `Some` only when path tracking is active.
-    pub parent: Option<Arc<Traverser>>,
-    /// Hierarchical group identity assigned by source steps. Used by both engines to
-    /// correlate traversers across split streams (e.g. `where`, co-group steps).
-    pub group_id: GroupId,
+    pub parent: Option<Rc<Traverser>>,
     /// Labels assigned to the current step via `as(…)`.  `None` = no labels.
     pub labels: Option<SmallVec<[SmolStr; 2]>>,
 }
 
 impl Traverser {
     pub fn new(value: GValue) -> Self {
-        Self { value, labels: None, parent: None, group_id: GroupId::noop() }
+        Self { value, labels: None, parent: None }
     }
 
-    /// Creates a new traverser with a new edge value, inheriting parent and labels.
-    pub fn clone_with_edge(&self, edge_key: EdgeKey) -> Self {
-        let mut new_traverser = self.clone();
-        new_traverser.value = GValue::Edge(edge_key);
-        new_traverser.parent = Some(Arc::new(self.clone()));
-        new_traverser
+    pub fn new_rc(value: GValue) -> Rc<Self> {
+        Rc::new(Self::new(value))
     }
+
+    /// Creates a new traverser with a new value, inheriting the path of the parent traverser.
+    pub fn new_rc_with_parent(value: GValue, parent: Rc<Traverser>) -> Rc<Self> {
+        Rc::new(Self { value, labels: None, parent: Some(parent) })
+    }
+
     /// Collect the full traversal history as `(value, labels)` pairs,
     /// oldest entry first (including the current traverser).
     pub fn collect_path(&self) -> Vec<(GValue, Option<&SmallVec<[SmolStr; 2]>>)> {

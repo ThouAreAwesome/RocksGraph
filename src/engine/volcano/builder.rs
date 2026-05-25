@@ -48,11 +48,11 @@ pub struct PhysicalPlan {
 }
 
 impl PhysicalPlan {
-    pub fn inject(&self, items: VecDeque<Traverser>) {
+    pub fn inject(&self, items: VecDeque<Rc<Traverser>>) {
         self.source.inject(items);
     }
 
-    pub fn next(&self, ctx: &mut dyn GraphCtx) -> Option<Traverser> {
+    pub fn next(&self, ctx: &mut dyn GraphCtx) -> Option<Rc<Traverser>> {
         self.tail.next(ctx)
     }
 
@@ -229,6 +229,8 @@ impl PhysicalPlanBuilder {
 mod tests {
     use std::collections::VecDeque;
 
+    use std::rc::Rc;
+
     use super::PhysicalPlanBuilder;
     use crate::{
         engine::{context::NoopCtx, traverser::Traverser},
@@ -240,8 +242,8 @@ mod tests {
         GValue::Scalar(Primitive::Int32(value))
     }
 
-    fn traverser(value: i32) -> Traverser {
-        Traverser::new(gvalue(value))
+    fn traverser(value: i32) -> Rc<Traverser> {
+        Traverser::new_rc(gvalue(value))
     }
 
     #[test]
@@ -256,7 +258,7 @@ mod tests {
 
         let mut ctx = NoopCtx;
         let result = physical_plan.next(&mut ctx).expect("Expected one result");
-        assert_eq!(result.value, gvalue(2));
+        assert_eq!(result.as_ref().value, gvalue(2));
         assert!(physical_plan.next(&mut ctx).is_none());
     }
 
@@ -270,13 +272,13 @@ mod tests {
         physical_plan.inject(VecDeque::from(vec![traverser(1), traverser(2), traverser(3)]));
         let mut ctx = NoopCtx;
         let result1 = physical_plan.next(&mut ctx).unwrap();
-        assert_eq!(result1.value, gvalue(3));
+        assert_eq!(result1.as_ref().value, gvalue(3));
         assert!(physical_plan.next(&mut ctx).is_none());
 
         physical_plan.reset();
         physical_plan.inject(VecDeque::from(vec![traverser(1), traverser(2)]));
         let result2 = physical_plan.next(&mut ctx).unwrap();
-        assert_eq!(result2.value, gvalue(2));
+        assert_eq!(result2.as_ref().value, gvalue(2));
         assert!(physical_plan.next(&mut ctx).is_none());
     }
 
@@ -293,7 +295,7 @@ mod tests {
 
         let mut ctx = NoopCtx;
         let result = physical_plan.next(&mut ctx).expect("Expected one result");
-        assert_eq!(result.value, gvalue(2));
+        assert_eq!(result.as_ref().value, gvalue(2));
         assert!(physical_plan.next(&mut ctx).is_none());
     }
 }

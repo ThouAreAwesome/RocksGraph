@@ -26,7 +26,7 @@ struct Inner {
     upstream: Option<ConsumerIter>,
     physical_plans: Vec<PhysicalPlan>,
     current_plan_idx: usize,
-    current_input: Option<Traverser>,
+    current_input: Option<Rc<Traverser>>,
 }
 
 pub struct UnionStep {
@@ -50,18 +50,18 @@ impl HasBroadcast for UnionStep {
 }
 
 impl Produce for UnionStep {
-    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Traverser; 4]>> {
+    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
         let mut inner = self.inner.borrow_mut();
         loop {
             if inner.current_input.is_none() {
                 let t = inner.upstream.as_ref().unwrap().next(ctx)?;
-                inner.current_input = Some(t.clone());
+                inner.current_input = Some(Rc::clone(&t));
                 inner.current_plan_idx = 0;
 
                 if !inner.physical_plans.is_empty() {
                     let p = &inner.physical_plans[0];
                     p.reset();
-                    p.inject(std::collections::VecDeque::from(vec![t]));
+                    p.inject(std::collections::VecDeque::from(vec![Rc::clone(&t)]));
                 }
             }
             if inner.physical_plans.is_empty() {
@@ -77,11 +77,9 @@ impl Produce for UnionStep {
                 if inner.current_plan_idx < inner.physical_plans.len() {
                     let next_p = &inner.physical_plans[inner.current_plan_idx];
                     next_p.reset();
-                    next_p.inject(std::collections::VecDeque::from(vec![inner
-                        .current_input
-                        .as_ref()
-                        .unwrap()
-                        .clone()]));
+                    next_p.inject(std::collections::VecDeque::from(vec![Rc::clone(
+                        inner.current_input.as_ref().unwrap(),
+                    )]));
                 } else {
                     inner.current_input = None;
                 }

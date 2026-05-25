@@ -17,7 +17,7 @@ use std::{cell::RefCell, collections::VecDeque, rc::Rc};
 // ── BroadcastState ────────────────────────────────────────────────────────────
 
 pub(crate) struct BroadcastState {
-    buffer: VecDeque<Traverser>,
+    buffer: VecDeque<Rc<Traverser>>,
 }
 
 impl BroadcastState {
@@ -29,11 +29,11 @@ impl BroadcastState {
         self.buffer.is_empty()
     }
 
-    pub(crate) fn push(&mut self, items: SmallVec<[Traverser; 4]>) {
+    pub(crate) fn push(&mut self, items: SmallVec<[Rc<Traverser>; 4]>) {
         self.buffer.extend(items);
     }
 
-    pub(crate) fn advance(&mut self) -> Option<Traverser> {
+    pub(crate) fn advance(&mut self) -> Option<Rc<Traverser>> {
         self.buffer.pop_front()
     }
 
@@ -49,18 +49,18 @@ pub(crate) trait HasBroadcast {
 }
 
 pub(crate) trait Produce {
-    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Traverser; 4]>>;
+    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>>;
 }
 
 // ── Pullable ──────────────────────────────────────────────────────────────────
 
 pub trait Pullable {
-    fn pull(&self, ctx: &mut dyn GraphCtx) -> Option<Traverser>;
+    fn pull(&self, ctx: &mut dyn GraphCtx) -> Option<Rc<Traverser>>;
     fn reset_step(&self);
 }
 
 impl<T: HasBroadcast + Produce + GremlinStep> Pullable for T {
-    fn pull(&self, ctx: &mut dyn GraphCtx) -> Option<Traverser> {
+    fn pull(&self, ctx: &mut dyn GraphCtx) -> Option<Rc<Traverser>> {
         let mut buffer = self.broadcast().borrow_mut();
         if buffer.is_empty() {
             drop(buffer); // prevent refcell conflict with produce
@@ -88,7 +88,7 @@ impl ConsumerIter {
         Self { source }
     }
 
-    pub fn next(&self, ctx: &mut dyn GraphCtx) -> Option<Traverser> {
+    pub fn next(&self, ctx: &mut dyn GraphCtx) -> Option<Rc<Traverser>> {
         self.source.pull(ctx)
     }
 

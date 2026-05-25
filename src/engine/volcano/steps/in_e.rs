@@ -26,7 +26,7 @@ use crate::{
 struct Inner {
     upstream: Option<ConsumerIter>,
     label_ids: Vec<LabelId>,
-    current_input: Option<Traverser>,
+    current_input: Option<Rc<Traverser>>,
     current_label_idx: usize,
 }
 
@@ -51,12 +51,12 @@ impl HasBroadcast for InEStep {
 }
 
 impl Produce for InEStep {
-    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Traverser; 4]>> {
+    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
         let mut inner = self.inner.borrow_mut();
         loop {
             if inner.current_input.is_none() {
                 let t = inner.upstream.as_ref()?.next(ctx)?;
-                if matches!(t.value, GValue::Vertex(_)) {
+                if matches!(&t.value, GValue::Vertex(_)) {
                     inner.current_input = Some(t);
                     inner.current_label_idx = 0;
                 } else {
@@ -64,13 +64,16 @@ impl Produce for InEStep {
                 }
             }
 
-            let t = inner.current_input.as_ref().unwrap().clone();
+            let t = Rc::clone(inner.current_input.as_ref().unwrap());
             if let GValue::Vertex(vk) = &t.value {
                 let label =
                     if inner.label_ids.is_empty() { None } else { Some(inner.label_ids[inner.current_label_idx]) };
 
                 let in_edges = ctx.get_in_edges(*vk, label).ok().unwrap_or_default();
-                let results: SmallVec<[_; 4]> = in_edges.into_iter().map(|e| t.clone_with_edge(e)).collect();
+                let results: SmallVec<[_; 4]> = in_edges
+                    .into_iter()
+                    .map(|e| Traverser::new_rc_with_parent(GValue::Edge(e), Rc::clone(&t)))
+                    .collect();
 
                 inner.current_label_idx += 1;
                 if inner.label_ids.is_empty() || inner.current_label_idx >= inner.label_ids.len() {

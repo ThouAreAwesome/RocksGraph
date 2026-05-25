@@ -49,12 +49,12 @@ impl HasBroadcast for ScalarFilterStep {
 }
 
 impl Produce for ScalarFilterStep {
-    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Traverser; 4]>> {
+    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
         let inner = self.inner.borrow();
         loop {
             let t = inner.upstream.as_ref().unwrap().next(ctx)?;
             if matches!(&t.value, GValue::Scalar(p) if p == &inner.expected) {
-                return Some(smallvec![t]);
+                return Some(smallvec![Rc::clone(&t)]);
             }
         }
     }

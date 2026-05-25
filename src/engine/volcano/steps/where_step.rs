@@ -49,7 +49,7 @@ impl HasBroadcast for WhereStep {
 }
 
 impl Produce for WhereStep {
-    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Traverser; 4]>> {
+    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
         let inner = self.inner.borrow_mut();
         loop {
             let t = inner.upstream.as_ref().unwrap().next(ctx)?;
@@ -57,7 +57,7 @@ impl Produce for WhereStep {
             let physical_sub_plan = &inner.physical_sub_plan;
 
             physical_sub_plan.reset();
-            physical_sub_plan.inject(std::collections::VecDeque::from(vec![t.clone()]));
+            physical_sub_plan.inject(std::collections::VecDeque::from(vec![Rc::clone(&t)]));
 
             // Sub pipeline evaluates properly — if sub-traversal yields at least one item, original goes through
             if physical_sub_plan.next(ctx).is_some() {

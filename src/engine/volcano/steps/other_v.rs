@@ -45,12 +45,12 @@ impl HasBroadcast for OtherVStep {
 }
 
 impl Produce for OtherVStep {
-    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Traverser; 4]>> {
+    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
         let inner = self.inner.borrow();
         loop {
             let t = inner.upstream.as_ref()?.next(ctx)?;
             if let GValue::Edge(ek) = &t.value {
-                return Some(smallvec![Traverser::new(GValue::Vertex(ek.secondary_id))]);
+                return Some(smallvec![Traverser::new_rc(GValue::Vertex(ek.secondary_id))]);
             } else {
                 // If it's not an edge, we can't apply otherV, so we skip it. In a more complete implementation,
                 // todo: we might raise an error here, as otherV should only be called on edges. For now, we'll just

@@ -50,7 +50,7 @@ impl HasBroadcast for HasPropertyStep {
 }
 
 impl Produce for HasPropertyStep {
-    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Traverser; 4]>> {
+    fn produce(&self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
         let inner = self.inner.borrow();
         loop {
             let t = inner.upstream.as_ref().unwrap().next(ctx)?;
@@ -58,7 +58,7 @@ impl Produce for HasPropertyStep {
                 crate::types::gvalue::GValue::Vertex(vk) => {
                     if let Some(vl) = ctx.get_property(CanonicalKey::Vertex(*vk), &inner.prop_key).ok()? {
                         if vl == inner.expected_value {
-                            return Some(smallvec![t]);
+                            return Some(smallvec![Rc::clone(&t)]);
                         }
                     }
                 }
@@ -67,7 +67,7 @@ impl Produce for HasPropertyStep {
                         ctx.get_property(CanonicalKey::Edge(ek.canonical_edge_key()), &inner.prop_key).ok()?
                     {
                         if et == inner.expected_value {
-                            return Some(smallvec![t]);
+                            return Some(smallvec![Rc::clone(&t)]);
                         }
                     }
                 }
