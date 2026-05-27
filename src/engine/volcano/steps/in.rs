@@ -56,11 +56,7 @@ impl CoreStep for InStep {
 
             let t = Rc::clone(self.current_input.as_ref().unwrap());
             if let GValue::Vertex(vk) = &t.value {
-                let label = if self.label_ids.is_empty() {
-                    None
-                } else {
-                    Some(self.label_ids[self.current_label_idx])
-                };
+                let label = if self.label_ids.is_empty() { None } else { Some(self.label_ids[self.current_label_idx]) };
 
                 let in_edges = ctx.get_in_edges(*vk, label, self.limit).ok().unwrap_or_default();
                 let results: SmallVec<[_; 4]> = in_edges

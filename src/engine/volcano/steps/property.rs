@@ -30,10 +30,7 @@ pub struct PropertyStep {
 
 impl PropertyStep {
     pub fn new(prop_key: PropKey, prop_value: Primitive) -> Self {
-        Self {
-            upstream: None,
-            prop: Property { owner: CanonicalKey::Empty, key: prop_key, value: prop_value },
-        }
+        Self { upstream: None, prop: Property { owner: CanonicalKey::Empty, key: prop_key, value: prop_value } }
     }
 }
 

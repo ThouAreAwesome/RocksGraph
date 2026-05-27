@@ -42,6 +42,8 @@ use std::sync::RwLock;
 
 // ── Scan helpers ──────────────────────────────────────────────────────────────
 
+pub(crate) const EDGE_PREFIX_LENGHT: usize = 10;
+
 /// Build the prefix for an edge CF scan:
 /// `vertex_id` (8 B), optionally followed by `label_id` (2 B).
 pub fn edge_scan_prefix(vertex: VertexKey, label: Option<LabelId>) -> Vec<u8> {

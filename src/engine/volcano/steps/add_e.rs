@@ -46,12 +46,7 @@ impl AddEStep {
         let properties = properties
             .into_iter()
             .map(|(key, value)| Property {
-                owner: CanonicalKey::Edge(CanonicalEdgeKey {
-                    src_id: out_v_id,
-                    label_id,
-                    dst_id: in_v_id,
-                    rank: 0,
-                }),
+                owner: CanonicalKey::Edge(CanonicalEdgeKey { src_id: out_v_id, label_id, dst_id: in_v_id, rank: 0 }),
                 key,
                 value,
             })

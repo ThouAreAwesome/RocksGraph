@@ -10,8 +10,8 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
+pub(super) mod admin;
 mod encoding;
-pub(super) mod graph;
 mod store;
 mod transaction;
 

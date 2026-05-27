@@ -34,14 +34,7 @@ pub struct BothStep {
 
 impl BothStep {
     pub fn new(label_ids: Vec<LabelId>) -> Self {
-        Self {
-            upstream: None,
-            label_ids,
-            limit: None,
-            current_input: None,
-            current_label_idx: 0,
-            current_direction: 0,
-        }
+        Self { upstream: None, label_ids, limit: None, current_input: None, current_label_idx: 0, current_direction: 0 }
     }
 }
 
@@ -65,18 +58,13 @@ impl CoreStep for BothStep {
 
             let t = Rc::clone(self.current_input.as_ref().unwrap());
             if let GValue::Vertex(vk) = &t.value {
-                let label = if self.label_ids.is_empty() {
-                    None
-                } else {
-                    Some(self.label_ids[self.current_label_idx])
-                };
+                let label = if self.label_ids.is_empty() { None } else { Some(self.label_ids[self.current_label_idx]) };
 
                 let mut results = SmallVec::new();
                 if self.current_direction == 0 {
                     let out_edges = ctx.get_out_edges(*vk, label, self.limit).ok().unwrap_or_default();
                     for edge in out_edges {
-                        results
-                            .push(Traverser::new_rc_with_parent(GValue::Vertex(edge.secondary_id), Rc::clone(&t)));
+                        results.push(Traverser::new_rc_with_parent(GValue::Vertex(edge.secondary_id), Rc::clone(&t)));
                     }
                     self.current_direction = 1;
                     if !results.is_empty() {
@@ -87,8 +75,7 @@ impl CoreStep for BothStep {
                 if self.current_direction == 1 {
                     let in_edges = ctx.get_in_edges(*vk, label, self.limit).ok().unwrap_or_default();
                     for edge in in_edges {
-                        results
-                            .push(Traverser::new_rc_with_parent(GValue::Vertex(edge.secondary_id), Rc::clone(&t)));
+                        results.push(Traverser::new_rc_with_parent(GValue::Vertex(edge.secondary_id), Rc::clone(&t)));
                     }
                     self.current_direction = 0;
                     self.current_label_idx += 1;
