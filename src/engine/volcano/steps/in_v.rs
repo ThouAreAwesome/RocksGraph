@@ -20,7 +20,7 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::GValue,
+    types::{error::StoreError, GValue},
 };
 
 #[derive(Default)]
@@ -33,14 +33,14 @@ impl CoreStep for InVStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
         loop {
-            let t = self.upstream.as_ref()?.next(ctx)?;
+            let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
+            let Some(t) = upstream.next(ctx)? else { return Ok(None) };
             if let GValue::Edge(ek) = &t.value {
                 let vk = ek.canonical_edge_key().dst_id;
-                return Some(smallvec![Traverser::new_rc_with_parent(GValue::Vertex(vk), Rc::clone(&t))]);
+                return Ok(Some(smallvec![Traverser::new_rc_with_parent(GValue::Vertex(vk), Rc::clone(&t))]));
             }
-            // TODO: raise an error for non-edge traversers instead of silently skipping
         }
     }
 

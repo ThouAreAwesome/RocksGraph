@@ -20,7 +20,10 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::gvalue::{GValue, Primitive},
+    types::{
+        error::StoreError,
+        gvalue::{GValue, Primitive},
+    },
 };
 
 #[derive(Default)]
@@ -34,16 +37,17 @@ impl CoreStep for CountStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
         if self.done {
-            return None;
+            return Ok(None);
         }
+        let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
         let mut count: u64 = 0;
-        while self.upstream.as_ref()?.next(ctx).is_some() {
+        while upstream.next(ctx)?.is_some() {
             count += 1;
         }
         self.done = true;
-        Some(smallvec![Traverser::new_rc(GValue::Scalar(Primitive::Int64(count as i64)))])
+        Ok(Some(smallvec![Traverser::new_rc(GValue::Scalar(Primitive::Int64(count as i64)))]))
     }
 
     fn reset(&mut self) {

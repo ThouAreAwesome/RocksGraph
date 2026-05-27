@@ -20,7 +20,7 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{element::Property, gvalue::Primitive, keys::CanonicalKey, prop_key::PropKey, GValue},
+    types::{element::Property, error::StoreError, gvalue::Primitive, keys::CanonicalKey, prop_key::PropKey, GValue},
 };
 
 pub struct PropertyStep {
@@ -39,19 +39,19 @@ impl CoreStep for PropertyStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
         loop {
-            let t = self.upstream.as_ref()?.next(ctx)?;
+            let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
+            let Some(t) = upstream.next(ctx)? else { return Ok(None) };
             let canonical_key = match &t.value {
                 GValue::Vertex(v_arc) => CanonicalKey::Vertex(*v_arc),
                 GValue::Edge(e_arc) => CanonicalKey::Edge(e_arc.canonical_edge_key()),
-                // TODO: raise an error if it's not a vertex or edge
                 _ => continue,
             };
             let mut prop = self.prop.clone();
             prop.owner = canonical_key;
-            ctx.set_property(&prop).ok()?;
-            return Some(smallvec![Rc::clone(&t)]);
+            ctx.set_property(&prop)?;
+            return Ok(Some(smallvec![Rc::clone(&t)]));
         }
     }
 

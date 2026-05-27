@@ -20,7 +20,7 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{keys::VertexKey, GValue},
+    types::{error::StoreError, keys::VertexKey, GValue},
 };
 
 pub struct VStep {
@@ -39,15 +39,15 @@ impl CoreStep for VStep {
         panic!("VStep is a source step, it does not have an upstream.");
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
         loop {
             if self.current_idx >= self.vertex_ids.len() {
-                return None;
+                return Ok(None);
             }
             let id = self.vertex_ids[self.current_idx];
             self.current_idx += 1;
-            if let Some(vertex_arc) = ctx.get_vertex(id).ok()? {
-                return Some(smallvec![Traverser::new_rc(GValue::Vertex(vertex_arc.id))]);
+            if let Some(vertex_arc) = ctx.get_vertex(id)? {
+                return Ok(Some(smallvec![Traverser::new_rc(GValue::Vertex(vertex_arc.id))]));
             }
         }
     }

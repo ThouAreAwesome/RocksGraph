@@ -20,7 +20,7 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{gvalue::Primitive, prop_key::PropKey, CanonicalKey, GValue},
+    types::{error::StoreError, gvalue::Primitive, prop_key::PropKey, CanonicalKey, GValue},
 };
 
 pub struct HasPropertyStep {
@@ -40,23 +40,22 @@ impl CoreStep for HasPropertyStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
         loop {
-            let t = self.upstream.as_ref()?.next(ctx)?;
+            let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
+            let Some(t) = upstream.next(ctx)? else { return Ok(None) };
             match &t.value {
                 GValue::Vertex(vk) => {
-                    if let Some(vl) = ctx.get_property(CanonicalKey::Vertex(*vk), &self.prop_key).ok()? {
+                    if let Some(vl) = ctx.get_property(CanonicalKey::Vertex(*vk), &self.prop_key)? {
                         if vl == self.expected_value {
-                            return Some(smallvec![Rc::clone(&t)]);
+                            return Ok(Some(smallvec![Rc::clone(&t)]));
                         }
                     }
                 }
                 GValue::Edge(ek) => {
-                    if let Some(et) =
-                        ctx.get_property(CanonicalKey::Edge(ek.canonical_edge_key()), &self.prop_key).ok()?
-                    {
+                    if let Some(et) = ctx.get_property(CanonicalKey::Edge(ek.canonical_edge_key()), &self.prop_key)? {
                         if et == self.expected_value {
-                            return Some(smallvec![Rc::clone(&t)]);
+                            return Ok(Some(smallvec![Rc::clone(&t)]));
                         }
                     }
                 }

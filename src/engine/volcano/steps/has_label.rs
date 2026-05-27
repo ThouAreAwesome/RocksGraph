@@ -20,7 +20,7 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{keys::LabelId, GValue},
+    types::{error::StoreError, keys::LabelId, GValue},
 };
 
 pub struct HasLabelStep {
@@ -39,19 +39,20 @@ impl CoreStep for HasLabelStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
         loop {
-            let t = self.upstream.as_ref()?.next(ctx)?;
+            let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
+            let Some(t) = upstream.next(ctx)? else { return Ok(None) };
             let matched = match &t.value {
                 GValue::Vertex(v_arc) => {
-                    let vertex = ctx.get_vertex(*v_arc).ok()??;
+                    let Some(vertex) = ctx.get_vertex(*v_arc)? else { continue };
                     self.label_ids.contains(&vertex.label_id)
                 }
                 GValue::Edge(e_arc) => self.label_ids.contains(&e_arc.label_id),
                 _ => false,
             };
             if matched {
-                return Some(smallvec![Rc::clone(&t)]);
+                return Ok(Some(smallvec![Rc::clone(&t)]));
             }
         }
     }

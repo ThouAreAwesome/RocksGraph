@@ -51,6 +51,12 @@ pub enum LogicalStep {
     V(VStep),
     Limit(LimitStep),
     HasId(HasIdStep),
+    Coalesce(CoalesceStep),
+}
+
+#[derive(Clone)]
+pub struct CoalesceStep {
+    pub plans: Vec<LogicalPlan>,
 }
 
 #[derive(Clone)]

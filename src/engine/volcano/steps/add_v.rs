@@ -22,6 +22,7 @@ use crate::{
     },
     types::{
         element::Property,
+        error::StoreError,
         gvalue::Primitive,
         keys::{CanonicalKey, LabelId, VertexKey},
         prop_key::PropKey,
@@ -51,16 +52,16 @@ impl CoreStep for AddVStep {
         panic!("AddVStep is a source step and cannot have an upstream");
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
         if self.emitted {
-            return None;
+            return Ok(None);
         }
-        let vk = ctx.add_vertex(self.vertex_id, self.label_id).ok()?;
+        let vk = ctx.add_vertex(self.vertex_id, self.label_id)?;
         for property in &self.properties {
-            ctx.set_property(property).ok()?;
+            ctx.set_property(property)?;
         }
         self.emitted = true;
-        Some(smallvec![Traverser::new_rc(GValue::Vertex(vk))])
+        Ok(Some(smallvec![Traverser::new_rc(GValue::Vertex(vk))]))
     }
 
     fn reset(&mut self) {

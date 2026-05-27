@@ -120,8 +120,15 @@ fn process_query_message(bytes: &[u8], graph: &mut LogicalGraph<RocksStorage>) -
     let physical_plan = builder.build(&logical_plan);
 
     let mut results = Vec::new();
-    while let Some(traverser) = physical_plan.next(graph) {
-        results.push(traverser.as_ref().value.clone());
+    loop {
+        match physical_plan.next(graph) {
+            Ok(Some(traverser)) => results.push(traverser.as_ref().value.clone()),
+            Ok(None) => break,
+            Err(e) => {
+                let error_msg = serde_json::to_string(&format!("Runtime Error: {e}")).unwrap_or_default();
+                return format!(r#"{{"status":{{"code":500,"message":{error_msg}}}}}"#);
+            }
+        }
     }
 
     // For simplicity, commit after every query. In a real server, this would be explicit.

@@ -10,7 +10,10 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use crate::engine::{context::GraphCtx, traverser::Traverser};
+use crate::{
+    engine::{context::GraphCtx, traverser::Traverser},
+    types::error::StoreError,
+};
 use smallvec::SmallVec;
 use std::{cell::RefCell, collections::VecDeque, rc::Rc};
 
@@ -25,7 +28,7 @@ pub type StepRef = Rc<dyn GremlinStep>;
 /// The interface callers and downstream steps use. All methods take `&self`
 /// because interior mutability is encapsulated inside [`BufferedStep`].
 pub trait GremlinStep {
-    fn next(&self, ctx: &mut dyn GraphCtx) -> Option<Rc<Traverser>>;
+    fn next(&self, ctx: &mut dyn GraphCtx) -> Result<Option<Rc<Traverser>>, StoreError>;
     fn reset(&self);
     fn add_upper(&self, upstream: StepRef);
 }
@@ -38,8 +41,9 @@ pub trait CoreStep {
     /// Wire an upstream step. Called once per upstream during plan construction.
     fn add_upper(&mut self, upstream: StepRef);
 
-    /// Pull the next batch of results. Return `None` when exhausted.
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>>;
+    /// Pull the next batch of results. Returns `Ok(None)` when exhausted,
+    /// `Err` on storage or runtime failure.
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError>;
 
     /// Reset all mutable state and propagate to upstreams.
     fn reset(&mut self);
@@ -72,16 +76,16 @@ impl<T: CoreStep + 'static> BufferedStep<T> {
 }
 
 impl<T: CoreStep + 'static> GremlinStep for BufferedStep<T> {
-    fn next(&self, ctx: &mut dyn GraphCtx) -> Option<Rc<Traverser>> {
+    fn next(&self, ctx: &mut dyn GraphCtx) -> Result<Option<Rc<Traverser>>, StoreError> {
         // One borrow covers the buffer check, the produce call, and the pop.
         // Safety: produce only calls upstream steps (different Rc objects),
         // so their RefCells are independent — no re-entrant borrow can occur.
         let mut inner = self.inner.borrow_mut();
         if inner.buffer.is_empty() {
-            let items = inner.core.produce(ctx)?;
+            let Some(items) = inner.core.produce(ctx)? else { return Ok(None) };
             inner.buffer.extend(items);
         }
-        inner.buffer.pop_front()
+        Ok(inner.buffer.pop_front())
     }
 
     fn reset(&self) {

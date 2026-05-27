@@ -21,6 +21,7 @@ use crate::{
         volcano::steps::traits::{CoreStep, StepRef},
     },
     types::{
+        error::StoreError,
         gvalue::Primitive,
         keys::{CanonicalKey, Direction, EdgeKey, LabelId, VertexKey},
         prop_key::PropKey,
@@ -60,9 +61,9 @@ impl CoreStep for AddEStep {
         panic!("AddEStep is a source step and cannot have an upstream");
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
         if self.emitted {
-            return None;
+            return Ok(None);
         }
         let edge_key = EdgeKey {
             primary_id: self.out_v_id,
@@ -71,12 +72,12 @@ impl CoreStep for AddEStep {
             secondary_id: self.in_v_id,
             rank: 0,
         };
-        let new_edge = ctx.add_edge(edge_key).ok()?;
+        let new_edge = ctx.add_edge(edge_key)?;
         for property in &self.properties {
-            ctx.set_property(property).ok()?;
+            ctx.set_property(property)?;
         }
         self.emitted = true;
-        Some(smallvec![Traverser::new_rc(GValue::Edge(new_edge))])
+        Ok(Some(smallvec![Traverser::new_rc(GValue::Edge(new_edge))]))
     }
 
     fn reset(&mut self) {

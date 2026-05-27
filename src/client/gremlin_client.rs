@@ -120,6 +120,7 @@ impl<'a, S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> GraphTraversal
         self
     }
     /// Executes the traversal against the bound client and waits for the response.
+    #[allow(clippy::await_holding_refcell_ref)]
     pub async fn execute(&mut self) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
         let response_text = if let Some(client) = &self.client {
             client.borrow_mut().send_query(self.ast.clone()).await?
@@ -278,6 +279,12 @@ impl<'a, S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> GraphTraversal
     pub fn union(&mut self, traversals: Vec<&mut GraphTraversal<'_, S>>) -> &mut Self {
         let arguments = traversals.into_iter().map(|t| GremlinArgument::NestedBytecode(t.build())).collect();
         self.ast.step.push(ParsedGremlinStep { name: "union".to_string(), arguments });
+        self
+    }
+
+    pub fn coalesce(&mut self, traversals: Vec<&mut GraphTraversal<'_, S>>) -> &mut Self {
+        let arguments = traversals.into_iter().map(|t| GremlinArgument::NestedBytecode(t.build())).collect();
+        self.ast.step.push(ParsedGremlinStep { name: "coalesce".to_string(), arguments });
         self
     }
     pub fn limit(&mut self, limit: u32) -> &mut Self {

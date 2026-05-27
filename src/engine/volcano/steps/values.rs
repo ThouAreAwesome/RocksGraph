@@ -20,7 +20,7 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{keys::CanonicalKey, prop_key::PropKey, GValue},
+    types::{error::StoreError, keys::CanonicalKey, prop_key::PropKey, GValue},
 };
 
 pub struct ValuesStep {
@@ -39,13 +39,13 @@ impl CoreStep for ValuesStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
         loop {
-            let t = self.upstream.as_ref()?.next(ctx)?;
+            let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
+            let Some(t) = upstream.next(ctx)? else { return Ok(None) };
             let canonical_key = match &t.value {
                 GValue::Vertex(v_arc) => CanonicalKey::Vertex(*v_arc),
                 GValue::Edge(e_arc) => CanonicalKey::Edge(e_arc.canonical_edge_key()),
-                // TODO: raise an error if it's not a vertex or edge
                 _ => continue,
             };
 
@@ -56,12 +56,12 @@ impl CoreStep for ValuesStep {
 
             let mut results = smallvec![];
             for key in &self.property_keys {
-                if let Some(value) = ctx.get_property(canonical_key, key).ok()? {
+                if let Some(value) = ctx.get_property(canonical_key, key)? {
                     results.push(Traverser::new_rc(GValue::Scalar(value)));
                 }
             }
             if !results.is_empty() {
-                return Some(results);
+                return Ok(Some(results));
             }
         }
     }

@@ -14,10 +14,13 @@ use std::rc::Rc;
 
 use smallvec::SmallVec;
 
-use crate::engine::{
-    context::GraphCtx,
-    traverser::Traverser,
-    volcano::steps::traits::{CoreStep, StepRef},
+use crate::{
+    engine::{
+        context::GraphCtx,
+        traverser::Traverser,
+        volcano::steps::traits::{CoreStep, StepRef},
+    },
+    types::error::StoreError,
 };
 
 pub struct VecSourceStep {
@@ -39,11 +42,11 @@ impl CoreStep for VecSourceStep {
         panic!("VecSourceStep is a source step and cannot have an upstream");
     }
 
-    fn produce(&mut self, _ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
+    fn produce(&mut self, _ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
         if !self.items.is_empty() {
-            Some(self.items.drain(..).collect())
+            Ok(Some(self.items.drain(..).collect()))
         } else {
-            None
+            Ok(None)
         }
     }
 

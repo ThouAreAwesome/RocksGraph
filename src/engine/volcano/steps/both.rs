@@ -20,7 +20,7 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{GValue, LabelId},
+    types::{error::StoreError, GValue, LabelId},
 };
 
 pub struct BothStep {
@@ -43,10 +43,11 @@ impl CoreStep for BothStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
         loop {
             if self.current_input.is_none() {
-                let t = self.upstream.as_ref()?.next(ctx)?;
+                let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
+                let Some(t) = upstream.next(ctx)? else { return Ok(None) };
                 if matches!(&t.value, GValue::Vertex(_)) {
                     self.current_input = Some(t);
                     self.current_label_idx = 0;
@@ -62,18 +63,18 @@ impl CoreStep for BothStep {
 
                 let mut results = SmallVec::new();
                 if self.current_direction == 0 {
-                    let out_edges = ctx.get_out_edges(*vk, label, self.limit).ok().unwrap_or_default();
+                    let out_edges = ctx.get_out_edges(*vk, label, self.limit)?;
                     for edge in out_edges {
                         results.push(Traverser::new_rc_with_parent(GValue::Vertex(edge.secondary_id), Rc::clone(&t)));
                     }
                     self.current_direction = 1;
                     if !results.is_empty() {
-                        return Some(results);
+                        return Ok(Some(results));
                     }
                 }
 
                 if self.current_direction == 1 {
-                    let in_edges = ctx.get_in_edges(*vk, label, self.limit).ok().unwrap_or_default();
+                    let in_edges = ctx.get_in_edges(*vk, label, self.limit)?;
                     for edge in in_edges {
                         results.push(Traverser::new_rc_with_parent(GValue::Vertex(edge.secondary_id), Rc::clone(&t)));
                     }
@@ -83,7 +84,7 @@ impl CoreStep for BothStep {
                         self.current_input = None;
                     }
                     if !results.is_empty() {
-                        return Some(results);
+                        return Ok(Some(results));
                     }
                 }
             } else {

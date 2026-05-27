@@ -14,10 +14,13 @@ use std::rc::Rc;
 
 use smallvec::{smallvec, SmallVec};
 
-use crate::engine::{
-    context::GraphCtx,
-    traverser::Traverser,
-    volcano::steps::traits::{CoreStep, StepRef},
+use crate::{
+    engine::{
+        context::GraphCtx,
+        traverser::Traverser,
+        volcano::steps::traits::{CoreStep, StepRef},
+    },
+    types::error::StoreError,
 };
 
 pub struct LimitStep {
@@ -37,13 +40,14 @@ impl CoreStep for LimitStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
         if self.current_idx >= self.limit as usize {
-            return None;
+            return Ok(None);
         }
-        let t = self.upstream.as_ref()?.next(ctx)?;
+        let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
+        let Some(t) = upstream.next(ctx)? else { return Ok(None) };
         self.current_idx += 1;
-        Some(smallvec![Rc::clone(&t)])
+        Ok(Some(smallvec![Rc::clone(&t)]))
     }
 
     fn reset(&mut self) {

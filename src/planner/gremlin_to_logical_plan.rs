@@ -28,9 +28,9 @@ use smol_str::SmolStr;
 
 use crate::{
     planner::logical_step::{
-        AddEStep, AddVStep, BothEStep, BothStep, CountStep, HasIdStep, HasLabelStep, HasPropertyStep, InEStep, InStep,
-        InVStep, LimitStep, LogicalPlan, LogicalStep, OtherVStep, OutEStep, OutStep, OutVStep, PropertyStep,
-        ScalarFilterStep, UnionStep, VStep, ValuesStep, WhereStep,
+        AddEStep, AddVStep, BothEStep, BothStep, CoalesceStep, CountStep, HasIdStep, HasLabelStep, HasPropertyStep,
+        InEStep, InStep, InVStep, LimitStep, LogicalPlan, LogicalStep, OtherVStep, OutEStep, OutStep, OutVStep,
+        PropertyStep, ScalarFilterStep, UnionStep, VStep, ValuesStep, WhereStep,
     },
     server::bytecode_deserializer::{GremlinArgument, GremlinQueryAst, ParsedGremlinStep},
     types::{gvalue::Primitive, keys::LabelId, VertexKey},
@@ -220,6 +220,17 @@ fn translate_parsed_step(parsed_step: ParsedGremlinStep) -> Result<Vec<LogicalSt
                 })
                 .collect::<Result<Vec<LogicalPlan>, TranslationError>>()?;
             Ok(vec![LogicalStep::Union(UnionStep { plans })])
+        }
+        "coalesce" => {
+            let plans: Vec<LogicalPlan> = parsed_step
+                .arguments
+                .into_iter()
+                .map(|arg| match arg {
+                    GremlinArgument::NestedBytecode(ast) => ast.try_into(),
+                    _ => Err(TranslationError::NestedPlanError("coalesce step expects nested bytecode".to_string())),
+                })
+                .collect::<Result<Vec<LogicalPlan>, TranslationError>>()?;
+            Ok(vec![LogicalStep::Coalesce(CoalesceStep { plans })])
         }
         "property" => {
             if parsed_step.arguments.len() != 2 {

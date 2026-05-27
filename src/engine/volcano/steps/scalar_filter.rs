@@ -20,7 +20,7 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{GValue, Primitive},
+    types::{error::StoreError, GValue, Primitive},
 };
 
 pub struct ScalarFilterStep {
@@ -39,11 +39,12 @@ impl CoreStep for ScalarFilterStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
         loop {
-            let t = self.upstream.as_ref()?.next(ctx)?;
+            let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
+            let Some(t) = upstream.next(ctx)? else { return Ok(None) };
             if matches!(&t.value, GValue::Scalar(p) if p == &self.expected) {
-                return Some(smallvec![Rc::clone(&t)]);
+                return Ok(Some(smallvec![Rc::clone(&t)]));
             }
         }
     }

@@ -17,6 +17,7 @@ pub mod add_e;
 pub mod add_v;
 pub mod both;
 pub mod both_e;
+pub mod coalesce;
 pub mod count;
 pub mod has_id;
 pub mod has_label;

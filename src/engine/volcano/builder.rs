@@ -41,6 +41,7 @@ use crate::{
         },
     },
     planner::logical_step::{LogicalPlan, LogicalStep},
+    types::error::StoreError,
 };
 
 #[derive(Clone)]
@@ -54,7 +55,7 @@ impl PhysicalPlan {
         self.source.inner.borrow_mut().core.inject(items);
     }
 
-    pub fn next(&self, ctx: &mut dyn GraphCtx) -> Option<Rc<Traverser>> {
+    pub fn next(&self, ctx: &mut dyn GraphCtx) -> Result<Option<Rc<Traverser>>, StoreError> {
         self.tail.next(ctx)
     }
 
@@ -210,6 +211,14 @@ impl PhysicalPlanBuilder {
             LogicalStep::HasId(s) => {
                 wire_required!(BufferedStep::new(steps::has_id::HasIdStep::new(s.ids.clone())), upstream, "HasIdStep")
             }
+            LogicalStep::Coalesce(s) => {
+                let physical_plans = s.plans.iter().map(|p| self.build(p)).collect();
+                wire_required!(
+                    BufferedStep::new(steps::coalesce::CoalesceStep::new(physical_plans)),
+                    upstream,
+                    "CoalesceStep"
+                )
+            }
         }
     }
 }
@@ -245,9 +254,9 @@ mod tests {
         physical_plan.inject(smallvec![traverser(1), traverser(2), traverser(3)]);
 
         let mut ctx = NoopCtx;
-        let result = physical_plan.next(&mut ctx).expect("Expected one result");
+        let result = physical_plan.next(&mut ctx).expect("store error").expect("Expected one result");
         assert_eq!(result.as_ref().value, gvalue(2));
-        assert!(physical_plan.next(&mut ctx).is_none());
+        assert!(physical_plan.next(&mut ctx).expect("store error").is_none());
     }
 
     #[test]
@@ -259,15 +268,15 @@ mod tests {
 
         physical_plan.inject(smallvec![traverser(1), traverser(2), traverser(3)]);
         let mut ctx = NoopCtx;
-        let result1 = physical_plan.next(&mut ctx).unwrap();
+        let result1 = physical_plan.next(&mut ctx).unwrap().unwrap();
         assert_eq!(result1.as_ref().value, gvalue(3));
-        assert!(physical_plan.next(&mut ctx).is_none());
+        assert!(physical_plan.next(&mut ctx).unwrap().is_none());
 
         physical_plan.reset();
         physical_plan.inject(smallvec![traverser(1), traverser(2)]);
-        let result2 = physical_plan.next(&mut ctx).unwrap();
+        let result2 = physical_plan.next(&mut ctx).unwrap().unwrap();
         assert_eq!(result2.as_ref().value, gvalue(2));
-        assert!(physical_plan.next(&mut ctx).is_none());
+        assert!(physical_plan.next(&mut ctx).unwrap().is_none());
     }
 
     #[test]
@@ -282,8 +291,8 @@ mod tests {
         physical_plan.inject(smallvec![traverser(1), traverser(2), traverser(3)]);
 
         let mut ctx = NoopCtx;
-        let result = physical_plan.next(&mut ctx).expect("Expected one result");
+        let result = physical_plan.next(&mut ctx).expect("store error").expect("Expected one result");
         assert_eq!(result.as_ref().value, gvalue(2));
-        assert!(physical_plan.next(&mut ctx).is_none());
+        assert!(physical_plan.next(&mut ctx).expect("store error").is_none());
     }
 }

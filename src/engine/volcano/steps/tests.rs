@@ -28,6 +28,7 @@ mod cases {
         store::{GraphStore, RocksStorage}, // Assuming RocksStorage is in src/store.rs
         types::element::Property,
         types::{
+            error::StoreError,
             gvalue::Primitive,
             keys::{CanonicalEdgeKey, CanonicalKey, LabelId, VertexKey},
             GValue,
@@ -453,7 +454,7 @@ mod cases {
 
         let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
-        let result = physical_plan.next(&mut graph).unwrap();
+        let Some(result) = physical_plan.next(&mut graph).unwrap() else { panic!("Expected a result") };
 
         if let GValue::Vertex(v_key) = &result.value {
             assert_eq!(*v_key, test_vertex_id); // Check the returned VertexKey
@@ -474,7 +475,7 @@ mod cases {
         } else {
             panic!("Expected a Vertex GValue");
         }
-        assert!(physical_plan.next(&mut graph).is_none()); // Should only emit once
+        assert!(physical_plan.next(&mut graph).unwrap().is_none()); // Should only emit once
     }
 
     // --- Test Cases for AddEStep ---
@@ -501,7 +502,7 @@ mod cases {
 
         let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
-        let result = physical_plan.next(&mut graph).unwrap();
+        let result = physical_plan.next(&mut graph).unwrap().unwrap();
         if let GValue::Edge(e_key) = &result.value {
             let added_edge = graph.get_edge(e_key.canonical_edge_key()).unwrap().unwrap(); // Fetch the actual edge
             assert_eq!(added_edge.label_id, FRIENDS_LABEL_ID);
@@ -517,7 +518,7 @@ mod cases {
         } else {
             panic!("Expected an Edge GValue");
         }
-        assert!(physical_plan.next(&mut graph).is_none()); // Should only emit once
+        assert!(physical_plan.next(&mut graph).unwrap().is_none()); // Should only emit once
     }
 
     // --- Test Cases for PropertyStep ---
@@ -538,7 +539,7 @@ mod cases {
 
         let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
-        let result = physical_plan.next(&mut graph).unwrap();
+        let result = physical_plan.next(&mut graph).unwrap().unwrap();
 
         if let GValue::Vertex(v_key) = &result.value {
             let updated_vertex = graph.get_vertex(*v_key).unwrap().unwrap();
@@ -555,7 +556,7 @@ mod cases {
         } else {
             panic!("Expected a Vertex GValue");
         }
-        assert!(physical_plan.next(&mut graph).is_none());
+        assert!(physical_plan.next(&mut graph).unwrap().is_none());
     }
 
     #[test]
@@ -582,7 +583,7 @@ mod cases {
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
-        let result = physical_plan.next(&mut graph).unwrap();
+        let result = physical_plan.next(&mut graph).unwrap().unwrap();
 
         if let GValue::Edge(e_key) = &result.value {
             let updated_edge = graph.get_edge(e_key.canonical_edge_key()).unwrap().unwrap();
@@ -623,13 +624,13 @@ mod cases {
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
-        let result = physical_plan.next(&mut graph).unwrap();
+        let result = physical_plan.next(&mut graph).unwrap().unwrap();
         if let GValue::Vertex(v_key) = &result.value {
             assert_eq!(*v_key, marko_id);
         } else {
             panic!("Expected Marko");
         }
-        assert!(physical_plan.next(&mut graph).is_none());
+        assert!(physical_plan.next(&mut graph).unwrap().is_none());
     }
 
     #[test]
@@ -659,14 +660,14 @@ mod cases {
 
         let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
-        let result = physical_plan.next(&mut graph).unwrap();
+        let result = physical_plan.next(&mut graph).unwrap().unwrap();
 
         if let GValue::Edge(e_key) = &result.value {
             assert_eq!(e_key.canonical_edge_key(), created_edge_key); // Josh created Ripple with weight 1.0
         } else {
             panic!("Expected created_edge_arc");
         }
-        assert!(physical_plan.next(&mut graph).is_none());
+        assert!(physical_plan.next(&mut graph).unwrap().is_none());
 
         // Start from Marko and Josh, get their outgoing edges without label filter, but filter by weight = 0.4 (should
         // match Marko->Lop and Josh->Lop)
@@ -688,7 +689,7 @@ mod cases {
 
         let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
-        let result = physical_plan.next(&mut graph).unwrap();
+        let result = physical_plan.next(&mut graph).unwrap().unwrap();
 
         if let GValue::Edge(e_key) = &result.value {
             assert_eq!(e_key.canonical_edge_key(), expected_edge_keys[0]); // Josh created Ripple with weight 1.0
@@ -696,13 +697,13 @@ mod cases {
             panic!("Expected created_edge_arc");
         }
 
-        let result = physical_plan.next(&mut graph).unwrap();
+        let Some(result) = physical_plan.next(&mut graph).unwrap() else { panic!("Expected a result") };
         if let GValue::Edge(e_key) = &result.value {
             assert_eq!(e_key.canonical_edge_key(), expected_edge_keys[1]); // Josh created Ripple with weight 1.0
         } else {
             panic!("Expected created_edge_arc");
         }
-        assert!(physical_plan.next(&mut graph).is_none());
+        assert!(physical_plan.next(&mut graph).unwrap().is_none());
     }
 
     #[test]
@@ -740,7 +741,7 @@ mod cases {
         let physical_plan = builder.build(&logical_plan);
 
         let mut results = Vec::new();
-        while let Some(traverser) = physical_plan.next(&mut graph) {
+        while let Ok(Some(traverser)) = physical_plan.next(&mut graph) {
             results.push(traverser.as_ref().value.clone());
         }
 
@@ -765,7 +766,7 @@ mod cases {
         let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
         let mut results = Vec::new();
-        while let Some(t) = physical_plan.next(&mut graph) {
+        while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
         }
         assert_eq!(results.len(), 3);
@@ -789,7 +790,7 @@ mod cases {
         let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
         let mut results = Vec::new();
-        while let Some(t) = physical_plan.next(&mut graph) {
+        while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
         }
         assert_eq!(results.len(), 3);
@@ -815,7 +816,7 @@ mod cases {
         let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
         let mut results = Vec::new();
-        while let Some(t) = physical_plan.next(&mut graph) {
+        while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
         }
         assert_eq!(results.len(), 3);
@@ -834,7 +835,7 @@ mod cases {
         let mut builder2: PhysicalPlanBuilder = Default::default();
         let physical_plan2 = builder2.build(&logical_plan2);
         let mut results2 = Vec::new();
-        while let Some(t) = physical_plan2.next(&mut graph) {
+        while let Ok(Some(t)) = physical_plan2.next(&mut graph) {
             results2.push(t.as_ref().value.clone());
         }
         assert_eq!(results2.len(), 3);
@@ -856,7 +857,7 @@ mod cases {
         let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
         let mut results = Vec::new();
-        while let Some(t) = physical_plan.next(&mut graph) {
+        while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
         }
         assert_eq!(results.len(), 3);
@@ -873,7 +874,7 @@ mod cases {
         let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan_e = builder.build(&logical_plan_e);
         let mut results_e = Vec::new();
-        while let Some(t) = physical_plan_e.next(&mut graph) {
+        while let Ok(Some(t)) = physical_plan_e.next(&mut graph) {
             results_e.push(t.as_ref().value.clone());
         }
         assert_eq!(results_e.len(), 3);
@@ -895,7 +896,7 @@ mod cases {
         let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
         let mut results = Vec::new();
-        while let Some(t) = physical_plan.next(&mut graph) {
+        while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
         }
         assert_eq!(results.len(), 1);
@@ -918,7 +919,7 @@ mod cases {
         let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
         let mut results = Vec::new();
-        while let Some(t) = physical_plan.next(&mut graph) {
+        while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
         }
         assert_eq!(results.len(), 3);
@@ -944,7 +945,7 @@ mod cases {
         let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
         let mut results = Vec::new();
-        while let Some(t) = physical_plan.next(&mut graph) {
+        while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
         }
         assert_eq!(results.len(), 2);
@@ -968,7 +969,7 @@ mod cases {
         let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
         let mut results = Vec::new();
-        while let Some(t) = physical_plan.next(&mut graph) {
+        while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
         }
         assert_eq!(results.len(), 1);
@@ -995,13 +996,56 @@ mod cases {
         let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
         let mut results = Vec::new();
-        while let Some(t) = physical_plan.next(&mut graph) {
+        while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
         }
         assert_eq!(results.len(), 3);
         assert!(results.contains(&GValue::Vertex(1)));
         assert!(results.contains(&GValue::Vertex(4)));
         assert!(results.contains(&GValue::Vertex(6)));
+    }
+
+    #[test]
+    fn test_add_v_step_duplicate_vertex_returns_error() {
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+
+        // Vertex 1 (marko) already exists in the committed graph.
+        let logical_plan = LogicalPlan {
+            steps: vec![LogicalStep::AddV(LogicalAddVStep {
+                label_id: PERSON_LABEL_ID,
+                vertex_id: 1,
+                properties: HashMap::new(),
+            })],
+        };
+
+        let mut builder: PhysicalPlanBuilder = Default::default();
+        let physical_plan = builder.build(&logical_plan);
+        let result = physical_plan.next(&mut graph);
+
+        assert!(matches!(result, Err(StoreError::DuplicateVertex(1))));
+    }
+
+    #[test]
+    fn test_add_e_step_duplicate_edge_returns_error() {
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+
+        // The marko->vadas "knows" edge already exists in the committed graph.
+        let logical_plan = LogicalPlan {
+            steps: vec![LogicalStep::AddE(LogicalAddEStep {
+                label_id: KNOWS_LABEL_ID,
+                out_v_id: 1,
+                in_v_id: 2,
+                properties: HashMap::new(),
+            })],
+        };
+
+        let mut builder: PhysicalPlanBuilder = Default::default();
+        let physical_plan = builder.build(&logical_plan);
+        let result = physical_plan.next(&mut graph);
+
+        assert!(matches!(result, Err(StoreError::DuplicateEdge(_))));
     }
 
     #[test]
@@ -1019,7 +1063,7 @@ mod cases {
         let mut builder: PhysicalPlanBuilder = Default::default();
         let physical_plan = builder.build(&logical_plan);
         let mut results = Vec::new();
-        while let Some(t) = physical_plan.next(&mut graph) {
+        while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
         }
         assert_eq!(results.len(), 3); // 2 knows + 1 created

@@ -14,13 +14,16 @@ use std::rc::Rc;
 
 use smallvec::{smallvec, SmallVec};
 
-use crate::engine::{
-    context::GraphCtx,
-    traverser::Traverser,
-    volcano::{
-        builder::PhysicalPlan,
-        steps::traits::{CoreStep, StepRef},
+use crate::{
+    engine::{
+        context::GraphCtx,
+        traverser::Traverser,
+        volcano::{
+            builder::PhysicalPlan,
+            steps::traits::{CoreStep, StepRef},
+        },
     },
+    types::error::StoreError,
 };
 
 pub struct WhereStep {
@@ -39,9 +42,10 @@ impl CoreStep for WhereStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Option<SmallVec<[Rc<Traverser>; 4]>> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
         loop {
-            let t = self.upstream.as_ref().unwrap().next(ctx)?;
+            let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
+            let Some(t) = upstream.next(ctx)? else { return Ok(None) };
 
             let physical_sub_plan = &self.physical_plans;
 
@@ -49,8 +53,8 @@ impl CoreStep for WhereStep {
             physical_sub_plan.inject(smallvec![Rc::clone(&t)]);
 
             // Sub pipeline evaluates properly — if sub-traversal yields at least one item, original goes through
-            if physical_sub_plan.next(ctx).is_some() {
-                return Some(smallvec![t]);
+            if physical_sub_plan.next(ctx)?.is_some() {
+                return Ok(Some(smallvec![t]));
             }
         }
     }
