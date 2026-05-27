@@ -176,10 +176,6 @@ impl GraphTransaction for Transaction {
 
         let prefix = edge_scan_prefix(vertex, label);
         let mut read_opts = ReadOptions::default();
-        if label.is_some() {
-            // iterator stops at the prefix boundary automatically
-            read_opts.set_prefix_same_as_start(true);
-        }
 
         if let Some(upper) = prefix_upper_bound(&prefix) {
             read_opts.set_iterate_upper_bound(upper);
