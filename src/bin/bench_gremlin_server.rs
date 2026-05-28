@@ -12,12 +12,13 @@
 
 use multigraph::{
     client::gremlin_client::{self, GremlinArgument},
-    server::gremlin_server,
+    server::{config::Config, gremlin_server},
 };
 
 use rand::Rng;
 use std::{
     collections::HashMap,
+    env,
     fs::File,
     io::{BufRead, BufReader},
     path::PathBuf,
@@ -132,11 +133,18 @@ async fn upsert_edge(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = env::args().collect();
+    let config_path = if let Some(pos) = args.iter().position(|arg| arg == "--config") {
+        args.get(pos + 1).map(PathBuf::from)
+    } else {
+        None
+    }
+    .expect("Please provide a --config file path for the benchmark");
+
+    let config = Config::from_file(&config_path)?;
     let server_addr = random_server_addr().await;
 
-    let path_str = "./bench_data/rocksdb_data";
-    let path = PathBuf::from(path_str);
-    let graph_store = gremlin_server::open_rocks_store(Some(&path));
+    let graph_store = gremlin_server::open_rocks_store(Some(&config.storage.data_dir))?;
 
     let addr_clone = server_addr.clone();
     tokio::spawn(async move {

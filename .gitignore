@@ -5,3 +5,7 @@ target/
 src/.DS_Store
 Cargo.lock
 **/*.rs.bk
+data/
+bench_data/
+*.pid
+*.log

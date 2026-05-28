@@ -5,6 +5,7 @@ use crate::{
     planner::logical_step::LogicalPlan,
     server::{
         bytecode_deserializer::{deserialize_bytecode, GremlinQueryAst},
+        config::Config,
         result_serializer::serialize_results,
     },
     store::{GraphStore, RocksStorage},
@@ -14,14 +15,24 @@ use std::{path::Path, sync::Arc};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 
-pub fn open_rocks_store<P: AsRef<Path>>(path: Option<P>) -> Arc<RocksStorage> {
+pub fn open_rocks_store<P: AsRef<Path>>(path: Option<P>) -> Result<Arc<RocksStorage>, Box<dyn std::error::Error>> {
     match path {
-        Some(pth) => Arc::new(RocksStorage::open(pth).unwrap()),
+        Some(pth) => Ok(Arc::new(RocksStorage::open(pth)?)),
         None => {
-            let dir = tempfile::tempdir().unwrap();
-            Arc::new(RocksStorage::open(dir.path()).unwrap())
+            let dir = tempfile::tempdir()?;
+            Ok(Arc::new(RocksStorage::open(dir.path())?))
         }
     }
+}
+
+/// Loads configuration and starts the server using the provided config file path.
+pub async fn run_server_with_config<P: AsRef<Path>>(config_path: P) -> Result<(), Box<dyn std::error::Error>> {
+    let config = Config::from_file(config_path)?;
+
+    let graph_store = open_rocks_store(Some(&config.storage.data_dir))?;
+    let addr = config.addr();
+
+    start_server(&addr, graph_store).await
 }
 
 /// Starts the Gremlin WebSocket server.
@@ -29,11 +40,18 @@ pub async fn start_server(addr: &str, graph_store: Arc<RocksStorage>) -> Result<
     let listener = TcpListener::bind(addr).await?;
     println!("Gremlin WebSocket server listening on: {}", addr);
 
-    while let Ok((stream, _)) = listener.accept().await {
-        let graph_store_clone = Arc::clone(&graph_store);
-        tokio::spawn(handle_connection(stream, graph_store_clone));
+    loop {
+        match listener.accept().await {
+            Ok((stream, _)) => {
+                let graph_store_clone = Arc::clone(&graph_store);
+                tokio::spawn(handle_connection(stream, graph_store_clone));
+            }
+            Err(e) => {
+                // Log the error but continue listening for new connections.
+                eprintln!("Error accepting connection: {}", e);
+            }
+        }
     }
-    Ok(())
 }
 
 /// Handles a single WebSocket connection from a Gremlin client.
@@ -50,9 +68,6 @@ async fn handle_connection(stream: TcpStream, graph_store: Arc<RocksStorage>) {
 
     let (mut sender, mut receiver) = ws_stream.split();
 
-    // Each connection gets its own LogicalGraph for transactional context
-    let mut logical_graph = LogicalGraph::new(graph_store.begin());
-
     while let Some(msg) = receiver.next().await {
         let msg = match msg {
             Ok(msg) => msg,
@@ -66,6 +81,7 @@ async fn handle_connection(stream: TcpStream, graph_store: Arc<RocksStorage>) {
             Message::Text(text) => {
                 // For simplicity, we'll treat text messages as JSON-encoded bytecode
                 // In a real TinkerPop server, this would be binary Gryo.
+                let mut logical_graph = LogicalGraph::new(graph_store.begin());
                 let response = process_query_message(text.as_bytes(), &mut logical_graph);
                 if let Err(e) = sender.send(Message::Text(response.into())).await {
                     eprintln!("Error sending response: {:?}", e);
@@ -73,6 +89,7 @@ async fn handle_connection(stream: TcpStream, graph_store: Arc<RocksStorage>) {
                 }
             }
             Message::Binary(bytes) => {
+                let mut logical_graph = LogicalGraph::new(graph_store.begin());
                 let response = process_query_message(&bytes, &mut logical_graph);
                 if let Err(e) = sender.send(Message::Text(response.into())).await {
                     eprintln!("Error sending response: {:?}", e);
@@ -93,8 +110,6 @@ async fn handle_connection(stream: TcpStream, graph_store: Arc<RocksStorage>) {
         }
     }
 
-    // Ensure transaction is aborted if not explicitly committed
-    logical_graph.abort();
     println!("WebSocket connection closed.");
 }
 
