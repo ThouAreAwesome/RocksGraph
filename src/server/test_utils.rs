@@ -27,7 +27,7 @@ pub fn create_tinkerpop_modern_graph_for_server_test(store: Arc<RocksStorage>) {
     let mut graph = LogicalGraph::<RocksStorage>::new(store.begin());
 
     // Add Vertices
-    let (v_marko_key, _) = graph.add_vertex(1, PERSON_LABEL_ID).unwrap();
+    let v_marko_key = graph.add_vertex(1, PERSON_LABEL_ID).unwrap();
     let peter_name = Property {
         owner: CanonicalKey::Vertex(v_marko_key),
         key: SmolStr::new("name"),
@@ -42,7 +42,7 @@ pub fn create_tinkerpop_modern_graph_for_server_test(store: Arc<RocksStorage>) {
         })
         .unwrap();
 
-    let (v_vadas_key, _) = graph.add_vertex(2, PERSON_LABEL_ID).unwrap();
+    let v_vadas_key = graph.add_vertex(2, PERSON_LABEL_ID).unwrap();
     graph
         .set_property(&Property {
             owner: CanonicalKey::Vertex(v_vadas_key),
@@ -58,7 +58,7 @@ pub fn create_tinkerpop_modern_graph_for_server_test(store: Arc<RocksStorage>) {
         })
         .unwrap();
 
-    let (v_lop_key, _) = graph.add_vertex(3, SOFTWARE_LABEL_ID).unwrap();
+    let v_lop_key = graph.add_vertex(3, SOFTWARE_LABEL_ID).unwrap();
     graph
         .set_property(&Property {
             owner: CanonicalKey::Vertex(v_lop_key),
@@ -74,7 +74,7 @@ pub fn create_tinkerpop_modern_graph_for_server_test(store: Arc<RocksStorage>) {
         })
         .unwrap();
 
-    let (v_josh_key, _) = graph.add_vertex(4, PERSON_LABEL_ID).unwrap();
+    let v_josh_key = graph.add_vertex(4, PERSON_LABEL_ID).unwrap();
     graph
         .set_property(&Property {
             owner: CanonicalKey::Vertex(v_josh_key),
@@ -90,7 +90,7 @@ pub fn create_tinkerpop_modern_graph_for_server_test(store: Arc<RocksStorage>) {
         })
         .unwrap();
 
-    let (v_ripple_key, _) = graph.add_vertex(5, SOFTWARE_LABEL_ID).unwrap();
+    let v_ripple_key = graph.add_vertex(5, SOFTWARE_LABEL_ID).unwrap();
     graph
         .set_property(&Property {
             owner: CanonicalKey::Vertex(v_ripple_key),
@@ -106,7 +106,7 @@ pub fn create_tinkerpop_modern_graph_for_server_test(store: Arc<RocksStorage>) {
         })
         .unwrap();
 
-    let (v_peter_key, _) = graph.add_vertex(6, PERSON_LABEL_ID).unwrap();
+    let v_peter_key = graph.add_vertex(6, PERSON_LABEL_ID).unwrap();
     graph
         .set_property(&Property {
             owner: CanonicalKey::Vertex(v_peter_key),
@@ -123,7 +123,7 @@ pub fn create_tinkerpop_modern_graph_for_server_test(store: Arc<RocksStorage>) {
         .unwrap();
 
     // Add Edges
-    let (e1_key, _) = graph
+    let e1_key = graph
         .add_edge(CanonicalEdgeKey { src_id: v_marko_key, label_id: KNOWS_LABEL_ID, rank: 0, dst_id: v_vadas_key })
         .unwrap();
     graph
@@ -134,7 +134,7 @@ pub fn create_tinkerpop_modern_graph_for_server_test(store: Arc<RocksStorage>) {
         })
         .unwrap();
 
-    let (e2_key, _) = graph
+    let e2_key = graph
         .add_edge(CanonicalEdgeKey { src_id: v_marko_key, label_id: KNOWS_LABEL_ID, rank: 0, dst_id: v_josh_key })
         .unwrap();
     graph
@@ -145,7 +145,7 @@ pub fn create_tinkerpop_modern_graph_for_server_test(store: Arc<RocksStorage>) {
         })
         .unwrap();
 
-    let (e3_key, _) = graph
+    let e3_key = graph
         .add_edge(CanonicalEdgeKey { src_id: v_marko_key, label_id: CREATED_LABEL_ID, rank: 0, dst_id: v_lop_key })
         .unwrap();
     graph
@@ -156,7 +156,7 @@ pub fn create_tinkerpop_modern_graph_for_server_test(store: Arc<RocksStorage>) {
         })
         .unwrap();
 
-    let (e4_key, _) = graph
+    let e4_key = graph
         .add_edge(CanonicalEdgeKey { src_id: v_josh_key, label_id: CREATED_LABEL_ID, rank: 0, dst_id: v_ripple_key })
         .unwrap();
     graph
@@ -167,7 +167,7 @@ pub fn create_tinkerpop_modern_graph_for_server_test(store: Arc<RocksStorage>) {
         })
         .unwrap();
 
-    let (e5_key, _) = graph
+    let e5_key = graph
         .add_edge(CanonicalEdgeKey { src_id: v_josh_key, label_id: CREATED_LABEL_ID, rank: 0, dst_id: v_lop_key })
         .unwrap();
     graph
@@ -178,7 +178,7 @@ pub fn create_tinkerpop_modern_graph_for_server_test(store: Arc<RocksStorage>) {
         })
         .unwrap();
 
-    let (e6_key, _) = graph
+    let e6_key = graph
         .add_edge(CanonicalEdgeKey { src_id: v_peter_key, label_id: CREATED_LABEL_ID, rank: 0, dst_id: v_lop_key })
         .unwrap();
     graph

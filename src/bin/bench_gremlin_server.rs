@@ -116,7 +116,7 @@ async fn upsert_edge(
                                 plan: LogicalPlan {
                                     steps: vec![
                                         LogicalStep::OtherV(OtherVStep {}),
-                                        LogicalStep::HasId(HasIdStep { ids: vec![dst as i64] }),
+                                        LogicalStep::HasId(HasIdStep { ids: vec![dst] }),
                                     ],
                                 },
                             }),
@@ -169,7 +169,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let graph_store = gremlin_server::open_rocks_store(Some(&config.storage.data_dir))?;
 
-    let file = File::open("./bench_data/soc-LiveJournal1-1M.txt")?;
+    let file = File::open("./bench_data/soc-LiveJournal1_shuffled.txt")?;
     let reader = BufReader::new(file);
 
     let start = Instant::now();

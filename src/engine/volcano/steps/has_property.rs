@@ -46,14 +46,14 @@ impl CoreStep for HasPropertyStep {
             let Some(t) = upstream.next(ctx)? else { return Ok(None) };
             match &t.value {
                 GValue::Vertex(vk) => {
-                    if let Some(vl) = ctx.get_property(CanonicalKey::Vertex(*vk), &self.prop_key)? {
+                    if let Some(vl) = ctx.get_value(CanonicalKey::Vertex(*vk), &self.prop_key)? {
                         if vl == self.expected_value {
                             return Ok(Some(smallvec![Rc::clone(&t)]));
                         }
                     }
                 }
                 GValue::Edge(ek) => {
-                    if let Some(et) = ctx.get_property(CanonicalKey::Edge(ek.canonical_edge_key()), &self.prop_key)? {
+                    if let Some(et) = ctx.get_value(CanonicalKey::Edge(ek.canonical_edge_key()), &self.prop_key)? {
                         if et == self.expected_value {
                             return Ok(Some(smallvec![Rc::clone(&t)]));
                         }

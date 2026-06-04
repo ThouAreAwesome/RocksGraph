@@ -107,7 +107,7 @@ impl Transaction {
 // ── GraphTransaction ──────────────────────────────────────────────────────────
 
 impl GraphTransaction for Transaction {
-    fn get_vertex(&mut self, key: VertexKey) -> Result<Option<Arc<Vertex>>, StoreError> {
+    fn get_vertex(&mut self, key: VertexKey) -> Result<Option<Vertex>, StoreError> {
         let cf_vertices = self.db.cf_handle(CF_VERTICES).ok_or(StoreError::MissingColumnFamily("vertices"))?;
         let vv_raw = self
             .db_txn
@@ -119,7 +119,7 @@ impl GraphTransaction for Transaction {
         match vv_raw {
             Some(vv_bytes) => {
                 let vv = VertexValue::decode(&vv_bytes).ok_or(StoreError::CorruptData("vertex value"))?;
-                Ok(Some(Arc::new(build_full_vertex(key, &vv)?)))
+                Ok(Some(build_full_vertex(key, &vv)?))
             }
             _ => Ok(None),
         }
@@ -142,7 +142,7 @@ impl GraphTransaction for Transaction {
         }
     }
 
-    fn get_edge(&mut self, key: CanonicalEdgeKey, direction: Direction) -> Result<Option<Arc<Edge>>, StoreError> {
+    fn get_edge(&mut self, key: CanonicalEdgeKey, direction: Direction) -> Result<Option<Edge>, StoreError> {
         let (cf_name, key_bytes) = match direction {
             Direction::OUT => (CF_EDGES_OUT, encode_edge_key_out(key)),
             Direction::IN => (CF_EDGES_IN, encode_edge_key_in(key)),
@@ -157,7 +157,7 @@ impl GraphTransaction for Transaction {
 
         match raw_opt {
             None => Ok(None),
-            Some(raw) => Ok(Some(Arc::new(build_full_edge(key, &EdgeValue::decode(&raw))?))),
+            Some(raw) => Ok(Some(build_full_edge(key, &EdgeValue::decode(&raw))?)),
         }
     }
 
@@ -168,7 +168,7 @@ impl GraphTransaction for Transaction {
         label: Option<LabelId>,
         dst: Option<&[VertexKey]>,
         limit: Option<u32>,
-    ) -> Result<Vec<Arc<Edge>>, StoreError> {
+    ) -> Result<Vec<Edge>, StoreError> {
         let (cf_name, decode_fn): (&str, EdgeKeyDecoder) = match direction {
             Direction::OUT => (CF_EDGES_OUT, decode_edge_key_out),
             Direction::IN => (CF_EDGES_IN, decode_edge_key_in),
@@ -203,7 +203,7 @@ impl GraphTransaction for Transaction {
                     continue;
                 }
             }
-            result.push(Arc::new(build_full_edge(cek, &EdgeValue::decode(&val_bytes))?));
+            result.push(build_full_edge(cek, &EdgeValue::decode(&val_bytes))?);
             if let Some(max) = limit {
                 if result.len() >= max as usize {
                     break;

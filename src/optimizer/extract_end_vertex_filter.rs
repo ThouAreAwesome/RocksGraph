@@ -72,7 +72,7 @@ mod tests {
             plan: LogicalPlan {
                 steps: vec![
                     LogicalStep::OtherV(OtherVStep {}),
-                    LogicalStep::HasProperty(HasPropertyStep { key: ID.into(), value: Primitive::Int32(123) }),
+                    LogicalStep::HasProperty(HasPropertyStep { key: ID, value: Primitive::Int32(123) }),
                 ],
             },
         })

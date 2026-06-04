@@ -35,7 +35,6 @@
 //! The engine never imports `GraphTransaction` or `GraphStore` directly —
 //! it only touches `LogicalGraph`. Backend details (RocksDB CFs, OCC, encoding)
 //! never cross the `GraphTransaction` boundary.
-use std::sync::Arc;
 
 use crate::types::{element::Property, CanonicalEdgeKey, Direction, Edge, LabelId, StoreError, Vertex, VertexKey};
 
@@ -70,14 +69,14 @@ pub trait GraphTransaction {
     //      Currently, `get_vertex` is used both for property loading and existence checking.
     //      A batch API would be great for data fetching, but returning a partial result set makes it
     //      inconvenient for strict existence checks. Needs further design consideration.
-    fn get_vertex(&mut self, key: VertexKey) -> Result<Option<Arc<Vertex>>, StoreError>;
+    fn get_vertex(&mut self, key: VertexKey) -> Result<Option<Vertex>, StoreError>;
 
     /// Fetch a committed vertex's out-degree and in-degree; `None` if absent.
     /// Implementations should register the key in an OCC read-set.
     fn get_vertex_degree(&mut self, key: VertexKey) -> Result<Option<(u32, u32)>, StoreError>;
 
     /// Fetch a single committed edge record for the given direction; `None` if absent.
-    fn get_edge(&mut self, key: CanonicalEdgeKey, direction: Direction) -> Result<Option<Arc<Edge>>, StoreError>;
+    fn get_edge(&mut self, key: CanonicalEdgeKey, direction: Direction) -> Result<Option<Edge>, StoreError>;
 
     /// Scan committed edges incident to `vertex` in `direction`.
     ///
@@ -91,7 +90,7 @@ pub trait GraphTransaction {
         label: Option<LabelId>,
         dst: Option<&[VertexKey]>,
         limit: Option<u32>,
-    ) -> Result<Vec<Arc<Edge>>, StoreError>;
+    ) -> Result<Vec<Edge>, StoreError>;
 
     // ── Writes ────────────────────────────────────────────────────────────────
 

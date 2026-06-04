@@ -56,7 +56,7 @@ impl CoreStep for ValuesStep {
 
             let mut results = smallvec![];
             for key in &self.property_keys {
-                if let Some(value) = ctx.get_property(canonical_key, key)? {
+                if let Some(value) = ctx.get_value(canonical_key, key)? {
                     results.push(Traverser::new_rc(GValue::Scalar(value)));
                 }
             }

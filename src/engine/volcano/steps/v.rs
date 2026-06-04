@@ -46,8 +46,8 @@ impl CoreStep for VStep {
             }
             let id = self.vertex_ids[self.current_idx];
             self.current_idx += 1;
-            if let Some(vertex_arc) = ctx.get_vertex(id)? {
-                return Ok(Some(smallvec![Traverser::new_rc(GValue::Vertex(vertex_arc.id))]));
+            if let Some(vk) = ctx.get_vertex(id)? {
+                return Ok(Some(smallvec![Traverser::new_rc(GValue::Vertex(vk))]));
             }
         }
     }

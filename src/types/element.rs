@@ -13,7 +13,7 @@
 use crate::types::{
     gvalue::Primitive,
     keys::{CanonicalEdgeKey, CanonicalKey, LabelId, Rank, VertexKey},
-    prop_key::PropKey,
+    prop_key::{PropKey, LABEL},
 };
 use std::sync::RwLock;
 
@@ -35,7 +35,15 @@ pub struct Vertex {
 }
 
 impl Vertex {
+    #[inline]
     pub fn get_property(&self, key: &PropKey) -> Option<Property> {
+        if *key == LABEL {
+            return Some(Property {
+                owner: CanonicalKey::Vertex(self.id),
+                key: LABEL,
+                value: Primitive::Int32(self.label_id as i32),
+            });
+        }
         let props = self.props.read().unwrap();
         props.iter().find(|p| p.key == *key).cloned()
     }
@@ -57,11 +65,20 @@ pub struct Edge {
 
 impl Edge {
     /// Extract the direction-free canonical key (same as the `edges_out` CF key).
+    #[inline]
     pub fn canonical_key(&self) -> CanonicalEdgeKey {
         CanonicalEdgeKey { src_id: self.src_id, label_id: self.label_id, rank: self.rank, dst_id: self.dst_id }
     }
 
+    #[inline]
     pub fn get_property(&self, key: &PropKey) -> Option<Property> {
+        if *key == LABEL {
+            return Some(Property {
+                owner: CanonicalKey::Edge(self.canonical_key()),
+                key: LABEL,
+                value: Primitive::Int32(self.label_id as i32),
+            });
+        }
         let props = self.props.read().unwrap();
         props.iter().find(|p| p.key == *key).cloned()
     }

@@ -20,7 +20,7 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{error::StoreError, keys::LabelId, GValue},
+    types::{error::StoreError, keys::LabelId, prop_key::LABEL, CanonicalKey, GValue, Primitive},
 };
 
 pub struct HasLabelStep {
@@ -44,11 +44,13 @@ impl CoreStep for HasLabelStep {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
             let Some(t) = upstream.next(ctx)? else { return Ok(None) };
             let matched = match &t.value {
-                GValue::Vertex(v_arc) => {
-                    let Some(vertex) = ctx.get_vertex(*v_arc)? else { continue };
-                    self.label_ids.contains(&vertex.label_id)
+                GValue::Vertex(vk) => {
+                    let Some(Primitive::Int32(lb)) = ctx.get_value(CanonicalKey::Vertex(*vk), &LABEL).unwrap() else {
+                        unreachable!("")
+                    };
+                    self.label_ids.contains(&(lb as u16))
                 }
-                GValue::Edge(e_arc) => self.label_ids.contains(&e_arc.label_id),
+                GValue::Edge(ek) => self.label_ids.contains(&ek.label_id),
                 _ => false,
             };
             if matched {

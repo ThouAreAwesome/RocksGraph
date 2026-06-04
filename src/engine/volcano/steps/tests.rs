@@ -6,7 +6,7 @@
 // included in the LICENSE file at the root of this repository.
 //
 // As of the Change Date (2030-01-01), in accordance with the Business Source
-// License, use of this software will be governed by the Apache License 2.0.
+// License, use of this software will be governed by the Apache License 2.
 //
 // SPDX-License-Identifier: BUSL-1.1
 
@@ -70,36 +70,36 @@ mod cases {
         // Add Vertices
         let v_marko = graph.add_vertex(1, PERSON_LABEL_ID).unwrap();
         let name = Property {
-            owner: CanonicalKey::Vertex(v_marko.0),
+            owner: CanonicalKey::Vertex(v_marko),
             key: SmolStr::new("name"),
             value: Primitive::String(SmolStr::new("marko")),
         };
         graph.set_property(&name).unwrap();
 
         let age =
-            Property { owner: CanonicalKey::Vertex(v_marko.0), key: SmolStr::new("age"), value: Primitive::Int32(29) };
+            Property { owner: CanonicalKey::Vertex(v_marko), key: SmolStr::new("age"), value: Primitive::Int32(29) };
         graph.set_property(&age).unwrap();
 
         let v_vadas = graph.add_vertex(2, PERSON_LABEL_ID).unwrap();
         let vadas_name = Property {
-            owner: CanonicalKey::Vertex(v_vadas.0),
+            owner: CanonicalKey::Vertex(v_vadas),
             key: SmolStr::new("name"),
             value: Primitive::String(SmolStr::new("vadas")),
         };
         graph.set_property(&vadas_name).unwrap();
         let vadas_age =
-            Property { owner: CanonicalKey::Vertex(v_vadas.0), key: SmolStr::new("age"), value: Primitive::Int32(27) };
+            Property { owner: CanonicalKey::Vertex(v_vadas), key: SmolStr::new("age"), value: Primitive::Int32(27) };
         graph.set_property(&vadas_age).unwrap();
 
         let v_lop = graph.add_vertex(3, SOFTWARE_LABEL_ID).unwrap();
         let lop_name = Property {
-            owner: CanonicalKey::Vertex(v_lop.0),
+            owner: CanonicalKey::Vertex(v_lop),
             key: SmolStr::new("name"),
             value: Primitive::String(SmolStr::new("lop")),
         };
         graph.set_property(&lop_name).unwrap();
         let lop_lang = Property {
-            owner: CanonicalKey::Vertex(v_lop.0),
+            owner: CanonicalKey::Vertex(v_lop),
             key: SmolStr::new("lang"),
             value: Primitive::String(SmolStr::new("java")),
         };
@@ -107,24 +107,24 @@ mod cases {
 
         let v_josh = graph.add_vertex(4, PERSON_LABEL_ID).unwrap();
         let josh_name = Property {
-            owner: CanonicalKey::Vertex(v_josh.0),
+            owner: CanonicalKey::Vertex(v_josh),
             key: SmolStr::new("name"),
             value: Primitive::String(SmolStr::new("josh")),
         };
         graph.set_property(&josh_name).unwrap();
         let josh_age =
-            Property { owner: CanonicalKey::Vertex(v_josh.0), key: SmolStr::new("age"), value: Primitive::Int32(32) };
+            Property { owner: CanonicalKey::Vertex(v_josh), key: SmolStr::new("age"), value: Primitive::Int32(32) };
         graph.set_property(&josh_age).unwrap();
 
         let v_ripple = graph.add_vertex(5, SOFTWARE_LABEL_ID).unwrap();
         let ripple_name = Property {
-            owner: CanonicalKey::Vertex(v_ripple.0),
+            owner: CanonicalKey::Vertex(v_ripple),
             key: SmolStr::new("name"),
             value: Primitive::String(SmolStr::new("ripple")),
         };
         graph.set_property(&ripple_name).unwrap();
         let ripple_lang = Property {
-            owner: CanonicalKey::Vertex(v_ripple.0),
+            owner: CanonicalKey::Vertex(v_ripple),
             key: SmolStr::new("lang"),
             value: Primitive::String(SmolStr::new("java")),
         };
@@ -132,70 +132,70 @@ mod cases {
 
         let v_peter = graph.add_vertex(6, PERSON_LABEL_ID).unwrap();
         let peter_name = Property {
-            owner: CanonicalKey::Vertex(v_peter.0),
+            owner: CanonicalKey::Vertex(v_peter),
             key: SmolStr::new("name"),
             value: Primitive::String(SmolStr::new("peter")),
         };
         graph.set_property(&peter_name).unwrap();
         let peter_age =
-            Property { owner: CanonicalKey::Vertex(v_peter.0), key: SmolStr::new("age"), value: Primitive::Int32(35) };
+            Property { owner: CanonicalKey::Vertex(v_peter), key: SmolStr::new("age"), value: Primitive::Int32(35) };
         graph.set_property(&peter_age).unwrap();
         // Add Edges
         let e1 = graph
-            .add_edge(CanonicalEdgeKey { src_id: v_marko.0, label_id: KNOWS_LABEL_ID, rank: 0, dst_id: v_vadas.0 })
+            .add_edge(CanonicalEdgeKey { src_id: v_marko, label_id: KNOWS_LABEL_ID, rank: 0, dst_id: v_vadas })
             .unwrap();
         let e1_weight = Property {
-            owner: CanonicalKey::Edge(e1.0.canonical_edge_key()),
+            owner: CanonicalKey::Edge(e1.canonical_edge_key()),
             key: SmolStr::new("weight"),
             value: Primitive::Float64(0.5),
         };
         graph.set_property(&e1_weight).unwrap();
 
         let e2 = graph
-            .add_edge(CanonicalEdgeKey { src_id: v_marko.0, label_id: KNOWS_LABEL_ID, rank: 0, dst_id: v_josh.0 })
+            .add_edge(CanonicalEdgeKey { src_id: v_marko, label_id: KNOWS_LABEL_ID, rank: 0, dst_id: v_josh })
             .unwrap();
         let e2_weight = Property {
-            owner: CanonicalKey::Edge(e2.0.canonical_edge_key()),
+            owner: CanonicalKey::Edge(e2.canonical_edge_key()),
             key: SmolStr::new("weight"),
             value: Primitive::Float64(1.0),
         };
         graph.set_property(&e2_weight).unwrap();
 
         let e3 = graph
-            .add_edge(CanonicalEdgeKey { src_id: v_marko.0, label_id: CREATED_LABEL_ID, rank: 0, dst_id: v_lop.0 })
+            .add_edge(CanonicalEdgeKey { src_id: v_marko, label_id: CREATED_LABEL_ID, rank: 0, dst_id: v_lop })
             .unwrap();
         let e3_weight = Property {
-            owner: CanonicalKey::Edge(e3.0.canonical_edge_key()),
+            owner: CanonicalKey::Edge(e3.canonical_edge_key()),
             key: SmolStr::new("weight"),
             value: Primitive::Float64(0.4),
         };
         graph.set_property(&e3_weight).unwrap();
 
         let e4 = graph
-            .add_edge(CanonicalEdgeKey { src_id: v_josh.0, label_id: CREATED_LABEL_ID, rank: 0, dst_id: v_ripple.0 })
+            .add_edge(CanonicalEdgeKey { src_id: v_josh, label_id: CREATED_LABEL_ID, rank: 0, dst_id: v_ripple })
             .unwrap();
         let e4_weight = Property {
-            owner: CanonicalKey::Edge(e4.0.canonical_edge_key()),
+            owner: CanonicalKey::Edge(e4.canonical_edge_key()),
             key: SmolStr::new("weight"),
             value: Primitive::Float64(1.0),
         };
         graph.set_property(&e4_weight).unwrap();
 
         let e5 = graph
-            .add_edge(CanonicalEdgeKey { src_id: v_josh.0, label_id: CREATED_LABEL_ID, rank: 0, dst_id: v_lop.0 })
+            .add_edge(CanonicalEdgeKey { src_id: v_josh, label_id: CREATED_LABEL_ID, rank: 0, dst_id: v_lop })
             .unwrap();
         let e5_weight = Property {
-            owner: CanonicalKey::Edge(e5.0.canonical_edge_key()),
+            owner: CanonicalKey::Edge(e5.canonical_edge_key()),
             key: SmolStr::new("weight"),
             value: Primitive::Float64(0.4),
         };
         graph.set_property(&e5_weight).unwrap();
 
         let e6 = graph
-            .add_edge(CanonicalEdgeKey { src_id: v_peter.0, label_id: CREATED_LABEL_ID, rank: 0, dst_id: v_lop.0 })
+            .add_edge(CanonicalEdgeKey { src_id: v_peter, label_id: CREATED_LABEL_ID, rank: 0, dst_id: v_lop })
             .unwrap();
         let e6_weight = Property {
-            owner: CanonicalKey::Edge(e6.0.canonical_edge_key()),
+            owner: CanonicalKey::Edge(e6.canonical_edge_key()),
             key: SmolStr::new("weight"),
             value: Primitive::Float64(0.2),
         };
@@ -207,140 +207,133 @@ mod cases {
         let mut verification_graph = create_logical_graph(store);
 
         // Verify Vertices
-        let _marko_v = verification_graph.get_vertex(v_marko.0).unwrap().unwrap();
-        assert_eq!(_marko_v.label_id, PERSON_LABEL_ID);
+        let _marko_v = verification_graph.get_vertex(v_marko).unwrap().unwrap();
         assert_eq!(
-            verification_graph.get_property(CanonicalKey::Vertex(v_marko.0), &SmolStr::new("name")).unwrap().unwrap(),
+            verification_graph.get_value(CanonicalKey::Vertex(v_marko), &SmolStr::new("name")).unwrap().unwrap(),
             Primitive::String(SmolStr::new("marko"))
         );
         assert_eq!(
-            verification_graph.get_property(CanonicalKey::Vertex(v_marko.0), &SmolStr::new("age")).unwrap().unwrap(),
+            verification_graph.get_value(CanonicalKey::Vertex(v_marko), &SmolStr::new("age")).unwrap().unwrap(),
             Primitive::Int32(29)
         );
 
-        let _vadas_v = verification_graph.get_vertex(v_vadas.0).unwrap().unwrap();
-        assert_eq!(_vadas_v.label_id, PERSON_LABEL_ID);
+        let _vadas_v = verification_graph.get_vertex(v_vadas).unwrap().unwrap();
         assert_eq!(
-            verification_graph.get_property(CanonicalKey::Vertex(v_vadas.0), &SmolStr::new("name")).unwrap().unwrap(),
+            verification_graph.get_value(CanonicalKey::Vertex(v_vadas), &SmolStr::new("name")).unwrap().unwrap(),
             Primitive::String(SmolStr::new("vadas"))
         );
         assert_eq!(
-            verification_graph.get_property(CanonicalKey::Vertex(v_vadas.0), &SmolStr::new("age")).unwrap().unwrap(),
+            verification_graph.get_value(CanonicalKey::Vertex(v_vadas), &SmolStr::new("age")).unwrap().unwrap(),
             Primitive::Int32(27)
         );
 
-        let _lop_v = verification_graph.get_vertex(v_lop.0).unwrap().unwrap();
-        assert_eq!(_lop_v.label_id, SOFTWARE_LABEL_ID);
+        let _lop_v = verification_graph.get_vertex(v_lop).unwrap().unwrap();
         assert_eq!(
-            verification_graph.get_property(CanonicalKey::Vertex(v_lop.0), &SmolStr::new("name")).unwrap().unwrap(),
+            verification_graph.get_value(CanonicalKey::Vertex(v_lop), &SmolStr::new("name")).unwrap().unwrap(),
             Primitive::String(SmolStr::new("lop"))
         );
         assert_eq!(
-            verification_graph.get_property(CanonicalKey::Vertex(v_lop.0), &SmolStr::new("lang")).unwrap().unwrap(),
+            verification_graph.get_value(CanonicalKey::Vertex(v_lop), &SmolStr::new("lang")).unwrap().unwrap(),
             Primitive::String(SmolStr::new("java"))
         );
 
-        let _josh_v = verification_graph.get_vertex(v_josh.0).unwrap().unwrap();
-        assert_eq!(_josh_v.label_id, PERSON_LABEL_ID);
+        let _josh_v = verification_graph.get_vertex(v_josh).unwrap().unwrap();
         assert_eq!(
-            verification_graph.get_property(CanonicalKey::Vertex(v_josh.0), &SmolStr::new("name")).unwrap().unwrap(),
+            verification_graph.get_value(CanonicalKey::Vertex(v_josh), &SmolStr::new("name")).unwrap().unwrap(),
             Primitive::String(SmolStr::new("josh"))
         );
         assert_eq!(
-            verification_graph.get_property(CanonicalKey::Vertex(v_josh.0), &SmolStr::new("age")).unwrap().unwrap(),
+            verification_graph.get_value(CanonicalKey::Vertex(v_josh), &SmolStr::new("age")).unwrap().unwrap(),
             Primitive::Int32(32)
         );
 
-        let _ripple_v = verification_graph.get_vertex(v_ripple.0).unwrap().unwrap();
-        assert_eq!(_ripple_v.label_id, SOFTWARE_LABEL_ID);
+        let _ripple_v = verification_graph.get_vertex(v_ripple).unwrap().unwrap();
         assert_eq!(
-            verification_graph.get_property(CanonicalKey::Vertex(v_ripple.0), &SmolStr::new("name")).unwrap().unwrap(),
+            verification_graph.get_value(CanonicalKey::Vertex(v_ripple), &SmolStr::new("name")).unwrap().unwrap(),
             Primitive::String(SmolStr::new("ripple"))
         );
         assert_eq!(
-            verification_graph.get_property(CanonicalKey::Vertex(v_ripple.0), &SmolStr::new("lang")).unwrap().unwrap(),
+            verification_graph.get_value(CanonicalKey::Vertex(v_ripple), &SmolStr::new("lang")).unwrap().unwrap(),
             Primitive::String(SmolStr::new("java"))
         );
 
-        let _peter_v = verification_graph.get_vertex(v_peter.0).unwrap().unwrap();
-        assert_eq!(_peter_v.label_id, PERSON_LABEL_ID);
+        let _peter_v = verification_graph.get_vertex(v_peter).unwrap().unwrap();
         assert_eq!(
-            verification_graph.get_property(CanonicalKey::Vertex(v_peter.0), &SmolStr::new("name")).unwrap().unwrap(),
+            verification_graph.get_value(CanonicalKey::Vertex(v_peter), &SmolStr::new("name")).unwrap().unwrap(),
             Primitive::String(SmolStr::new("peter"))
         );
         assert_eq!(
-            verification_graph.get_property(CanonicalKey::Vertex(v_peter.0), &SmolStr::new("age")).unwrap().unwrap(),
+            verification_graph.get_value(CanonicalKey::Vertex(v_peter), &SmolStr::new("age")).unwrap().unwrap(),
             Primitive::Int32(35)
         );
 
         // Verify Edges and their properties
-        let _e1_edge = verification_graph.get_edge(e1.0.canonical_edge_key()).unwrap().unwrap();
-        assert_eq!(_e1_edge.label_id, KNOWS_LABEL_ID);
-        assert_eq!(_e1_edge.src_id, v_marko.0);
-        assert_eq!(_e1_edge.dst_id, v_vadas.0);
+        let _e1_edge = verification_graph.get_edge(e1.canonical_edge_key()).unwrap().unwrap();
+        assert_eq!(_e1_edge.primary_id, v_marko);
+        assert_eq!(_e1_edge.secondary_id, v_vadas);
         assert_eq!(
             verification_graph
-                .get_property(CanonicalKey::Edge(e1.0.canonical_edge_key()), &SmolStr::new("weight"))
+                .get_value(CanonicalKey::Edge(e1.canonical_edge_key()), &SmolStr::new("weight"))
                 .unwrap()
                 .unwrap(),
             Primitive::Float64(0.5)
         );
 
-        let _e2_edge = verification_graph.get_edge(e2.0.canonical_edge_key()).unwrap().unwrap();
+        let _e2_edge = verification_graph.get_edge(e2.canonical_edge_key()).unwrap().unwrap();
         assert_eq!(_e2_edge.label_id, KNOWS_LABEL_ID);
-        assert_eq!(_e2_edge.src_id, v_marko.0);
-        assert_eq!(_e2_edge.dst_id, v_josh.0);
+        assert_eq!(_e2_edge.primary_id, v_marko);
+        assert_eq!(_e2_edge.secondary_id, v_josh);
         assert_eq!(
             verification_graph
-                .get_property(CanonicalKey::Edge(e2.0.canonical_edge_key()), &SmolStr::new("weight"))
+                .get_value(CanonicalKey::Edge(e2.canonical_edge_key()), &SmolStr::new("weight"))
                 .unwrap()
                 .unwrap(),
             Primitive::Float64(1.0)
         );
 
-        let _e3_edge = verification_graph.get_edge(e3.0.canonical_edge_key()).unwrap().unwrap();
+        let _e3_edge = verification_graph.get_edge(e3.canonical_edge_key()).unwrap().unwrap();
         assert_eq!(_e3_edge.label_id, CREATED_LABEL_ID);
-        assert_eq!(_e3_edge.src_id, v_marko.0);
-        assert_eq!(_e3_edge.dst_id, v_lop.0);
+        assert_eq!(_e3_edge.primary_id, v_marko);
+        assert_eq!(_e3_edge.secondary_id, v_lop);
         assert_eq!(
             verification_graph
-                .get_property(CanonicalKey::Edge(e3.0.canonical_edge_key()), &SmolStr::new("weight"))
+                .get_value(CanonicalKey::Edge(e3.canonical_edge_key()), &SmolStr::new("weight"))
                 .unwrap()
                 .unwrap(),
             Primitive::Float64(0.4)
         );
 
-        let _e4_edge = verification_graph.get_edge(e4.0.canonical_edge_key()).unwrap().unwrap();
+        let _e4_edge = verification_graph.get_edge(e4.canonical_edge_key()).unwrap().unwrap();
         assert_eq!(_e4_edge.label_id, CREATED_LABEL_ID);
-        assert_eq!(_e4_edge.src_id, v_josh.0);
-        assert_eq!(_e4_edge.dst_id, v_ripple.0);
+        assert_eq!(_e4_edge.primary_id, v_josh);
+        assert_eq!(_e4_edge.secondary_id, v_ripple);
         assert_eq!(
             verification_graph
-                .get_property(CanonicalKey::Edge(e4.0.canonical_edge_key()), &SmolStr::new("weight"))
+                .get_value(CanonicalKey::Edge(e4.canonical_edge_key()), &SmolStr::new("weight"))
                 .unwrap()
                 .unwrap(),
             Primitive::Float64(1.0)
         );
 
-        let _e5_edge = verification_graph.get_edge(e5.0.canonical_edge_key()).unwrap().unwrap();
+        let _e5_edge = verification_graph.get_edge(e5.canonical_edge_key()).unwrap().unwrap();
         assert_eq!(_e5_edge.label_id, CREATED_LABEL_ID);
-        assert_eq!(_e5_edge.src_id, v_josh.0);
-        assert_eq!(_e5_edge.dst_id, v_lop.0);
+        assert_eq!(_e5_edge.primary_id, v_josh);
+        assert_eq!(_e5_edge.secondary_id, v_lop);
         assert_eq!(
             verification_graph
-                .get_property(CanonicalKey::Edge(e5.0.canonical_edge_key()), &SmolStr::new("weight"))
+                .get_value(CanonicalKey::Edge(e5.canonical_edge_key()), &SmolStr::new("weight"))
                 .unwrap()
                 .unwrap(),
             Primitive::Float64(0.4)
         );
 
-        let _e6_edge = verification_graph.get_edge(e6.0.canonical_edge_key()).unwrap().unwrap();
+        let _e6_edge = verification_graph.get_edge(e6.canonical_edge_key()).unwrap().unwrap();
         assert_eq!(_e6_edge.label_id, CREATED_LABEL_ID);
-        assert_eq!(_e6_edge.src_id, v_peter.0);
-        assert_eq!(_e6_edge.dst_id, v_lop.0);
+        assert_eq!(_e6_edge.primary_id, v_peter);
+        assert_eq!(_e6_edge.secondary_id, v_lop);
         assert_eq!(
             verification_graph
-                .get_property(CanonicalKey::Edge(e6.0.canonical_edge_key()), &SmolStr::new("weight"))
+                .get_value(CanonicalKey::Edge(e6.canonical_edge_key()), &SmolStr::new("weight"))
                 .unwrap()
                 .unwrap(),
             Primitive::Float64(0.2)
@@ -368,22 +361,8 @@ mod cases {
 
         println!("\nVertices:");
         for id in 1..=6 {
-            if let Ok(Some(vertex)) = graph.get_vertex(id) {
-                let label_name = get_label_name(vertex.label_id);
-                print!("  ({}: {})", vertex.id, label_name);
-                let props_guard = vertex.props.read().unwrap();
-                if !props_guard.is_empty() {
-                    print!(" {{");
-                    let mut first = true;
-                    for prop in props_guard.iter() {
-                        if !first {
-                            print!(", ");
-                        }
-                        print!("{}: {:?}", prop.key, prop.value);
-                        first = false;
-                    }
-                    print!("}}");
-                }
+            if let Ok(Some(vertex_key)) = graph.get_vertex(id) {
+                print!("  ({})", vertex_key);
                 println!();
             }
         }
@@ -393,22 +372,9 @@ mod cases {
         for src_id in 1..=6 {
             if let Ok(out_edges) = graph.get_out_edges(src_id, None, None, None) {
                 for edge_key in out_edges {
-                    if let Ok(Some(edge)) = graph.get_edge(edge_key.canonical_edge_key()) {
-                        let label_name = get_label_name(edge.label_id);
-                        print!("  ({:?}) --{}--> ({:?})", edge.src_id, label_name, edge.dst_id);
-                        let props_guard = edge.props.read().unwrap();
-                        if !props_guard.is_empty() {
-                            print!(" {{");
-                            let mut first = true;
-                            for prop in props_guard.iter() {
-                                if !first {
-                                    print!(", ");
-                                }
-                                print!("{}: {:?}", prop.key, prop.value);
-                                first = false;
-                            }
-                            print!("}}");
-                        }
+                    if let Ok(Some(ek)) = graph.get_edge(edge_key.canonical_edge_key()) {
+                        let label_name = get_label_name(ek.label_id);
+                        print!("  ({:?}) --{}--> ({:?})", ek.primary_id, label_name, ek.secondary_id);
                         println!();
                     }
                 }
@@ -427,8 +393,7 @@ mod cases {
         // This test primarily prints the graph, but we can add a simple assertion
         // to ensure the graph is not empty.
         let marko = graph.get_vertex(1).unwrap().unwrap();
-        assert_eq!(marko.id, 1);
-        assert_eq!(marko.label_id, PERSON_LABEL_ID);
+        assert_eq!(marko, 1);
     }
 
     // --- Mock Upstream for testing steps ---
@@ -458,18 +423,17 @@ mod cases {
 
         if let GValue::Vertex(v_key) = &result.value {
             assert_eq!(*v_key, test_vertex_id); // Check the returned VertexKey
-            let added_vertex = graph.get_vertex(*v_key).unwrap().unwrap(); // Fetch the actual vertex
-            assert_eq!(added_vertex.label_id, PERSON_LABEL_ID);
+            let _ = graph.get_vertex(*v_key).unwrap().unwrap(); // Fetch the actual vertex (populates overlay)
             assert_eq!(
-                graph.get_property(CanonicalKey::Vertex(*v_key), &SmolStr::new("name")).unwrap().unwrap(),
+                graph.get_value(CanonicalKey::Vertex(*v_key), &SmolStr::new("name")).unwrap().unwrap(),
                 Primitive::String(SmolStr::new("marko"))
             );
             assert_eq!(
-                graph.get_property(CanonicalKey::Vertex(*v_key), &SmolStr::new("age")).unwrap().unwrap(),
+                graph.get_value(CanonicalKey::Vertex(*v_key), &SmolStr::new("age")).unwrap().unwrap(),
                 Primitive::Int32(29)
             );
             assert_eq!(
-                graph.get_property(CanonicalKey::Vertex(*v_key), &SmolStr::new("name")).unwrap().unwrap(),
+                graph.get_value(CanonicalKey::Vertex(*v_key), &SmolStr::new("name")).unwrap().unwrap(),
                 Primitive::String(SmolStr::new("marko"))
             );
         } else {
@@ -485,8 +449,8 @@ mod cases {
         let mut graph = create_tinkerpop_modern_graph(&store);
 
         // Find existing vertices to connect
-        let marko_id = graph.get_vertex(1).unwrap().unwrap().id; // Assuming ID 1 for marko
-        let vadas_id = graph.get_vertex(2).unwrap().unwrap().id; // Assuming ID 2 for vadas
+        let marko_id = graph.get_vertex(1).unwrap().unwrap(); // Assuming ID 1 for marko
+        let vadas_id = graph.get_vertex(2).unwrap().unwrap(); // Assuming ID 2 for vadas
 
         let mut properties = HashMap::new();
         properties.insert(SmolStr::new("since"), Primitive::Int32(2020));
@@ -506,11 +470,11 @@ mod cases {
         if let GValue::Edge(e_key) = &result.value {
             let added_edge = graph.get_edge(e_key.canonical_edge_key()).unwrap().unwrap(); // Fetch the actual edge
             assert_eq!(added_edge.label_id, FRIENDS_LABEL_ID);
-            assert_eq!(added_edge.src_id, marko_id);
-            assert_eq!(added_edge.dst_id, vadas_id);
+            assert_eq!(added_edge.primary_id, marko_id);
+            assert_eq!(added_edge.secondary_id, vadas_id);
             assert_eq!(
                 graph
-                    .get_property(CanonicalKey::Edge(e_key.canonical_edge_key()), &SmolStr::new("since"))
+                    .get_value(CanonicalKey::Edge(e_key.canonical_edge_key()), &SmolStr::new("since"))
                     .unwrap()
                     .unwrap(),
                 Primitive::Int32(2020)
@@ -526,7 +490,7 @@ mod cases {
     fn test_property_step_update_vertex_in_tinkerpop_modern_graph() {
         let (store, _dir) = open_rocks_store();
         let mut graph = create_tinkerpop_modern_graph(&store);
-        let marko_id = graph.get_vertex(1).unwrap().unwrap().id; // Assuming ID 1 for marko
+        let marko_id = graph.get_vertex(1).unwrap().unwrap(); // Assuming ID 1 for marko
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: vec![marko_id] }),
@@ -543,14 +507,13 @@ mod cases {
 
         if let GValue::Vertex(v_key) = &result.value {
             let updated_vertex = graph.get_vertex(*v_key).unwrap().unwrap();
-            assert_eq!(updated_vertex.id, marko_id);
-            assert_eq!(updated_vertex.label_id, PERSON_LABEL_ID); // Assuming label_id 1 for person
+            assert_eq!(updated_vertex, marko_id);
             assert_eq!(
-                graph.get_property(CanonicalKey::Vertex(*v_key), &SmolStr::new("name")).unwrap().unwrap(),
+                graph.get_value(CanonicalKey::Vertex(*v_key), &SmolStr::new("name")).unwrap().unwrap(),
                 Primitive::String(SmolStr::new("marko"))
             );
             assert_eq!(
-                graph.get_property(CanonicalKey::Vertex(*v_key), &SmolStr::new("age")).unwrap().unwrap(),
+                graph.get_value(CanonicalKey::Vertex(*v_key), &SmolStr::new("age")).unwrap().unwrap(),
                 Primitive::Int32(30)
             ); // Updated
         } else {
@@ -564,8 +527,8 @@ mod cases {
         let (store, _dir) = open_rocks_store();
         let mut graph = create_tinkerpop_modern_graph(&store);
 
-        let marko_id = graph.get_vertex(1).unwrap().unwrap().id;
-        let josh_id = graph.get_vertex(4).unwrap().unwrap().id;
+        let marko_id = graph.get_vertex(1).unwrap().unwrap();
+        let josh_id = graph.get_vertex(4).unwrap().unwrap();
         let knows_edge_key = CanonicalEdgeKey { src_id: marko_id, label_id: KNOWS_LABEL_ID, rank: 0, dst_id: josh_id }; // LabelId 3 for "knows"
         let logical_plan = LogicalPlan {
             steps: vec![
@@ -587,10 +550,10 @@ mod cases {
 
         if let GValue::Edge(e_key) = &result.value {
             let updated_edge = graph.get_edge(e_key.canonical_edge_key()).unwrap().unwrap();
-            assert_eq!(updated_edge.canonical_key(), knows_edge_key);
+            assert_eq!(updated_edge.canonical_edge_key(), knows_edge_key);
             assert_eq!(
                 graph
-                    .get_property(CanonicalKey::Edge(e_key.canonical_edge_key()), &SmolStr::new("duration"))
+                    .get_value(CanonicalKey::Edge(e_key.canonical_edge_key()), &SmolStr::new("duration"))
                     .unwrap()
                     .unwrap(),
                 Primitive::Int32(12)
@@ -599,7 +562,7 @@ mod cases {
             panic!("Expected an Edge GValue");
         }
         assert_eq!(
-            graph.get_property(CanonicalKey::Edge(knows_edge_key), &SmolStr::new("duration")).unwrap().unwrap(),
+            graph.get_value(CanonicalKey::Edge(knows_edge_key), &SmolStr::new("duration")).unwrap().unwrap(),
             Primitive::Int32(12)
         );
     }
@@ -610,8 +573,8 @@ mod cases {
         let (store, _dir) = open_rocks_store();
         let mut graph = create_tinkerpop_modern_graph(&store);
 
-        let marko_id = graph.get_vertex(1).unwrap().unwrap().id;
-        let vadas_id = graph.get_vertex(2).unwrap().unwrap().id; // Assuming ID 2 for vadas
+        let marko_id = graph.get_vertex(1).unwrap().unwrap();
+        let vadas_id = graph.get_vertex(2).unwrap().unwrap(); // Assuming ID 2 for vadas
         let logical_plan = LogicalPlan {
             steps: vec![
                 // Corrected to use PERSON_LABEL_ID
@@ -638,15 +601,15 @@ mod cases {
         let (store, _dir) = open_rocks_store();
         let mut graph = create_tinkerpop_modern_graph(&store);
 
-        let marko_id = graph.get_vertex(1).unwrap().unwrap().id;
-        let vadas_id = graph.get_vertex(2).unwrap().unwrap().id;
+        let marko_id = graph.get_vertex(1).unwrap().unwrap();
+        let vadas_id = graph.get_vertex(2).unwrap().unwrap();
         let _knows_edge_key = CanonicalEdgeKey { src_id: marko_id, label_id: 3, rank: 0, dst_id: vadas_id };
-        let josh_id = graph.get_vertex(4).unwrap().unwrap().id;
-        let _lop_id = graph.get_vertex(3).unwrap().unwrap().id;
-        let ripple_id = graph.get_vertex(5).unwrap().unwrap().id;
+        let josh_id = graph.get_vertex(4).unwrap().unwrap();
+        let _lop_id = graph.get_vertex(3).unwrap().unwrap();
+        let ripple_id = graph.get_vertex(5).unwrap().unwrap();
         let created_edge_key =
-            CanonicalEdgeKey { src_id: josh_id, label_id: CREATED_LABEL_ID, rank: 0, dst_id: ripple_id }; // Josh created Ripple has weight 1.0
-                                                                                                          // Start from Marko and Josh, get their outgoing edges with label CREATED_LABEL_ID, and filter by weight = 1.0
+            CanonicalEdgeKey { src_id: josh_id, label_id: CREATED_LABEL_ID, rank: 0, dst_id: ripple_id }; // Josh created Ripple has weight 1
+                                                                                                          // Start from Marko and Josh, get their outgoing edges with label CREATED_LABEL_ID, and filter by weight = 1
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: vec![marko_id, josh_id] }), // Start from Marko and Josh
@@ -663,7 +626,7 @@ mod cases {
         let result = physical_plan.next(&mut graph).unwrap().unwrap();
 
         if let GValue::Edge(e_key) = &result.value {
-            assert_eq!(e_key.canonical_edge_key(), created_edge_key); // Josh created Ripple with weight 1.0
+            assert_eq!(e_key.canonical_edge_key(), created_edge_key); // Josh created Ripple with weight 1
         } else {
             panic!("Expected created_edge_arc");
         }
@@ -693,14 +656,14 @@ mod cases {
         let result = physical_plan.next(&mut graph).unwrap().unwrap();
 
         if let GValue::Edge(e_key) = &result.value {
-            assert_eq!(e_key.canonical_edge_key(), expected_edge_keys[0]); // Josh created Ripple with weight 1.0
+            assert_eq!(e_key.canonical_edge_key(), expected_edge_keys[0]); // Josh created Ripple with weight 1
         } else {
             panic!("Expected created_edge_arc");
         }
 
         let Some(result) = physical_plan.next(&mut graph).unwrap() else { panic!("Expected a result") };
         if let GValue::Edge(e_key) = &result.value {
-            assert_eq!(e_key.canonical_edge_key(), expected_edge_keys[1]); // Josh created Ripple with weight 1.0
+            assert_eq!(e_key.canonical_edge_key(), expected_edge_keys[1]); // Josh created Ripple with weight 1
         } else {
             panic!("Expected created_edge_arc");
         }
@@ -712,7 +675,7 @@ mod cases {
         let (store, _dir) = open_rocks_store();
         let mut graph = create_tinkerpop_modern_graph(&store);
 
-        let marko_id = graph.get_vertex(1).unwrap().unwrap().id;
+        let marko_id = graph.get_vertex(1).unwrap().unwrap();
 
         // Sub-plan 1: outE().count()
         let out_e_count_sub_plan = LogicalPlan {
@@ -756,7 +719,7 @@ mod cases {
     fn test_out_step() {
         let (store, _dir) = open_rocks_store();
         let mut graph = create_tinkerpop_modern_graph(&store);
-        let marko_id = graph.get_vertex(1).unwrap().unwrap().id;
+        let marko_id = graph.get_vertex(1).unwrap().unwrap();
 
         let logical_plan = LogicalPlan {
             steps: vec![
@@ -780,7 +743,7 @@ mod cases {
     fn test_in_step() {
         let (store, _dir) = open_rocks_store();
         let mut graph = create_tinkerpop_modern_graph(&store);
-        let lop_id = graph.get_vertex(3).unwrap().unwrap().id;
+        let lop_id = graph.get_vertex(3).unwrap().unwrap();
 
         let logical_plan = LogicalPlan {
             steps: vec![
@@ -804,7 +767,7 @@ mod cases {
     fn test_out_v_in_v_step() {
         let (store, _dir) = open_rocks_store();
         let mut graph = create_tinkerpop_modern_graph(&store);
-        let marko_id = graph.get_vertex(1).unwrap().unwrap().id;
+        let marko_id = graph.get_vertex(1).unwrap().unwrap();
 
         // V(1).outE().inV() equivalent to V(1).out()
         let logical_plan = LogicalPlan {
@@ -847,7 +810,7 @@ mod cases {
     fn test_both_and_both_e_step() {
         let (store, _dir) = open_rocks_store();
         let mut graph = create_tinkerpop_modern_graph(&store);
-        let josh_id = graph.get_vertex(4).unwrap().unwrap().id;
+        let josh_id = graph.get_vertex(4).unwrap().unwrap();
 
         let logical_plan = LogicalPlan {
             steps: vec![
@@ -885,7 +848,7 @@ mod cases {
     fn test_has_label_step() {
         let (store, _dir) = open_rocks_store();
         let mut graph = create_tinkerpop_modern_graph(&store);
-        let marko_id = graph.get_vertex(1).unwrap().unwrap().id;
+        let marko_id = graph.get_vertex(1).unwrap().unwrap();
 
         let logical_plan = LogicalPlan {
             steps: vec![
@@ -908,7 +871,7 @@ mod cases {
     fn test_other_v_step() {
         let (store, _dir) = open_rocks_store();
         let mut graph = create_tinkerpop_modern_graph(&store);
-        let marko_id = graph.get_vertex(1).unwrap().unwrap().id;
+        let marko_id = graph.get_vertex(1).unwrap().unwrap();
 
         let logical_plan = LogicalPlan {
             steps: vec![
@@ -933,7 +896,7 @@ mod cases {
     fn test_values_step() {
         let (store, _dir) = open_rocks_store();
         let mut graph = create_tinkerpop_modern_graph(&store);
-        let marko_id = graph.get_vertex(1).unwrap().unwrap().id;
+        let marko_id = graph.get_vertex(1).unwrap().unwrap();
 
         let logical_plan = LogicalPlan {
             steps: vec![
@@ -958,7 +921,7 @@ mod cases {
     fn test_scalar_filter_step() {
         let (store, _dir) = open_rocks_store();
         let mut graph = create_tinkerpop_modern_graph(&store);
-        let marko_id = graph.get_vertex(1).unwrap().unwrap().id;
+        let marko_id = graph.get_vertex(1).unwrap().unwrap();
 
         let logical_plan = LogicalPlan {
             steps: vec![
@@ -1053,7 +1016,7 @@ mod cases {
     fn test_out_multiple_labels() {
         let (store, _dir) = open_rocks_store();
         let mut graph = create_tinkerpop_modern_graph(&store);
-        let marko_id = graph.get_vertex(1).unwrap().unwrap().id;
+        let marko_id = graph.get_vertex(1).unwrap().unwrap();
 
         let logical_plan = LogicalPlan {
             steps: vec![

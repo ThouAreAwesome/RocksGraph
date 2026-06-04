@@ -19,4 +19,5 @@ use smol_str::SmolStr;
 /// string is the identity.
 pub type PropKey = SmolStr;
 
-pub const ID: &str = "ID";
+pub const ID: PropKey = SmolStr::new_static("id");
+pub const LABEL: PropKey = SmolStr::new_static("label");
