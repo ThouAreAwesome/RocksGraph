@@ -391,7 +391,7 @@ mod cases {
         println!("\nEdges:");
         // Iterate through all vertices to get their outgoing edges
         for src_id in 1..=6 {
-            if let Ok(out_edges) = graph.get_out_edges(src_id, None, None) {
+            if let Ok(out_edges) = graph.get_out_edges(src_id, None, None, None) {
                 for edge_key in out_edges {
                     if let Ok(Some(edge)) = graph.get_edge(edge_key.canonical_edge_key()) {
                         let label_name = get_label_name(edge.label_id);
@@ -570,7 +570,7 @@ mod cases {
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: vec![marko_id] }),
-                LogicalStep::OutE(LogicalOutEStep { label_ids: vec![knows_edge_key.label_id] }),
+                LogicalStep::OutE(LogicalOutEStep { label_ids: vec![knows_edge_key.label_id], end_vertex_ids: None }),
                 LogicalStep::HasProperty(LogicalHasPropertyStep {
                     key: SmolStr::new("weight"),
                     value: Primitive::Float64(1.0),
@@ -650,7 +650,7 @@ mod cases {
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: vec![marko_id, josh_id] }), // Start from Marko and Josh
-                LogicalStep::OutE(LogicalOutEStep { label_ids: vec![CREATED_LABEL_ID] }), // Get all outgoing edges
+                LogicalStep::OutE(LogicalOutEStep { label_ids: vec![CREATED_LABEL_ID], end_vertex_ids: None }), /* Get all outgoing edges */
                 LogicalStep::HasProperty(LogicalHasPropertyStep {
                     key: SmolStr::new("weight"),
                     value: Primitive::Float64(1.0),
@@ -674,7 +674,8 @@ mod cases {
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: vec![marko_id, josh_id] }), // Start from Marko and Josh
-                LogicalStep::OutE(LogicalOutEStep { label_ids: vec![] }),      // Get all outgoing edges
+                LogicalStep::OutE(LogicalOutEStep { label_ids: vec![], end_vertex_ids: None }), /* Get all outgoing
+                                                                                * edges */
                 LogicalStep::HasProperty(LogicalHasPropertyStep {
                     key: SmolStr::new("weight"),
                     value: Primitive::Float64(1.0),
@@ -716,7 +717,7 @@ mod cases {
         // Sub-plan 1: outE().count()
         let out_e_count_sub_plan = LogicalPlan {
             steps: vec![
-                LogicalStep::OutE(LogicalOutEStep { label_ids: vec![] }),
+                LogicalStep::OutE(LogicalOutEStep { label_ids: vec![], end_vertex_ids: None }),
                 LogicalStep::Count(LogicalCountStep {}),
             ],
         };
@@ -724,7 +725,7 @@ mod cases {
         // Sub-plan 2: inE().count()
         let in_e_count_sub_plan = LogicalPlan {
             steps: vec![
-                LogicalStep::InE(LogicalInEStep { label_ids: vec![] }),
+                LogicalStep::InE(LogicalInEStep { label_ids: vec![], end_vertex_ids: None }),
                 LogicalStep::Count(LogicalCountStep {}),
             ],
         };
@@ -760,7 +761,7 @@ mod cases {
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: vec![marko_id] }),
-                LogicalStep::Out(LogicalOutStep { label_ids: vec![] }),
+                LogicalStep::Out(LogicalOutStep { label_ids: vec![], end_vertex_ids: None }),
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
@@ -784,7 +785,7 @@ mod cases {
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: vec![lop_id] }),
-                LogicalStep::In(LogicalInStep { label_ids: vec![] }),
+                LogicalStep::In(LogicalInStep { label_ids: vec![], end_vertex_ids: None }),
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
@@ -809,7 +810,7 @@ mod cases {
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: vec![marko_id] }),
-                LogicalStep::OutE(LogicalOutEStep { label_ids: vec![] }),
+                LogicalStep::OutE(LogicalOutEStep { label_ids: vec![], end_vertex_ids: None }),
                 LogicalStep::InV(LogicalInVStep {}),
             ],
         };
@@ -828,7 +829,7 @@ mod cases {
         let logical_plan2 = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: vec![marko_id] }),
-                LogicalStep::OutE(LogicalOutEStep { label_ids: vec![] }),
+                LogicalStep::OutE(LogicalOutEStep { label_ids: vec![], end_vertex_ids: None }),
                 LogicalStep::OutV(LogicalOutVStep {}),
             ],
         };
@@ -851,7 +852,7 @@ mod cases {
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: vec![josh_id] }),
-                LogicalStep::Both(LogicalBothStep { label_ids: vec![] }),
+                LogicalStep::Both(LogicalBothStep { label_ids: vec![], end_vertex_ids: None }),
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
@@ -868,7 +869,7 @@ mod cases {
         let logical_plan_e = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: vec![josh_id] }),
-                LogicalStep::BothE(LogicalBothEStep { label_ids: vec![] }),
+                LogicalStep::BothE(LogicalBothEStep { label_ids: vec![], end_vertex_ids: None }),
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
@@ -889,7 +890,7 @@ mod cases {
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: vec![marko_id] }),
-                LogicalStep::Out(LogicalOutStep { label_ids: vec![] }),
+                LogicalStep::Out(LogicalOutStep { label_ids: vec![], end_vertex_ids: None }),
                 LogicalStep::HasLabel(LogicalHasLabelStep { label_ids: vec![SOFTWARE_LABEL_ID] }),
             ],
         };
@@ -912,7 +913,7 @@ mod cases {
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: vec![marko_id] }),
-                LogicalStep::OutE(LogicalOutEStep { label_ids: vec![] }),
+                LogicalStep::OutE(LogicalOutEStep { label_ids: vec![], end_vertex_ids: None }),
                 LogicalStep::OtherV(LogicalOtherVStep {}),
             ],
         };
@@ -983,7 +984,7 @@ mod cases {
 
         let sub_plan = LogicalPlan {
             steps: vec![
-                LogicalStep::Out(LogicalOutStep { label_ids: vec![] }),
+                LogicalStep::Out(LogicalOutStep { label_ids: vec![], end_vertex_ids: None }),
                 LogicalStep::HasLabel(LogicalHasLabelStep { label_ids: vec![SOFTWARE_LABEL_ID] }),
             ],
         };
@@ -1057,7 +1058,10 @@ mod cases {
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: vec![marko_id] }),
-                LogicalStep::Out(LogicalOutStep { label_ids: vec![KNOWS_LABEL_ID, CREATED_LABEL_ID] }),
+                LogicalStep::Out(LogicalOutStep {
+                    label_ids: vec![KNOWS_LABEL_ID, CREATED_LABEL_ID],
+                    end_vertex_ids: None,
+                }),
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();

@@ -92,7 +92,7 @@ pub fn encode_vertex_key(key: VertexKey) -> [u8; VERTEX_KEY_SIZE] {
 
 #[allow(dead_code)]
 pub fn decode_vertex_key(bytes: &[u8]) -> Option<VertexKey> {
-    Some(u64::from_be_bytes(bytes.try_into().ok()?))
+    Some(i64::from_be_bytes(bytes.try_into().ok()?))
 }
 
 // ── Edge key encoding ─────────────────────────────────────────────────────────
@@ -128,9 +128,9 @@ pub fn decode_edge_key_out(bytes: &[u8]) -> Option<CanonicalEdgeKey> {
         return None;
     }
     Some(CanonicalEdgeKey {
-        src_id: u64::from_be_bytes(bytes[0..8].try_into().ok()?),
+        src_id: i64::from_be_bytes(bytes[0..8].try_into().ok()?),
         label_id: u16::from_be_bytes(bytes[8..10].try_into().ok()?) as LabelId,
-        dst_id: u64::from_be_bytes(bytes[10..18].try_into().ok()?),
+        dst_id: i64::from_be_bytes(bytes[10..18].try_into().ok()?),
         rank: u16::from_be_bytes(bytes[18..20].try_into().ok()?) as Rank,
     })
 }
@@ -141,9 +141,9 @@ pub fn decode_edge_key_in(bytes: &[u8]) -> Option<CanonicalEdgeKey> {
         return None;
     }
     Some(CanonicalEdgeKey {
-        src_id: u64::from_be_bytes(bytes[10..18].try_into().ok()?),
+        src_id: i64::from_be_bytes(bytes[10..18].try_into().ok()?),
         label_id: u16::from_be_bytes(bytes[8..10].try_into().ok()?) as LabelId,
-        dst_id: u64::from_be_bytes(bytes[0..8].try_into().ok()?),
+        dst_id: i64::from_be_bytes(bytes[0..8].try_into().ok()?),
         rank: u16::from_be_bytes(bytes[18..20].try_into().ok()?) as Rank,
     })
 }
@@ -513,7 +513,7 @@ mod tests {
         out
     }
 
-    fn make_vertex(id: u64, label_id: u16, raw: &[(PropKey, Primitive)]) -> Vertex {
+    fn make_vertex(id: i64, label_id: u16, raw: &[(PropKey, Primitive)]) -> Vertex {
         let owner = CanonicalKey::Vertex(id);
         let props = raw.iter().map(|(k, v)| Property { owner, key: k.clone(), value: v.clone() }).collect();
         Vertex { id, label_id, props: RwLock::new(props) }
@@ -535,7 +535,7 @@ mod tests {
 
     #[test]
     fn vertex_key_encode_decode() {
-        let id: u64 = 42;
+        let id: i64 = 42;
         assert_eq!(decode_vertex_key(&encode_vertex_key(id)).unwrap(), id);
     }
 

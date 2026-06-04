@@ -11,9 +11,18 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 use multigraph::{
-    client::gremlin_client::{self, GremlinArgument},
+    engine::volcano::builder::PhysicalPlanBuilder,
+    graph::LogicalGraph,
+    optimizer::apply_rules,
+    planner::logical_step::{
+        AddEStep, AddVStep, CoalesceStep, HasIdStep, HasPropertyStep, LogicalPlan, LogicalStep, OtherVStep, OutEStep,
+        VStep, WhereStep,
+    },
     server::{config::Config, gremlin_server},
+    store::{GraphStore, RocksStorage},
+    types::{error::StoreError, gvalue::Primitive},
 };
+use smol_str::SmolStr;
 
 use rand::Rng;
 use std::{
@@ -37,43 +46,43 @@ const RETRY_DELAY_MS: u64 = 5;
 const MAX_RETRIES: usize = 3;
 const PARALLELISM: usize = 20;
 
-async fn random_server_addr() -> String {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap().to_string();
-    drop(listener);
-    addr
-}
-
 fn generate_random_string(len: usize) -> String {
     rand::thread_rng().sample_iter(rand::distributions::Alphanumeric).take(len).map(char::from).collect()
 }
 
-fn generate_random_properties() -> HashMap<String, GremlinArgument> {
+fn generate_random_properties() -> HashMap<SmolStr, Primitive> {
     let mut rng = rand::thread_rng();
     HashMap::from([
-        ("name".to_string(), GremlinArgument::String(generate_random_string(10))),
-        ("age".to_string(), GremlinArgument::Int(rng.gen_range(18..100))),
+        (SmolStr::new("name"), Primitive::String(generate_random_string(10).into())),
+        (SmolStr::new("age"), Primitive::Int64(rng.gen_range(18..100))),
     ])
 }
 
-fn generate_random_edge_properties() -> HashMap<String, GremlinArgument> {
+fn generate_random_edge_properties() -> HashMap<SmolStr, Primitive> {
     let mut rng = rand::thread_rng();
     HashMap::from([
-        ("weight".to_string(), GremlinArgument::Float(rng.gen_range(0.1..10.0))),
-        ("timestamp".to_string(), GremlinArgument::Int(rng.gen_range(0..1000000))),
+        (SmolStr::new("weight"), Primitive::Float64(rng.gen_range(0.1..10.0))),
+        (SmolStr::new("timestamp"), Primitive::Int64(rng.gen_range(0..1000000))),
     ])
 }
 
 /// Creates a vertex; if it already exists the error is silently ignored.
-async fn upsert_vertex(
-    g: &mut gremlin_client::GraphTraversal<'_>,
-    label: u32,
-    vertex_id: i64,
-    properties: HashMap<String, GremlinArgument>,
-) -> Result<bool, Box<dyn std::error::Error>> {
-    match g.reset().addV(label, vertex_id, properties).execute().await {
-        Ok(_) => Ok(true),
-        Err(e) if e.to_string().contains("duplicate vertex") => Ok(false),
+async fn upsert_vertex(graph: &mut LogicalGraph<RocksStorage>, label: u16, vertex_id: i64) -> Result<bool, StoreError> {
+    let mut plan = LogicalPlan {
+        steps: vec![LogicalStep::AddV(AddVStep {
+            label_id: label,
+            vertex_id,
+            properties: generate_random_properties(),
+        })],
+    };
+    let _ = apply_rules(&mut plan).unwrap();
+
+    let mut builder: PhysicalPlanBuilder = Default::default();
+    let physical_plan = builder.build(&plan);
+
+    match physical_plan.next(graph) {
+        Ok(Some(_)) => Ok(true),
+        Ok(None) => Ok(false), // vertex already exists (addV is idempotent)
         Err(e) => Err(e),
     }
 }
@@ -81,54 +90,69 @@ async fn upsert_vertex(
 /// Creates an edge from src to dst if it does not already exist, using coalesce.
 /// Returns Ok(true) if created, Ok(false) if it already existed.
 async fn upsert_edge(
-    g: &mut gremlin_client::GraphTraversal<'_>,
+    graph: &mut LogicalGraph<RocksStorage>,
     src: i64,
     dst: i64,
-    edge_type: u32,
-    properties: HashMap<String, GremlinArgument>,
+    edge_type: u16,
     max_retries: usize,
-) -> Result<bool, Box<dyn std::error::Error>> {
+) -> Result<bool, StoreError> {
     // g.V(src).coalesce(
-    //   __.outE(edge_type).where(__.inV().hasId(dst)),   -- check if edge exists
+    //   __.outE(edge_type).where(__.otherV().hasId(dst)),   -- check if edge exists
     //   __.addE(edge_type, src, dst, props)              -- create if not
     // )
     // The coalesce short-circuits: if the first branch yields results the edge
     // already exists and addE is never executed.
+
+    let mut upsert_e_plan = LogicalPlan {
+        steps: vec![
+            LogicalStep::V(VStep { ids: vec![] }),
+            LogicalStep::HasProperty(HasPropertyStep { key: SmolStr::new("id"), value: Primitive::Int64(src) }),
+            LogicalStep::Coalesce(CoalesceStep {
+                plans: vec![
+                    LogicalPlan {
+                        steps: vec![
+                            LogicalStep::OutE(OutEStep { label_ids: vec![edge_type], end_vertex_ids: None }),
+                            LogicalStep::Where(WhereStep {
+                                plan: LogicalPlan {
+                                    steps: vec![
+                                        LogicalStep::OtherV(OtherVStep {}),
+                                        LogicalStep::HasId(HasIdStep { ids: vec![dst as i64] }),
+                                    ],
+                                },
+                            }),
+                        ],
+                    },
+                    LogicalPlan {
+                        steps: vec![LogicalStep::AddE(AddEStep {
+                            label_id: edge_type,
+                            out_v_id: src,
+                            in_v_id: dst,
+                            properties: generate_random_edge_properties(),
+                        })],
+                    },
+                ],
+            }),
+        ],
+    };
+    let _ = apply_rules(&mut upsert_e_plan).unwrap();
+
+    let mut builder: PhysicalPlanBuilder = Default::default();
+    let physical_plan = builder.build(&upsert_e_plan);
+
     for attempt in 0..max_retries {
-        let mut check_inner = gremlin_client::__();
-        check_inner.inV().hasId(&[dst]);
-
-        let mut check_branch = gremlin_client::__();
-        check_branch.outE(&[edge_type]).r#where(&mut check_inner);
-
-        let mut create_branch = gremlin_client::__();
-        create_branch.addE(edge_type, src, dst, properties.clone());
-
-        match g.reset().V(&[src]).coalesce(vec![&mut check_branch, &mut create_branch]).execute().await {
-            Ok(result) => {
-                let arr = result.as_array().unwrap();
-                if arr.is_empty() {
-                    // V(src) returned nothing — src vertex doesn't exist yet, retry
-                    if attempt == max_retries - 1 {
-                        return Err("src vertex not found after max retries".into());
-                    }
-                    sleep(Duration::from_millis(RETRY_DELAY_MS)).await;
-                    continue;
-                }
-                // coalesce returned the existing edge (branch 1) or the new edge (branch 2)
-                // If the edge already existed addE was not called → Ok(false); otherwise Ok(true).
-                // We can't easily distinguish here so just treat any result as success.
-                return Ok(true);
-            }
+        match physical_plan.next(graph) {
+            Ok(Some(_)) => return Ok(true),
+            Ok(None) => return Ok(false), // vertex already exists (addV is idempotent)
             Err(e) => {
                 if attempt == max_retries - 1 {
                     return Err(e);
                 }
+                // Retry after a short delay
                 sleep(Duration::from_millis(RETRY_DELAY_MS)).await;
             }
         }
     }
-    Err("upsert_edge failed after max retries".into())
+    Err(StoreError::RuntimeError("Max retries exceeded".into()))
 }
 
 #[tokio::main]
@@ -142,16 +166,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .expect("Please provide a --config file path for the benchmark");
 
     let config = Config::from_file(&config_path)?;
-    let server_addr = random_server_addr().await;
 
     let graph_store = gremlin_server::open_rocks_store(Some(&config.storage.data_dir))?;
-
-    let addr_clone = server_addr.clone();
-    tokio::spawn(async move {
-        gremlin_server::start_server(&addr_clone, graph_store).await.expect("Server failed to start");
-    });
-
-    sleep(Duration::from_millis(100)).await;
 
     let file = File::open("./bench_data/soc-LiveJournal1-1M.txt")?;
     let reader = BufReader::new(file);
@@ -166,8 +182,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut worker_handles = vec![];
     for _ in 0..PARALLELISM {
         let rx = Arc::clone(&rx);
-        let server_addr = server_addr.clone();
         let mutation_counter = Arc::clone(&mutation_counter);
+        let store = Arc::clone(&graph_store);
 
         let handle = std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
@@ -176,15 +192,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .expect("Failed to create tokio runtime");
 
             rt.block_on(async move {
-                let mut client = match gremlin_client::GremlinClient::connect(&server_addr).await {
-                    Ok(c) => c,
-                    Err(e) => {
-                        eprintln!("Worker failed to connect: {}", e);
-                        return;
-                    }
-                };
-                let mut g = gremlin_client::graphTraversalSource(&mut client);
-
                 loop {
                     let line = {
                         let mut lock = rx.lock().await;
@@ -205,16 +212,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     let (src, dst) = (parts[0], parts[1]);
 
+                    let mut lg = LogicalGraph::new(store.begin());
+
                     // Upsert both vertices (single round trip each — addV ignores duplicate)
-                    if upsert_vertex(&mut g, 1u32, src, generate_random_properties()).await.unwrap_or(false) {
+                    if upsert_vertex(&mut lg, 1u16, src).await.unwrap_or(false) {
                         mutation_counter.fetch_add(1, Ordering::Relaxed);
                     }
-                    if upsert_vertex(&mut g, 1u32, dst, generate_random_properties()).await.unwrap_or(false) {
+                    if upsert_vertex(&mut lg, 1u16, dst).await.unwrap_or(false) {
                         mutation_counter.fetch_add(1, Ordering::Relaxed);
                     }
 
                     // Upsert edge via coalesce (single round trip)
-                    match upsert_edge(&mut g, src, dst, 2u32, generate_random_edge_properties(), MAX_RETRIES).await {
+                    match upsert_edge(&mut lg, src, dst, 2u16, MAX_RETRIES).await {
                         Ok(_) => {
                             mutation_counter.fetch_add(1, Ordering::Relaxed);
                         }
@@ -222,6 +231,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             eprintln!("Edge upsert failed ({} -> {}): {}", src, dst, e);
                         }
                     }
+
+                    let _ = lg.commit();
                 }
             })
         });

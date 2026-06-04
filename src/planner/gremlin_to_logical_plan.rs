@@ -142,27 +142,27 @@ fn translate_parsed_step(parsed_step: ParsedGremlinStep) -> Result<Vec<LogicalSt
         }
         "outE" => {
             let label_ids = parse_optional_labels(&parsed_step.arguments)?;
-            Ok(vec![LogicalStep::OutE(OutEStep { label_ids })])
+            Ok(vec![LogicalStep::OutE(OutEStep { label_ids, end_vertex_ids: None })])
         }
         "inE" => {
             let label_ids = parse_optional_labels(&parsed_step.arguments)?;
-            Ok(vec![LogicalStep::InE(InEStep { label_ids })])
+            Ok(vec![LogicalStep::InE(InEStep { label_ids, end_vertex_ids: None })])
         }
         "bothE" => {
             let label_ids = parse_optional_labels(&parsed_step.arguments)?;
-            Ok(vec![LogicalStep::BothE(BothEStep { label_ids })])
+            Ok(vec![LogicalStep::BothE(BothEStep { label_ids, end_vertex_ids: None })])
         }
         "out" => {
             let label_ids = parse_optional_labels(&parsed_step.arguments)?;
-            Ok(vec![LogicalStep::Out(OutStep { label_ids })])
+            Ok(vec![LogicalStep::Out(OutStep { label_ids, end_vertex_ids: None })])
         }
         "in" => {
             let label_ids = parse_optional_labels(&parsed_step.arguments)?;
-            Ok(vec![LogicalStep::In(InStep { label_ids })])
+            Ok(vec![LogicalStep::In(InStep { label_ids, end_vertex_ids: None })])
         }
         "both" => {
             let label_ids = parse_optional_labels(&parsed_step.arguments)?;
-            Ok(vec![LogicalStep::Both(BothStep { label_ids })])
+            Ok(vec![LogicalStep::Both(BothStep { label_ids, end_vertex_ids: None })])
         }
         "outV" => Ok(vec![LogicalStep::OutV(OutVStep {})]),
         "inV" => Ok(vec![LogicalStep::InV(InVStep {})]),

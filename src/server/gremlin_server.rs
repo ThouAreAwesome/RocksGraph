@@ -1,7 +1,7 @@
 use crate::{
     engine::volcano::builder::PhysicalPlanBuilder,
     graph::LogicalGraph,
-    optimizer::optimize,
+    optimizer::apply_rules,
     planner::logical_step::LogicalPlan,
     server::{
         bytecode_deserializer::{deserialize_bytecode, GremlinQueryAst},
@@ -122,14 +122,14 @@ fn process_query_message(bytes: &[u8], graph: &mut LogicalGraph<RocksStorage>) -
         }
     };
 
-    let logical_plan: LogicalPlan = match ast.try_into() {
+    let mut logical_plan: LogicalPlan = match ast.try_into() {
         Ok(plan) => plan,
         Err(e) => {
             let error_msg = serde_json::to_string(&format!("Translation Error: {:#?}", e)).unwrap_or_default();
             return format!(r#"{{"status":{{"code":400,"message":{}}}}}"#, error_msg);
         }
     };
-    let logical_plan = optimize(logical_plan);
+    let _ = apply_rules(&mut logical_plan).unwrap();
 
     let mut builder: PhysicalPlanBuilder = Default::default();
     let physical_plan = builder.build(&logical_plan);

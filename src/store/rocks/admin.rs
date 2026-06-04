@@ -222,7 +222,7 @@ mod tests {
         (store, dir)
     }
 
-    fn make_vertex(id: u64, label_id: u16, props: Vec<(SmolStr, Primitive)>) -> Vertex {
+    fn make_vertex(id: i64, label_id: u16, props: Vec<(SmolStr, Primitive)>) -> Vertex {
         let owner = CanonicalKey::Vertex(id);
         Vertex {
             id,
@@ -242,7 +242,7 @@ mod tests {
         }
     }
 
-    fn cek(src: u64, label: u16, dst: u64) -> CanonicalEdgeKey {
+    fn cek(src: i64, label: u16, dst: i64) -> CanonicalEdgeKey {
         CanonicalEdgeKey { src_id: src, label_id: label, rank: 0, dst_id: dst }
     }
 
@@ -305,7 +305,7 @@ mod tests {
             .unwrap();
         let results = store.get_vertices(&[1, 2, 3]).unwrap();
         assert_eq!(results.len(), 3);
-        let mut ids: Vec<u64> = results.iter().map(|v| v.id).collect();
+        let mut ids: Vec<i64> = results.iter().map(|v| v.id).collect();
         ids.sort_unstable();
         assert_eq!(ids, vec![1, 2, 3]);
     }
@@ -383,7 +383,7 @@ mod tests {
             .unwrap();
         let result = store.get_edges(1, Direction::OUT, None, Some(&[10, 30]), None).unwrap();
         assert_eq!(result.len(), 2);
-        let mut dst_ids: Vec<u64> = result.iter().map(|e| e.dst_id).collect();
+        let mut dst_ids: Vec<i64> = result.iter().map(|e| e.dst_id).collect();
         dst_ids.sort_unstable();
         assert_eq!(dst_ids, vec![10, 30]);
     }

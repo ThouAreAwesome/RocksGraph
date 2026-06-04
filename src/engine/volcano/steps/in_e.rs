@@ -20,7 +20,7 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{error::StoreError, GValue, LabelId},
+    types::{error::StoreError, GValue, LabelId, VertexKey},
 };
 
 pub struct InEStep {
@@ -29,11 +29,12 @@ pub struct InEStep {
     limit: Option<u32>,
     current_input: Option<Rc<Traverser>>,
     current_label_idx: usize,
+    end_vertex_ids: Option<Vec<VertexKey>>,
 }
 
 impl InEStep {
-    pub fn new(label_ids: Vec<LabelId>) -> Self {
-        Self { upstream: None, label_ids, limit: None, current_input: None, current_label_idx: 0 }
+    pub fn new(label_ids: Vec<LabelId>, end_vertex_ids: Option<Vec<VertexKey>>) -> Self {
+        Self { upstream: None, label_ids, limit: None, current_input: None, current_label_idx: 0, end_vertex_ids }
     }
 }
 
@@ -59,7 +60,7 @@ impl CoreStep for InEStep {
             if let GValue::Vertex(vk) = &t.value {
                 let label = if self.label_ids.is_empty() { None } else { Some(self.label_ids[self.current_label_idx]) };
 
-                let in_edges = ctx.get_in_edges(*vk, label, self.limit)?;
+                let in_edges = ctx.get_in_edges(*vk, label, self.end_vertex_ids.as_deref(), self.limit)?;
                 let results: SmallVec<[_; 4]> = in_edges
                     .into_iter()
                     .map(|e| Traverser::new_rc_with_parent(GValue::Edge(e), Rc::clone(&t)))

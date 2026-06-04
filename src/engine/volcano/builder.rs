@@ -113,7 +113,7 @@ impl PhysicalPlanBuilder {
             }
             LogicalStep::BothE(s) => {
                 wire_required!(
-                    BufferedStep::new(steps::both_e::BothEStep::new(s.label_ids.clone())),
+                    BufferedStep::new(steps::both_e::BothEStep::new(s.label_ids.clone(), s.end_vertex_ids.clone())),
                     upstream,
                     "BothEStep"
                 )
@@ -137,17 +137,38 @@ impl PhysicalPlanBuilder {
                 "HasPropertyStep"
             ),
             LogicalStep::In(s) => {
-                wire_required!(BufferedStep::new(steps::r#in::InStep::new(s.label_ids.clone())), upstream, "InStep")
+                wire_required!(
+                    BufferedStep::new(steps::r#in::InStep::new(s.label_ids.clone(), s.end_vertex_ids.clone())),
+                    upstream,
+                    "InStep"
+                )
             }
             LogicalStep::InE(s) => {
-                wire_required!(BufferedStep::new(steps::in_e::InEStep::new(s.label_ids.clone())), upstream, "InEStep")
+                wire_required!(
+                    BufferedStep::new(steps::in_e::InEStep::new(s.label_ids.clone(), s.end_vertex_ids.clone())),
+                    upstream,
+                    "InEStep"
+                )
             }
             LogicalStep::Out(s) => {
-                wire_required!(BufferedStep::new(steps::out::OutStep::new(s.label_ids.clone())), upstream, "OutStep")
+                wire_required!(
+                    BufferedStep::new(steps::out::OutStep::new(s.label_ids.clone(), s.end_vertex_ids.clone())),
+                    upstream,
+                    "OutStep"
+                )
             }
             LogicalStep::OutE(s) => {
+                if let Some(end_ids) = &s.end_vertex_ids {
+                    if !s.label_ids.is_empty() && !end_ids.is_empty() {
+                        return wire_required!(
+                            BufferedStep::new(steps::get_out_e::GetOutEStep::new(s.label_ids.clone(), end_ids.clone())),
+                            upstream,
+                            "GetOutEStep"
+                        );
+                    }
+                }
                 wire_required!(
-                    BufferedStep::new(steps::out_e::OutEStep::new(s.label_ids.clone())),
+                    BufferedStep::new(steps::out_e::OutEStep::new(s.label_ids.clone(), s.end_vertex_ids.clone())),
                     upstream,
                     "OutEStep"
                 )
@@ -217,6 +238,13 @@ impl PhysicalPlanBuilder {
                     BufferedStep::new(steps::coalesce::CoalesceStep::new(physical_plans)),
                     upstream,
                     "CoalesceStep"
+                )
+            }
+            LogicalStep::EndVertexFilter(s) => {
+                wire_required!(
+                    BufferedStep::new(steps::end_vertex_filter::EndVertexFilter::new(s.ids.clone())),
+                    upstream,
+                    "EndVertexFilterStep"
                 )
             }
         }

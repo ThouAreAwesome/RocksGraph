@@ -771,7 +771,7 @@ mod tests {
         LogicalGraph::new(store.begin())
     }
 
-    fn cek(src: u64, label: u16, dst: u64) -> CanonicalEdgeKey {
+    fn cek(src: i64, label: u16, dst: i64) -> CanonicalEdgeKey {
         CanonicalEdgeKey { src_id: src, label_id: label, rank: 0, dst_id: dst }
     }
 
@@ -1524,7 +1524,7 @@ mod tests {
 
         let result = c.get_edges(v1, Direction::OUT, None, Some(&[v10, v30]), None).unwrap();
         assert_eq!(result.len(), 2);
-        let mut secondaries: Vec<u64> = result.iter().map(|(ek, _)| ek.secondary_id).collect();
+        let mut secondaries: Vec<i64> = result.iter().map(|(ek, _)| ek.secondary_id).collect();
         secondaries.sort_unstable();
         let mut expected = vec![v10, v30];
         expected.sort_unstable();
@@ -2365,7 +2365,7 @@ mod tests {
             key
         };
 
-        let spokes: Vec<u64> = (0..4)
+        let spokes: Vec<i64> = (0..4)
             .map(|i| {
                 let mut c = ctx(&store);
                 let (key, _) = c.add_vertex(i, 1).unwrap();
@@ -2386,7 +2386,7 @@ mod tests {
         assert_eq!(in_e, 0);
 
         // The 4 edges must land at the 4 spoke vertices.
-        let mut dst_ids: Vec<u64> = out.iter().map(|(ek, _)| ek.secondary_id).collect();
+        let mut dst_ids: Vec<i64> = out.iter().map(|(ek, _)| ek.secondary_id).collect();
         dst_ids.sort_unstable();
         let mut expected = spokes.clone();
         expected.sort_unstable();
@@ -2501,7 +2501,7 @@ mod tests {
         // London has two incoming edges: one from Alice, one from Bob.
         let london_in = c.get_edges(london, Direction::IN, Some(2), None, None).unwrap();
         assert_eq!(london_in.len(), 2);
-        let mut src_ids: Vec<u64> = london_in.iter().map(|(ek, _)| ek.secondary_id).collect();
+        let mut src_ids: Vec<i64> = london_in.iter().map(|(ek, _)| ek.secondary_id).collect();
         src_ids.sort_unstable();
         assert_eq!(src_ids, vec![alice.min(bob), alice.max(bob)]);
     }

@@ -13,7 +13,7 @@
 use std::fmt::Display;
 
 /// Unique identifier for a vertex.
-pub type VertexKey = u64;
+pub type VertexKey = i64;
 
 /// Numeric id for an edge label, mapped via the schema registry.
 /// 12 bits are used semantically (max 4 096 distinct labels); stored as u16.

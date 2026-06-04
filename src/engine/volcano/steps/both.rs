@@ -63,7 +63,7 @@ impl CoreStep for BothStep {
 
                 let mut results = SmallVec::new();
                 if self.current_direction == 0 {
-                    let out_edges = ctx.get_out_edges(*vk, label, self.limit)?;
+                    let out_edges = ctx.get_out_edges(*vk, label, None, self.limit)?;
                     for edge in out_edges {
                         results.push(Traverser::new_rc_with_parent(GValue::Vertex(edge.secondary_id), Rc::clone(&t)));
                     }
@@ -74,7 +74,7 @@ impl CoreStep for BothStep {
                 }
 
                 if self.current_direction == 1 {
-                    let in_edges = ctx.get_in_edges(*vk, label, self.limit)?;
+                    let in_edges = ctx.get_in_edges(*vk, label, None, self.limit)?;
                     for edge in in_edges {
                         results.push(Traverser::new_rc_with_parent(GValue::Vertex(edge.secondary_id), Rc::clone(&t)));
                     }

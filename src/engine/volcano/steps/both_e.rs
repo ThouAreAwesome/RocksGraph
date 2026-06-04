@@ -20,7 +20,7 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{error::StoreError, GValue, LabelId},
+    types::{error::StoreError, GValue, LabelId, VertexKey},
 };
 
 pub struct BothEStep {
@@ -30,11 +30,20 @@ pub struct BothEStep {
     current_input: Option<Rc<Traverser>>,
     current_label_idx: usize,
     current_direction: u8, // 0 = out, 1 = in
+    end_vertex_ids: Option<Vec<VertexKey>>,
 }
 
 impl BothEStep {
-    pub fn new(label_ids: Vec<LabelId>) -> Self {
-        Self { upstream: None, label_ids, limit: None, current_input: None, current_label_idx: 0, current_direction: 0 }
+    pub fn new(label_ids: Vec<LabelId>, end_vertex_ids: Option<Vec<VertexKey>>) -> Self {
+        Self {
+            upstream: None,
+            label_ids,
+            limit: None,
+            current_input: None,
+            current_label_idx: 0,
+            current_direction: 0,
+            end_vertex_ids,
+        }
     }
 }
 
@@ -63,7 +72,7 @@ impl CoreStep for BothEStep {
 
                 let mut results = SmallVec::new();
                 if self.current_direction == 0 {
-                    let out_edges = ctx.get_out_edges(*vk, label, self.limit)?;
+                    let out_edges = ctx.get_out_edges(*vk, label, self.end_vertex_ids.as_deref(), self.limit)?;
                     for edge in out_edges {
                         results.push(Traverser::new_rc_with_parent(GValue::Edge(edge), Rc::clone(&t)));
                     }
@@ -74,7 +83,7 @@ impl CoreStep for BothEStep {
                 }
 
                 if self.current_direction == 1 {
-                    let in_edges = ctx.get_in_edges(*vk, label, self.limit)?;
+                    let in_edges = ctx.get_in_edges(*vk, label, self.end_vertex_ids.as_deref(), self.limit)?;
                     for edge in in_edges {
                         results.push(Traverser::new_rc_with_parent(GValue::Edge(edge), Rc::clone(&t)));
                     }
