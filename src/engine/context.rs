@@ -38,21 +38,21 @@ use crate::{
 /// than `get_edge` / `get_edges`) are overlay-only — the caller must call
 /// `get_edge` or `get_edges` first.
 ///
-/// | Method                   | Store fallback (vertex) | Store fallback (edge) | Lock acquired            | Precondition                  |
-/// |--------------------------|:-----------------------:|:---------------------:|:------------------------:|-------------------------------|
-/// | `get_vertex`             | ✅ on miss               | n/a                   | none                     | none                          |
-/// | `get_edge`               | n/a                     | ✅ on miss             | none                     | none                          |
-/// | `get_outs` / `get_ins`   | n/a                     | ✅ merged              | none                     | none                          |
-/// | `get_property` (vertex)  | ✅ via `get_vertex`      | —                     | `RwLock::read` on props  | none                          |
-/// | `get_property` (edge)    | —                       | ✗ overlay-only        | `RwLock::read` on props  | ⚠ **edge must be pre-loaded** |
-/// | `get_value` (vertex)     | ✅ via `get_vertex`      | —                     | `RwLock::read` on props  | none                          |
-/// | `get_value` (edge)       | —                       | ✗ overlay-only        | `RwLock::read` on props  | ⚠ **edge must be pre-loaded** |
-/// | `add_vertex`             | ✅ via degree record     | n/a                   | none                     | none                          |
-/// | `add_edge`               | ✅ via degree record     | ✅ via OUT record      | none                     | none                          |
-/// | `set_property` (vertex)  | ✅ auto-load             | —                     | `RwLock::write` on props | none                          |
-/// | `set_property` (edge)    | —                       | ✗ overlay-only        | `RwLock::write` on props | ⚠ **edge must be pre-loaded** |
-/// | `drop_property` (vertex) | ✅ auto-load             | —                     | `RwLock::write` on props | none                          |
-/// | `drop_property` (edge)   | —                       | ✗ overlay-only        | `RwLock::write` on props | ⚠ **edge must be pre-loaded** |
+/// | Method                   | Store fallback (vertex) | Store fallback (edge) | Lock acquired  | Precondition                  |
+/// |--------------------------|:-----------------------:|:---------------------:|:--------------:|-------------------------------|
+/// | `get_vertex`             | ✅ on miss               | n/a                   | none          | none                          |
+/// | `get_edge`               | n/a                     | ✅ on miss             | none          | none                          |
+/// | `get_outs` / `get_ins`   | n/a                     | ✅ merged              | none          | none                          |
+/// | `get_property` (vertex)  | ✅ via `get_vertex`      | —                     | none          | none                          |
+/// | `get_property` (edge)    | —                       | ✗ overlay-only        | none           | ⚠ **edge must be pre-loaded** |
+/// | `get_value` (vertex)     | ✅ via `get_vertex`      | —                     | none          | none                          |
+/// | `get_value` (edge)       | —                       | ✗ overlay-only        | none           | ⚠ **edge must be pre-loaded** |
+/// | `add_vertex`             | ✅ via degree record     | n/a                   | none          | none                          |
+/// | `add_edge`               | ✅ via degree record     | ✅ via OUT record     | none           | none                         |
+/// | `set_property` (vertex)  | ✅ auto-load             | —                     | none          | none                          |
+/// | `set_property` (edge)    | —                       | ✗ overlay-only        | none           | ⚠ **edge must be pre-loaded** |
+/// | `drop_property` (vertex) | ✅ auto-load             | —                     | none          | none                          |
+/// | `drop_property` (edge)   | —                       | ✗ overlay-only        | none           | ⚠ **edge must be pre-loaded** |
 pub trait GraphCtx {
     fn get_vertex(&mut self, key: VertexKey) -> Result<Option<VertexKey>, StoreError>;
     fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<EdgeKey>, StoreError>;
@@ -93,8 +93,7 @@ pub trait GraphCtx {
     fn add_edge(&mut self, cek: &EdgeKey) -> Result<EdgeKey, StoreError>;
     /// Upsert a property.  For vertices the element is auto-loaded from the store
     /// if absent from the overlay (no precondition).  For edges the edge must
-    /// already be in the overlay — call `get_edge` first.  Acquires
-    /// `RwLock::write` on `props` briefly.
+    /// already be in the overlay — call `get_edge` first.
     fn set_property(&mut self, prop: &Property) -> Result<(), StoreError>;
     fn drop_property(&mut self, prop: &Property) -> Result<(), StoreError>;
     fn drop_vertex(&mut self, vertex: VertexKey) -> Result<(), StoreError>;
@@ -226,8 +225,7 @@ impl<S: GraphStore> GraphCtx for LogicalGraph<S> {
         self.add_edge(ek)
     }
     fn set_property(&mut self, prop: &Property) -> Result<(), StoreError> {
-        self.set_property(prop)?;
-        Ok(())
+        self.set_property(prop)
     }
     fn drop_property(&mut self, prop: &Property) -> Result<(), StoreError> {
         self.drop_property(prop)

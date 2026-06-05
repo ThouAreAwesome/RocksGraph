@@ -47,8 +47,7 @@ use crate::types::{element::Property, Direction, Edge, EdgeKey, LabelId, StoreEr
 /// # Read semantics
 ///
 /// Reads return owned `Vertex` or `Edge` values.  `LogicalGraph` moves them into
-/// its overlay map; on mutation it acquires a write lock on the element's
-/// `RwLock<Vec<Property>>` for in-place updates.
+/// its overlay map; on mutation it updates the element's properties in place.
 ///
 /// # Write semantics
 ///

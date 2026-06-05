@@ -103,6 +103,12 @@ enum Existence {
 }
 
 impl Existence {
+    /// Merges two dirty states for the same element within a single transaction.
+    ///
+    /// This defines the state machine for consecutive operations. For example:
+    /// - Any operation followed by a deletion (`Tombstone`) results in a `Tombstone`.
+    /// - Modifying properties (`Modified`) and changing edge counts (`CounterOnly`) combines into
+    ///   `ModifiedWithCounter`.
     fn merge(self, other: Existence) -> Existence {
         use Existence::*;
         match (self, other) {
@@ -146,6 +152,12 @@ impl<S: GraphStore> LogicalGraph<S> {
         self.get_vertex_degree(key)
     }
 
+    /// Retrieves the degree (out-edge count, in-edge count) of a vertex.
+    ///
+    /// This acts as a transparent read-through cache: it first checks the in-memory
+    /// `vertex_degree` overlay, and falls back to the underlying `GraphStore` on a miss,
+    /// caching the result. It is central to existence checks for vertices and endpoints.
+    /// Returns `None` if the vertex does not exist.
     fn get_vertex_degree(&mut self, key: VertexKey) -> Result<Option<(u32, u32)>, StoreError> {
         if let Some(counts) = self.vertex_degree.get(&key) {
             return Ok(Some(*counts));
@@ -156,6 +168,10 @@ impl<S: GraphStore> LogicalGraph<S> {
         })
     }
 
+    /// Records an element's mutation state in the query-scoped overlay.
+    ///
+    /// If the element was already modified in this transaction, its state is
+    /// combined with the new state via `Existence::merge`.
     fn mark_dirty(&mut self, key: CanonicalKey, state: Existence) {
         match self.dirty.entry(key) {
             Entry::Vacant(entry) => {
@@ -267,8 +283,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     /// overlay-only policy for all other edge operations.
     ///
     /// # Locking
-    /// Acquires `RwLock::read` on `element.props` briefly; returns
-    /// `StoreError::LockError` if the lock is poisoned.
+    /// No lock is acquired. The method operates via an exclusive borrow (`&mut self`).
     pub fn get_property(&mut self, key: &CanonicalKey, prop: &PropKey) -> Result<Option<Property>, StoreError> {
         match *key {
             CanonicalKey::Vertex(vk) => {
@@ -289,6 +304,18 @@ impl<S: GraphStore> LogicalGraph<S> {
             CanonicalKey::Empty => Err(StoreError::RuntimeError("Property owner cannot be empty".to_string())),
         }
     }
+
+    /// Read a single primitive value from a vertex or edge property.
+    ///
+    /// # Vertex — no precondition
+    /// Delegates to `get_vertex`, which loads from the store on a cache miss and
+    /// returns `None` for absent or tombstoned vertices.
+    ///
+    /// # Edge — overlay-only (precondition: edge must be in overlay)
+    /// The edge must already be in the overlay; returns `None` if absent.
+    ///
+    /// # Locking
+    /// No lock is acquired. The method operates via an exclusive borrow (`&mut self`).
     pub fn get_value(&mut self, key: &CanonicalKey, prop: &PropKey) -> Result<Option<Primitive>, StoreError> {
         match *key {
             CanonicalKey::Vertex(vk) => {
@@ -360,8 +387,8 @@ impl<S: GraphStore> LogicalGraph<S> {
     /// Re-inserting a deleted vertex within one transaction is not supported.
     ///
     /// # Locking
-    /// No lock is acquired.  The new vertex's `props` field is an empty
-    /// `RwLock<Vec<Property>>`.
+    /// No lock is acquired. The new vertex's `props` field is an empty
+    /// `Vec<Property>`.
     pub fn add_vertex(&mut self, id: VertexKey, label_id: LabelId) -> Result<VertexKey, StoreError> {
         // Single-call check: covers both overlay (vertex_degree map) and store.
         if self.get_vertex_degree(id)?.is_some() {
@@ -451,9 +478,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     ///    call); if absent `StoreError::NotFound` is returned.  **Caller must pre-load the edge.**
     ///
     /// # Locking
-    /// Acquires `RwLock::write()` on `element.props` for the duration of the
-    /// upsert, then releases it immediately — not held across any store or I/O
-    /// call.  Returns `StoreError::LockError` if the lock is poisoned.
+    /// No lock is acquired. Mutates the properties in place via an exclusive borrow.
     pub fn set_property(&mut self, prop: &Property) -> Result<(), StoreError> {
         let key = prop.owner;
         match key {
@@ -500,8 +525,8 @@ impl<S: GraphStore> LogicalGraph<S> {
     /// # Existence check and locking
     /// Same semantics as `set_property`: tombstone guard first, then
     /// auto-load-from-store for vertices (no precondition), overlay-only check
-    /// for edges (caller must pre-load).  Acquires a short-lived
-    /// `RwLock::write()` on `props` to perform the removal.
+    /// for edges (caller must pre-load). Mutates the properties in place via an
+    /// exclusive borrow.
     pub fn drop_property(&mut self, prop: &Property) -> Result<(), StoreError> {
         let key = prop.owner;
         match key {
@@ -697,6 +722,7 @@ impl<S: GraphStore> LogicalGraph<S> {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/// Updates a property in-place if its key exists, otherwise appends it to the list.
 fn upsert_prop(props: &mut Vec<Property>, prop: &Property) {
     if let Some(p) = props.iter_mut().find(|p| p.key == prop.key) {
         p.value = prop.value.clone();
@@ -705,6 +731,10 @@ fn upsert_prop(props: &mut Vec<Property>, prop: &Property) {
     }
 }
 
+/// Evaluates whether an edge matches the specified traversal filters.
+///
+/// Verifies that the edge's primary endpoint matches `vertex` in the given `direction`,
+/// and optionally applies filters for `label` and the secondary endpoint (`dst`).
 fn edge_matches(
     view: &Edge,
     vertex: VertexKey,

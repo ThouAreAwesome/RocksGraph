@@ -19,10 +19,10 @@
 //!
 //! | CF name         | Key layout                               | Value layout                        |
 //! |-----------------|------------------------------------------|-------------------------------------|
-//! | `vertices`      | `[ VertexId:u64 ]`                       | `[ label_id:u16 \| props ]`         |
-//! | `vertex_degree` | `[ VertexId:u64 ]`                       | `[ out_e_cnt:u32 \| in_e_cnt:u32 ]` |
-//! | `edges_out`     | `[ SrcId:u64 \| LabelId:u16 \| DstId:u64 \| Rank:u16 ]` | `[ props ]` |
-//! | `edges_in`      | `[ DstId:u64 \| LabelId:u16 \| SrcId:u64 \| Rank:u16 ]` | `[ props ]` |
+//! | `vertices`      | `[ VertexId:i64 ]`                       | `[ label_id:u16 \| props ]`         |
+//! | `vertex_degree` | `[ VertexId:i64 ]`                       | `[ out_e_cnt:u32 \| in_e_cnt:u32 ]` |
+//! | `edges_out`     | `[ SrcId:i64 \| LabelId:u16 \| DstId:i64 \| Rank:u16 ]` | `[ props ]` |
+//! | `edges_in`      | `[ DstId:i64 \| LabelId:u16 \| SrcId:i64 \| Rank:u16 ]` | `[ props ]` |
 //!
 //! Edge properties are duplicated across `edges_out` and `edges_in`.
 //! The direction byte present in previous versions has been removed; each CF
@@ -47,7 +47,7 @@ pub(crate) const EDGE_PREFIX_LENGHT: usize = 8;
 /// `vertex_id` (8 B), optionally followed by `label_id` (2 B).
 pub fn edge_scan_prefix(vertex: VertexKey, label: Option<LabelId>) -> Vec<u8> {
     let mut prefix = Vec::with_capacity(10);
-    prefix.extend_from_slice(&vertex.to_be_bytes());
+    prefix.extend_from_slice(&(vertex ^ (1 << 63)).to_be_bytes());
     if let Some(lbl) = label {
         prefix.extend_from_slice(&lbl.to_be_bytes());
     }
@@ -86,27 +86,27 @@ pub const EDGE_KEY_SIZE: usize = 20;
 // ── VertexKey encoding ────────────────────────────────────────────────────────
 
 pub fn encode_vertex_key(key: VertexKey) -> [u8; VERTEX_KEY_SIZE] {
-    key.to_be_bytes()
+    (key ^ (1 << 63)).to_be_bytes()
 }
 
 #[allow(dead_code)]
 pub fn decode_vertex_key(bytes: &[u8]) -> Option<VertexKey> {
-    Some(i64::from_be_bytes(bytes.try_into().ok()?))
+    Some(i64::from_be_bytes(bytes.try_into().ok()?) ^ (1 << 63))
 }
 
 // ── Edge key encoding ─────────────────────────────────────────────────────────
 //
-// edges_out layout:  [ SrcId:u64 | LabelId:u16 | DstId:u64 | Rank:u16 ]
-// edges_in  layout:  [ DstId:u64 | LabelId:u16 | SrcId:u64 | Rank:u16 ]
+// edges_out layout:  [ SrcId:i64 | LabelId:u16 | DstId:i64 | Rank:u16 ]
+// edges_in  layout:  [ DstId:i64 | LabelId:u16 | SrcId:i64 | Rank:u16 ]
 //
 // Both are encoded with the same physical byte format; only the semantic
-// meaning of the first and last u64 differs by CF.
+// meaning of the first and last i64 differs by CF.
 /// Encode a `EdgeKey`
 pub fn encode_edge_key(k: &EdgeKey) -> [u8; EDGE_KEY_SIZE] {
     let mut buf = [0u8; EDGE_KEY_SIZE];
-    buf[0..8].copy_from_slice(&k.primary_id.to_be_bytes());
+    buf[0..8].copy_from_slice(&(k.primary_id ^ (1 << 63)).to_be_bytes());
     buf[8..10].copy_from_slice(&k.label_id.to_be_bytes());
-    buf[10..18].copy_from_slice(&k.secondary_id.to_be_bytes());
+    buf[10..18].copy_from_slice(&(k.secondary_id ^ (1 << 63)).to_be_bytes());
     buf[18..20].copy_from_slice(&k.rank.to_be_bytes());
     buf
 }
@@ -116,10 +116,10 @@ pub fn decode_edge_key(bytes: &[u8], dir: Direction) -> Option<EdgeKey> {
         return None;
     }
     Some(EdgeKey {
-        primary_id: i64::from_be_bytes(bytes[0..8].try_into().ok()?),
+        primary_id: i64::from_be_bytes(bytes[0..8].try_into().ok()?) ^ (1 << 63),
         direction: dir,
         label_id: u16::from_be_bytes(bytes[8..10].try_into().ok()?) as LabelId,
-        secondary_id: i64::from_be_bytes(bytes[10..18].try_into().ok()?),
+        secondary_id: i64::from_be_bytes(bytes[10..18].try_into().ok()?) ^ (1 << 63),
         rank: u16::from_be_bytes(bytes[18..20].try_into().ok()?) as Rank,
     })
 }
@@ -537,9 +537,28 @@ mod tests {
         let k = CanonicalEdgeKey { src_id: 100, label_id: 5, rank: 2, dst_id: 200 };
         let in_bytes = encode_edge_key_in(k);
         assert_eq!(in_bytes.len(), 20);
-        assert_eq!(u64::from_be_bytes(in_bytes[0..8].try_into().unwrap()), 200u64);
+        assert_eq!(i64::from_be_bytes(in_bytes[0..8].try_into().unwrap()) ^ (1 << 63), 200i64);
         let decoded = decode_edge_key_in(&in_bytes).unwrap();
         assert_eq!(decoded, k);
+    }
+
+    #[test]
+    fn edge_key_in_encode_decode_negative_dst() {
+        let k = CanonicalEdgeKey { src_id: 100, label_id: 5, rank: 2, dst_id: -200 };
+        let in_bytes = encode_edge_key_in(k);
+        assert_eq!(in_bytes.len(), 20);
+        assert_eq!(i64::from_be_bytes(in_bytes[0..8].try_into().unwrap()) ^ (1 << 63), -200i64);
+        let decoded = decode_edge_key_in(&in_bytes).unwrap();
+        assert_eq!(decoded, k);
+    }
+
+    #[test]
+    fn lexicographic_ordering_of_signed_keys() {
+        let keys = vec![i64::MIN, -100, -1, 0, 1, 100, i64::MAX];
+        let mut encoded: Vec<_> = keys.iter().copied().map(encode_vertex_key).collect();
+        encoded.sort();
+        let decoded: Vec<_> = encoded.iter().map(|b| decode_vertex_key(b).unwrap()).collect();
+        assert_eq!(decoded, keys);
     }
 
     #[test]
