@@ -58,7 +58,7 @@ impl CoreStep for GetOutEStep {
                 for dst in &self.end_vertex_ids {
                     let edge_key = EdgeKey::out_e(src, *label_id, *dst, 0);
 
-                    if let Some(_e) = ctx.get_edge(edge_key)? {
+                    if let Some(_e) = ctx.get_edge(&edge_key)? {
                         results.push(Traverser::new_rc_with_parent(GValue::Edge(edge_key), Rc::clone(&t)));
                     }
                 }

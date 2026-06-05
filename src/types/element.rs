@@ -14,6 +14,7 @@ use crate::types::{
     gvalue::Primitive,
     keys::{CanonicalEdgeKey, CanonicalKey, LabelId, Rank, VertexKey},
     prop_key::{PropKey, LABEL},
+    EdgeKey,
 };
 
 use std::hash::{Hash, Hasher};
@@ -73,6 +74,27 @@ impl Edge {
     #[inline]
     pub fn canonical_key(&self) -> CanonicalEdgeKey {
         CanonicalEdgeKey { src_id: self.src_id, label_id: self.label_id, rank: self.rank, dst_id: self.dst_id }
+    }
+    #[inline]
+    pub fn edge_key_out(&self) -> EdgeKey {
+        EdgeKey {
+            primary_id: self.src_id,
+            direction: super::Direction::OUT,
+            label_id: self.label_id,
+            secondary_id: self.dst_id,
+            rank: 0,
+        }
+    }
+
+    #[inline]
+    pub fn edge_key_in(&self) -> EdgeKey {
+        EdgeKey {
+            primary_id: self.dst_id,
+            direction: super::Direction::IN,
+            label_id: self.label_id,
+            secondary_id: self.src_id,
+            rank: 0,
+        }
     }
 
     #[inline]

@@ -36,7 +36,7 @@
 //! | `vertex_id \| label_id` | 10 | `outE(label)` / `inE(label)`    |
 
 use crate::types::{
-    CanonicalEdgeKey, CanonicalKey, Edge, LabelId, Primitive, PropKey, Property, Rank, StoreError, Vertex, VertexKey,
+    CanonicalKey, Direction, Edge, EdgeKey, LabelId, Primitive, PropKey, Property, Rank, StoreError, Vertex, VertexKey,
 };
 
 // ── Scan helpers ──────────────────────────────────────────────────────────────
@@ -101,52 +101,28 @@ pub fn decode_vertex_key(bytes: &[u8]) -> Option<VertexKey> {
 //
 // Both are encoded with the same physical byte format; only the semantic
 // meaning of the first and last u64 differs by CF.
-
-fn encode_edge_key_raw(a: VertexKey, label: LabelId, b: VertexKey, rank: Rank) -> [u8; EDGE_KEY_SIZE] {
+/// Encode a `EdgeKey`
+pub fn encode_edge_key(k: &EdgeKey) -> [u8; EDGE_KEY_SIZE] {
     let mut buf = [0u8; EDGE_KEY_SIZE];
-    buf[0..8].copy_from_slice(&a.to_be_bytes());
-    buf[8..10].copy_from_slice(&label.to_be_bytes());
-    buf[10..18].copy_from_slice(&b.to_be_bytes());
-    buf[18..20].copy_from_slice(&rank.to_be_bytes());
+    buf[0..8].copy_from_slice(&k.primary_id.to_be_bytes());
+    buf[8..10].copy_from_slice(&k.label_id.to_be_bytes());
+    buf[10..18].copy_from_slice(&k.secondary_id.to_be_bytes());
+    buf[18..20].copy_from_slice(&k.rank.to_be_bytes());
     buf
 }
 
-/// Encode a `CanonicalEdgeKey` for the `edges_out` CF: `[ src | label | dst | rank ]`.
-pub fn encode_edge_key_out(k: CanonicalEdgeKey) -> [u8; EDGE_KEY_SIZE] {
-    encode_edge_key_raw(k.src_id, k.label_id, k.dst_id, k.rank)
-}
-
-/// Encode a `CanonicalEdgeKey` for the `edges_in` CF: `[ dst | label | src | rank ]`.
-pub fn encode_edge_key_in(k: CanonicalEdgeKey) -> [u8; EDGE_KEY_SIZE] {
-    encode_edge_key_raw(k.dst_id, k.label_id, k.src_id, k.rank)
-}
-
-/// Decode a 20-byte `edges_out` key: `[ src | label | dst | rank ]`.
-pub fn decode_edge_key_out(bytes: &[u8]) -> Option<CanonicalEdgeKey> {
+pub fn decode_edge_key(bytes: &[u8], dir: Direction) -> Option<EdgeKey> {
     if bytes.len() < EDGE_KEY_SIZE {
         return None;
     }
-    Some(CanonicalEdgeKey {
-        src_id: i64::from_be_bytes(bytes[0..8].try_into().ok()?),
+    Some(EdgeKey {
+        primary_id: i64::from_be_bytes(bytes[0..8].try_into().ok()?),
+        direction: dir,
         label_id: u16::from_be_bytes(bytes[8..10].try_into().ok()?) as LabelId,
-        dst_id: i64::from_be_bytes(bytes[10..18].try_into().ok()?),
+        secondary_id: i64::from_be_bytes(bytes[10..18].try_into().ok()?),
         rank: u16::from_be_bytes(bytes[18..20].try_into().ok()?) as Rank,
     })
 }
-
-/// Decode a 20-byte `edges_in` key: `[ dst | label | src | rank ]` → canonical.
-pub fn decode_edge_key_in(bytes: &[u8]) -> Option<CanonicalEdgeKey> {
-    if bytes.len() < EDGE_KEY_SIZE {
-        return None;
-    }
-    Some(CanonicalEdgeKey {
-        src_id: i64::from_be_bytes(bytes[10..18].try_into().ok()?),
-        label_id: u16::from_be_bytes(bytes[8..10].try_into().ok()?) as LabelId,
-        dst_id: i64::from_be_bytes(bytes[0..8].try_into().ok()?),
-        rank: u16::from_be_bytes(bytes[18..20].try_into().ok()?) as Rank,
-    })
-}
-
 // ── VertexValue ───────────────────────────────────────────────────────────────
 
 /// `[ label_id:u16 | property_blob ]` — value in the `vertices` CF.
@@ -379,7 +355,8 @@ pub(super) fn build_full_vertex(id: VertexKey, vv: &VertexValue) -> Result<Verte
 }
 
 /// Decode an `EdgeValue` from storage into an `Edge`.
-pub(super) fn build_full_edge(cek: CanonicalEdgeKey, ev: &EdgeValue) -> Result<Edge, StoreError> {
+pub(super) fn build_full_edge(ek: &EdgeKey, ev: &EdgeValue) -> Result<Edge, StoreError> {
+    let cek = ek.canonical_edge_key();
     let owner = CanonicalKey::Edge(cek);
     let props = decode_props(&ev.property_blob, owner).ok_or(StoreError::CorruptData("edge property blob"))?;
     Ok(Edge { src_id: cek.src_id, label_id: cek.label_id, dst_id: cek.dst_id, props, rank: cek.rank })
@@ -390,10 +367,7 @@ pub(super) fn build_full_edge(cek: CanonicalEdgeKey, ev: &EdgeValue) -> Result<E
 mod tests {
     use smol_str::SmolStr;
 
-    use super::{
-        decode_edge_key_in, decode_edge_key_out, decode_vertex_key, encode_edge_key_in, encode_edge_key_out,
-        encode_vertex_key, EdgeValue, VertexDegree, VertexValue,
-    };
+    use super::{decode_vertex_key, encode_vertex_key, EdgeValue, VertexDegree, VertexValue};
     use crate::types::{
         element::{Edge, Vertex},
         CanonicalEdgeKey, CanonicalKey, Primitive, PropKey, Property,
@@ -515,6 +489,22 @@ mod tests {
         let owner = CanonicalKey::Edge(cek);
         let props = raw.iter().map(|(k, v)| Property { owner, key: k.clone(), value: v.clone() }).collect();
         Edge { src_id: cek.src_id, label_id: cek.label_id, rank: cek.rank, dst_id: cek.dst_id, props }
+    }
+
+    fn encode_edge_key_out(cek: CanonicalEdgeKey) -> [u8; super::EDGE_KEY_SIZE] {
+        super::encode_edge_key(&cek.out_key())
+    }
+
+    fn decode_edge_key_out(bytes: &[u8]) -> Option<CanonicalEdgeKey> {
+        Some(super::decode_edge_key(bytes, crate::types::Direction::OUT)?.canonical_edge_key())
+    }
+
+    fn encode_edge_key_in(cek: CanonicalEdgeKey) -> [u8; super::EDGE_KEY_SIZE] {
+        super::encode_edge_key(&cek.in_key())
+    }
+
+    fn decode_edge_key_in(bytes: &[u8]) -> Option<CanonicalEdgeKey> {
+        Some(super::decode_edge_key(bytes, crate::types::Direction::IN)?.canonical_edge_key())
     }
 
     // ── VertexKey ─────────────────────────────────────────────────────────────

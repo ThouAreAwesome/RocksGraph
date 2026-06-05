@@ -30,13 +30,13 @@ use rocksdb::{Direction as ScanDir, IteratorMode, ReadOptions, WriteBatchWithTra
 use crate::{
     store::rocks::{
         encoding::{
-            build_full_edge, build_full_vertex, decode_edge_key_in, decode_edge_key_out, edge_scan_prefix,
-            encode_edge_key_in, encode_edge_key_out, encode_props, encode_vertex_key, prefix_upper_bound, EdgeValue,
-            VertexDegree, VertexValue, CF_EDGES_IN, CF_EDGES_OUT, CF_VERTEX_DEGREE, CF_VERTICES,
+            build_full_edge, build_full_vertex, decode_edge_key, edge_scan_prefix, encode_edge_key, encode_props,
+            encode_vertex_key, prefix_upper_bound, EdgeValue, VertexDegree, VertexValue, CF_EDGES_IN, CF_EDGES_OUT,
+            CF_VERTEX_DEGREE, CF_VERTICES,
         },
         store::RocksStorage,
     },
-    types::{CanonicalEdgeKey, Direction, Edge, LabelId, StoreError, Vertex, VertexKey},
+    types::{CanonicalEdgeKey, Direction, Edge, EdgeKey, LabelId, StoreError, Vertex, VertexKey},
 };
 
 #[allow(dead_code)]
@@ -73,11 +73,12 @@ impl RocksStorage {
         Ok(result)
     }
 
-    pub(crate) fn get_edge(&self, key: CanonicalEdgeKey, direction: Direction) -> Result<Option<Edge>, StoreError> {
-        let (cf_name, key_bytes) = match direction {
-            Direction::OUT => (CF_EDGES_OUT, encode_edge_key_out(key)),
-            Direction::IN => (CF_EDGES_IN, encode_edge_key_in(key)),
+    pub(crate) fn get_edge(&self, key: &EdgeKey) -> Result<Option<Edge>, StoreError> {
+        let cf_name = match key.direction {
+            Direction::OUT => CF_EDGES_OUT,
+            Direction::IN => CF_EDGES_IN,
         };
+        let key_bytes = encode_edge_key(key);
         let cf = self.db.cf_handle(cf_name).ok_or(StoreError::MissingColumnFamily(cf_name))?;
         match self.db.get_cf(&cf, key_bytes).map_err(StoreError::RocksDb)? {
             None => Ok(None),
@@ -93,10 +94,11 @@ impl RocksStorage {
         dst: Option<&[VertexKey]>,
         limit: Option<u32>,
     ) -> Result<Vec<Edge>, StoreError> {
-        let (cf_name, decode_fn): (&str, EdgeKeyDecoder) = match direction {
-            Direction::OUT => (CF_EDGES_OUT, decode_edge_key_out),
-            Direction::IN => (CF_EDGES_IN, decode_edge_key_in),
+        let cf_name = match direction {
+            Direction::OUT => CF_EDGES_OUT,
+            Direction::IN => CF_EDGES_IN,
         };
+
         let cf = self.db.cf_handle(cf_name).ok_or(StoreError::MissingColumnFamily(cf_name))?;
 
         let prefix = edge_scan_prefix(vertex, label);
@@ -114,17 +116,13 @@ impl RocksStorage {
             if !key_bytes.starts_with(&prefix) {
                 break;
             }
-            let cek = decode_fn(&key_bytes).ok_or(StoreError::CorruptData("edge key"))?;
+            let ek = decode_edge_key(&key_bytes, direction).ok_or(StoreError::CorruptData("edge key"))?;
             if let Some(ref set) = dst_set {
-                let remote = match direction {
-                    Direction::OUT => cek.dst_id,
-                    Direction::IN => cek.src_id,
-                };
-                if !set.contains(&remote) {
+                if !set.contains(&ek.secondary_id) {
                     continue;
                 }
             }
-            result.push(build_full_edge(cek, &EdgeValue::decode(&val_bytes))?);
+            result.push(build_full_edge(&ek, &EdgeValue::decode(&val_bytes))?);
             if let Some(max) = limit {
                 if result.len() >= max as usize {
                     break;
@@ -160,10 +158,9 @@ impl RocksStorage {
         let cf = self.db.cf_handle(cf_name).ok_or(StoreError::MissingColumnFamily(cf_name))?;
         let mut batch = WriteBatchWithTransaction::<true>::default();
         for ev in edges {
-            let cek = ev.canonical_key();
             let key_bytes = match direction {
-                Direction::OUT => encode_edge_key_out(cek),
-                Direction::IN => encode_edge_key_in(cek),
+                Direction::OUT => encode_edge_key(&ev.edge_key_out()),
+                Direction::IN => encode_edge_key(&ev.edge_key_in()),
             };
             let bytes = EdgeValue { property_blob: encode_props(&ev.props) }.encode().to_vec();
             batch.put_cf(&cf, key_bytes, &bytes);
@@ -180,18 +177,15 @@ impl RocksStorage {
         self.db.write(batch).map_err(StoreError::RocksDb)
     }
 
-    pub(crate) fn delete_edges(&mut self, keys: &[CanonicalEdgeKey], direction: Direction) -> Result<(), StoreError> {
-        let cf_name = match direction {
-            Direction::OUT => CF_EDGES_OUT,
-            Direction::IN => CF_EDGES_IN,
-        };
-        let cf = self.db.cf_handle(cf_name).ok_or(StoreError::MissingColumnFamily(cf_name))?;
+    pub(crate) fn delete_edges(&mut self, keys: &[EdgeKey]) -> Result<(), StoreError> {
         let mut batch = WriteBatchWithTransaction::<true>::default();
-        for &key in keys {
-            let key_bytes = match direction {
-                Direction::OUT => encode_edge_key_out(key),
-                Direction::IN => encode_edge_key_in(key),
+        for key in keys {
+            let cf_name = match key.direction {
+                Direction::OUT => CF_EDGES_OUT,
+                Direction::IN => CF_EDGES_IN,
             };
+            let cf = self.db.cf_handle(cf_name).ok_or(StoreError::MissingColumnFamily(cf_name))?;
+            let key_bytes = encode_edge_key(key);
             batch.delete_cf(&cf, key_bytes);
         }
         self.db.write(batch).map_err(StoreError::RocksDb)

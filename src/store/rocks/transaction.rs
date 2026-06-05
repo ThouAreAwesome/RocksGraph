@@ -52,16 +52,14 @@ use rocksdb::{Direction as ScanDir, IteratorMode, OptimisticTransactionDB, ReadO
 use crate::{
     store::{
         rocks::encoding::{
-            build_full_edge, build_full_vertex, decode_edge_key_in, decode_edge_key_out, edge_scan_prefix,
-            encode_edge_key_in, encode_edge_key_out, encode_props, encode_vertex_key, prefix_upper_bound, EdgeValue,
-            VertexDegree, VertexValue, CF_EDGES_IN, CF_EDGES_OUT, CF_VERTEX_DEGREE, CF_VERTICES,
+            build_full_edge, build_full_vertex, decode_edge_key, edge_scan_prefix, encode_edge_key, encode_props,
+            encode_vertex_key, prefix_upper_bound, EdgeValue, VertexDegree, VertexValue, CF_EDGES_IN, CF_EDGES_OUT,
+            CF_VERTEX_DEGREE, CF_VERTICES,
         },
         traits::GraphTransaction,
     },
-    types::{element::Property, CanonicalEdgeKey, Direction, Edge, LabelId, StoreError, Vertex, VertexKey},
+    types::{element::Property, Direction, Edge, EdgeKey, LabelId, StoreError, Vertex, VertexKey},
 };
-
-type EdgeKeyDecoder = fn(&[u8]) -> Option<CanonicalEdgeKey>;
 
 // ── Lifetime-erased RocksDB transaction ──────────────────────────────────────
 
@@ -142,11 +140,12 @@ impl GraphTransaction for Transaction {
         }
     }
 
-    fn get_edge(&mut self, key: CanonicalEdgeKey, direction: Direction) -> Result<Option<Edge>, StoreError> {
-        let (cf_name, key_bytes) = match direction {
-            Direction::OUT => (CF_EDGES_OUT, encode_edge_key_out(key)),
-            Direction::IN => (CF_EDGES_IN, encode_edge_key_in(key)),
+    fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<Edge>, StoreError> {
+        let cf_name = match key.direction {
+            Direction::OUT => CF_EDGES_OUT,
+            Direction::IN => CF_EDGES_IN,
         };
+        let key_bytes = encode_edge_key(key);
         let cf = self.db.cf_handle(cf_name).ok_or(StoreError::MissingColumnFamily(cf_name))?;
         let raw_opt = self
             .db_txn
@@ -169,9 +168,9 @@ impl GraphTransaction for Transaction {
         dst: Option<&[VertexKey]>,
         limit: Option<u32>,
     ) -> Result<Vec<Edge>, StoreError> {
-        let (cf_name, decode_fn): (&str, EdgeKeyDecoder) = match direction {
-            Direction::OUT => (CF_EDGES_OUT, decode_edge_key_out),
-            Direction::IN => (CF_EDGES_IN, decode_edge_key_in),
+        let cf_name = match direction {
+            Direction::OUT => CF_EDGES_OUT,
+            Direction::IN => CF_EDGES_IN,
         };
 
         let prefix = edge_scan_prefix(vertex, label);
@@ -193,17 +192,13 @@ impl GraphTransaction for Transaction {
             if !key_bytes.starts_with(&prefix) {
                 break;
             }
-            let cek = decode_fn(&key_bytes).ok_or(StoreError::CorruptData("edge key"))?;
+            let ek = decode_edge_key(&key_bytes, direction).ok_or(StoreError::CorruptData("edge key"))?;
             if let Some(ref set) = dst_set {
-                let remote = match direction {
-                    Direction::OUT => cek.dst_id,
-                    Direction::IN => cek.src_id,
-                };
-                if !set.contains(&remote) {
+                if !set.contains(&ek.secondary_id) {
                     continue;
                 }
             }
-            result.push(build_full_edge(cek, &EdgeValue::decode(&val_bytes))?);
+            result.push(build_full_edge(&ek, &EdgeValue::decode(&val_bytes))?);
             if let Some(max) = limit {
                 if result.len() >= max as usize {
                     break;
@@ -227,12 +222,13 @@ impl GraphTransaction for Transaction {
         txn.put_cf(&cf_degree, encode_vertex_key(key), vd.encode()).map_err(StoreError::RocksDb)
     }
 
-    fn put_edge(&mut self, key: CanonicalEdgeKey, direction: Direction, props: &[Property]) -> Result<(), StoreError> {
+    fn put_edge(&mut self, key: &EdgeKey, props: &[Property]) -> Result<(), StoreError> {
         let txn = self.db_txn.as_ref().expect("no active transaction");
-        let (cf_name, key_bytes) = match direction {
-            Direction::OUT => (CF_EDGES_OUT, encode_edge_key_out(key)),
-            Direction::IN => (CF_EDGES_IN, encode_edge_key_in(key)),
+        let cf_name = match key.direction {
+            Direction::OUT => CF_EDGES_OUT,
+            Direction::IN => CF_EDGES_IN,
         };
+        let key_bytes = encode_edge_key(key);
         let cf = self.db.cf_handle(cf_name).ok_or(StoreError::MissingColumnFamily(cf_name))?;
         let ev_bytes = EdgeValue { property_blob: encode_props(props) }.encode().to_vec();
         txn.put_cf(&cf, key_bytes, &ev_bytes).map_err(StoreError::RocksDb)
@@ -250,11 +246,12 @@ impl GraphTransaction for Transaction {
         txn.delete_cf(&cf_degree, encode_vertex_key(key)).map_err(StoreError::RocksDb)
     }
 
-    fn delete_edge(&mut self, key: CanonicalEdgeKey, direction: Direction) -> Result<(), StoreError> {
-        let (cf_name, key_bytes) = match direction {
-            Direction::OUT => (CF_EDGES_OUT, encode_edge_key_out(key)),
-            Direction::IN => (CF_EDGES_IN, encode_edge_key_in(key)),
+    fn delete_edge(&mut self, key: &EdgeKey) -> Result<(), StoreError> {
+        let cf_name = match key.direction {
+            Direction::OUT => CF_EDGES_OUT,
+            Direction::IN => CF_EDGES_IN,
         };
+        let key_bytes = encode_edge_key(key);
         let cf = self.db.cf_handle(cf_name).ok_or(StoreError::MissingColumnFamily(cf_name))?;
         let txn = self.db_txn.as_ref().expect("no active transaction");
         txn.delete_cf(&cf, key_bytes).map_err(StoreError::RocksDb)

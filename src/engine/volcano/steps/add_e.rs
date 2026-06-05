@@ -72,7 +72,7 @@ impl CoreStep for AddEStep {
             secondary_id: self.in_v_id,
             rank: 0,
         };
-        let new_edge = ctx.add_edge(edge_key)?;
+        let new_edge = ctx.add_edge(&edge_key)?;
         for property in &self.properties {
             ctx.set_property(property)?;
         }

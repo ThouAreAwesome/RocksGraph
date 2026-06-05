@@ -55,7 +55,7 @@ use crate::{
 /// | `drop_property` (edge)   | —                       | ✗ overlay-only        | `RwLock::write` on props | ⚠ **edge must be pre-loaded** |
 pub trait GraphCtx {
     fn get_vertex(&mut self, key: VertexKey) -> Result<Option<VertexKey>, StoreError>;
-    fn get_edge(&mut self, key: EdgeKey) -> Result<Option<EdgeKey>, StoreError>;
+    fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<EdgeKey>, StoreError>;
     fn get_outs(
         &mut self,
         vertex_key: VertexKey,
@@ -82,15 +82,15 @@ pub trait GraphCtx {
         end_vertex_ids: Option<&[VertexKey]>,
         limit: Option<u32>,
     ) -> Result<Vec<EdgeKey>, StoreError>;
-    fn get_property(&mut self, key: CanonicalKey, prop: &PropKey) -> Result<Option<Property>, StoreError>;
-    fn get_value(&mut self, key: CanonicalKey, prop: &PropKey) -> Result<Option<Primitive>, StoreError>;
+    fn get_property(&mut self, key: &CanonicalKey, prop: &PropKey) -> Result<Option<Property>, StoreError>;
+    fn get_value(&mut self, key: &CanonicalKey, prop: &PropKey) -> Result<Option<Primitive>, StoreError>;
     /// Insert a vertex.  See `LogicalGraph::add_vertex` for existence-check and
     /// locking details.
     fn add_vertex(&mut self, id: VertexKey, label_id: LabelId) -> Result<VertexKey, StoreError>;
     /// Insert an edge.  Both endpoint vertices must already exist (overlay or
     /// store).  See `LogicalGraph::add_edge` for existence-check and locking
     /// details.
-    fn add_edge(&mut self, cek: EdgeKey) -> Result<EdgeKey, StoreError>;
+    fn add_edge(&mut self, cek: &EdgeKey) -> Result<EdgeKey, StoreError>;
     /// Upsert a property.  For vertices the element is auto-loaded from the store
     /// if absent from the overlay (no precondition).  For edges the edge must
     /// already be in the overlay — call `get_edge` first.  Acquires
@@ -98,7 +98,7 @@ pub trait GraphCtx {
     fn set_property(&mut self, prop: &Property) -> Result<(), StoreError>;
     fn drop_property(&mut self, prop: &Property) -> Result<(), StoreError>;
     fn drop_vertex(&mut self, vertex: VertexKey) -> Result<(), StoreError>;
-    fn drop_edge(&mut self, edge: EdgeKey) -> Result<(), StoreError>;
+    fn drop_edge(&mut self, edge: &EdgeKey) -> Result<(), StoreError>;
 }
 
 /// Zero-cost context used in unit tests where no real graph is needed.
@@ -107,7 +107,7 @@ impl GraphCtx for NoopCtx {
     fn get_vertex(&mut self, _key: VertexKey) -> Result<Option<VertexKey>, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support get_vertex".to_string()))
     }
-    fn get_edge(&mut self, _key: EdgeKey) -> Result<Option<EdgeKey>, StoreError> {
+    fn get_edge(&mut self, _key: &EdgeKey) -> Result<Option<EdgeKey>, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support get_edge".to_string()))
     }
     fn get_outs(
@@ -144,16 +144,16 @@ impl GraphCtx for NoopCtx {
     ) -> Result<Vec<EdgeKey>, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support get_in_edges".to_string()))
     }
-    fn get_property(&mut self, _key: CanonicalKey, _prop: &PropKey) -> Result<Option<Property>, StoreError> {
+    fn get_property(&mut self, _key: &CanonicalKey, _prop: &PropKey) -> Result<Option<Property>, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support get_property".to_string()))
     }
-    fn get_value(&mut self, _key: CanonicalKey, _prop: &PropKey) -> Result<Option<Primitive>, StoreError> {
+    fn get_value(&mut self, _key: &CanonicalKey, _prop: &PropKey) -> Result<Option<Primitive>, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support get_value".to_string()))
     }
     fn add_vertex(&mut self, _id: VertexKey, _label_id: LabelId) -> Result<VertexKey, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support add_vertex".to_string()))
     }
-    fn add_edge(&mut self, _cek: EdgeKey) -> Result<EdgeKey, StoreError> {
+    fn add_edge(&mut self, _cek: &EdgeKey) -> Result<EdgeKey, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support add_edge".to_string()))
     }
     fn set_property(&mut self, _prop: &Property) -> Result<(), StoreError> {
@@ -165,17 +165,17 @@ impl GraphCtx for NoopCtx {
     fn drop_vertex(&mut self, _vk: VertexKey) -> Result<(), StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support drop_vertex".to_string()))
     }
-    fn drop_edge(&mut self, _ek: EdgeKey) -> Result<(), StoreError> {
+    fn drop_edge(&mut self, _ek: &EdgeKey) -> Result<(), StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support drop_edge".to_string()))
     }
 }
 
 impl<S: GraphStore> GraphCtx for LogicalGraph<S> {
     fn get_vertex(&mut self, key: VertexKey) -> Result<Option<VertexKey>, StoreError> {
-        LogicalGraph::get_vertex(self, key)
+        self.get_vertex(key)
     }
-    fn get_edge(&mut self, key: EdgeKey) -> Result<Option<EdgeKey>, StoreError> {
-        LogicalGraph::get_edge(self, key.canonical_edge_key())
+    fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<EdgeKey>, StoreError> {
+        self.get_edge(key)
     }
     fn get_outs(
         &mut self,
@@ -213,18 +213,17 @@ impl<S: GraphStore> GraphCtx for LogicalGraph<S> {
     ) -> Result<Vec<EdgeKey>, StoreError> {
         self.get_edges(vertex_key, crate::types::Direction::IN, label, end_vertex_ids, limit)
     }
-    fn get_property(&mut self, key: CanonicalKey, prop: &PropKey) -> Result<Option<Property>, StoreError> {
+    fn get_property(&mut self, key: &CanonicalKey, prop: &PropKey) -> Result<Option<Property>, StoreError> {
         self.get_property(key, prop)
     }
-    fn get_value(&mut self, key: CanonicalKey, prop: &PropKey) -> Result<Option<Primitive>, StoreError> {
+    fn get_value(&mut self, key: &CanonicalKey, prop: &PropKey) -> Result<Option<Primitive>, StoreError> {
         self.get_value(key, prop)
     }
     fn add_vertex(&mut self, id: VertexKey, label_id: LabelId) -> Result<VertexKey, StoreError> {
         self.add_vertex(id, label_id)
     }
-    fn add_edge(&mut self, cek: EdgeKey) -> Result<EdgeKey, StoreError> {
-        self.add_edge(cek.canonical_edge_key())?;
-        Ok(cek)
+    fn add_edge(&mut self, ek: &EdgeKey) -> Result<EdgeKey, StoreError> {
+        self.add_edge(ek)
     }
     fn set_property(&mut self, prop: &Property) -> Result<(), StoreError> {
         self.set_property(prop)?;
@@ -235,9 +234,9 @@ impl<S: GraphStore> GraphCtx for LogicalGraph<S> {
     }
 
     fn drop_vertex(&mut self, vertex: VertexKey) -> Result<(), StoreError> {
-        self.drop_element(CanonicalKey::Vertex(vertex))
+        self.drop_element(&CanonicalKey::Vertex(vertex))
     }
-    fn drop_edge(&mut self, edge: EdgeKey) -> Result<(), StoreError> {
-        self.drop_element(CanonicalKey::Edge(edge.canonical_edge_key()))
+    fn drop_edge(&mut self, edge: &EdgeKey) -> Result<(), StoreError> {
+        self.drop_element(&CanonicalKey::Edge(edge.canonical_edge_key()))
     }
 }

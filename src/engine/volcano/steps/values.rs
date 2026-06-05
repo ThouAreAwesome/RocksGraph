@@ -58,13 +58,13 @@ impl CoreStep for ValuesStep {
             let mut results = smallvec![];
             if self.emit_property {
                 for key in &self.property_keys {
-                    if let Some(value) = ctx.get_property(canonical_key, key)? {
+                    if let Some(value) = ctx.get_property(&canonical_key, key)? {
                         results.push(Traverser::new_rc_with_parent(GValue::Property(value), t.clone()));
                     }
                 }
             } else {
                 for key in &self.property_keys {
-                    if let Some(value) = ctx.get_value(canonical_key, key)? {
+                    if let Some(value) = ctx.get_value(&canonical_key, key)? {
                         results.push(Traverser::new_rc_with_parent(GValue::Scalar(value), t.clone()));
                     }
                 }

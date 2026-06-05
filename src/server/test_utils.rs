@@ -124,7 +124,9 @@ pub fn create_tinkerpop_modern_graph_for_server_test(store: Arc<RocksStorage>) {
 
     // Add Edges
     let e1_key = graph
-        .add_edge(CanonicalEdgeKey { src_id: v_marko_key, label_id: KNOWS_LABEL_ID, rank: 0, dst_id: v_vadas_key })
+        .add_edge(
+            &CanonicalEdgeKey { src_id: v_marko_key, label_id: KNOWS_LABEL_ID, rank: 0, dst_id: v_vadas_key }.out_key(),
+        )
         .unwrap();
     graph
         .set_property(&Property {
@@ -135,7 +137,9 @@ pub fn create_tinkerpop_modern_graph_for_server_test(store: Arc<RocksStorage>) {
         .unwrap();
 
     let e2_key = graph
-        .add_edge(CanonicalEdgeKey { src_id: v_marko_key, label_id: KNOWS_LABEL_ID, rank: 0, dst_id: v_josh_key })
+        .add_edge(
+            &CanonicalEdgeKey { src_id: v_marko_key, label_id: KNOWS_LABEL_ID, rank: 0, dst_id: v_josh_key }.out_key(),
+        )
         .unwrap();
     graph
         .set_property(&Property {
@@ -146,7 +150,9 @@ pub fn create_tinkerpop_modern_graph_for_server_test(store: Arc<RocksStorage>) {
         .unwrap();
 
     let e3_key = graph
-        .add_edge(CanonicalEdgeKey { src_id: v_marko_key, label_id: CREATED_LABEL_ID, rank: 0, dst_id: v_lop_key })
+        .add_edge(
+            &CanonicalEdgeKey { src_id: v_marko_key, label_id: CREATED_LABEL_ID, rank: 0, dst_id: v_lop_key }.out_key(),
+        )
         .unwrap();
     graph
         .set_property(&Property {
@@ -157,7 +163,10 @@ pub fn create_tinkerpop_modern_graph_for_server_test(store: Arc<RocksStorage>) {
         .unwrap();
 
     let e4_key = graph
-        .add_edge(CanonicalEdgeKey { src_id: v_josh_key, label_id: CREATED_LABEL_ID, rank: 0, dst_id: v_ripple_key })
+        .add_edge(
+            &CanonicalEdgeKey { src_id: v_josh_key, label_id: CREATED_LABEL_ID, rank: 0, dst_id: v_ripple_key }
+                .out_key(),
+        )
         .unwrap();
     graph
         .set_property(&Property {
@@ -168,7 +177,9 @@ pub fn create_tinkerpop_modern_graph_for_server_test(store: Arc<RocksStorage>) {
         .unwrap();
 
     let e5_key = graph
-        .add_edge(CanonicalEdgeKey { src_id: v_josh_key, label_id: CREATED_LABEL_ID, rank: 0, dst_id: v_lop_key })
+        .add_edge(
+            &CanonicalEdgeKey { src_id: v_josh_key, label_id: CREATED_LABEL_ID, rank: 0, dst_id: v_lop_key }.out_key(),
+        )
         .unwrap();
     graph
         .set_property(&Property {
@@ -179,7 +190,9 @@ pub fn create_tinkerpop_modern_graph_for_server_test(store: Arc<RocksStorage>) {
         .unwrap();
 
     let e6_key = graph
-        .add_edge(CanonicalEdgeKey { src_id: v_peter_key, label_id: CREATED_LABEL_ID, rank: 0, dst_id: v_lop_key })
+        .add_edge(
+            &CanonicalEdgeKey { src_id: v_peter_key, label_id: CREATED_LABEL_ID, rank: 0, dst_id: v_lop_key }.out_key(),
+        )
         .unwrap();
     graph
         .set_property(&Property {

@@ -47,7 +47,8 @@ pub struct CanonicalEdgeKey {
 
 impl CanonicalEdgeKey {
     /// Build a directed `EdgeKey` for Out-direction traversal.
-    pub fn out_key(self) -> EdgeKey {
+    #[inline]
+    pub fn out_key(&self) -> EdgeKey {
         EdgeKey {
             primary_id: self.src_id,
             direction: Direction::OUT,
@@ -58,7 +59,8 @@ impl CanonicalEdgeKey {
     }
 
     /// Build a directed `EdgeKey` for In-direction traversal.
-    pub fn in_key(self) -> EdgeKey {
+    #[inline]
+    pub fn in_key(&self) -> EdgeKey {
         EdgeKey {
             primary_id: self.dst_id,
             direction: Direction::IN,
@@ -103,7 +105,7 @@ impl EdgeKey {
     }
 
     /// Flip to the opposite direction (swaps `primary_id` ↔ `secondary_id`).
-    pub fn flip(self) -> Self {
+    pub fn flip(&self) -> Self {
         Self {
             primary_id: self.secondary_id,
             direction: match self.direction {

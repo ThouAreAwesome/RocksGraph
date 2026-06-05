@@ -45,7 +45,7 @@ impl CoreStep for HasLabelStep {
             let Some(t) = upstream.next(ctx)? else { return Ok(None) };
             let matched = match &t.value {
                 GValue::Vertex(vk) => {
-                    let Some(Primitive::Int32(lb)) = ctx.get_value(CanonicalKey::Vertex(*vk), &LABEL).unwrap() else {
+                    let Some(Primitive::Int32(lb)) = ctx.get_value(&CanonicalKey::Vertex(*vk), &LABEL).unwrap() else {
                         unreachable!("")
                     };
                     self.label_ids.contains(&(lb as u16))

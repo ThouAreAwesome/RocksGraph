@@ -36,7 +36,7 @@
 //! it only touches `LogicalGraph`. Backend details (RocksDB CFs, OCC, encoding)
 //! never cross the `GraphTransaction` boundary.
 
-use crate::types::{element::Property, CanonicalEdgeKey, Direction, Edge, LabelId, StoreError, Vertex, VertexKey};
+use crate::types::{element::Property, Direction, Edge, EdgeKey, LabelId, StoreError, Vertex, VertexKey};
 
 // ── GraphTransaction ──────────────────────────────────────────────────────────
 
@@ -75,8 +75,8 @@ pub trait GraphTransaction {
     /// Implementations should register the key in an OCC read-set.
     fn get_vertex_degree(&mut self, key: VertexKey) -> Result<Option<(u32, u32)>, StoreError>;
 
-    /// Fetch a single committed edge record for the given direction; `None` if absent.
-    fn get_edge(&mut self, key: CanonicalEdgeKey, direction: Direction) -> Result<Option<Edge>, StoreError>;
+    /// Fetch a single committed edge record; `None` if absent.
+    fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<Edge>, StoreError>;
 
     /// Scan committed edges incident to `vertex` in `direction`.
     ///
@@ -101,7 +101,7 @@ pub trait GraphTransaction {
     fn put_vertex_degree(&mut self, key: VertexKey, out_e_cnt: u32, in_e_cnt: u32) -> Result<(), StoreError>;
 
     /// Upsert a single edge record in the specified physical direction index.
-    fn put_edge(&mut self, key: CanonicalEdgeKey, direction: Direction, props: &[Property]) -> Result<(), StoreError>;
+    fn put_edge(&mut self, key: &EdgeKey, props: &[Property]) -> Result<(), StoreError>;
 
     /// Delete a vertex metadata record.
     fn delete_vertex(&mut self, key: VertexKey) -> Result<(), StoreError>;
@@ -110,7 +110,7 @@ pub trait GraphTransaction {
     fn delete_vertex_degree(&mut self, key: VertexKey) -> Result<(), StoreError>;
 
     /// Delete a single edge record from the specified physical direction index.
-    fn delete_edge(&mut self, key: CanonicalEdgeKey, direction: Direction) -> Result<(), StoreError>;
+    fn delete_edge(&mut self, key: &EdgeKey) -> Result<(), StoreError>;
 
     // ── Control ───────────────────────────────────────────────────────────────
 

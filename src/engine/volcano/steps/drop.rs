@@ -40,7 +40,7 @@ impl CoreStep for DropStep {
             match &el.value {
                 GValue::Property(pp) => ctx.drop_property(pp)?,
                 GValue::Vertex(vt) => ctx.drop_vertex(*vt)?,
-                GValue::Edge(eg) => ctx.drop_edge(*eg)?,
+                GValue::Edge(eg) => ctx.drop_edge(eg)?,
                 _ => {
                     return Err(StoreError::UnexpectedDataType("unexpected data type for drop step".into()));
                 }

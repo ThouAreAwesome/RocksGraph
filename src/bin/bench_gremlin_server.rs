@@ -44,7 +44,8 @@ use tokio::{
 
 const RETRY_DELAY_MS: u64 = 5;
 const MAX_RETRIES: usize = 3;
-const PARALLELISM: usize = 20;
+// best concurrent number
+const PARALLELISM: usize = 3;
 
 fn generate_random_string(len: usize) -> String {
     rand::thread_rng().sample_iter(rand::distributions::Alphanumeric).take(len).map(char::from).collect()
@@ -169,7 +170,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let graph_store = gremlin_server::open_rocks_store(Some(&config.storage.data_dir))?;
 
-    let file = File::open("./bench_data/soc-LiveJournal1_shuffled.txt")?;
+    let file = File::open("./bench_data/soc-LiveJournal1-1M.txt")?;
     let reader = BufReader::new(file);
 
     let start = Instant::now();
