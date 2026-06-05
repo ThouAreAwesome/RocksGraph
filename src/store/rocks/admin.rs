@@ -144,8 +144,7 @@ impl RocksStorage {
         let cf_degree = self.db.cf_handle(CF_VERTEX_DEGREE).ok_or(StoreError::MissingColumnFamily("vertex_degree"))?;
         let mut batch = WriteBatchWithTransaction::<true>::default();
         for vv in vertices {
-            let guard_props = vv.props.read().map_err(|_| StoreError::LockError)?;
-            let val = VertexValue { label_id: vv.label_id, property_blob: encode_props(&guard_props) };
+            let val = VertexValue { label_id: vv.label_id, property_blob: encode_props(&vv.props) };
             let degree = VertexDegree { out_e_cnt: 0, in_e_cnt: 0 };
             batch.put_cf(&cf_vertices, encode_vertex_key(vv.id), val.encode());
             batch.put_cf(&cf_degree, encode_vertex_key(vv.id), degree.encode());
@@ -166,8 +165,7 @@ impl RocksStorage {
                 Direction::OUT => encode_edge_key_out(cek),
                 Direction::IN => encode_edge_key_in(cek),
             };
-            let guard_props = ev.props.read().map_err(|_| StoreError::LockError)?;
-            let bytes = EdgeValue { property_blob: encode_props(&guard_props) }.encode().to_vec();
+            let bytes = EdgeValue { property_blob: encode_props(&ev.props) }.encode().to_vec();
             batch.put_cf(&cf, key_bytes, &bytes);
         }
         self.db.write(batch).map_err(StoreError::RocksDb)
@@ -205,14 +203,13 @@ impl RocksStorage {
 #[cfg(test)]
 mod tests {
     use smol_str::SmolStr;
-    use std::sync::RwLock;
 
     use crate::{
         store::rocks::store::RocksStorage,
         types::{
             element::{Edge, Property, Vertex},
             gvalue::Primitive,
-            CanonicalEdgeKey, CanonicalKey, Direction, StoreError,
+            CanonicalEdgeKey, CanonicalKey, Direction,
         },
     };
 
@@ -224,11 +221,7 @@ mod tests {
 
     fn make_vertex(id: i64, label_id: u16, props: Vec<(SmolStr, Primitive)>) -> Vertex {
         let owner = CanonicalKey::Vertex(id);
-        Vertex {
-            id,
-            label_id,
-            props: RwLock::new(props.into_iter().map(|(k, v)| Property { owner, key: k, value: v }).collect()),
-        }
+        Vertex { id, label_id, props: props.into_iter().map(|(k, v)| Property { owner, key: k, value: v }).collect() }
     }
 
     fn make_edge(cek: CanonicalEdgeKey, props: Vec<(SmolStr, Primitive)>) -> Edge {
@@ -238,7 +231,7 @@ mod tests {
             label_id: cek.label_id,
             rank: cek.rank,
             dst_id: cek.dst_id,
-            props: RwLock::new(props.into_iter().map(|(k, v)| Property { owner, key: k, value: v }).collect()),
+            props: props.into_iter().map(|(k, v)| Property { owner, key: k, value: v }).collect(),
         }
     }
 
@@ -261,13 +254,11 @@ mod tests {
         let fv = store.get_vertex(1).unwrap().unwrap();
         assert_eq!(fv.id, 1);
         assert_eq!(fv.label_id, 3);
-        let fv_props = fv.props.read().map_err(|_| StoreError::LockError).unwrap();
-        assert_eq!(fv_props.len(), 2);
-        assert_eq!(fv_props[0].key, SmolStr::new("name"));
-        assert_eq!(fv_props[0].value, Primitive::String(SmolStr::new("Alice")));
-        assert_eq!(fv_props[0].owner, CanonicalKey::Vertex(1));
-        let props_guard = fv.props.read().map_err(|_| StoreError::LockError).unwrap();
-        assert_eq!(props_guard[1].value, Primitive::Int32(30));
+        assert_eq!(fv.props.len(), 2);
+        assert_eq!(fv.props[0].key, SmolStr::new("name"));
+        assert_eq!(fv.props[0].value, Primitive::String(SmolStr::new("Alice")));
+        assert_eq!(fv.props[0].owner, CanonicalKey::Vertex(1));
+        assert_eq!(fv.props[1].value, Primitive::Int32(30));
     }
 
     #[test]
@@ -282,8 +273,7 @@ mod tests {
         store.insert_vertices(&[make_vertex(42, 1, vec![])]).unwrap();
         let fv = store.get_vertex(42).unwrap().unwrap();
         assert_eq!(fv.label_id, 1);
-        let fv_props = fv.props.read().map_err(|_| StoreError::LockError).unwrap();
-        assert!(fv_props.is_empty());
+        assert!(fv.props.is_empty());
     }
 
     #[test]
@@ -293,8 +283,7 @@ mod tests {
         store.insert_vertices(&[make_vertex(1, 2, vec![(SmolStr::new("age"), Primitive::Int32(99))])]).unwrap();
         let fv = store.get_vertex(1).unwrap().unwrap();
         assert_eq!(fv.label_id, 2);
-        let fv_props = fv.props.read().map_err(|_| StoreError::LockError).unwrap();
-        assert_eq!(fv_props[0].value, Primitive::Int32(99));
+        assert_eq!(fv.props[0].value, Primitive::Int32(99));
     }
 
     #[test]
@@ -338,9 +327,8 @@ mod tests {
         assert_eq!(fe.src_id, 1);
         assert_eq!(fe.dst_id, 2);
         assert_eq!(fe.label_id, 5);
-        let fe_props = fe.props.read().map_err(|_| StoreError::LockError).unwrap();
-        assert_eq!(fe_props[0].value, Primitive::Float64(1.5));
-        assert_eq!(fe_props[0].owner, CanonicalKey::Edge(k));
+        assert_eq!(fe.props[0].value, Primitive::Float64(1.5));
+        assert_eq!(fe.props[0].owner, CanonicalKey::Edge(k));
     }
 
     #[test]

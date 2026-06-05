@@ -26,11 +26,12 @@ use crate::{
 pub struct ValuesStep {
     upstream: Option<StepRef>,
     property_keys: Vec<PropKey>,
+    emit_property: bool,
 }
 
 impl ValuesStep {
-    pub fn new(property_keys: Vec<PropKey>) -> Self {
-        Self { upstream: None, property_keys }
+    pub fn new(property_keys: Vec<PropKey>, emit_property: bool) -> Self {
+        Self { upstream: None, property_keys, emit_property }
     }
 }
 
@@ -44,8 +45,8 @@ impl CoreStep for ValuesStep {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
             let Some(t) = upstream.next(ctx)? else { return Ok(None) };
             let canonical_key = match &t.value {
-                GValue::Vertex(v_arc) => CanonicalKey::Vertex(*v_arc),
-                GValue::Edge(e_arc) => CanonicalKey::Edge(e_arc.canonical_edge_key()),
+                GValue::Vertex(vt) => CanonicalKey::Vertex(*vt),
+                GValue::Edge(eg) => CanonicalKey::Edge(eg.canonical_edge_key()),
                 _ => continue,
             };
 
@@ -55,11 +56,20 @@ impl CoreStep for ValuesStep {
             }
 
             let mut results = smallvec![];
-            for key in &self.property_keys {
-                if let Some(value) = ctx.get_value(canonical_key, key)? {
-                    results.push(Traverser::new_rc(GValue::Scalar(value)));
+            if self.emit_property {
+                for key in &self.property_keys {
+                    if let Some(value) = ctx.get_property(canonical_key, key)? {
+                        results.push(Traverser::new_rc_with_parent(GValue::Property(value), t.clone()));
+                    }
+                }
+            } else {
+                for key in &self.property_keys {
+                    if let Some(value) = ctx.get_value(canonical_key, key)? {
+                        results.push(Traverser::new_rc_with_parent(GValue::Scalar(value), t.clone()));
+                    }
                 }
             }
+
             if !results.is_empty() {
                 return Ok(Some(results));
             }

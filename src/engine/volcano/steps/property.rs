@@ -44,8 +44,8 @@ impl CoreStep for PropertyStep {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
             let Some(t) = upstream.next(ctx)? else { return Ok(None) };
             let canonical_key = match &t.value {
-                GValue::Vertex(v_arc) => CanonicalKey::Vertex(*v_arc),
-                GValue::Edge(e_arc) => CanonicalKey::Edge(e_arc.canonical_edge_key()),
+                GValue::Vertex(vt) => CanonicalKey::Vertex(*vt),
+                GValue::Edge(eg) => CanonicalKey::Edge(eg.canonical_edge_key()),
                 _ => continue,
             };
             let mut prop = self.prop.clone();

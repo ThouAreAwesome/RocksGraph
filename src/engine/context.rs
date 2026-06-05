@@ -97,6 +97,8 @@ pub trait GraphCtx {
     /// `RwLock::write` on `props` briefly.
     fn set_property(&mut self, prop: &Property) -> Result<(), StoreError>;
     fn drop_property(&mut self, prop: &Property) -> Result<(), StoreError>;
+    fn drop_vertex(&mut self, vertex: VertexKey) -> Result<(), StoreError>;
+    fn drop_edge(&mut self, edge: EdgeKey) -> Result<(), StoreError>;
 }
 
 /// Zero-cost context used in unit tests where no real graph is needed.
@@ -159,6 +161,12 @@ impl GraphCtx for NoopCtx {
     }
     fn drop_property(&mut self, _prop: &Property) -> Result<(), StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support drop_property".to_string()))
+    }
+    fn drop_vertex(&mut self, _vk: VertexKey) -> Result<(), StoreError> {
+        Err(StoreError::UnsupportedOperation("NoopCtx does not support drop_vertex".to_string()))
+    }
+    fn drop_edge(&mut self, _ek: EdgeKey) -> Result<(), StoreError> {
+        Err(StoreError::UnsupportedOperation("NoopCtx does not support drop_edge".to_string()))
     }
 }
 
@@ -224,5 +232,12 @@ impl<S: GraphStore> GraphCtx for LogicalGraph<S> {
     }
     fn drop_property(&mut self, prop: &Property) -> Result<(), StoreError> {
         self.drop_property(prop)
+    }
+
+    fn drop_vertex(&mut self, vertex: VertexKey) -> Result<(), StoreError> {
+        self.drop_element(CanonicalKey::Vertex(vertex))
+    }
+    fn drop_edge(&mut self, edge: EdgeKey) -> Result<(), StoreError> {
+        self.drop_element(CanonicalKey::Edge(edge.canonical_edge_key()))
     }
 }

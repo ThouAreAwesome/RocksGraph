@@ -191,7 +191,14 @@ impl PhysicalPlanBuilder {
             }
             LogicalStep::Values(s) => {
                 wire_required!(
-                    BufferedStep::new(steps::values::ValuesStep::new(s.property_keys.clone())),
+                    BufferedStep::new(steps::values::ValuesStep::new(s.property_keys.clone(), false)),
+                    upstream,
+                    "ValuesStep"
+                )
+            }
+            LogicalStep::Properties(s) => {
+                wire_required!(
+                    BufferedStep::new(steps::values::ValuesStep::new(s.property_keys.clone(), true)),
                     upstream,
                     "ValuesStep"
                 )
@@ -246,6 +253,9 @@ impl PhysicalPlanBuilder {
                     upstream,
                     "EndVertexFilterStep"
                 )
+            }
+            LogicalStep::Drop(_) => {
+                wire_required!(BufferedStep::new(steps::drop::DropStep::default()), upstream, "DropStep")
             }
         }
     }

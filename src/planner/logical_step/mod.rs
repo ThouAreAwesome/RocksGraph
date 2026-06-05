@@ -68,6 +68,7 @@ pub enum LogicalStep {
     OutV(OutVStep),
     ScalarFilter(ScalarFilterStep),
     Values(ValuesStep),
+    Properties(PropertiesStep),
     Where(WhereStep),
     Union(UnionStep),
     AddV(AddVStep),
@@ -78,7 +79,13 @@ pub enum LogicalStep {
     HasId(HasIdStep),
     Coalesce(CoalesceStep),
     EndVertexFilter(EndVertexFilter),
+    Drop(DropStep),
 }
+
+#[derive(Clone)]
+pub struct DropStep {}
+
+impl Optimizer for DropStep {}
 
 impl Optimizer for LogicalStep {
     fn optimize(&mut self, optimizer_rule: &OptimizerRule) -> Result<bool, StoreError> {
@@ -209,6 +216,12 @@ pub struct ValuesStep {
 }
 
 impl Optimizer for ValuesStep {}
+
+#[derive(Clone)]
+pub struct PropertiesStep {
+    pub property_keys: Vec<PropKey>,
+}
+impl Optimizer for PropertiesStep {}
 
 #[derive(Clone)]
 pub struct WhereStep {

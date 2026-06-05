@@ -19,6 +19,7 @@ pub mod both;
 pub mod both_e;
 pub mod coalesce;
 pub mod count;
+pub mod drop;
 pub mod end_vertex_filter;
 pub mod get_out_e;
 pub mod has_id;
@@ -41,7 +42,6 @@ pub mod v;
 pub mod values;
 pub mod vec_source;
 pub mod r#where;
-
 // ── Physical plan operators (storage-layer stubs) ─────────────────────────────
 
 pub use traits::{BufferedStep, CoreStep, GremlinStep, StepRef};

@@ -17,20 +17,21 @@ mod cases {
         graph::LogicalGraph,
         planner::logical_step::{
             AddEStep as LogicalAddEStep, AddVStep as LogicalAddVStep, BothEStep as LogicalBothEStep,
-            BothStep as LogicalBothStep, CountStep as LogicalCountStep, HasLabelStep as LogicalHasLabelStep,
-            HasPropertyStep as LogicalHasPropertyStep, InEStep as LogicalInEStep, InStep as LogicalInStep,
-            InVStep as LogicalInVStep, LogicalPlan, LogicalStep, OtherVStep as LogicalOtherVStep,
-            OutEStep as LogicalOutEStep, OutStep as LogicalOutStep, OutVStep as LogicalOutVStep,
-            PropertyStep as LogicalPropertyStep, ScalarFilterStep as LogicalScalarFilterStep,
-            UnionStep as LogicalUnionStep, VStep as LogicalVStep, ValuesStep as LogicalValuesStep,
-            WhereStep as LogicalWhereStep,
+            BothStep as LogicalBothStep, CountStep as LogicalCountStep, DropStep as LogicalDropStep,
+            HasLabelStep as LogicalHasLabelStep, HasPropertyStep as LogicalHasPropertyStep, InEStep as LogicalInEStep,
+            InStep as LogicalInStep, InVStep as LogicalInVStep, LogicalPlan, LogicalStep,
+            OtherVStep as LogicalOtherVStep, OutEStep as LogicalOutEStep, OutStep as LogicalOutStep,
+            OutVStep as LogicalOutVStep, PropertiesStep as LogicalPropertiesStep, PropertyStep as LogicalPropertyStep,
+            ScalarFilterStep as LogicalScalarFilterStep, UnionStep as LogicalUnionStep, VStep as LogicalVStep,
+            ValuesStep as LogicalValuesStep, WhereStep as LogicalWhereStep,
         },
         store::{GraphStore, RocksStorage}, // Assuming RocksStorage is in src/store.rs
-        types::element::Property,
         types::{
+            element::Property,
             error::StoreError,
             gvalue::Primitive,
             keys::{CanonicalEdgeKey, CanonicalKey, LabelId, VertexKey},
+            prop_key::LABEL,
             GValue,
         },
     };
@@ -918,6 +919,54 @@ mod cases {
     }
 
     #[test]
+    fn test_properties_step() {
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+        let marko_id = graph.get_vertex(1).unwrap().unwrap();
+
+        let logical_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: vec![marko_id] }),
+                LogicalStep::Properties(LogicalPropertiesStep {
+                    property_keys: vec![SmolStr::new("name"), SmolStr::new("age"), LABEL],
+                }),
+            ],
+        };
+        let mut builder: PhysicalPlanBuilder = Default::default();
+        let physical_plan = builder.build(&logical_plan);
+        let mut results = Vec::new();
+        while let Ok(Some(t)) = physical_plan.next(&mut graph) {
+            results.push(t.as_ref().value.clone());
+        }
+        assert_eq!(results.len(), 3);
+        assert!(matches!(results[0], GValue::Property(_)));
+        assert!(matches!(results[1], GValue::Property(_)));
+        assert!(matches!(results[2], GValue::Property(_)));
+        let keys: Vec<SmolStr> = results
+            .iter()
+            .map(|p| match p {
+                GValue::Property(Property { owner: _, key, value: _ }) => key.clone(),
+                _ => unreachable!("unexpecte result"),
+            })
+            .collect();
+        assert!(keys.contains(&SmolStr::new("name")));
+        assert!(keys.contains(&SmolStr::new("age")));
+        assert!(keys.contains(&LABEL));
+
+        let owners: Vec<CanonicalKey> = results
+            .iter()
+            .map(|p| match p {
+                GValue::Property(Property { owner, key: _, value: _ }) => *owner,
+                _ => unreachable!("unexpecte result"),
+            })
+            .collect();
+        assert_eq!(
+            owners.as_slice(),
+            &[CanonicalKey::Vertex(marko_id), CanonicalKey::Vertex(marko_id), CanonicalKey::Vertex(marko_id)]
+        )
+    }
+
+    #[test]
     fn test_scalar_filter_step() {
         let (store, _dir) = open_rocks_store();
         let mut graph = create_tinkerpop_modern_graph(&store);
@@ -1034,5 +1083,213 @@ mod cases {
             results.push(t.as_ref().value.clone());
         }
         assert_eq!(results.len(), 3); // 2 knows + 1 created
+    }
+
+    // --- Test Cases for DropStep ---
+
+    #[test]
+    fn test_drop_edge_step() {
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+
+        let marko_id: VertexKey = 1;
+        let vadas_id: VertexKey = 2;
+
+        // Drop the marko->vadas "knows" edge.
+        let logical_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: vec![marko_id] }),
+                LogicalStep::OutE(LogicalOutEStep {
+                    label_ids: vec![KNOWS_LABEL_ID],
+                    end_vertex_ids: Some(vec![vadas_id]),
+                }),
+                LogicalStep::Drop(LogicalDropStep {}),
+            ],
+        };
+        let mut builder: PhysicalPlanBuilder = Default::default();
+        let physical_plan = builder.build(&logical_plan);
+        assert!(physical_plan.next(&mut graph).unwrap().is_none());
+        graph.commit().unwrap();
+
+        let mut verify = create_logical_graph(&store);
+        let cek = CanonicalEdgeKey { src_id: marko_id, label_id: KNOWS_LABEL_ID, rank: 0, dst_id: vadas_id };
+        assert!(verify.get_edge(cek).unwrap().is_none());
+        // Both endpoint vertices are still present.
+        assert!(verify.get_vertex(marko_id).unwrap().is_some());
+        assert!(verify.get_vertex(vadas_id).unwrap().is_some());
+        // Marko's remaining two outgoing edges are unaffected.
+        let remaining = verify.get_out_edges(marko_id, None, None, None).unwrap();
+        assert_eq!(remaining.len(), 2);
+    }
+
+    #[test]
+    fn test_drop_all_out_edges_step() {
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+
+        let josh_id: VertexKey = 4;
+
+        // josh has two outgoing "created" edges (to ripple and lop).  Drop both.
+        let logical_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: vec![josh_id] }),
+                LogicalStep::OutE(LogicalOutEStep { label_ids: vec![], end_vertex_ids: None }),
+                LogicalStep::Drop(LogicalDropStep {}),
+            ],
+        };
+        let mut builder: PhysicalPlanBuilder = Default::default();
+        let physical_plan = builder.build(&logical_plan);
+        assert!(physical_plan.next(&mut graph).unwrap().is_none());
+        graph.commit().unwrap();
+
+        let mut verify = create_logical_graph(&store);
+        assert!(verify.get_out_edges(josh_id, None, None, None).unwrap().is_empty());
+        // josh and the target vertices still exist.
+        assert!(verify.get_vertex(josh_id).unwrap().is_some());
+        assert!(verify.get_vertex(3).unwrap().is_some()); // lop
+        assert!(verify.get_vertex(5).unwrap().is_some()); // ripple
+    }
+
+    #[test]
+    fn test_drop_vertex_step() {
+        let (store, _dir) = open_rocks_store();
+
+        // Commit an isolated vertex that has no edges.
+        {
+            let mut setup = create_logical_graph(&store);
+            setup.add_vertex(99, PERSON_LABEL_ID).unwrap();
+            setup.commit().unwrap();
+        }
+
+        // Drop it via the DropStep.
+        let mut graph = create_logical_graph(&store);
+        let logical_plan = LogicalPlan {
+            steps: vec![LogicalStep::V(LogicalVStep { ids: vec![99] }), LogicalStep::Drop(LogicalDropStep {})],
+        };
+        let mut builder: PhysicalPlanBuilder = Default::default();
+        let physical_plan = builder.build(&logical_plan);
+        assert!(physical_plan.next(&mut graph).unwrap().is_none());
+        graph.commit().unwrap();
+
+        let mut verify = create_logical_graph(&store);
+        assert!(verify.get_vertex(99).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_drop_vertex_with_incident_edges_fails() {
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+
+        // marko (id=1) has three outgoing edges; dropping it must fail.
+        let logical_plan = LogicalPlan {
+            steps: vec![LogicalStep::V(LogicalVStep { ids: vec![1] }), LogicalStep::Drop(LogicalDropStep {})],
+        };
+        let mut builder: PhysicalPlanBuilder = Default::default();
+        let physical_plan = builder.build(&logical_plan);
+        assert!(matches!(physical_plan.next(&mut graph), Err(StoreError::IncidentEdges)));
+    }
+
+    #[test]
+    fn test_drop_property_on_vertex_step() {
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+
+        let marko_id: VertexKey = 1;
+
+        // Drop the "age" property from marko.
+        let logical_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: vec![marko_id] }),
+                LogicalStep::Properties(LogicalPropertiesStep { property_keys: vec![SmolStr::new("age")] }),
+                LogicalStep::Drop(LogicalDropStep {}),
+            ],
+        };
+        let mut builder: PhysicalPlanBuilder = Default::default();
+        let physical_plan = builder.build(&logical_plan);
+        assert!(physical_plan.next(&mut graph).unwrap().is_none());
+        graph.commit().unwrap();
+
+        let mut verify = create_logical_graph(&store);
+        let _ = verify.get_vertex(marko_id).unwrap().unwrap();
+        assert!(verify.get_value(CanonicalKey::Vertex(marko_id), &SmolStr::new("age")).unwrap().is_none());
+        // "name" is untouched.
+        assert_eq!(
+            verify.get_value(CanonicalKey::Vertex(marko_id), &SmolStr::new("name")).unwrap().unwrap(),
+            Primitive::String(SmolStr::new("marko"))
+        );
+    }
+
+    #[test]
+    fn test_drop_property_on_edge_step() {
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+
+        let marko_id: VertexKey = 1;
+        let josh_id: VertexKey = 4;
+        let edge_cek = CanonicalEdgeKey { src_id: marko_id, label_id: KNOWS_LABEL_ID, rank: 0, dst_id: josh_id };
+
+        // Drop the "weight" property from marko->josh "knows" edge.
+        let logical_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: vec![marko_id] }),
+                LogicalStep::OutE(LogicalOutEStep {
+                    label_ids: vec![KNOWS_LABEL_ID],
+                    end_vertex_ids: Some(vec![josh_id]),
+                }),
+                LogicalStep::Properties(LogicalPropertiesStep { property_keys: vec![SmolStr::new("weight")] }),
+                LogicalStep::Drop(LogicalDropStep {}),
+            ],
+        };
+        let mut builder: PhysicalPlanBuilder = Default::default();
+        let physical_plan = builder.build(&logical_plan);
+        assert!(physical_plan.next(&mut graph).unwrap().is_none());
+        graph.commit().unwrap();
+
+        let mut verify = create_logical_graph(&store);
+        let _ = verify.get_edge(edge_cek).unwrap().unwrap();
+        assert!(verify.get_value(CanonicalKey::Edge(edge_cek), &SmolStr::new("weight")).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_drop_edge_then_drop_vertex() {
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+
+        // vadas (id=2) has exactly one edge: marko->vadas "knows".
+        let marko_id: VertexKey = 1;
+        let vadas_id: VertexKey = 2;
+        let edge_cek = CanonicalEdgeKey { src_id: marko_id, label_id: KNOWS_LABEL_ID, rank: 0, dst_id: vadas_id };
+
+        // Phase 1: drop the incident edge.
+        let drop_edge_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: vec![marko_id] }),
+                LogicalStep::OutE(LogicalOutEStep {
+                    label_ids: vec![KNOWS_LABEL_ID],
+                    end_vertex_ids: Some(vec![vadas_id]),
+                }),
+                LogicalStep::Drop(LogicalDropStep {}),
+            ],
+        };
+        let mut builder: PhysicalPlanBuilder = Default::default();
+        let physical_plan = builder.build(&drop_edge_plan);
+        assert!(physical_plan.next(&mut graph).unwrap().is_none());
+        graph.commit().unwrap();
+
+        // Phase 2: now that vadas has no edges, drop the vertex.
+        let mut graph2 = create_logical_graph(&store);
+        let drop_v_plan = LogicalPlan {
+            steps: vec![LogicalStep::V(LogicalVStep { ids: vec![vadas_id] }), LogicalStep::Drop(LogicalDropStep {})],
+        };
+        let mut builder2: PhysicalPlanBuilder = Default::default();
+        let physical_plan2 = builder2.build(&drop_v_plan);
+        assert!(physical_plan2.next(&mut graph2).unwrap().is_none());
+        graph2.commit().unwrap();
+
+        // Verify: edge and vertex are gone; marko is unaffected.
+        let mut verify = create_logical_graph(&store);
+        assert!(verify.get_vertex(vadas_id).unwrap().is_none());
+        assert!(verify.get_edge(edge_cek).unwrap().is_none());
+        assert!(verify.get_vertex(marko_id).unwrap().is_some());
     }
 }

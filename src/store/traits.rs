@@ -19,7 +19,7 @@
 //!   │  talks only to `LogicalGraph` via inherent methods
 //!   ▼
 //! LogicalGraph<S: GraphStore>       ← query-scoped ground truth
-//!   │  owns the element overlay (VertexIdx / EdgeIdx)
+//!   │  owns the element overlay (VertexKey / EdgeKey)
 //!   │  merges committed + dirty state
 //!   │  forwards to S::Txn on commit
 //!   ▼
@@ -46,9 +46,9 @@ use crate::types::{element::Property, CanonicalEdgeKey, Direction, Edge, LabelId
 ///
 /// # Read semantics
 ///
-/// Reads return `Arc<Vertex>` or `Arc<Edge>` so the engine can hold references cheaply.
-/// `LogicalGraph` stores the Arcs in its overlay; on mutation it acquires a write
-/// lock on the properties `RwLock` for in-place updates.
+/// Reads return owned `Vertex` or `Edge` values.  `LogicalGraph` moves them into
+/// its overlay map; on mutation it acquires a write lock on the element's
+/// `RwLock<Vec<Property>>` for in-place updates.
 ///
 /// # Write semantics
 ///

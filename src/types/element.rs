@@ -15,7 +15,6 @@ use crate::types::{
     keys::{CanonicalEdgeKey, CanonicalKey, LabelId, Rank, VertexKey},
     prop_key::{PropKey, LABEL},
 };
-use std::sync::RwLock;
 
 use std::hash::{Hash, Hasher};
 
@@ -31,21 +30,27 @@ use std::hash::{Hash, Hasher};
 pub struct Vertex {
     pub id: VertexKey,
     pub label_id: LabelId,
-    pub props: RwLock<Vec<Property>>,
+    pub props: Vec<Property>,
 }
 
 impl Vertex {
     #[inline]
     pub fn get_property(&self, key: &PropKey) -> Option<Property> {
-        if *key == LABEL {
+        if LABEL == *key {
             return Some(Property {
                 owner: CanonicalKey::Vertex(self.id),
                 key: LABEL,
                 value: Primitive::Int32(self.label_id as i32),
             });
         }
-        let props = self.props.read().unwrap();
-        props.iter().find(|p| p.key == *key).cloned()
+        self.props.iter().find(|p| p.key == *key).cloned()
+    }
+    #[inline]
+    pub fn get_value(&self, key: &PropKey) -> Option<Primitive> {
+        if LABEL == *key {
+            return Some(Primitive::Int32(self.label_id as i32));
+        }
+        self.props.iter().find(|p| p.key == *key).map(|p| p.value.clone())
     }
 }
 // ── Edge ──────────────────────────────────────────────────────────────────
@@ -59,7 +64,7 @@ pub struct Edge {
     pub src_id: VertexKey,
     pub label_id: LabelId,
     pub dst_id: VertexKey,
-    pub props: RwLock<Vec<Property>>,
+    pub props: Vec<Property>,
     pub rank: Rank,
 }
 
@@ -72,15 +77,21 @@ impl Edge {
 
     #[inline]
     pub fn get_property(&self, key: &PropKey) -> Option<Property> {
-        if *key == LABEL {
+        if LABEL == *key {
             return Some(Property {
                 owner: CanonicalKey::Edge(self.canonical_key()),
                 key: LABEL,
                 value: Primitive::Int32(self.label_id as i32),
             });
         }
-        let props = self.props.read().unwrap();
-        props.iter().find(|p| p.key == *key).cloned()
+        self.props.iter().find(|p| p.key == *key).cloned()
+    }
+    #[inline]
+    pub fn get_value(&self, key: &PropKey) -> Option<Primitive> {
+        if LABEL == *key {
+            return Some(Primitive::Int32(self.label_id as i32));
+        }
+        self.props.iter().find(|p| *key == p.key).map(|p| p.value.clone())
     }
 }
 
@@ -92,9 +103,7 @@ impl PartialEq for Vertex {
         }
 
         // Lock both sides to compare properties
-        let p1 = self.props.read().unwrap();
-        let p2 = other.props.read().unwrap();
-        *p1 == *p2
+        self.props == other.props
     }
 }
 
@@ -112,9 +121,7 @@ impl PartialEq for Edge {
         }
 
         // Lock both sides to compare properties
-        let p1 = self.props.read().unwrap();
-        let p2 = other.props.read().unwrap();
-        *p1 == *p2
+        self.props == other.props
     }
 }
 
