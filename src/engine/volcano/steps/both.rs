@@ -20,21 +20,30 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{error::StoreError, GValue, LabelId},
+    types::{error::StoreError, Direction, GValue, LabelId, VertexKey},
 };
 
 pub struct BothStep {
     upstream: Option<StepRef>,
     label_ids: Vec<LabelId>,
     limit: Option<u32>,
+    end_vertex_ids: Option<Vec<VertexKey>>,
     current_input: Option<Rc<Traverser>>,
     current_label_idx: usize,
-    current_direction: u8, // 0 = out, 1 = in
+    current_direction: Direction, // 0 = out, 1 = in
 }
 
 impl BothStep {
-    pub fn new(label_ids: Vec<LabelId>) -> Self {
-        Self { upstream: None, label_ids, limit: None, current_input: None, current_label_idx: 0, current_direction: 0 }
+    pub fn new(label_ids: Vec<LabelId>, end_vertex_ids: Option<Vec<VertexKey>>) -> Self {
+        Self {
+            upstream: None,
+            label_ids,
+            limit: None,
+            end_vertex_ids,
+            current_input: None,
+            current_label_idx: 0,
+            current_direction: Direction::OUT,
+        }
     }
 }
 
@@ -51,7 +60,7 @@ impl CoreStep for BothStep {
                 if matches!(&t.value, GValue::Vertex(_)) {
                     self.current_input = Some(t);
                     self.current_label_idx = 0;
-                    self.current_direction = 0;
+                    self.current_direction = Direction::OUT;
                 } else {
                     continue;
                 }
@@ -62,23 +71,35 @@ impl CoreStep for BothStep {
                 let label = if self.label_ids.is_empty() { None } else { Some(self.label_ids[self.current_label_idx]) };
 
                 let mut results = SmallVec::new();
-                if self.current_direction == 0 {
-                    let out_edges = ctx.get_out_edges(*vk, label, None, self.limit)?;
-                    for edge in out_edges {
-                        results.push(Traverser::new_rc_with_parent(GValue::Vertex(edge.secondary_id), Rc::clone(&t)));
+                if self.current_direction == Direction::OUT {
+                    let vertices = ctx.get_adjacent_vertices(
+                        *vk,
+                        label,
+                        self.current_direction,
+                        self.end_vertex_ids.as_deref(),
+                        self.limit,
+                    )?;
+                    for vertex in vertices {
+                        results.push(Traverser::new_rc_with_parent(GValue::Vertex(vertex), Rc::clone(&t)));
                     }
-                    self.current_direction = 1;
+                    self.current_direction = Direction::IN;
                     if !results.is_empty() {
                         return Ok(Some(results));
                     }
                 }
 
-                if self.current_direction == 1 {
-                    let in_edges = ctx.get_in_edges(*vk, label, None, self.limit)?;
-                    for edge in in_edges {
-                        results.push(Traverser::new_rc_with_parent(GValue::Vertex(edge.secondary_id), Rc::clone(&t)));
+                if self.current_direction == Direction::IN {
+                    let vertices = ctx.get_adjacent_vertices(
+                        *vk,
+                        label,
+                        self.current_direction,
+                        self.end_vertex_ids.as_deref(),
+                        self.limit,
+                    )?;
+                    for vertex in vertices {
+                        results.push(Traverser::new_rc_with_parent(GValue::Vertex(vertex), Rc::clone(&t)));
                     }
-                    self.current_direction = 0;
+                    self.current_direction = Direction::OUT;
                     self.current_label_idx += 1;
                     if self.label_ids.is_empty() || self.current_label_idx >= self.label_ids.len() {
                         self.current_input = None;
@@ -99,6 +120,6 @@ impl CoreStep for BothStep {
         }
         self.current_input = None;
         self.current_label_idx = 0;
-        self.current_direction = 0;
+        self.current_direction = Direction::OUT;
     }
 }

@@ -73,6 +73,8 @@ pub enum LogicalStep {
     Union(UnionStep),
     AddV(AddVStep),
     AddE(AddEStep),
+    From(FromStep),
+    To(ToStep),
     Property(PropertyStep),
     V(VStep),
     Limit(LimitStep),
@@ -252,7 +254,7 @@ impl Optimizer for UnionStep {
 #[derive(Clone)]
 pub struct AddVStep {
     pub label_id: LabelId,
-    pub vertex_id: VertexKey,
+    pub vertex_id: Option<VertexKey>,
     pub properties: HashMap<PropKey, Primitive>,
 }
 
@@ -261,12 +263,26 @@ impl Optimizer for AddVStep {}
 #[derive(Clone)]
 pub struct AddEStep {
     pub label_id: LabelId,
-    pub out_v_id: VertexKey,
-    pub in_v_id: VertexKey,
+    pub out_v_id: Option<VertexKey>,
+    pub in_v_id: Option<VertexKey>,
     pub properties: HashMap<PropKey, Primitive>,
 }
 
 impl Optimizer for AddEStep {}
+
+#[derive(Clone)]
+pub struct FromStep {
+    pub vertex_id: VertexKey,
+}
+
+impl Optimizer for FromStep {}
+
+#[derive(Clone)]
+pub struct ToStep {
+    pub vertex_id: VertexKey,
+}
+
+impl Optimizer for ToStep {}
 
 #[derive(Clone)]
 pub struct PropertyStep {

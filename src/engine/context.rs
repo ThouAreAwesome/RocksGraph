@@ -18,7 +18,7 @@ use crate::{
         gvalue::Primitive,
         keys::{CanonicalKey, LabelId, VertexKey},
         prop_key::PropKey,
-        EdgeKey, StoreError,
+        Direction, EdgeKey, StoreError,
     },
 };
 
@@ -42,7 +42,7 @@ use crate::{
 /// |--------------------------|:-----------------------:|:---------------------:|:--------------:|-------------------------------|
 /// | `get_vertex`             | ✅ on miss               | n/a                   | none          | none                          |
 /// | `get_edge`               | n/a                     | ✅ on miss             | none          | none                          |
-/// | `get_outs` / `get_ins`   | n/a                     | ✅ merged              | none          | none                          |
+/// | `get_adjacent_xxx`       | n/a                     | ✅ merged              | none          | none                          |
 /// | `get_property` (vertex)  | ✅ via `get_vertex`      | —                     | none          | none                          |
 /// | `get_property` (edge)    | —                       | ✗ overlay-only        | none           | ⚠ **edge must be pre-loaded** |
 /// | `get_value` (vertex)     | ✅ via `get_vertex`      | —                     | none          | none                          |
@@ -56,29 +56,19 @@ use crate::{
 pub trait GraphCtx {
     fn get_vertex(&mut self, key: VertexKey) -> Result<Option<VertexKey>, StoreError>;
     fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<EdgeKey>, StoreError>;
-    fn get_outs(
+    fn get_adjacent_vertices(
         &mut self,
         vertex_key: VertexKey,
         label: Option<LabelId>,
-        limit: Option<u32>,
-    ) -> Result<Vec<VertexKey>, StoreError>;
-    fn get_out_edges(
-        &mut self,
-        vertex_key: VertexKey,
-        label: Option<LabelId>,
+        direction: Direction,
         end_vertex_ids: Option<&[VertexKey]>,
         limit: Option<u32>,
-    ) -> Result<Vec<EdgeKey>, StoreError>;
-    fn get_ins(
-        &mut self,
-        vertex_key: VertexKey,
-        label: Option<LabelId>,
-        limit: Option<u32>,
     ) -> Result<Vec<VertexKey>, StoreError>;
-    fn get_in_edges(
+    fn get_adjacent_edges(
         &mut self,
         vertex_key: VertexKey,
         label: Option<LabelId>,
+        direction: Direction,
         end_vertex_ids: Option<&[VertexKey]>,
         limit: Option<u32>,
     ) -> Result<Vec<EdgeKey>, StoreError>;
@@ -109,39 +99,25 @@ impl GraphCtx for NoopCtx {
     fn get_edge(&mut self, _key: &EdgeKey) -> Result<Option<EdgeKey>, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support get_edge".to_string()))
     }
-    fn get_outs(
+    fn get_adjacent_vertices(
         &mut self,
         _vertex_key: VertexKey,
         _label: Option<LabelId>,
+        _direction: Direction,
+        _end_vertex_ids: Option<&[VertexKey]>,
         _limit: Option<u32>,
     ) -> Result<Vec<VertexKey>, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support get_outs".to_string()))
     }
-    fn get_out_edges(
+    fn get_adjacent_edges(
         &mut self,
         _vertex_key: VertexKey,
         _label: Option<LabelId>,
+        _direction: Direction,
         _end_vertex_ids: Option<&[VertexKey]>,
         _limit: Option<u32>,
     ) -> Result<Vec<EdgeKey>, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support get_out_edges".to_string()))
-    }
-    fn get_ins(
-        &mut self,
-        _vertex_key: VertexKey,
-        _label: Option<LabelId>,
-        _limit: Option<u32>,
-    ) -> Result<Vec<VertexKey>, StoreError> {
-        Err(StoreError::UnsupportedOperation("NoopCtx does not support get_ins".to_string()))
-    }
-    fn get_in_edges(
-        &mut self,
-        _vertex_key: VertexKey,
-        _label: Option<LabelId>,
-        _end_vertex_ids: Option<&[VertexKey]>,
-        _limit: Option<u32>,
-    ) -> Result<Vec<EdgeKey>, StoreError> {
-        Err(StoreError::UnsupportedOperation("NoopCtx does not support get_in_edges".to_string()))
     }
     fn get_property(&mut self, _key: &CanonicalKey, _prop: &PropKey) -> Result<Option<Property>, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support get_property".to_string()))
@@ -176,41 +152,26 @@ impl<S: GraphStore> GraphCtx for LogicalGraph<S> {
     fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<EdgeKey>, StoreError> {
         self.get_edge(key)
     }
-    fn get_outs(
+    fn get_adjacent_vertices(
         &mut self,
         vertex_key: VertexKey,
         label: Option<LabelId>,
+        direction: Direction,
+        end_vertex_ids: Option<&[VertexKey]>,
         limit: Option<u32>,
     ) -> Result<Vec<VertexKey>, StoreError> {
-        let edges = self.get_edges(vertex_key, crate::types::Direction::OUT, label, None, limit)?;
+        let edges = self.get_edges(vertex_key, direction, label, end_vertex_ids, limit)?;
         Ok(edges.into_iter().map(|ek| ek.secondary_id).collect())
     }
-    fn get_out_edges(
+    fn get_adjacent_edges(
         &mut self,
         vertex_key: VertexKey,
         label: Option<LabelId>,
+        direction: Direction,
         end_vertex_ids: Option<&[VertexKey]>,
         limit: Option<u32>,
     ) -> Result<Vec<EdgeKey>, StoreError> {
-        self.get_edges(vertex_key, crate::types::Direction::OUT, label, end_vertex_ids, limit)
-    }
-    fn get_ins(
-        &mut self,
-        vertex_key: VertexKey,
-        label: Option<LabelId>,
-        limit: Option<u32>,
-    ) -> Result<Vec<VertexKey>, StoreError> {
-        let edges = self.get_edges(vertex_key, crate::types::Direction::IN, label, None, limit)?;
-        Ok(edges.into_iter().map(|ek| ek.secondary_id).collect())
-    }
-    fn get_in_edges(
-        &mut self,
-        vertex_key: VertexKey,
-        label: Option<LabelId>,
-        end_vertex_ids: Option<&[VertexKey]>,
-        limit: Option<u32>,
-    ) -> Result<Vec<EdgeKey>, StoreError> {
-        self.get_edges(vertex_key, crate::types::Direction::IN, label, end_vertex_ids, limit)
+        self.get_edges(vertex_key, direction, label, end_vertex_ids, limit)
     }
     fn get_property(&mut self, key: &CanonicalKey, prop: &PropKey) -> Result<Option<Property>, StoreError> {
         self.get_property(key, prop)
@@ -230,7 +191,6 @@ impl<S: GraphStore> GraphCtx for LogicalGraph<S> {
     fn drop_property(&mut self, prop: &Property) -> Result<(), StoreError> {
         self.drop_property(prop)
     }
-
     fn drop_vertex(&mut self, vertex: VertexKey) -> Result<(), StoreError> {
         self.drop_element(&CanonicalKey::Vertex(vertex))
     }

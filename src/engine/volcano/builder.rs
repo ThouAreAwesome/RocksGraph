@@ -41,7 +41,7 @@ use crate::{
         },
     },
     planner::logical_step::{LogicalPlan, LogicalStep},
-    types::error::StoreError,
+    types::{error::StoreError, Direction},
 };
 
 #[derive(Clone)]
@@ -109,7 +109,11 @@ impl PhysicalPlanBuilder {
 
         match step {
             LogicalStep::Both(s) => {
-                wire_required!(BufferedStep::new(steps::both::BothStep::new(s.label_ids.clone())), upstream, "BothStep")
+                wire_required!(
+                    BufferedStep::new(steps::both::BothStep::new(s.label_ids.clone(), s.end_vertex_ids.clone())),
+                    upstream,
+                    "BothStep"
+                )
             }
             LogicalStep::BothE(s) => {
                 wire_required!(
@@ -138,21 +142,33 @@ impl PhysicalPlanBuilder {
             ),
             LogicalStep::In(s) => {
                 wire_required!(
-                    BufferedStep::new(steps::r#in::InStep::new(s.label_ids.clone(), s.end_vertex_ids.clone())),
+                    BufferedStep::new(steps::in_out::InOutStep::new(
+                        s.label_ids.clone(),
+                        Direction::IN,
+                        s.end_vertex_ids.clone()
+                    )),
                     upstream,
                     "InStep"
                 )
             }
             LogicalStep::InE(s) => {
                 wire_required!(
-                    BufferedStep::new(steps::in_e::InEStep::new(s.label_ids.clone(), s.end_vertex_ids.clone())),
+                    BufferedStep::new(steps::in_e_out_e::InEOutEStep::new(
+                        s.label_ids.clone(),
+                        Direction::IN,
+                        s.end_vertex_ids.clone()
+                    )),
                     upstream,
                     "InEStep"
                 )
             }
             LogicalStep::Out(s) => {
                 wire_required!(
-                    BufferedStep::new(steps::out::OutStep::new(s.label_ids.clone(), s.end_vertex_ids.clone())),
+                    BufferedStep::new(steps::in_out::InOutStep::new(
+                        s.label_ids.clone(),
+                        Direction::OUT,
+                        s.end_vertex_ids.clone()
+                    )),
                     upstream,
                     "OutStep"
                 )
@@ -168,19 +184,31 @@ impl PhysicalPlanBuilder {
                     }
                 }
                 wire_required!(
-                    BufferedStep::new(steps::out_e::OutEStep::new(s.label_ids.clone(), s.end_vertex_ids.clone())),
+                    BufferedStep::new(steps::in_e_out_e::InEOutEStep::new(
+                        s.label_ids.clone(),
+                        Direction::OUT,
+                        s.end_vertex_ids.clone()
+                    )),
                     upstream,
                     "OutEStep"
                 )
             }
             LogicalStep::InV(_) => {
-                wire_required!(BufferedStep::new(steps::in_v::InVStep::default()), upstream, "InVStep")
+                wire_required!(
+                    BufferedStep::new(steps::in_v_out_v::InVOutVStep::new(Direction::IN)),
+                    upstream,
+                    "InVStep"
+                )
             }
             LogicalStep::OtherV(_) => {
                 wire_required!(BufferedStep::new(steps::other_v::OtherVStep::default()), upstream, "OtherVStep")
             }
             LogicalStep::OutV(_) => {
-                wire_required!(BufferedStep::new(steps::out_v::OutVStep::default()), upstream, "OutVStep")
+                wire_required!(
+                    BufferedStep::new(steps::in_v_out_v::InVOutVStep::new(Direction::OUT)),
+                    upstream,
+                    "OutVStep"
+                )
             }
             LogicalStep::ScalarFilter(s) => {
                 wire_required!(
@@ -213,7 +241,11 @@ impl PhysicalPlanBuilder {
             }
             LogicalStep::AddV(s) => {
                 wire!(
-                    BufferedStep::new(steps::add_v::AddVStep::new(s.label_id, s.vertex_id, s.properties.clone())),
+                    BufferedStep::new(steps::add_v::AddVStep::new(
+                        s.label_id,
+                        s.vertex_id.expect("vertex is not provide in the query"),
+                        s.properties.clone()
+                    )),
                     None::<StepRef>
                 )
             }
@@ -221,8 +253,8 @@ impl PhysicalPlanBuilder {
                 wire!(
                     BufferedStep::new(steps::add_e::AddEStep::new(
                         s.label_id,
-                        s.out_v_id,
-                        s.in_v_id,
+                        s.out_v_id.expect("end vertex id has not been provided in query"),
+                        s.in_v_id.expect("end vertex id has not been provided in query"),
                         s.properties.clone()
                     )),
                     None::<StepRef>
@@ -257,6 +289,7 @@ impl PhysicalPlanBuilder {
             LogicalStep::Drop(_) => {
                 wire_required!(BufferedStep::new(steps::drop::DropStep::default()), upstream, "DropStep")
             }
+            _ => unreachable!("unreachable"),
         }
     }
 }

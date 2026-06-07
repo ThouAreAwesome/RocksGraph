@@ -13,7 +13,7 @@
 #[cfg(test)]
 mod cases {
     use crate::{
-        engine::{context::GraphCtx, volcano::builder::PhysicalPlanBuilder},
+        engine::volcano::builder::PhysicalPlanBuilder,
         graph::LogicalGraph,
         planner::logical_step::{
             AddEStep as LogicalAddEStep, AddVStep as LogicalAddVStep, BothEStep as LogicalBothEStep,
@@ -32,7 +32,7 @@ mod cases {
             gvalue::Primitive,
             keys::{CanonicalEdgeKey, CanonicalKey, LabelId, VertexKey},
             prop_key::LABEL,
-            EdgeKey, GValue,
+            Direction, EdgeKey, GValue,
         },
     };
     use smol_str::SmolStr;
@@ -391,7 +391,7 @@ mod cases {
         println!("\nEdges:");
         // Iterate through all vertices to get their outgoing edges
         for src_id in 1..=6 {
-            if let Ok(out_edges) = graph.get_out_edges(src_id, None, None, None) {
+            if let Ok(out_edges) = graph.get_edges(src_id, crate::types::Direction::OUT, None, None, None) {
                 for edge_key in out_edges {
                     if let Ok(Some(ek)) = graph.get_edge(&edge_key) {
                         let label_name = get_label_name(ek.label_id);
@@ -433,7 +433,7 @@ mod cases {
         let logical_plan = LogicalPlan {
             steps: vec![LogicalStep::AddV(LogicalAddVStep {
                 label_id: PERSON_LABEL_ID,
-                vertex_id: test_vertex_id,
+                vertex_id: Some(test_vertex_id),
                 properties,
             })],
         };
@@ -479,8 +479,8 @@ mod cases {
         let logical_plan = LogicalPlan {
             steps: vec![LogicalStep::AddE(LogicalAddEStep {
                 label_id: FRIENDS_LABEL_ID,
-                out_v_id: marko_id,
-                in_v_id: vadas_id,
+                out_v_id: Some(marko_id),
+                in_v_id: Some(vadas_id),
                 properties,
             })],
         };
@@ -1047,7 +1047,7 @@ mod cases {
         let logical_plan = LogicalPlan {
             steps: vec![LogicalStep::AddV(LogicalAddVStep {
                 label_id: PERSON_LABEL_ID,
-                vertex_id: 1,
+                vertex_id: Some(1),
                 properties: HashMap::new(),
             })],
         };
@@ -1068,8 +1068,8 @@ mod cases {
         let logical_plan = LogicalPlan {
             steps: vec![LogicalStep::AddE(LogicalAddEStep {
                 label_id: KNOWS_LABEL_ID,
-                out_v_id: 1,
-                in_v_id: 2,
+                out_v_id: Some(1),
+                in_v_id: Some(2),
                 properties: HashMap::new(),
             })],
         };
@@ -1138,7 +1138,7 @@ mod cases {
         assert!(verify.get_vertex(marko_id).unwrap().is_some());
         assert!(verify.get_vertex(vadas_id).unwrap().is_some());
         // Marko's remaining two outgoing edges are unaffected.
-        let remaining = verify.get_out_edges(marko_id, None, None, None).unwrap();
+        let remaining = verify.get_edges(marko_id, Direction::OUT, None, None, None).unwrap();
         assert_eq!(remaining.len(), 2);
     }
 
@@ -1163,7 +1163,7 @@ mod cases {
         graph.commit().unwrap();
 
         let mut verify = create_logical_graph(&store);
-        assert!(verify.get_out_edges(josh_id, None, None, None).unwrap().is_empty());
+        assert!(verify.get_edges(josh_id, Direction::OUT, None, None, None).unwrap().is_empty());
         // josh and the target vertices still exist.
         assert!(verify.get_vertex(josh_id).unwrap().is_some());
         assert!(verify.get_vertex(3).unwrap().is_some()); // lop

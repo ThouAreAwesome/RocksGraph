@@ -20,15 +20,21 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{error::StoreError, GValue},
+    types::{error::StoreError, Direction, GValue},
 };
 
-#[derive(Default)]
-pub struct InVStep {
+pub struct InVOutVStep {
     upstream: Option<StepRef>,
+    direction: Direction,
 }
 
-impl CoreStep for InVStep {
+impl InVOutVStep {
+    pub fn new(direction: Direction) -> Self {
+        Self { upstream: None, direction }
+    }
+}
+
+impl CoreStep for InVOutVStep {
     fn add_upper(&mut self, upstream: StepRef) {
         self.upstream = Some(upstream);
     }
@@ -38,8 +44,18 @@ impl CoreStep for InVStep {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
             let Some(t) = upstream.next(ctx)? else { return Ok(None) };
             if let GValue::Edge(ek) = &t.value {
-                let vk = ek.canonical_edge_key().dst_id;
-                return Ok(Some(smallvec![Traverser::new_rc_with_parent(GValue::Vertex(vk), Rc::clone(&t))]));
+                let cek = ek.canonical_edge_key();
+                if self.direction == Direction::OUT {
+                    return Ok(Some(smallvec![Traverser::new_rc_with_parent(
+                        GValue::Vertex(cek.src_id),
+                        Rc::clone(&t)
+                    )]));
+                } else {
+                    return Ok(Some(smallvec![Traverser::new_rc_with_parent(
+                        GValue::Vertex(cek.dst_id),
+                        Rc::clone(&t)
+                    )]));
+                }
             }
         }
     }

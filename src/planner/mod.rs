@@ -10,26 +10,4 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-//! Compilation front-end: Gremlin AST → engine-agnostic logical IR.
-//!
-//! This module is engine-agnostic — it has no dependency on `engine::volcano`
-//! or `engine::data_flow`. Both execution engines consume the same
-//! [`logical_step::LogicalPlan`] produced here.
-//!
-//! ## Pipeline position
-//!
-//! ```text
-//! server::bytecode_deserializer  (parse JSON → GremlinQueryAst)
-//!          │
-//!          ▼
-//! planner::gremlin_to_logical_plan  (translate → LogicalPlan)
-//!          │
-//!          ▼
-//! optimizer::optimize               (rewrite → LogicalPlan)
-//!          │
-//!          ▼
-//! engine::volcano::builder          (compile → PhysicalPlan)
-//! ```
-
-pub mod gremlin_to_logical_plan;
 pub mod logical_step;

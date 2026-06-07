@@ -20,25 +20,34 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{error::StoreError, GValue, LabelId, VertexKey},
+    types::{error::StoreError, Direction, GValue, LabelId, VertexKey},
 };
 
-pub struct OutEStep {
+pub struct InEOutEStep {
     upstream: Option<StepRef>,
     label_ids: Vec<LabelId>,
+    dirction: Direction,
     limit: Option<u32>,
-    end_vertex_ids: Option<Vec<VertexKey>>,
     current_input: Option<Rc<Traverser>>,
     current_label_idx: usize,
+    end_vertex_ids: Option<Vec<VertexKey>>,
 }
 
-impl OutEStep {
-    pub fn new(label_ids: Vec<LabelId>, end_vertex_ids: Option<Vec<VertexKey>>) -> Self {
-        Self { upstream: None, label_ids, limit: None, current_input: None, current_label_idx: 0, end_vertex_ids }
+impl InEOutEStep {
+    pub fn new(label_ids: Vec<LabelId>, direction: Direction, end_vertex_ids: Option<Vec<VertexKey>>) -> Self {
+        Self {
+            upstream: None,
+            label_ids,
+            dirction: direction,
+            limit: None,
+            current_input: None,
+            current_label_idx: 0,
+            end_vertex_ids,
+        }
     }
 }
 
-impl CoreStep for OutEStep {
+impl CoreStep for InEOutEStep {
     fn add_upper(&mut self, upstream: StepRef) {
         self.upstream = Some(upstream);
     }
@@ -60,11 +69,10 @@ impl CoreStep for OutEStep {
             if let GValue::Vertex(vk) = &t.value {
                 let label = if self.label_ids.is_empty() { None } else { Some(self.label_ids[self.current_label_idx]) };
 
-                let out_edges = ctx.get_out_edges(*vk, label, self.end_vertex_ids.as_deref(), self.limit)?;
-                let results: SmallVec<[_; 4]> = out_edges
-                    .into_iter()
-                    .map(|e| Traverser::new_rc_with_parent(GValue::Edge(e), Rc::clone(&t)))
-                    .collect();
+                let edges =
+                    ctx.get_adjacent_edges(*vk, label, self.dirction, self.end_vertex_ids.as_deref(), self.limit)?;
+                let results: SmallVec<[_; 4]> =
+                    edges.into_iter().map(|e| Traverser::new_rc_with_parent(GValue::Edge(e), Rc::clone(&t))).collect();
 
                 self.current_label_idx += 1;
                 if self.label_ids.is_empty() || self.current_label_idx >= self.label_ids.len() {

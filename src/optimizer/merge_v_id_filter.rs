@@ -12,7 +12,7 @@
 
 use crate::{
     planner::logical_step::{LogicalPlan, LogicalStep},
-    types::{gvalue::Primitive, StoreError},
+    types::{gvalue::Primitive, prop_key::ID, StoreError},
 };
 
 /// Folds `V().has("id", N)` into `V(N)`, removing the redundant property scan.
@@ -27,24 +27,25 @@ pub(super) fn merget_v_id_filter(plan: &mut LogicalPlan) -> Result<bool, StoreEr
 
     while j < plan.steps.len() {
         let v_ids = match (&plan.steps[i], &plan.steps[j]) {
-            (LogicalStep::V(v), LogicalStep::HasProperty(hp)) if hp.key.as_str() == "id" => match hp.value {
-                Primitive::Int64(id) => Some(vec![id]),
-                Primitive::Int32(id) => Some(vec![id as i64]),
-                _ => None,
-            },
+            (LogicalStep::V(v), LogicalStep::HasProperty(hp)) if hp.key.as_str() == ID && v.ids.is_empty() => {
+                match hp.value {
+                    Primitive::Int64(id) => Some(vec![id]),
+                    Primitive::Int32(id) => Some(vec![id as i64]),
+                    _ => None,
+                }
+            }
             (LogicalStep::V(_), LogicalStep::HasId(hi)) => Some(hi.ids.clone()),
             _ => None,
         };
         if let Some(ids) = v_ids {
-            if let LogicalStep::V(v) = &mut plan.steps[i] {
-                // merge the id filter into the V step
-                v.ids.clear();
-                v.ids.extend_from_slice(&ids);
-                plan_changed = true;
-                j += 1; // skip the merged HasProperty step. no need to remove the steps[j]
-            } else {
-                unreachable!("should never reach here since we have checked the pattern already");
-            }
+            let LogicalStep::V(v) = &mut plan.steps[i] else {
+                unreachable!("should never reach here since we have checked the pattern already")
+            };
+            // merge the id filter into the V step
+            v.ids.clear();
+            v.ids.extend_from_slice(&ids);
+            plan_changed = true;
+            j += 1; // skip the merged HasProperty step. no need to remove the steps[j]
         } else {
             i += 1;
             if i != j {
@@ -79,6 +80,24 @@ mod tests {
         LogicalStep::HasProperty(HasPropertyStep { key: SmolStr::new(key), value })
     }
 
+    fn has_id(ids: Vec<VertexKey>) -> LogicalStep {
+        LogicalStep::HasId(crate::planner::logical_step::HasIdStep { ids })
+    }
+
+    #[test]
+    fn test_ids_filter_folded_into_v_step() {
+        let steps = vec![v_all(), has_id(vec![7])];
+        let mut plan = LogicalPlan { steps };
+        let opt = merget_v_id_filter(&mut plan).unwrap();
+        assert!(opt, "plan should be changed");
+        assert_eq!(plan.steps.len(), 1);
+        if let LogicalStep::V(v) = &plan.steps[0] {
+            assert_eq!(v.ids, vec![7]);
+        } else {
+            panic!("expected VStep");
+        }
+    }
+
     #[test]
     fn test_id_filter_folded_into_v_step() {
         let steps = vec![v_all(), has("id", Primitive::Int32(7))];
@@ -106,14 +125,19 @@ mod tests {
 
     #[test]
     fn test_v_with_explicit_ids_should_be_optimized() {
-        let steps = vec![v_ids(vec![2]), has("id", Primitive::Int32(2))];
+        let steps = vec![v_ids(vec![2]), has("id", Primitive::Int32(3))];
         let mut plan = LogicalPlan { steps };
         let opt = merget_v_id_filter(&mut plan).unwrap();
-        assert!(opt, "plan should be changed");
-        assert_eq!(plan.steps.len(), 1);
+        assert!(!opt, "plan should not be changed");
+        assert_eq!(plan.steps.len(), 2);
         assert!(matches!(plan.steps[0], LogicalStep::V(_)));
         if let LogicalStep::V(v) = &plan.steps[0] {
             assert_eq!(v.ids, vec![2]);
+        } else {
+            panic!("expected VStep");
+        }
+        if let LogicalStep::HasProperty(hp) = &plan.steps[1] {
+            assert_eq!(hp.value, Primitive::Int32(3));
         } else {
             panic!("expected VStep");
         }

@@ -24,8 +24,8 @@
 //! |-------------|------|
 //! [`planner`]   | Translates a Gremlin AST into engine-agnostic [`LogicalPlan`] IR. |
 //! [`optimizer`] | Rewrites a `LogicalPlan` into a more efficient equivalent. |
-//! [`engine`]    | Execution engines (`volcano`, `data_flow`) and their shared primitives (`GraphCtx`, `Traverser`, `GroupId`). |
-//! [`graph`]     | Query-scoped in-memory overlay over a `GraphStore` transaction. |
+//! [`engine`]    | Execution engines (`volcano`, `data_flow`) and their shared primitives (`GraphCtx`, `Traverser`,
+//! `GroupId`). | [`graph`]     | Query-scoped in-memory overlay over a `GraphStore` transaction. |
 //! [`store`]     | Pluggable storage backends (RocksDB, distributed). |
 //! [`server`]    | WebSocket/Gremlin server and bytecode deserializer. |
 //! [`client`]    | Lightweight Gremlin WebSocket client. |
@@ -34,9 +34,9 @@
 //!
 //! [`LogicalPlan`]: planner::logical_step::LogicalPlan
 
-pub mod client;
 pub mod engine;
 pub mod graph;
+pub mod gremlin;
 pub mod optimizer;
 pub mod planner;
 pub mod schema;

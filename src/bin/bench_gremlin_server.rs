@@ -16,7 +16,7 @@ use multigraph::{
     optimizer::apply_rules,
     planner::logical_step::{
         AddEStep, AddVStep, CoalesceStep, HasIdStep, HasPropertyStep, LogicalPlan, LogicalStep, OtherVStep, OutEStep,
-        VStep, WhereStep,
+        PropertyStep, VStep, WhereStep,
     },
     server::{config::Config, gremlin_server},
     store::{GraphStore, RocksStorage},
@@ -51,30 +51,21 @@ fn generate_random_string(len: usize) -> String {
     rand::thread_rng().sample_iter(rand::distributions::Alphanumeric).take(len).map(char::from).collect()
 }
 
-fn generate_random_properties() -> HashMap<SmolStr, Primitive> {
-    let mut rng = rand::thread_rng();
-    HashMap::from([
-        (SmolStr::new("name"), Primitive::String(generate_random_string(10).into())),
-        (SmolStr::new("age"), Primitive::Int64(rng.gen_range(18..100))),
-    ])
-}
-
-fn generate_random_edge_properties() -> HashMap<SmolStr, Primitive> {
-    let mut rng = rand::thread_rng();
-    HashMap::from([
-        (SmolStr::new("weight"), Primitive::Float64(rng.gen_range(0.1..10.0))),
-        (SmolStr::new("timestamp"), Primitive::Int64(rng.gen_range(0..1000000))),
-    ])
-}
-
 /// Creates a vertex; if it already exists the error is silently ignored.
-async fn upsert_vertex(graph: &mut LogicalGraph<RocksStorage>, label: u16, vertex_id: i64) -> Result<bool, StoreError> {
+fn upsert_vertex(graph: &mut LogicalGraph<RocksStorage>, label: u16, vertex_id: i64) -> Result<bool, StoreError> {
+    let mut rng = rand::thread_rng();
     let mut plan = LogicalPlan {
-        steps: vec![LogicalStep::AddV(AddVStep {
-            label_id: label,
-            vertex_id,
-            properties: generate_random_properties(),
-        })],
+        steps: vec![
+            LogicalStep::AddV(AddVStep { label_id: label, vertex_id: Some(vertex_id), properties: HashMap::new() }),
+            LogicalStep::Property(PropertyStep {
+                prop_key: SmolStr::new("name"),
+                prop_value: Primitive::String(generate_random_string(10).into()),
+            }),
+            LogicalStep::Property(PropertyStep {
+                prop_key: SmolStr::new("age"),
+                prop_value: Primitive::Int64(rng.gen_range(18..100)),
+            }),
+        ],
     };
     let _ = apply_rules(&mut plan).unwrap();
 
@@ -90,20 +81,14 @@ async fn upsert_vertex(graph: &mut LogicalGraph<RocksStorage>, label: u16, verte
 
 /// Creates an edge from src to dst if it does not already exist, using coalesce.
 /// Returns Ok(true) if created, Ok(false) if it already existed.
-async fn upsert_edge(
-    graph: &mut LogicalGraph<RocksStorage>,
-    src: i64,
-    dst: i64,
-    edge_type: u16,
-    max_retries: usize,
-) -> Result<bool, StoreError> {
+fn upsert_edge(graph: &mut LogicalGraph<RocksStorage>, src: i64, dst: i64, edge_type: u16) -> Result<bool, StoreError> {
     // g.V(src).coalesce(
     //   __.outE(edge_type).where(__.otherV().hasId(dst)),   -- check if edge exists
     //   __.addE(edge_type, src, dst, props)              -- create if not
     // )
     // The coalesce short-circuits: if the first branch yields results the edge
     // already exists and addE is never executed.
-
+    let mut rng = rand::thread_rng();
     let mut upsert_e_plan = LogicalPlan {
         steps: vec![
             LogicalStep::V(VStep { ids: vec![] }),
@@ -124,12 +109,22 @@ async fn upsert_edge(
                         ],
                     },
                     LogicalPlan {
-                        steps: vec![LogicalStep::AddE(AddEStep {
-                            label_id: edge_type,
-                            out_v_id: src,
-                            in_v_id: dst,
-                            properties: generate_random_edge_properties(),
-                        })],
+                        steps: vec![
+                            LogicalStep::AddE(AddEStep {
+                                label_id: edge_type,
+                                out_v_id: Some(src),
+                                in_v_id: Some(dst),
+                                properties: HashMap::new(),
+                            }),
+                            LogicalStep::Property(PropertyStep {
+                                prop_key: SmolStr::new("weight"),
+                                prop_value: Primitive::Float64(rng.gen_range(0.1..10.0)),
+                            }),
+                            LogicalStep::Property(PropertyStep {
+                                prop_key: SmolStr::new("timestamp"),
+                                prop_value: Primitive::Int64(rng.gen_range(0..1000000)),
+                            }),
+                        ],
                     },
                 ],
             }),
@@ -140,20 +135,11 @@ async fn upsert_edge(
     let mut builder: PhysicalPlanBuilder = Default::default();
     let physical_plan = builder.build(&upsert_e_plan);
 
-    for attempt in 0..max_retries {
-        match physical_plan.next(graph) {
-            Ok(Some(_)) => return Ok(true),
-            Ok(None) => return Ok(false), // vertex already exists (addV is idempotent)
-            Err(e) => {
-                if attempt == max_retries - 1 {
-                    return Err(e);
-                }
-                // Retry after a short delay
-                sleep(Duration::from_millis(RETRY_DELAY_MS)).await;
-            }
-        }
+    match physical_plan.next(graph) {
+        Ok(Some(_)) => Ok(true),
+        Ok(None) => Ok(false),
+        Err(e) => Err(e),
     }
-    Err(StoreError::RuntimeError("Max retries exceeded".into()))
 }
 
 #[tokio::main]
@@ -214,26 +200,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let (src, dst) = (parts[0], parts[1]);
 
                     let mut lg = LogicalGraph::new(store.begin());
+                    let mut success = false;
 
-                    // Upsert both vertices (single round trip each — addV ignores duplicate)
-                    if upsert_vertex(&mut lg, 1u16, src).await.unwrap_or(false) {
-                        mutation_counter.fetch_add(1, Ordering::Relaxed);
-                    }
-                    if upsert_vertex(&mut lg, 1u16, dst).await.unwrap_or(false) {
-                        mutation_counter.fetch_add(1, Ordering::Relaxed);
-                    }
+                    for attempt in 0..MAX_RETRIES {
+                        // 1. Stage the mutations in the overlay
+                        let v1_new = upsert_vertex(&mut lg, 1u16, src).unwrap_or(false);
+                        let v2_new = upsert_vertex(&mut lg, 1u16, dst).unwrap_or(false);
+                        let e_new = upsert_edge(&mut lg, src, dst, 2u16).unwrap_or(false);
 
-                    // Upsert edge via coalesce (single round trip)
-                    match upsert_edge(&mut lg, src, dst, 2u16, MAX_RETRIES).await {
-                        Ok(_) => {
-                            mutation_counter.fetch_add(1, Ordering::Relaxed);
+                        // 2. Attempt to commit the transaction
+                        match lg.commit() {
+                            Ok(_) => {
+                                if v1_new {
+                                    mutation_counter.fetch_add(1, Ordering::Relaxed);
+                                }
+                                if v2_new {
+                                    mutation_counter.fetch_add(1, Ordering::Relaxed);
+                                }
+                                if e_new {
+                                    mutation_counter.fetch_add(1, Ordering::Relaxed);
+                                }
+                                success = true;
+                                break;
+                            }
+                            Err(StoreError::Conflict) => {
+                                if attempt < MAX_RETRIES - 1 {
+                                    sleep(Duration::from_millis(RETRY_DELAY_MS)).await;
+                                    // LogicalGraph::commit() automatically calls reset() on conflict,
+                                    // so 'lg' is fresh and ready for the next attempt.
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Transaction failed with non-retryable error ({} -> {}): {}", src, dst, e);
+                                break;
+                            }
                         }
-                        Err(e) => {
-                            eprintln!("Edge upsert failed ({} -> {}): {}", src, dst, e);
-                        }
                     }
 
-                    let _ = lg.commit();
+                    if !success {
+                        eprintln!("Failed to upsert edge ({} -> {}) after {} retries", src, dst, MAX_RETRIES);
+                    }
                 }
             })
         });

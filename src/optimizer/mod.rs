@@ -25,6 +25,8 @@
 //! [`LogicalPlan`]: crate::planner::logical_step::LogicalPlan
 
 mod extract_end_vertex_filter;
+mod merge_adde_ids;
+mod merge_addv_id;
 mod merge_end_vertex_filter;
 mod merge_v_id_filter;
 
@@ -39,6 +41,8 @@ pub fn apply_rules(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
         extract_end_vertex_filter::extract_end_vertex_filter,
         merge_v_id_filter::merget_v_id_filter,
         merge_end_vertex_filter::merge_end_vertex_filter,
+        merge_addv_id::merge_addv_id,
+        merge_adde_ids::merge_adde_from,
     ];
     let mut plan_changed = true;
     // apply optimizers to each step first, then to the whole plan. this allows optimizers to terget specific patterns
@@ -56,10 +60,13 @@ pub fn apply_rules(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use smol_str::SmolStr;
+
     use crate::{
         planner::logical_step::{BothEStep, HasIdStep, LogicalStep, OtherVStep, OutEStep, OutVStep, VStep, WhereStep},
-        types::keys::VertexKey,
+        types::{keys::VertexKey, Primitive},
     };
+    use std::collections::HashMap;
 
     fn v_all() -> LogicalStep {
         LogicalStep::V(VStep { ids: vec![] })
@@ -95,23 +102,43 @@ mod tests {
         LogicalStep::HasProperty(HasPropertyStep { key: SmolStr::new("id"), value: Primitive::Int32(id) })
     }
 
+    fn prop(key: SmolStr, value: Primitive) -> LogicalStep {
+        LogicalStep::Property(crate::planner::logical_step::PropertyStep { prop_key: key, prop_value: value })
+    }
+
     // V().has("id",1).has("id",2).outE().otherV().hasId(4)
-    // Both has("id") are folded into V by merget_v_id_filter (second id wins); no where() to extract.
-    // Result: [V(2), OutE, OtherV, HasId(4)]
     #[test]
-    fn test_v_has_id_prop_twice_merged_into_v() {
+    fn test_v_has_id_prop_twice_merge_into_v() {
         let steps = vec![v_all(), has_id_prop(1), has_id_prop(2), out_e(), other_v(), has_id(vec![4])];
         let mut plan = LogicalPlan { steps };
         let _ = apply_rules(&mut plan).unwrap();
-        assert_eq!(plan.steps.len(), 4);
+        assert_eq!(plan.steps.len(), 5);
         if let LogicalStep::V(v) = &plan.steps[0] {
-            assert_eq!(v.ids, vec![2], "second has(\"id\") should win");
+            assert_eq!(v.ids, vec![1], "second has(\"id\") should win");
         } else {
             panic!("expected VStep at step 0");
         }
-        assert!(matches!(plan.steps[1], LogicalStep::OutE(_)));
-        assert!(matches!(plan.steps[2], LogicalStep::OtherV(_)));
-        assert!(matches!(plan.steps[3], LogicalStep::HasId(_)));
+        assert!(matches!(plan.steps[1], LogicalStep::HasProperty(_)));
+        assert!(matches!(plan.steps[2], LogicalStep::OutE(_)));
+        assert!(matches!(plan.steps[3], LogicalStep::OtherV(_)));
+        assert!(matches!(plan.steps[4], LogicalStep::HasId(_)));
+    }
+
+    #[test]
+    fn test_v_has_id_merged_into_v() {
+        let steps = vec![v_all(), has_id_prop(1), has_id_prop(2), out_e(), other_v(), has_id(vec![4])];
+        let mut plan = LogicalPlan { steps };
+        let _ = apply_rules(&mut plan).unwrap();
+        assert_eq!(plan.steps.len(), 5);
+        if let LogicalStep::V(v) = &plan.steps[0] {
+            assert_eq!(v.ids, vec![1], "second has(\"id\") should win");
+        } else {
+            panic!("expected VStep at step 0");
+        }
+        assert!(matches!(plan.steps[1], LogicalStep::HasProperty(_)));
+        assert!(matches!(plan.steps[2], LogicalStep::OutE(_)));
+        assert!(matches!(plan.steps[3], LogicalStep::OtherV(_)));
+        assert!(matches!(plan.steps[4], LogicalStep::HasId(_)));
     }
 
     // V().has("id",1).outE().where(otherV().hasId(2)).outV().bothE().where(otherV().hasId(3))
@@ -175,5 +202,58 @@ mod tests {
         assert!(matches!(plan.steps[1], LogicalStep::OutE(_)));
         assert!(matches!(plan.steps[2], LogicalStep::OutV(_)));
         assert!(matches!(plan.steps[3], LogicalStep::BothE(_)));
+    }
+
+    // addV().property("id", 1)
+    // merge_addv_id folds property("id", 1) into AddV(vertex_id=1).
+    #[test]
+    fn test_add_v_id_prop_merged() {
+        use crate::planner::logical_step::AddVStep;
+        let steps = vec![
+            LogicalStep::AddV(AddVStep { label_id: 1, vertex_id: None, properties: HashMap::new() }),
+            prop(SmolStr::new("id"), Primitive::Int32(321)),
+        ];
+        let mut plan = LogicalPlan { steps };
+        let _ = apply_rules(&mut plan).unwrap();
+        assert_eq!(plan.steps.len(), 1);
+        if let LogicalStep::AddV(add_v) = &plan.steps[0] {
+            assert_eq!(add_v.vertex_id, Some(321), "property(\"id\") should be merged into addV");
+        } else {
+            panic!("expected AddVStep at step 0");
+        }
+    }
+
+    // addV().property("id", 1).property("id", 2) which is unsupported
+    // merge_addv_id folds property("id", 1) into AddV(vertex_id=1).
+    #[test]
+    fn test_add_v_id_prop_duplicate() {
+        use crate::planner::logical_step::AddVStep;
+        let steps = vec![
+            LogicalStep::AddV(AddVStep { label_id: 1, vertex_id: None, properties: HashMap::new() }),
+            prop(SmolStr::new("id"), Primitive::Int64(321)),
+            prop(SmolStr::new("id"), Primitive::Int32(21)),
+        ];
+        let mut plan = LogicalPlan { steps };
+        let res = apply_rules(&mut plan);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_adde_from_merged() {
+        use crate::planner::logical_step::{AddEStep, FromStep, ToStep};
+        let steps = vec![
+            LogicalStep::AddE(AddEStep { label_id: 1, out_v_id: None, in_v_id: None, properties: HashMap::new() }),
+            LogicalStep::From(FromStep { vertex_id: 12 }),
+            LogicalStep::To(ToStep { vertex_id: 13 }),
+        ];
+        let mut plan = LogicalPlan { steps };
+        let _ = apply_rules(&mut plan).unwrap();
+        assert_eq!(plan.steps.len(), 1);
+        if let LogicalStep::AddE(add_e) = &plan.steps[0] {
+            assert_eq!(add_e.out_v_id, Some(12), "property(\"id\") should be merged into addE");
+            assert_eq!(add_e.in_v_id, Some(13), "property(\"id\") should be merged into addE");
+        } else {
+            panic!("expected AddVStep at step 0");
+        }
     }
 }

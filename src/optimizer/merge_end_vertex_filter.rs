@@ -11,8 +11,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 use crate::{
-    planner::logical_step::{LogicalPlan, LogicalStep},
-    types::StoreError,
+    planner::logical_step::{HasPropertyStep, LogicalPlan, LogicalStep},
+    types::{prop_key::ID, Primitive, StoreError},
 };
 
 pub(super) fn merge_end_vertex_filter(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
@@ -21,30 +21,50 @@ pub(super) fn merge_end_vertex_filter(plan: &mut LogicalPlan) -> Result<bool, St
     let mut j = 1;
     while j < plan.steps.len() {
         let ids = match (&plan.steps[i], &plan.steps[j]) {
-            (LogicalStep::OutE(_), LogicalStep::EndVertexFilter(ef)) => Some(ef.ids.clone()),
-            (LogicalStep::InE(_), LogicalStep::EndVertexFilter(ef)) => Some(ef.ids.clone()),
-            (LogicalStep::BothE(_), LogicalStep::EndVertexFilter(ef)) => Some(ef.ids.clone()),
+            (LogicalStep::OutE(_), LogicalStep::EndVertexFilter(ef))
+            | (LogicalStep::InE(_), LogicalStep::EndVertexFilter(ef))
+            | (LogicalStep::BothE(_), LogicalStep::EndVertexFilter(ef)) => Some(ef.ids.clone()),
+            (LogicalStep::Out(_), LogicalStep::HasId(ef))
+            | (LogicalStep::In(_), LogicalStep::HasId(ef))
+            | (LogicalStep::Both(_), LogicalStep::HasId(ef)) => Some(ef.ids.clone()),
+            (LogicalStep::Out(_), LogicalStep::HasProperty(HasPropertyStep { key, value }))
+            | (LogicalStep::In(_), LogicalStep::HasProperty(HasPropertyStep { key, value }))
+            | (LogicalStep::Both(_), LogicalStep::HasProperty(HasPropertyStep { key, value }))
+                if ID == *key =>
+            {
+                match value {
+                    Primitive::Int32(id) => Some(vec![*id as i64]),
+                    Primitive::Int64(id) => Some(vec![*id]),
+                    _ => return Err(StoreError::UnexpectedDataType("only i32 and i64 can be vertex id".into())),
+                }
+            }
             _ => None,
         };
         if let Some(idv) = ids {
             match &mut plan.steps[i] {
                 LogicalStep::OutE(oute) => {
                     oute.end_vertex_ids = Some(idv);
-                    plan_changed = true;
-                    j += 1; // skip the merged step
                 }
                 LogicalStep::InE(ine) => {
                     ine.end_vertex_ids = Some(idv);
-                    plan_changed = true;
-                    j += 1; // skip the merged step
                 }
                 LogicalStep::BothE(bothe) => {
                     bothe.end_vertex_ids = Some(idv);
-                    plan_changed = true;
-                    j += 1; // skip the merged step
                 }
+                LogicalStep::Out(out) => {
+                    out.end_vertex_ids = Some(idv);
+                }
+                LogicalStep::In(in_) => {
+                    in_.end_vertex_ids = Some(idv);
+                }
+                LogicalStep::Both(both) => {
+                    both.end_vertex_ids = Some(idv);
+                }
+
                 _ => unreachable!("should never reach here since we have checked the pattern already"),
             }
+            plan_changed = true;
+            j += 1; // skip the merged step
         } else {
             i += 1;
             if i != j {

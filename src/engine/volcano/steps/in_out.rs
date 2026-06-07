@@ -20,25 +20,34 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{error::StoreError, GValue, LabelId, VertexKey},
+    types::{error::StoreError, Direction, GValue, LabelId, VertexKey},
 };
 
-pub struct InStep {
+pub struct InOutStep {
     upstream: Option<StepRef>,
     label_ids: Vec<LabelId>,
+    direction: Direction,
     limit: Option<u32>,
     end_vertex_ids: Option<Vec<VertexKey>>,
     current_input: Option<Rc<Traverser>>,
     current_label_idx: usize,
 }
 
-impl InStep {
-    pub fn new(label_ids: Vec<LabelId>, end_vertex_ids: Option<Vec<VertexKey>>) -> Self {
-        Self { upstream: None, label_ids, limit: None, end_vertex_ids, current_input: None, current_label_idx: 0 }
+impl InOutStep {
+    pub fn new(label_ids: Vec<LabelId>, direction: Direction, end_vertex_ids: Option<Vec<VertexKey>>) -> Self {
+        Self {
+            upstream: None,
+            label_ids,
+            direction,
+            limit: None,
+            end_vertex_ids,
+            current_input: None,
+            current_label_idx: 0,
+        }
     }
 }
 
-impl CoreStep for InStep {
+impl CoreStep for InOutStep {
     fn add_upper(&mut self, upstream: StepRef) {
         self.upstream = Some(upstream);
     }
@@ -60,8 +69,9 @@ impl CoreStep for InStep {
             if let GValue::Vertex(vk) = &t.value {
                 let label = if self.label_ids.is_empty() { None } else { Some(self.label_ids[self.current_label_idx]) };
 
-                let in_edges = ctx.get_in_edges(*vk, label, self.end_vertex_ids.as_deref(), self.limit)?;
-                let results: SmallVec<[_; 4]> = in_edges
+                let edges =
+                    ctx.get_adjacent_edges(*vk, label, self.direction, self.end_vertex_ids.as_deref(), self.limit)?;
+                let results: SmallVec<[_; 4]> = edges
                     .into_iter()
                     .map(|e| Traverser::new_rc_with_parent(GValue::Vertex(e.secondary_id), Rc::clone(&t)))
                     .collect();
