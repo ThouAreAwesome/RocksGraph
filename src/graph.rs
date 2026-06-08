@@ -242,6 +242,7 @@ impl<S: GraphStore> LogicalGraph<S> {
         limit: Option<u32>,
     ) -> Result<Vec<EdgeKey>, StoreError> {
         // Phase 1: populate overlay from store (mutable).
+        // TODO: directly push limit down to store is incorrect, which may result in less edges.
         let committed = self.store.get_edges(vertex, direction, label, dst, limit)?;
         for edge in committed {
             let cek = edge.canonical_key();
@@ -723,6 +724,7 @@ impl<S: GraphStore> LogicalGraph<S> {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /// Updates a property in-place if its key exists, otherwise appends it to the list.
+#[inline]
 fn upsert_prop(props: &mut Vec<Property>, prop: &Property) {
     if let Some(p) = props.iter_mut().find(|p| p.key == prop.key) {
         p.value = prop.value.clone();

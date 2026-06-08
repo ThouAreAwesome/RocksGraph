@@ -17,12 +17,10 @@
 //! | Submodule    | Role |
 //! |--------------|------|
 //! | [`context`]  | [`GraphCtx`] trait — the graph-access interface passed to every step at runtime. Shared by both engines. |
-//! | [`group_id`] | [`GroupId`] — hierarchical group identity carried on every [`Traverser`]. Used by both engines for `where`/co-group correlation. |
 //! | [`traverser`]| [`Traverser`] — the unit of work flowing between steps. |
 //! | [`volcano`]  | Pull-based iterator execution engine. Logical steps are compiled to a chain of physical operators by [`volcano::builder::PhysicalPlanBuilder`]. |
 //!
 //! [`GraphCtx`]: context::GraphCtx
-//! [`GroupId`]: group_id::GroupId
 //! [`Traverser`]: traverser::Traverser
 
 pub mod context;

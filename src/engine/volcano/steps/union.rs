@@ -12,8 +12,6 @@
 
 use std::rc::Rc;
 
-use smallvec::{smallvec, SmallVec};
-
 use crate::{
     engine::{
         context::GraphCtx,
@@ -25,6 +23,8 @@ use crate::{
     },
     types::error::StoreError,
 };
+use smallvec::smallvec;
+use std::collections::VecDeque;
 
 pub struct UnionStep {
     upstream: Option<StepRef>,
@@ -44,11 +44,11 @@ impl CoreStep for UnionStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx, buffer: &mut VecDeque<Rc<Traverser>>) -> Result<bool, StoreError> {
         loop {
             if self.current_input.is_none() {
-                let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
-                let Some(t) = upstream.next(ctx)? else { return Ok(None) };
+                let Some(upstream) = self.upstream.as_ref() else { return Ok(false) };
+                let Some(t) = upstream.next(ctx)? else { return Ok(false) };
                 self.current_input = Some(Rc::clone(&t));
                 self.current_plan_idx = 0;
                 if !self.physical_plans.is_empty() {
@@ -65,7 +65,8 @@ impl CoreStep for UnionStep {
 
             let p = &self.physical_plans[self.current_plan_idx];
             if let Some(res) = p.next(ctx)? {
-                return Ok(Some(smallvec![res]));
+                buffer.push_back(res);
+                return Ok(true);
             }
 
             self.current_plan_idx += 1;

@@ -12,7 +12,8 @@
 
 use std::rc::Rc;
 
-use smallvec::{smallvec, SmallVec};
+use smallvec::smallvec;
+use std::collections::VecDeque;
 
 use crate::{
     engine::{
@@ -42,10 +43,10 @@ impl CoreStep for WhereStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx, buffer: &mut VecDeque<Rc<Traverser>>) -> Result<bool, StoreError> {
         loop {
-            let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
-            let Some(t) = upstream.next(ctx)? else { return Ok(None) };
+            let Some(upstream) = self.upstream.as_ref() else { return Ok(false) };
+            let Some(t) = upstream.next(ctx)? else { return Ok(false) };
 
             let physical_sub_plan = &self.physical_plans;
 
@@ -54,7 +55,8 @@ impl CoreStep for WhereStep {
 
             // Sub pipeline evaluates properly — if sub-traversal yields at least one item, original goes through
             if physical_sub_plan.next(ctx)?.is_some() {
-                return Ok(Some(smallvec![t]));
+                buffer.push_back(t);
+                return Ok(true);
             }
         }
     }

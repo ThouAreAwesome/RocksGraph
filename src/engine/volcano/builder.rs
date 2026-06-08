@@ -152,6 +152,19 @@ impl PhysicalPlanBuilder {
                 )
             }
             LogicalStep::InE(s) => {
+                if let Some(end_ids) = &s.end_vertex_ids {
+                    if !end_ids.is_empty() && !s.label_ids.is_empty() {
+                        return wire_required!(
+                            BufferedStep::new(steps::get_e::GetEStep::new(
+                                s.label_ids.clone(),
+                                Direction::IN,
+                                end_ids.clone()
+                            )),
+                            upstream,
+                            "InEStep"
+                        );
+                    }
+                }
                 wire_required!(
                     BufferedStep::new(steps::in_e_out_e::InEOutEStep::new(
                         s.label_ids.clone(),
@@ -177,9 +190,13 @@ impl PhysicalPlanBuilder {
                 if let Some(end_ids) = &s.end_vertex_ids {
                     if !s.label_ids.is_empty() && !end_ids.is_empty() {
                         return wire_required!(
-                            BufferedStep::new(steps::get_out_e::GetOutEStep::new(s.label_ids.clone(), end_ids.clone())),
+                            BufferedStep::new(steps::get_e::GetEStep::new(
+                                s.label_ids.clone(),
+                                Direction::OUT,
+                                end_ids.clone()
+                            )),
                             upstream,
-                            "GetOutEStep"
+                            "OutEStep"
                         );
                     }
                 }

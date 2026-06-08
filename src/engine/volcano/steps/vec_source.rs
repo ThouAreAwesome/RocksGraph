@@ -18,13 +18,14 @@ use crate::{
     engine::{
         context::GraphCtx,
         traverser::Traverser,
-        volcano::steps::traits::{CoreStep, StepRef},
+        volcano::steps::traits::{CoreStep, StepRef, BUFFER_CAPACITY},
     },
     types::error::StoreError,
 };
 
+use std::collections::VecDeque;
 pub struct VecSourceStep {
-    items: SmallVec<[Rc<Traverser>; 4]>,
+    items: SmallVec<[Rc<Traverser>; BUFFER_CAPACITY]>,
 }
 
 impl VecSourceStep {
@@ -42,11 +43,12 @@ impl CoreStep for VecSourceStep {
         panic!("VecSourceStep is a source step and cannot have an upstream");
     }
 
-    fn produce(&mut self, _ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+    fn produce(&mut self, _ctx: &mut dyn GraphCtx, buffer: &mut VecDeque<Rc<Traverser>>) -> Result<bool, StoreError> {
         if !self.items.is_empty() {
-            Ok(Some(self.items.drain(..).collect()))
+            buffer.extend(self.items.drain(..));
+            Ok(true)
         } else {
-            Ok(None)
+            Ok(false)
         }
     }
 

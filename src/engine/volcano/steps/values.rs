@@ -12,7 +12,7 @@
 
 use std::rc::Rc;
 
-use smallvec::{smallvec, SmallVec};
+use std::collections::VecDeque;
 
 use crate::{
     engine::{
@@ -40,10 +40,10 @@ impl CoreStep for ValuesStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx, buffer: &mut VecDeque<Rc<Traverser>>) -> Result<bool, StoreError> {
         loop {
-            let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
-            let Some(t) = upstream.next(ctx)? else { return Ok(None) };
+            let Some(upstream) = self.upstream.as_ref() else { return Ok(false) };
+            let Some(t) = upstream.next(ctx)? else { return Ok(false) };
             let canonical_key = match &t.value {
                 GValue::Vertex(vt) => CanonicalKey::Vertex(*vt),
                 GValue::Edge(eg) => CanonicalKey::Edge(eg.canonical_edge_key()),
@@ -55,23 +55,22 @@ impl CoreStep for ValuesStep {
                 continue;
             }
 
-            let mut results = smallvec![];
             if self.emit_property {
                 for key in &self.property_keys {
                     if let Some(value) = ctx.get_property(&canonical_key, key)? {
-                        results.push(Traverser::new_rc_with_parent(GValue::Property(value), t.clone()));
+                        buffer.push_back(Traverser::new_rc_with_parent(GValue::Property(value), t.clone()));
                     }
                 }
             } else {
                 for key in &self.property_keys {
                     if let Some(value) = ctx.get_value(&canonical_key, key)? {
-                        results.push(Traverser::new_rc_with_parent(GValue::Scalar(value), t.clone()));
+                        buffer.push_back(Traverser::new_rc_with_parent(GValue::Scalar(value), t.clone()));
                     }
                 }
             }
 
-            if !results.is_empty() {
-                return Ok(Some(results));
+            if !buffer.is_empty() {
+                return Ok(true);
             }
         }
     }

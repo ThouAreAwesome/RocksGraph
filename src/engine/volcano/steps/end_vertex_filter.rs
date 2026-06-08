@@ -12,7 +12,7 @@
 
 use std::rc::Rc;
 
-use smallvec::{smallvec, SmallVec};
+use std::collections::VecDeque;
 
 use crate::{
     engine::{
@@ -40,13 +40,14 @@ impl CoreStep for EndVertexFilter {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx, buffer: &mut VecDeque<Rc<Traverser>>) -> Result<bool, StoreError> {
         loop {
-            let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
-            let Some(t) = upstream.next(ctx)? else { return Ok(None) };
+            let Some(upstream) = self.upstream.as_ref() else { return Ok(false) };
+            let Some(t) = upstream.next(ctx)? else { return Ok(false) };
             if let GValue::Edge(edge) = &t.value {
                 if self.ids.contains(&edge.secondary_id) {
-                    return Ok(Some(smallvec![Rc::clone(&t)]));
+                    buffer.push_back(t);
+                    return Ok(true);
                 }
             } else {
                 return Err(StoreError::UnexpectedDataType("end vertex filter can only be applied on Edge".into()));

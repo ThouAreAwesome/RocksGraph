@@ -12,8 +12,6 @@
 
 use std::rc::Rc;
 
-use smallvec::{smallvec, SmallVec};
-
 use crate::{
     engine::{
         context::GraphCtx,
@@ -22,6 +20,8 @@ use crate::{
     },
     types::{element::Property, error::StoreError, gvalue::Primitive, keys::CanonicalKey, prop_key::PropKey, GValue},
 };
+
+use std::collections::VecDeque;
 
 pub struct PropertyStep {
     upstream: Option<StepRef>,
@@ -39,10 +39,10 @@ impl CoreStep for PropertyStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx, buffer: &mut VecDeque<Rc<Traverser>>) -> Result<bool, StoreError> {
         loop {
-            let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
-            let Some(t) = upstream.next(ctx)? else { return Ok(None) };
+            let Some(upstream) = self.upstream.as_ref() else { return Ok(false) };
+            let Some(t) = upstream.next(ctx)? else { return Ok(false) };
             let canonical_key = match &t.value {
                 GValue::Vertex(vt) => CanonicalKey::Vertex(*vt),
                 GValue::Edge(eg) => CanonicalKey::Edge(eg.canonical_edge_key()),
@@ -51,7 +51,8 @@ impl CoreStep for PropertyStep {
             let mut prop = self.prop.clone();
             prop.owner = canonical_key;
             ctx.set_property(&prop)?;
-            return Ok(Some(smallvec![Rc::clone(&t)]));
+            buffer.push_back(t);
+            return Ok(true);
         }
     }
 

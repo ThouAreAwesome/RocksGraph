@@ -12,7 +12,7 @@
 
 use std::rc::Rc;
 
-use smallvec::{smallvec, SmallVec};
+use std::collections::VecDeque;
 
 use crate::{
     engine::{
@@ -39,15 +39,16 @@ impl CoreStep for VStep {
         panic!("VStep is a source step, it does not have an upstream.");
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx, buffer: &mut VecDeque<Rc<Traverser>>) -> Result<bool, StoreError> {
         loop {
             if self.current_idx >= self.vertex_ids.len() {
-                return Ok(None);
+                return Ok(false);
             }
             let id = self.vertex_ids[self.current_idx];
             self.current_idx += 1;
             if let Some(vk) = ctx.get_vertex(id)? {
-                return Ok(Some(smallvec![Traverser::new_rc(GValue::Vertex(vk))]));
+                buffer.push_back(Traverser::new_rc(GValue::Vertex(vk)));
+                return Ok(true);
             }
         }
     }

@@ -14,7 +14,7 @@ use crate::{
     engine::{context::GraphCtx, traverser::Traverser},
     types::error::StoreError,
 };
-use smallvec::SmallVec;
+
 use std::{cell::RefCell, collections::VecDeque, rc::Rc};
 
 // ── Public step reference ─────────────────────────────────────────────────────
@@ -41,9 +41,9 @@ pub trait CoreStep {
     /// Wire an upstream step. Called once per upstream during plan construction.
     fn add_upper(&mut self, upstream: StepRef);
 
-    /// Pull the next batch of results. Returns `Ok(None)` when exhausted,
+    /// Pull the next batch of results. Returns `false` when exhausted,
     /// `Err` on storage or runtime failure.
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError>;
+    fn produce(&mut self, ctx: &mut dyn GraphCtx, buffer: &mut VecDeque<Rc<Traverser>>) -> Result<bool, StoreError>;
 
     /// Reset all mutable state and propagate to upstreams.
     fn reset(&mut self);
@@ -69,9 +69,10 @@ pub struct BufferedStep<T: CoreStep> {
     pub(crate) inner: RefCell<StepInner<T>>,
 }
 
+pub static BUFFER_CAPACITY: usize = 4;
 impl<T: CoreStep + 'static> BufferedStep<T> {
     pub fn new(core: T) -> Rc<Self> {
-        Rc::new(Self { inner: RefCell::new(StepInner { core, buffer: VecDeque::new() }) })
+        Rc::new(Self { inner: RefCell::new(StepInner { core, buffer: VecDeque::with_capacity(BUFFER_CAPACITY) }) })
     }
 }
 
@@ -80,12 +81,15 @@ impl<T: CoreStep + 'static> GremlinStep for BufferedStep<T> {
         // One borrow covers the buffer check, the produce call, and the pop.
         // Safety: produce only calls upstream steps (different Rc objects),
         // so their RefCells are independent — no re-entrant borrow can occur.
-        let mut inner = self.inner.borrow_mut();
-        if inner.buffer.is_empty() {
-            let Some(items) = inner.core.produce(ctx)? else { return Ok(None) };
-            inner.buffer.extend(items);
+        let mut borrow = self.inner.borrow_mut();
+        let inner = &mut *borrow; // Dereference RefMut to allow field splitting
+        if !inner.buffer.is_empty() {
+            return Ok(inner.buffer.pop_front());
         }
-        Ok(inner.buffer.pop_front())
+        if inner.core.produce(ctx, &mut inner.buffer)? {
+            return Ok(inner.buffer.pop_front());
+        }
+        Ok(None)
     }
 
     fn reset(&self) {

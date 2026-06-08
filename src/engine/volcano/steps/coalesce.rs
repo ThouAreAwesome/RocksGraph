@@ -12,7 +12,8 @@
 
 use std::rc::Rc;
 
-use smallvec::{smallvec, SmallVec};
+use smallvec::smallvec;
+use std::collections::VecDeque;
 
 use crate::{
     engine::{
@@ -45,12 +46,13 @@ impl CoreStep for CoalesceStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx, buffer: &mut VecDeque<Rc<Traverser>>) -> Result<bool, StoreError> {
         loop {
             // If we found a winning branch, keep draining it
             if let Some(winning_idx) = self.winning_plan_idx {
                 if let Some(res) = self.physical_plans[winning_idx].next(ctx)? {
-                    return Ok(Some(smallvec![res]));
+                    buffer.push_back(res);
+                    return Ok(true);
                 }
                 self.current_input = None;
                 self.winning_plan_idx = None;
@@ -58,8 +60,8 @@ impl CoreStep for CoalesceStep {
 
             // Fetch next input from upstream when current is exhausted
             if self.current_input.is_none() {
-                let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
-                let Some(t) = upstream.next(ctx)? else { return Ok(None) };
+                let Some(upstream) = self.upstream.as_ref() else { return Ok(false) };
+                let Some(t) = upstream.next(ctx)? else { return Ok(false) };
                 self.current_input = Some(Rc::clone(&t));
                 self.current_plan_idx = 0;
                 if let Some(p) = self.physical_plans.first() {
@@ -77,7 +79,8 @@ impl CoreStep for CoalesceStep {
             // Try the current branch
             if let Some(res) = self.physical_plans[self.current_plan_idx].next(ctx)? {
                 self.winning_plan_idx = Some(self.current_plan_idx);
-                return Ok(Some(smallvec![res]));
+                buffer.push_back(res);
+                return Ok(true);
             }
 
             // Branch yielded nothing — advance to next branch

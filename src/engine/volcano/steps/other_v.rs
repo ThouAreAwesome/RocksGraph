@@ -10,9 +10,7 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::rc::Rc;
-
-use smallvec::{smallvec, SmallVec};
+use std::{collections::VecDeque, rc::Rc};
 
 use crate::{
     engine::{
@@ -33,12 +31,13 @@ impl CoreStep for OtherVStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx, buffer: &mut VecDeque<Rc<Traverser>>) -> Result<bool, StoreError> {
         loop {
-            let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
-            let Some(t) = upstream.next(ctx)? else { return Ok(None) };
+            let Some(upstream) = self.upstream.as_ref() else { return Ok(false) };
+            let Some(t) = upstream.next(ctx)? else { return Ok(false) };
             if let GValue::Edge(ek) = &t.value {
-                return Ok(Some(smallvec![Traverser::new_rc(GValue::Vertex(ek.secondary_id))]));
+                buffer.push_back(Traverser::new_rc(GValue::Vertex(ek.secondary_id)));
+                return Ok(true);
             }
         }
     }

@@ -12,7 +12,7 @@
 
 use std::rc::Rc;
 
-use smallvec::{smallvec, SmallVec};
+use std::collections::VecDeque;
 
 use crate::{
     engine::{
@@ -39,13 +39,14 @@ impl CoreStep for HasIdStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx, buffer: &mut VecDeque<Rc<Traverser>>) -> Result<bool, StoreError> {
         loop {
-            let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
-            let Some(t) = upstream.next(ctx)? else { return Ok(None) };
+            let Some(upstream) = self.upstream.as_ref() else { return Ok(false) };
+            let Some(t) = upstream.next(ctx)? else { return Ok(false) };
             if let GValue::Vertex(vk) = &t.value {
                 if self.target_ids.contains(vk) {
-                    return Ok(Some(smallvec![t]));
+                    buffer.push_back(t);
+                    return Ok(true);
                 }
             }
         }

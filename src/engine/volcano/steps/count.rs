@@ -12,7 +12,7 @@
 
 use std::rc::Rc;
 
-use smallvec::{smallvec, SmallVec};
+use std::collections::VecDeque;
 
 use crate::{
     engine::{
@@ -37,17 +37,18 @@ impl CoreStep for CountStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx, buffer: &mut VecDeque<Rc<Traverser>>) -> Result<bool, StoreError> {
         if self.done {
-            return Ok(None);
+            return Ok(false);
         }
-        let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
+        let Some(upstream) = self.upstream.as_ref() else { return Ok(false) };
         let mut count: u64 = 0;
         while upstream.next(ctx)?.is_some() {
             count += 1;
         }
         self.done = true;
-        Ok(Some(smallvec![Traverser::new_rc(GValue::Scalar(Primitive::Int64(count as i64)))]))
+        buffer.push_back(Traverser::new_rc(GValue::Scalar(Primitive::Int64(count as i64))));
+        Ok(true)
     }
 
     fn reset(&mut self) {

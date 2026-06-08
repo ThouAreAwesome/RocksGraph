@@ -12,7 +12,7 @@
 
 use std::rc::Rc;
 
-use smallvec::SmallVec;
+use std::collections::VecDeque;
 
 use crate::{
     engine::{
@@ -34,8 +34,8 @@ impl CoreStep for DropStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
-        let Some(up) = self.upstream.as_deref() else { return Ok(None) };
+    fn produce(&mut self, ctx: &mut dyn GraphCtx, _buffer: &mut VecDeque<Rc<Traverser>>) -> Result<bool, StoreError> {
+        let Some(up) = self.upstream.as_deref() else { return Ok(false) };
         while let Some(el) = up.next(ctx)? {
             match &el.value {
                 GValue::Property(pp) => ctx.drop_property(pp)?,
@@ -46,7 +46,7 @@ impl CoreStep for DropStep {
                 }
             }
         }
-        Ok(None)
+        Ok(false)
     }
 
     /// Reset all mutable state and propagate to upstreams.

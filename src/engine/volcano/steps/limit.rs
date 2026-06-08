@@ -12,7 +12,7 @@
 
 use std::rc::Rc;
 
-use smallvec::{smallvec, SmallVec};
+use std::collections::VecDeque;
 
 use crate::{
     engine::{
@@ -40,14 +40,15 @@ impl CoreStep for LimitStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx, buffer: &mut VecDeque<Rc<Traverser>>) -> Result<bool, StoreError> {
         if self.current_idx >= self.limit as usize {
-            return Ok(None);
+            return Ok(false);
         }
-        let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
-        let Some(t) = upstream.next(ctx)? else { return Ok(None) };
+        let Some(upstream) = self.upstream.as_ref() else { return Ok(false) };
+        let Some(t) = upstream.next(ctx)? else { return Ok(false) };
         self.current_idx += 1;
-        Ok(Some(smallvec![Rc::clone(&t)]))
+        buffer.push_back(t);
+        Ok(true)
     }
 
     fn reset(&mut self) {

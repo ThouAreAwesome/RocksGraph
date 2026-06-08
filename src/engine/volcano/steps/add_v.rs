@@ -12,7 +12,8 @@
 
 use std::{collections::HashMap, rc::Rc};
 
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
+use std::collections::VecDeque;
 
 use crate::{
     engine::{
@@ -52,16 +53,17 @@ impl CoreStep for AddVStep {
         panic!("AddVStep is a source step and cannot have an upstream");
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx, buffer: &mut VecDeque<Rc<Traverser>>) -> Result<bool, StoreError> {
         if self.emitted {
-            return Ok(None);
+            return Ok(false);
         }
         let vk = ctx.add_vertex(self.vertex_id, self.label_id)?;
         for property in &self.properties {
             ctx.set_property(property)?;
         }
         self.emitted = true;
-        Ok(Some(smallvec![Traverser::new_rc(GValue::Vertex(vk))]))
+        buffer.push_back(Traverser::new_rc(GValue::Vertex(vk)));
+        Ok(true)
     }
 
     fn reset(&mut self) {

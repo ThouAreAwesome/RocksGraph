@@ -21,7 +21,7 @@ pub mod coalesce;
 pub mod count;
 pub mod drop;
 pub mod end_vertex_filter;
-pub mod get_out_e;
+pub mod get_e;
 pub mod has_id;
 pub mod has_label;
 pub mod has_property;

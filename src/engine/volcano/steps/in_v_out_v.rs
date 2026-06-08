@@ -12,7 +12,7 @@
 
 use std::rc::Rc;
 
-use smallvec::{smallvec, SmallVec};
+use std::collections::VecDeque;
 
 use crate::{
     engine::{
@@ -39,23 +39,18 @@ impl CoreStep for InVOutVStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx, buffer: &mut VecDeque<Rc<Traverser>>) -> Result<bool, StoreError> {
         loop {
-            let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
-            let Some(t) = upstream.next(ctx)? else { return Ok(None) };
+            let Some(upstream) = self.upstream.as_ref() else { return Ok(false) };
+            let Some(t) = upstream.next(ctx)? else { return Ok(false) };
             if let GValue::Edge(ek) = &t.value {
                 let cek = ek.canonical_edge_key();
                 if self.direction == Direction::OUT {
-                    return Ok(Some(smallvec![Traverser::new_rc_with_parent(
-                        GValue::Vertex(cek.src_id),
-                        Rc::clone(&t)
-                    )]));
+                    buffer.push_back(Traverser::new_rc_with_parent(GValue::Vertex(cek.src_id), t.clone()));
                 } else {
-                    return Ok(Some(smallvec![Traverser::new_rc_with_parent(
-                        GValue::Vertex(cek.dst_id),
-                        Rc::clone(&t)
-                    )]));
+                    buffer.push_back(Traverser::new_rc_with_parent(GValue::Vertex(cek.dst_id), t.clone()));
                 }
+                return Ok(true);
             }
         }
     }

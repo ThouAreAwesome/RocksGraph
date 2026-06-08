@@ -12,7 +12,7 @@
 
 use std::rc::Rc;
 
-use smallvec::{smallvec, SmallVec};
+use std::collections::VecDeque;
 
 use crate::{
     engine::{
@@ -20,51 +20,52 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{error::StoreError, EdgeKey, GValue, LabelId, VertexKey},
+    types::{error::StoreError, Direction, EdgeKey, GValue, LabelId, VertexKey},
 };
 
-pub struct GetOutEStep {
+pub struct GetEStep {
     upstream: Option<StepRef>,
     // label_ids should not be empty.
     label_ids: Vec<LabelId>,
+    direction: Direction,
     // end_vertex_ids should not be empty.
     end_vertex_ids: Vec<VertexKey>,
 }
 
-impl GetOutEStep {
-    pub fn new(label_ids: Vec<LabelId>, end_vertex_ids: Vec<VertexKey>) -> Self {
-        Self { upstream: None, label_ids, end_vertex_ids }
+impl GetEStep {
+    pub fn new(label_ids: Vec<LabelId>, direction: Direction, end_vertex_ids: Vec<VertexKey>) -> Self {
+        Self { upstream: None, label_ids, direction, end_vertex_ids }
     }
 }
 
-impl CoreStep for GetOutEStep {
+impl CoreStep for GetEStep {
     fn add_upper(&mut self, upstream: StepRef) {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx, buffer: &mut VecDeque<Rc<Traverser>>) -> Result<bool, StoreError> {
         loop {
-            let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
-            let Some(t) = upstream.next(ctx)? else { return Ok(None) };
+            let Some(upstream) = self.upstream.as_ref() else { return Ok(false) };
+            let Some(t) = upstream.next(ctx)? else { return Ok(false) };
 
-            let src = match t.value {
-                GValue::Vertex(src) => src,
-                _ => return Err(StoreError::UnexpectedDataType("expected Vertex before outE".into())),
+            let GValue::Vertex(src) = t.value else {
+                return Err(StoreError::UnexpectedDataType("expected Vertex before outE".into()));
             };
-
-            let mut results: SmallVec<[_; 4]> = smallvec![];
 
             for label_id in &self.label_ids {
                 for dst in &self.end_vertex_ids {
-                    let edge_key = EdgeKey::out_e(src, *label_id, *dst, 0);
+                    let edge_key = match self.direction {
+                        Direction::OUT => EdgeKey::out_e(src, *label_id, *dst, 0),
+                        Direction::IN => EdgeKey::in_e(src, *label_id, *dst, 0),
+                    };
 
                     if let Some(_e) = ctx.get_edge(&edge_key)? {
-                        results.push(Traverser::new_rc_with_parent(GValue::Edge(edge_key), Rc::clone(&t)));
+                        buffer.push_back(Traverser::new_rc_with_parent(GValue::Edge(edge_key), t.clone()));
                     }
                 }
             }
-            if !results.is_empty() {
-                return Ok(Some(results));
+            if !buffer.is_empty() {
+                return Ok(true);
             }
         }
     }

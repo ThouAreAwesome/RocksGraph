@@ -12,7 +12,7 @@
 
 use std::rc::Rc;
 
-use smallvec::SmallVec;
+use std::collections::VecDeque;
 
 use crate::{
     engine::{
@@ -25,9 +25,10 @@ use crate::{
 
 pub struct BothEStep {
     upstream: Option<StepRef>,
+
     label_ids: Vec<LabelId>,
-    limit: Option<u32>,
     end_vertex_ids: Option<Vec<VertexKey>>,
+
     current_input: Option<Rc<Traverser>>,
     current_label_idx: usize,
     current_direction: Direction, // 0 = out, 1 = in
@@ -38,7 +39,6 @@ impl BothEStep {
         Self {
             upstream: None,
             label_ids,
-            limit: None,
             end_vertex_ids,
             current_input: None,
             current_label_idx: 0,
@@ -52,11 +52,11 @@ impl CoreStep for BothEStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx, buffer: &mut VecDeque<Rc<Traverser>>) -> Result<bool, StoreError> {
         loop {
             if self.current_input.is_none() {
-                let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
-                let Some(t) = upstream.next(ctx)? else { return Ok(None) };
+                let Some(upstream) = self.upstream.as_ref() else { return Ok(false) };
+                let Some(t) = upstream.next(ctx)? else { return Ok(false) };
                 if matches!(&t.value, GValue::Vertex(_)) {
                     self.current_input = Some(t);
                     self.current_label_idx = 0;
@@ -70,21 +70,20 @@ impl CoreStep for BothEStep {
             if let GValue::Vertex(vk) = &t.value {
                 let label = if self.label_ids.is_empty() { None } else { Some(self.label_ids[self.current_label_idx]) };
 
-                let mut results = SmallVec::new();
                 if self.current_direction == Direction::OUT {
                     let edges = ctx.get_adjacent_edges(
                         *vk,
                         label,
                         self.current_direction,
                         self.end_vertex_ids.as_deref(),
-                        self.limit,
+                        None,
                     )?;
                     for edge in edges {
-                        results.push(Traverser::new_rc_with_parent(GValue::Edge(edge), Rc::clone(&t)));
+                        buffer.push_back(Traverser::new_rc_with_parent(GValue::Edge(edge), t.clone()));
                     }
                     self.current_direction = Direction::IN;
-                    if !results.is_empty() {
-                        return Ok(Some(results));
+                    if !buffer.is_empty() {
+                        return Ok(true);
                     }
                 }
 
@@ -94,18 +93,18 @@ impl CoreStep for BothEStep {
                         label,
                         self.current_direction,
                         self.end_vertex_ids.as_deref(),
-                        self.limit,
+                        None,
                     )?;
                     for edge in edges {
-                        results.push(Traverser::new_rc_with_parent(GValue::Edge(edge), Rc::clone(&t)));
+                        buffer.push_back(Traverser::new_rc_with_parent(GValue::Edge(edge), t.clone()));
                     }
                     self.current_direction = Direction::OUT;
                     self.current_label_idx += 1;
                     if self.label_ids.is_empty() || self.current_label_idx >= self.label_ids.len() {
                         self.current_input = None;
                     }
-                    if !results.is_empty() {
-                        return Ok(Some(results));
+                    if !buffer.is_empty() {
+                        return Ok(true);
                     }
                 }
             } else {

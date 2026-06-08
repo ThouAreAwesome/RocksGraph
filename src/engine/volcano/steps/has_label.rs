@@ -10,10 +10,6 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::rc::Rc;
-
-use smallvec::{smallvec, SmallVec};
-
 use crate::{
     engine::{
         context::GraphCtx,
@@ -22,6 +18,7 @@ use crate::{
     },
     types::{error::StoreError, keys::LabelId, prop_key::LABEL, CanonicalKey, GValue, Primitive},
 };
+use std::{collections::VecDeque, rc::Rc};
 
 pub struct HasLabelStep {
     upstream: Option<StepRef>,
@@ -39,10 +36,10 @@ impl CoreStep for HasLabelStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx, buffer: &mut VecDeque<Rc<Traverser>>) -> Result<bool, StoreError> {
         loop {
-            let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
-            let Some(t) = upstream.next(ctx)? else { return Ok(None) };
+            let Some(upstream) = self.upstream.as_ref() else { return Ok(false) };
+            let Some(t) = upstream.next(ctx)? else { return Ok(false) };
             let matched = match &t.value {
                 GValue::Vertex(vk) => {
                     let Some(Primitive::Int32(lb)) = ctx.get_value(&CanonicalKey::Vertex(*vk), &LABEL).unwrap() else {
@@ -54,7 +51,8 @@ impl CoreStep for HasLabelStep {
                 _ => false,
             };
             if matched {
-                return Ok(Some(smallvec![Rc::clone(&t)]));
+                buffer.push_back(t);
+                return Ok(true);
             }
         }
     }
