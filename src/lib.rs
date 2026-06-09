@@ -40,6 +40,5 @@ pub mod gremlin;
 pub mod optimizer;
 pub mod planner;
 pub mod schema;
-pub mod server;
 pub mod store;
 pub mod types;

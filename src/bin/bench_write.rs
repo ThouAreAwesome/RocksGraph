@@ -10,23 +10,20 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
+use hdrhistogram::Histogram;
 use multigraph::{
-    engine::volcano::builder::PhysicalPlanBuilder,
     graph::LogicalGraph,
-    optimizer::apply_rules,
-    planner::logical_step::{
-        AddEStep, AddVStep, CoalesceStep, HasIdStep, HasPropertyStep, LogicalPlan, LogicalStep, OtherVStep, OutEStep,
-        PropertyStep, VStep, WhereStep,
+    gremlin::{
+        config::Config,
+        traversal::{self, graphTraversalSource, __},
     },
-    server::{config::Config, gremlin_server},
     store::{GraphStore, RocksStorage},
-    types::{error::StoreError, gvalue::Primitive},
+    types::{error::StoreError, gvalue::Primitive, prop_key::ID},
 };
 use smol_str::SmolStr;
 
 use rand::Rng;
 use std::{
-    collections::HashMap,
     env,
     fs::File,
     io::{BufRead, BufReader},
@@ -54,23 +51,13 @@ fn generate_random_string(len: usize) -> String {
 /// Creates a vertex; if it already exists the error is silently ignored.
 fn upsert_vertex(graph: &mut LogicalGraph<RocksStorage>, label: u16, vertex_id: i64) -> Result<bool, StoreError> {
     let mut rng = rand::thread_rng();
-    let mut plan = LogicalPlan {
-        steps: vec![
-            LogicalStep::AddV(AddVStep { label_id: label, vertex_id: Some(vertex_id), properties: HashMap::new() }),
-            LogicalStep::Property(PropertyStep {
-                prop_key: SmolStr::new("name"),
-                prop_value: Primitive::String(generate_random_string(10).into()),
-            }),
-            LogicalStep::Property(PropertyStep {
-                prop_key: SmolStr::new("age"),
-                prop_value: Primitive::Int64(rng.gen_range(18..100)),
-            }),
-        ],
-    };
-    let _ = apply_rules(&mut plan).unwrap();
-
-    let mut builder: PhysicalPlanBuilder = Default::default();
-    let physical_plan = builder.build(&plan);
+    let mut traversal = graphTraversalSource();
+    traversal
+        .addV(label)
+        .property(ID, Primitive::Int64(vertex_id))
+        .property(SmolStr::new("name"), Primitive::String(generate_random_string(10).into()))
+        .property(SmolStr::new("age"), Primitive::Int64(rng.gen_range(18..100)));
+    let physical_plan = traversal.build();
 
     match physical_plan.next(graph) {
         Ok(Some(_)) => Ok(true),
@@ -82,58 +69,20 @@ fn upsert_vertex(graph: &mut LogicalGraph<RocksStorage>, label: u16, vertex_id: 
 /// Creates an edge from src to dst if it does not already exist, using coalesce.
 /// Returns Ok(true) if created, Ok(false) if it already existed.
 fn upsert_edge(graph: &mut LogicalGraph<RocksStorage>, src: i64, dst: i64, edge_type: u16) -> Result<bool, StoreError> {
-    // g.V(src).coalesce(
-    //   __.outE(edge_type).where(__.otherV().hasId(dst)),   -- check if edge exists
-    //   __.addE(edge_type, src, dst, props)              -- create if not
-    // )
-    // The coalesce short-circuits: if the first branch yields results the edge
-    // already exists and addE is never executed.
     let mut rng = rand::thread_rng();
-    let mut upsert_e_plan = LogicalPlan {
-        steps: vec![
-            LogicalStep::V(VStep { ids: vec![] }),
-            LogicalStep::HasProperty(HasPropertyStep { key: SmolStr::new("id"), value: Primitive::Int64(src) }),
-            LogicalStep::Coalesce(CoalesceStep {
-                plans: vec![
-                    LogicalPlan {
-                        steps: vec![
-                            LogicalStep::OutE(OutEStep { label_ids: vec![edge_type], end_vertex_ids: None }),
-                            LogicalStep::Where(WhereStep {
-                                plan: LogicalPlan {
-                                    steps: vec![
-                                        LogicalStep::OtherV(OtherVStep {}),
-                                        LogicalStep::HasId(HasIdStep { ids: vec![dst] }),
-                                    ],
-                                },
-                            }),
-                        ],
-                    },
-                    LogicalPlan {
-                        steps: vec![
-                            LogicalStep::AddE(AddEStep {
-                                label_id: edge_type,
-                                out_v_id: Some(src),
-                                in_v_id: Some(dst),
-                                properties: HashMap::new(),
-                            }),
-                            LogicalStep::Property(PropertyStep {
-                                prop_key: SmolStr::new("weight"),
-                                prop_value: Primitive::Float64(rng.gen_range(0.1..10.0)),
-                            }),
-                            LogicalStep::Property(PropertyStep {
-                                prop_key: SmolStr::new("timestamp"),
-                                prop_value: Primitive::Int64(rng.gen_range(0..1000000)),
-                            }),
-                        ],
-                    },
-                ],
-            }),
-        ],
-    };
-    let _ = apply_rules(&mut upsert_e_plan).unwrap();
 
-    let mut builder: PhysicalPlanBuilder = Default::default();
-    let physical_plan = builder.build(&upsert_e_plan);
+    // Using the fluent API to construct the query
+    let mut traversal = graphTraversalSource();
+    traversal.V(&[src]).coalesce(vec![
+        __().outE(&[edge_type]).r#where(__().otherV().hasId(&[dst])),
+        __().addE(edge_type)
+            .from(src)
+            .to(dst)
+            .property(SmolStr::new("weight"), Primitive::Float64(rng.gen_range(0.1..10.0)))
+            .property(SmolStr::new("timestamp"), Primitive::Int64(rng.gen_range(0..1000000))),
+    ]);
+
+    let physical_plan = traversal.build();
 
     match physical_plan.next(graph) {
         Ok(Some(_)) => Ok(true),
@@ -154,7 +103,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = Config::from_file(&config_path)?;
 
-    let graph_store = gremlin_server::open_rocks_store(Some(&config.storage.data_dir))?;
+    let graph_store = traversal::open_rocks_store(Some(&config.storage.data_dir))?;
 
     let file = File::open("./bench_data/soc-LiveJournal1-1M.txt")?;
     let reader = BufReader::new(file);
@@ -164,6 +113,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mutation_counter = Arc::new(AtomicUsize::new(0));
 
     let (tx, rx) = mpsc::channel::<String>(1000);
+    let (hist_tx, mut hist_rx) = mpsc::channel::<Histogram<u64>>(PARALLELISM);
     let rx = Arc::new(tokio::sync::Mutex::new(rx));
 
     let mut worker_handles = vec![];
@@ -171,6 +121,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let rx = Arc::clone(&rx);
         let mutation_counter = Arc::clone(&mutation_counter);
         let store = Arc::clone(&graph_store);
+        let hist_tx = hist_tx.clone();
 
         let handle = std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
@@ -178,6 +129,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .build()
                 .expect("Failed to create tokio runtime");
 
+            let mut local_hist = Histogram::<u64>::new(3).expect("Failed to create histogram");
             rt.block_on(async move {
                 loop {
                     let line = {
@@ -199,6 +151,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     let (src, dst) = (parts[0], parts[1]);
 
+                    let op_start = Instant::now();
                     let mut lg = LogicalGraph::new(store.begin());
                     let mut success = false;
 
@@ -221,6 +174,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     mutation_counter.fetch_add(1, Ordering::Relaxed);
                                 }
                                 success = true;
+                                let _ = local_hist.record(op_start.elapsed().as_micros() as u64);
                                 break;
                             }
                             Err(StoreError::Conflict) => {
@@ -241,6 +195,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         eprintln!("Failed to upsert edge ({} -> {}) after {} retries", src, dst, MAX_RETRIES);
                     }
                 }
+                let _ = hist_tx.send(local_hist).await;
             })
         });
         worker_handles.push(handle);
@@ -259,13 +214,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     drop(tx);
+    drop(hist_tx);
+
     for handle in worker_handles {
         let _ = handle.join();
+    }
+
+    let mut final_hist: Option<Histogram<u64>> = None;
+    while let Some(h) = hist_rx.recv().await {
+        if let Some(ref mut main_h) = final_hist {
+            main_h.add(h).unwrap();
+        } else {
+            final_hist = Some(h);
+        }
     }
 
     let elapsed = start.elapsed().as_secs().max(1);
     let m_count = mutation_counter.load(Ordering::Relaxed) as u64;
     println!("Final — mutations: {}, speed: {}/s", m_count, m_count / elapsed);
+
+    if let Some(h) = final_hist {
+        println!(
+            "Latency (μs) — p50: {}_us, p90: {}_us, p95: {}_us, p99: {}_us, max: {}_us",
+            h.value_at_quantile(0.5),
+            h.value_at_quantile(0.9),
+            h.value_at_quantile(0.95),
+            h.value_at_quantile(0.99),
+            h.max()
+        );
+    }
 
     Ok(())
 }

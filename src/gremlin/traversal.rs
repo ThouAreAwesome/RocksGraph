@@ -1,4 +1,6 @@
 use crate::{
+    engine::volcano::builder::{PhysicalPlan, PhysicalPlanBuilder},
+    optimizer::apply_rules,
     planner::logical_step::{
         AddEStep, AddVStep, BothEStep, BothStep, CoalesceStep, CountStep, FromStep, HasIdStep, HasLabelStep,
         HasPropertyStep, InEStep, InStep, InVStep, LimitStep, LogicalPlan, LogicalStep, OtherVStep, OutEStep, OutStep,
@@ -8,16 +10,6 @@ use crate::{
 };
 use smol_str::SmolStr;
 use std::collections::HashMap;
-#[derive(Clone)]
-pub enum GremlinArgument {
-    String(String),
-    Int(i64),
-    Float(f64),
-    Bool(bool),
-    NestedAst(GremlinQueryAst),
-    List(Vec<GremlinArgument>),
-    Map(HashMap<String, GremlinArgument>),
-}
 
 #[derive(Clone)]
 pub struct GremlinQueryAst {
@@ -44,8 +36,17 @@ pub fn __() -> GraphTraversal {
 
 #[allow(non_snake_case)]
 impl GraphTraversal {
-    pub fn build(&self) -> LogicalPlan {
+    fn build_logical(&self) -> LogicalPlan {
         LogicalPlan { steps: self.ast.steps.clone() }
+    }
+
+    pub fn build(&self) -> PhysicalPlan {
+        let mut logical_plan = LogicalPlan { steps: self.ast.steps.clone() };
+
+        let _ = apply_rules(&mut logical_plan).unwrap();
+
+        let mut builder: PhysicalPlanBuilder = Default::default();
+        builder.build(&logical_plan)
     }
 
     pub fn has(&mut self, key: SmolStr, value: Primitive) -> &mut Self {
@@ -156,21 +157,21 @@ impl GraphTraversal {
     }
 
     pub fn r#where(&mut self, traversal: &mut GraphTraversal) -> &mut Self {
-        self.ast.steps.push(LogicalStep::Where(WhereStep { plan: traversal.build() }));
+        self.ast.steps.push(LogicalStep::Where(WhereStep { plan: traversal.build_logical() }));
         self
     }
 
     pub fn union(&mut self, traversals: Vec<&mut GraphTraversal>) -> &mut Self {
         self.ast
             .steps
-            .push(LogicalStep::Union(UnionStep { plans: traversals.into_iter().map(|t| t.build()).collect() }));
+            .push(LogicalStep::Union(UnionStep { plans: traversals.into_iter().map(|t| t.build_logical()).collect() }));
         self
     }
 
     pub fn coalesce(&mut self, traversals: Vec<&mut GraphTraversal>) -> &mut Self {
-        self.ast
-            .steps
-            .push(LogicalStep::Coalesce(CoalesceStep { plans: traversals.into_iter().map(|t| t.build()).collect() }));
+        self.ast.steps.push(LogicalStep::Coalesce(CoalesceStep {
+            plans: traversals.into_iter().map(|t| t.build_logical()).collect(),
+        }));
         self
     }
     pub fn limit(&mut self, limit: u32) -> &mut Self {
@@ -180,5 +181,18 @@ impl GraphTraversal {
     pub fn hasId(&mut self, ids: &[i64]) -> &mut Self {
         self.ast.steps.push(LogicalStep::HasId(HasIdStep { ids: ids.to_vec() }));
         self
+    }
+}
+
+use crate::store::RocksStorage;
+use std::{path::Path, sync::Arc};
+
+pub fn open_rocks_store<P: AsRef<Path>>(path: Option<P>) -> Result<Arc<RocksStorage>, Box<dyn std::error::Error>> {
+    match path {
+        Some(pth) => Ok(Arc::new(RocksStorage::open(pth)?)),
+        None => {
+            let dir = tempfile::tempdir()?;
+            Ok(Arc::new(RocksStorage::open(dir.path())?))
+        }
     }
 }

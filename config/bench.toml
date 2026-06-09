@@ -4,4 +4,4 @@ port = 8183 # Use a different port to avoid conflict with main server if run man
 
 [storage]
 # Use a separate directory for benchmark data
-data_dir = "data/rocksdb_bench"
+data_dir = "data/rocksdb_bench_1M"
