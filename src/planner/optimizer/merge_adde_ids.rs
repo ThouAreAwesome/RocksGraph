@@ -15,7 +15,7 @@ use crate::{
     types::error::StoreError,
 };
 
-pub(super) fn merge_adde_from(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
+pub fn merge_adde_from(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
     let mut plan_changed = false;
     let mut i = 0;
     let mut j = 1;

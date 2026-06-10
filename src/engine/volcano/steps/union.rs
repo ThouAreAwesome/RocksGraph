@@ -29,13 +29,14 @@ use crate::{
 #[derive(Debug)]
 pub struct UnionStep {
     upstream: Option<StepRef>,
-    physical_plans: Vec<PhysicalPlan>,
+    physical_plans: SmallVec<[PhysicalPlan; 4]>,
+
     current_plan_idx: usize,
     current_input: Option<Rc<Traverser>>,
 }
 
 impl UnionStep {
-    pub fn new(physical_plans: Vec<PhysicalPlan>) -> Self {
+    pub fn new(physical_plans: SmallVec<[PhysicalPlan; 4]>) -> Self {
         Self { upstream: None, physical_plans, current_plan_idx: 0, current_input: None }
     }
 }

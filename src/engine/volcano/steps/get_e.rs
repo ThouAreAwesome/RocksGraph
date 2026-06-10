@@ -27,14 +27,18 @@ use crate::{
 pub struct GetEStep {
     upstream: Option<StepRef>,
     // label_ids should not be empty.
-    label_ids: Vec<LabelId>,
+    label_ids: SmallVec<[LabelId; 4]>,
     // end_vertex_ids should not be empty.
-    end_vertex_ids: Vec<VertexKey>,
+    end_vertex_ids: SmallVec<[VertexKey; 4]>,
     direction: Direction,
 }
 
 impl GetEStep {
-    pub fn new(label_ids: Vec<LabelId>, end_vertex_ids: Vec<VertexKey>, direction: Direction) -> Self {
+    pub fn new(
+        label_ids: SmallVec<[LabelId; 4]>,
+        end_vertex_ids: SmallVec<[VertexKey; 4]>,
+        direction: Direction,
+    ) -> Self {
         Self { upstream: None, label_ids, end_vertex_ids, direction }
     }
 }

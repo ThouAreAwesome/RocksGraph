@@ -15,7 +15,7 @@ use crate::{
     types::{error::StoreError, prop_key::ID, Primitive},
 };
 
-pub(super) fn merge_addv_id(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
+pub fn merge_addv_id(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
     let mut plan_changed = false;
     let mut i = 0;
     let mut j = 1;

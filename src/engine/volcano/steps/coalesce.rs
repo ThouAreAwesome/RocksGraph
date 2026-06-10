@@ -29,14 +29,14 @@ use crate::{
 #[derive(Debug)]
 pub struct CoalesceStep {
     upstream: Option<StepRef>,
-    physical_plans: Vec<PhysicalPlan>,
+    physical_plans: SmallVec<[PhysicalPlan; 4]>,
     current_input: Option<Rc<Traverser>>,
     current_plan_idx: usize,
     winning_plan_idx: Option<usize>,
 }
 
 impl CoalesceStep {
-    pub fn new(physical_plans: Vec<PhysicalPlan>) -> Self {
+    pub fn new(physical_plans: SmallVec<[PhysicalPlan; 4]>) -> Self {
         Self { upstream: None, physical_plans, current_input: None, current_plan_idx: 0, winning_plan_idx: None }
     }
 }

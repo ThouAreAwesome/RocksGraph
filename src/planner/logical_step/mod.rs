@@ -21,6 +21,7 @@
 //! [`engine::volcano::builder`]: crate::engine::volcano::builder
 
 use crate::types::{gvalue::Primitive, keys::VertexKey, prop_key::PropKey, LabelId, StoreError};
+use smallvec::SmallVec;
 use std::collections::HashMap;
 
 // Reuse the same rewrite/optimize rule for both LogicalPlan and LogicalStep.
@@ -104,7 +105,7 @@ impl Optimizer for LogicalStep {
 
 #[derive(Clone)]
 pub struct EndVertexFilter {
-    pub ids: Vec<VertexKey>,
+    pub ids: SmallVec<[VertexKey; 4]>,
 }
 
 impl Optimizer for EndVertexFilter {}
@@ -130,23 +131,23 @@ pub struct CountStep {}
 impl Optimizer for CountStep {}
 #[derive(Clone)]
 pub struct BothStep {
-    pub label_ids: Vec<LabelId>,
-    pub end_vertex_ids: Option<Vec<VertexKey>>,
+    pub label_ids: SmallVec<[LabelId; 4]>,
+    pub end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
 }
 
 impl Optimizer for BothStep {}
 
 #[derive(Clone)]
 pub struct BothEStep {
-    pub label_ids: Vec<LabelId>,
-    pub end_vertex_ids: Option<Vec<VertexKey>>,
+    pub label_ids: SmallVec<[LabelId; 4]>,
+    pub end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
 }
 
 impl Optimizer for BothEStep {}
 
 #[derive(Clone)]
 pub struct HasLabelStep {
-    pub label_ids: Vec<LabelId>,
+    pub label_ids: SmallVec<[LabelId; 4]>,
 }
 
 impl Optimizer for HasLabelStep {}
@@ -161,31 +162,31 @@ impl Optimizer for HasPropertyStep {}
 
 #[derive(Clone)]
 pub struct InStep {
-    pub label_ids: Vec<LabelId>,
-    pub end_vertex_ids: Option<Vec<VertexKey>>,
+    pub label_ids: SmallVec<[LabelId; 4]>,
+    pub end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
 }
 
 impl Optimizer for InStep {}
 
 #[derive(Clone)]
 pub struct InEStep {
-    pub label_ids: Vec<LabelId>,
-    pub end_vertex_ids: Option<Vec<VertexKey>>,
+    pub label_ids: SmallVec<[LabelId; 4]>,
+    pub end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
 }
 impl Optimizer for InEStep {}
 
 #[derive(Clone)]
 pub struct OutStep {
-    pub label_ids: Vec<LabelId>,
-    pub end_vertex_ids: Option<Vec<VertexKey>>,
+    pub label_ids: SmallVec<[LabelId; 4]>,
+    pub end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
 }
 
 impl Optimizer for OutStep {}
 
 #[derive(Clone)]
 pub struct OutEStep {
-    pub label_ids: Vec<LabelId>,
-    pub end_vertex_ids: Option<Vec<VertexKey>>,
+    pub label_ids: SmallVec<[LabelId; 4]>,
+    pub end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
 }
 
 impl Optimizer for OutEStep {}
@@ -214,14 +215,14 @@ impl Optimizer for ScalarFilterStep {}
 
 #[derive(Clone)]
 pub struct ValuesStep {
-    pub property_keys: Vec<PropKey>,
+    pub property_keys: SmallVec<[PropKey; 4]>,
 }
 
 impl Optimizer for ValuesStep {}
 
 #[derive(Clone)]
 pub struct PropertiesStep {
-    pub property_keys: Vec<PropKey>,
+    pub property_keys: SmallVec<[PropKey; 4]>,
 }
 impl Optimizer for PropertiesStep {}
 
@@ -238,7 +239,7 @@ impl Optimizer for WhereStep {
 
 #[derive(Clone)]
 pub struct UnionStep {
-    pub plans: Vec<LogicalPlan>,
+    pub plans: SmallVec<[LogicalPlan; 0]>,
 }
 
 impl Optimizer for UnionStep {
@@ -294,7 +295,7 @@ impl Optimizer for PropertyStep {}
 
 #[derive(Clone)]
 pub struct VStep {
-    pub ids: Vec<VertexKey>,
+    pub ids: SmallVec<[VertexKey; 4]>,
 }
 
 impl Optimizer for VStep {}
@@ -308,7 +309,7 @@ impl Optimizer for LimitStep {}
 
 #[derive(Clone)]
 pub struct HasIdStep {
-    pub ids: Vec<VertexKey>,
+    pub ids: SmallVec<[VertexKey; 4]>,
 }
 
 impl Optimizer for HasIdStep {}

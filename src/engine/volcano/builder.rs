@@ -440,16 +440,19 @@ mod tests {
     mod debug_print {
         use super::*;
         use crate::{
-            planner::logical_step::{
-                CoalesceStep, CountStep, HasIdStep, HasPropertyStep, InEStep, InStep, LogicalPlan, LogicalStep,
-                OtherVStep, OutEStep, OutStep, PropertiesStep, UnionStep, VStep, WhereStep,
+            planner::{
+                apply_rules,
+                logical_step::{
+                    CoalesceStep, CountStep, HasIdStep, HasPropertyStep, InEStep, InStep, LogicalPlan, LogicalStep,
+                    OtherVStep, OutEStep, OutStep, PropertiesStep, UnionStep, VStep, WhereStep,
+                },
             },
             types::{gvalue::Primitive, prop_key::ID},
         };
 
         fn assert_plan_contains_in_order(steps: Vec<LogicalStep>, expected_step_names: &[&str]) {
             let mut plan = LogicalPlan { steps };
-            crate::optimizer::apply_rules(&mut plan).expect("Optimizer rules failed");
+            apply_rules(&mut plan).expect("Optimizer rules failed");
             let mut builder: PhysicalPlanBuilder = Default::default();
             let physical_plan = builder.build(&plan).unwrap();
             let debug_str = format!("{:?}", physical_plan);
@@ -467,8 +470,8 @@ mod tests {
         #[test]
         fn test_print_v_hasid_properties() {
             let steps = vec![
-                LogicalStep::V(VStep { ids: vec![1] }),
-                LogicalStep::Properties(PropertiesStep { property_keys: vec![] }),
+                LogicalStep::V(VStep { ids: smallvec![1] }),
+                LogicalStep::Properties(PropertiesStep { property_keys: smallvec![] }),
             ];
             assert_plan_contains_in_order(steps, &["VStep", "ValuesStep"]);
         }
@@ -476,9 +479,9 @@ mod tests {
         #[test]
         fn test_print_v_hasid_out_properties() {
             let steps = vec![
-                LogicalStep::V(VStep { ids: vec![1] }),
-                LogicalStep::Out(OutStep { label_ids: vec![], end_vertex_ids: None }),
-                LogicalStep::Properties(PropertiesStep { property_keys: vec![] }),
+                LogicalStep::V(VStep { ids: smallvec![1] }),
+                LogicalStep::Out(OutStep { label_ids: smallvec![], end_vertex_ids: None }),
+                LogicalStep::Properties(PropertiesStep { property_keys: smallvec![] }),
             ];
             assert_plan_contains_in_order(steps, &["VStep", "InOutStep", "ValuesStep"]);
         }
@@ -486,8 +489,8 @@ mod tests {
         #[test]
         fn test_print_v_hasid_oute_count() {
             let steps = vec![
-                LogicalStep::V(VStep { ids: vec![1] }),
-                LogicalStep::OutE(OutEStep { label_ids: vec![], end_vertex_ids: None }),
+                LogicalStep::V(VStep { ids: smallvec![1] }),
+                LogicalStep::OutE(OutEStep { label_ids: smallvec![], end_vertex_ids: None }),
                 LogicalStep::Count(CountStep {}),
             ];
             assert_plan_contains_in_order(steps, &["VStep", "InEOutEStep", "CountStep"]);
@@ -496,11 +499,11 @@ mod tests {
         #[test]
         fn test_print_v_hasid_oute_where_otherv_hasid() {
             let where_plan = LogicalPlan {
-                steps: vec![LogicalStep::OtherV(OtherVStep {}), LogicalStep::HasId(HasIdStep { ids: vec![2] })],
+                steps: vec![LogicalStep::OtherV(OtherVStep {}), LogicalStep::HasId(HasIdStep { ids: smallvec![2] })],
             };
             let steps = vec![
-                LogicalStep::V(VStep { ids: vec![1] }),
-                LogicalStep::OutE(OutEStep { label_ids: vec![], end_vertex_ids: None }),
+                LogicalStep::V(VStep { ids: smallvec![1] }),
+                LogicalStep::OutE(OutEStep { label_ids: smallvec![], end_vertex_ids: None }),
                 LogicalStep::Where(WhereStep { plan: where_plan }),
             ];
             assert_plan_contains_in_order(steps, &["VStep", "InEOutEStep"]);
@@ -509,11 +512,11 @@ mod tests {
         #[test]
         fn test_print_v_hasid_oute_label_where_otherv_hasid() {
             let where_plan = LogicalPlan {
-                steps: vec![LogicalStep::OtherV(OtherVStep {}), LogicalStep::HasId(HasIdStep { ids: vec![2] })],
+                steps: vec![LogicalStep::OtherV(OtherVStep {}), LogicalStep::HasId(HasIdStep { ids: smallvec![2] })],
             };
             let steps = vec![
-                LogicalStep::V(VStep { ids: vec![1] }),
-                LogicalStep::OutE(OutEStep { label_ids: vec![123], end_vertex_ids: None }),
+                LogicalStep::V(VStep { ids: smallvec![1] }),
+                LogicalStep::OutE(OutEStep { label_ids: smallvec![123], end_vertex_ids: None }),
                 LogicalStep::Where(WhereStep { plan: where_plan }),
             ];
             assert_plan_contains_in_order(steps, &["VStep", "GetEStep"]);
@@ -522,11 +525,11 @@ mod tests {
         #[test]
         fn test_print_v_hasid_ine_label_where_otherv_hasid() {
             let where_plan = LogicalPlan {
-                steps: vec![LogicalStep::OtherV(OtherVStep {}), LogicalStep::HasId(HasIdStep { ids: vec![2] })],
+                steps: vec![LogicalStep::OtherV(OtherVStep {}), LogicalStep::HasId(HasIdStep { ids: smallvec![2] })],
             };
             let steps = vec![
-                LogicalStep::V(VStep { ids: vec![1] }),
-                LogicalStep::InE(InEStep { label_ids: vec![456], end_vertex_ids: None }),
+                LogicalStep::V(VStep { ids: smallvec![1] }),
+                LogicalStep::InE(InEStep { label_ids: smallvec![456], end_vertex_ids: None }),
                 LogicalStep::Where(WhereStep { plan: where_plan }),
             ];
             assert_plan_contains_in_order(steps, &["VStep", "GetEStep"]);
@@ -535,11 +538,11 @@ mod tests {
         #[test]
         fn test_print_v_hasprop_id_ine_otherv_hasid() {
             let steps = vec![
-                LogicalStep::V(VStep { ids: vec![] }),
+                LogicalStep::V(VStep { ids: smallvec![] }),
                 LogicalStep::HasProperty(HasPropertyStep { key: ID, value: Primitive::Int64(1) }),
-                LogicalStep::InE(InEStep { label_ids: vec![], end_vertex_ids: None }),
+                LogicalStep::InE(InEStep { label_ids: smallvec![], end_vertex_ids: None }),
                 LogicalStep::OtherV(OtherVStep {}),
-                LogicalStep::HasId(HasIdStep { ids: vec![2] }),
+                LogicalStep::HasId(HasIdStep { ids: smallvec![2] }),
             ];
             assert_plan_contains_in_order(steps, &["VStep", "InEOutEStep", "OtherVStep", "HasIdStep"]);
         }
@@ -547,18 +550,18 @@ mod tests {
         #[test]
         fn test_print_union_and_coalesce() {
             let out_plan =
-                LogicalPlan { steps: vec![LogicalStep::Out(OutStep { label_ids: vec![], end_vertex_ids: None })] };
+                LogicalPlan { steps: vec![LogicalStep::Out(OutStep { label_ids: smallvec![], end_vertex_ids: None })] };
             let in_plan =
-                LogicalPlan { steps: vec![LogicalStep::In(InStep { label_ids: vec![], end_vertex_ids: None })] };
+                LogicalPlan { steps: vec![LogicalStep::In(InStep { label_ids: smallvec![], end_vertex_ids: None })] };
 
             let union_steps = vec![
-                LogicalStep::V(VStep { ids: vec![1] }),
-                LogicalStep::Union(UnionStep { plans: vec![out_plan.clone(), in_plan.clone()] }),
+                LogicalStep::V(VStep { ids: smallvec![1] }),
+                LogicalStep::Union(UnionStep { plans: smallvec![out_plan.clone(), in_plan.clone()] }),
             ];
             assert_plan_contains_in_order(union_steps, &["VStep", "UnionStep", "InOutStep", "InOutStep"]);
 
             let coalesce_steps = vec![
-                LogicalStep::V(VStep { ids: vec![1] }),
+                LogicalStep::V(VStep { ids: smallvec![1] }),
                 LogicalStep::Coalesce(CoalesceStep { plans: vec![out_plan, in_plan] }),
             ];
             assert_plan_contains_in_order(coalesce_steps, &["VStep", "CoalesceStep", "InOutStep", "InOutStep"]);

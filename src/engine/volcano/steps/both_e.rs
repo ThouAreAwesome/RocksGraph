@@ -26,16 +26,16 @@ use crate::{
 #[derive(Debug)]
 pub struct BothEStep {
     upstream: Option<StepRef>,
-    label_ids: Vec<LabelId>,
+    label_ids: SmallVec<[LabelId; 4]>,
     limit: Option<u32>,
-    end_vertex_ids: Option<Vec<VertexKey>>,
+    end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
     current_input: Option<Rc<Traverser>>,
     current_label_idx: usize,
     current_direction: Direction, // 0 = out, 1 = in
 }
 
 impl BothEStep {
-    pub fn new(label_ids: Vec<LabelId>, end_vertex_ids: Option<Vec<VertexKey>>) -> Self {
+    pub fn new(label_ids: SmallVec<[LabelId; 4]>, end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>) -> Self {
         Self {
             upstream: None,
             label_ids,

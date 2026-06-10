@@ -14,6 +14,7 @@ use multigraph::{
     store::{GraphStore, RocksStorage},
     types::error::StoreError,
 };
+
 use smol_str::SmolStr;
 use std::{
     env,
@@ -23,7 +24,7 @@ use std::{
     time::Instant,
 };
 
-const EDGE_LABEL: u16 = 2;
+pub const EDGE_LABEL: u16 = 2;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
@@ -33,6 +34,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|pos| args.get(pos + 1))
         .expect("Please provide a --data-dir path");
 
+    let file_dir = args
+        .iter()
+        .position(|arg| arg == "--file-path")
+        .and_then(|pos| args.get(pos + 1))
+        .expect("Please provide a --file-path to specify the original graph file");
+
     let parallelism = args
         .iter()
         .position(|arg| arg == "--parallelism")
@@ -41,19 +48,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(3); // Default parallelism
 
     let graph_store = traversal::open_rocks_store(Some(&data_dir))?;
-    let file = File::open("./bench_data/soc-LiveJournal1-1M.txt")?;
+    let file = File::open(file_dir)?;
     let reader = BufReader::new(file);
     let lines: Arc<Vec<String>> = Arc::new(reader.lines().collect::<Result<_, _>>()?);
 
     // --- Query 1 ---
     run_query_benchmark(
-        "Q1: g.V(id).properties('name', 'age')",
+        "Q1: g.V().hasId(id).values('name', 'age').count()",
         &lines,
         &graph_store,
         parallelism,
         |lg, src, _dst| {
             let mut t = graphTraversalSource();
-            t.V(&[src]).properties(&[SmolStr::new("name"), SmolStr::new("age")]);
+            t.V(&[]).hasId(&[src]).values(&[SmolStr::new("name"), SmolStr::new("age")]).count();
             let p = t.build()?;
             while p.next(lg)?.is_some() {}
             Ok(())
@@ -62,13 +69,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- Query 2 ---
     run_query_benchmark(
-        "Q2: g.V(id).outE(label).where(otherV().hasId(dst))",
+        "Q2: g.V().hasId(id).outE(label).where(otherV().hasId(dst)).values('weight', 'timestamp').count()",
         &lines,
         &graph_store,
         parallelism,
         |lg, src, dst| {
             let mut t = graphTraversalSource();
-            t.V(&[src]).outE(&[EDGE_LABEL]).r#where(__().otherV().hasId(&[dst]));
+            t.V(&[])
+                .hasId(&[src])
+                .outE(&[EDGE_LABEL])
+                .r#where(__().otherV().hasId(&[dst]))
+                .values(&[SmolStr::new("weight"), SmolStr::new("timestamp")])
+                .count();
             let p = t.build()?;
             while p.next(lg)?.is_some() {}
             Ok(())
@@ -76,23 +88,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     // --- Query 3 ---
-    run_query_benchmark("Q3: g.V(id).bothE(label).count()", &lines, &graph_store, parallelism, |lg, src, _dst| {
-        let mut t = graphTraversalSource();
-        t.V(&[src]).bothE(&[EDGE_LABEL]).count();
-        let p = t.build()?;
-        while p.next(lg)?.is_some() {}
-        Ok(())
-    })?;
-
-    // --- Query 4 ---
     run_query_benchmark(
-        "Q4: g.V(id).both(label).both(label).count()",
+        "Q3: g.V().hasId(id).both(label).values('weight', 'timestamp').count()",
         &lines,
         &graph_store,
         parallelism,
         |lg, src, _dst| {
             let mut t = graphTraversalSource();
-            t.V(&[src]).both(&[EDGE_LABEL]).both(&[EDGE_LABEL]).count();
+            t.V(&[]).hasId(&[src]).both(&[EDGE_LABEL]).values(&[SmolStr::new("name"), SmolStr::new("age")]).count();
+            let p = t.build()?;
+            while p.next(lg)?.is_some() {}
+            Ok(())
+        },
+    )?;
+
+    // --- Query 4 ---
+    run_query_benchmark(
+        "Q4: g.V(id).out(label).out(label).count()",
+        &lines,
+        &graph_store,
+        parallelism,
+        |lg, src, _dst| {
+            let mut t = graphTraversalSource();
+            t.V(&[src]).out(&[EDGE_LABEL]).out(&[EDGE_LABEL]).count();
             let p = t.build()?;
             while p.next(lg)?.is_some() {}
             Ok(())

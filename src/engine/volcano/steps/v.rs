@@ -25,12 +25,12 @@ use crate::{
 
 #[derive(Debug)]
 pub struct VStep {
-    vertex_ids: Vec<VertexKey>,
+    vertex_ids: SmallVec<[VertexKey; 4]>,
     current_idx: usize,
 }
 
 impl VStep {
-    pub fn new(vertex_ids: Vec<VertexKey>) -> Self {
+    pub fn new(vertex_ids: SmallVec<[VertexKey; 4]>) -> Self {
         Self { vertex_ids, current_idx: 0 }
     }
 }

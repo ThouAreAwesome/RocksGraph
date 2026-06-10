@@ -1,10 +1,25 @@
+// Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
+//
+// This file is part of MultiGraph.
+//
+// Use of this software is governed by the Business Source License 1.1
+// included in the LICENSE file at the root of this repository.
+//
+// As of the Change Date (2030-01-01), in accordance with the Business Source
+// License, use of this software will be governed by the Apache License 2.0.
+//
+// SPDX-License-Identifier: BUSL-1.1
+
 use crate::{
     engine::volcano::builder::{PhysicalPlan, PhysicalPlanBuilder},
-    optimizer::apply_rules,
-    planner::logical_step::{
-        AddEStep, AddVStep, BothEStep, BothStep, CoalesceStep, CountStep, FromStep, HasIdStep, HasLabelStep,
-        HasPropertyStep, InEStep, InStep, InVStep, LimitStep, LogicalPlan, LogicalStep, OtherVStep, OutEStep, OutStep,
-        OutVStep, PropertiesStep, PropertyStep, ScalarFilterStep, ToStep, UnionStep, ValuesStep, WhereStep,
+    planner::{
+        apply_rules,
+        logical_step::{
+            AddEStep, AddVStep, BothEStep, BothStep, CoalesceStep, CountStep, FromStep, HasIdStep, HasLabelStep,
+            HasPropertyStep, InEStep, InStep, InVStep, LimitStep, LogicalPlan, LogicalStep, OtherVStep, OutEStep,
+            OutStep, OutVStep, PropertiesStep, PropertyStep, ScalarFilterStep, ToStep, UnionStep, ValuesStep,
+            WhereStep,
+        },
     },
     types::{Primitive, StoreError},
 };
@@ -57,7 +72,7 @@ impl GraphTraversal {
     /// Spawns a traversal with the `V()` step.
     /// This method is available on `GraphTraversal` for sub-traversals (e.g., `__.V()`).
     pub fn V(&mut self, ids: &[i64]) -> &mut Self {
-        self.ast.steps.push(LogicalStep::V(crate::planner::logical_step::VStep { ids: ids.to_vec() }));
+        self.ast.steps.push(LogicalStep::V(crate::planner::logical_step::VStep { ids: ids.iter().copied().collect() }));
         self
     }
 
@@ -87,32 +102,44 @@ impl GraphTraversal {
     }
 
     pub fn out(&mut self, labels: &[u16]) -> &mut Self {
-        self.ast.steps.push(LogicalStep::Out(OutStep { label_ids: labels.to_vec(), end_vertex_ids: None }));
+        self.ast
+            .steps
+            .push(LogicalStep::Out(OutStep { label_ids: labels.iter().copied().collect(), end_vertex_ids: None }));
         self
     }
 
     pub fn outE(&mut self, labels: &[u16]) -> &mut Self {
-        self.ast.steps.push(LogicalStep::OutE(OutEStep { label_ids: labels.to_vec(), end_vertex_ids: None }));
+        self.ast
+            .steps
+            .push(LogicalStep::OutE(OutEStep { label_ids: labels.iter().copied().collect(), end_vertex_ids: None }));
         self
     }
 
     pub fn r#in(&mut self, labels: &[u16]) -> &mut Self {
-        self.ast.steps.push(LogicalStep::In(InStep { label_ids: labels.to_vec(), end_vertex_ids: None }));
+        self.ast
+            .steps
+            .push(LogicalStep::In(InStep { label_ids: labels.iter().copied().collect(), end_vertex_ids: None }));
         self
     }
 
     pub fn inE(&mut self, labels: &[u16]) -> &mut Self {
-        self.ast.steps.push(LogicalStep::InE(InEStep { label_ids: labels.to_vec(), end_vertex_ids: None }));
+        self.ast
+            .steps
+            .push(LogicalStep::InE(InEStep { label_ids: labels.iter().copied().collect(), end_vertex_ids: None }));
         self
     }
 
     pub fn both(&mut self, labels: &[u16]) -> &mut Self {
-        self.ast.steps.push(LogicalStep::Both(BothStep { label_ids: labels.to_vec(), end_vertex_ids: None }));
+        self.ast
+            .steps
+            .push(LogicalStep::Both(BothStep { label_ids: labels.iter().copied().collect(), end_vertex_ids: None }));
         self
     }
 
     pub fn bothE(&mut self, labels: &[u16]) -> &mut Self {
-        self.ast.steps.push(LogicalStep::BothE(BothEStep { label_ids: labels.to_vec(), end_vertex_ids: None }));
+        self.ast
+            .steps
+            .push(LogicalStep::BothE(BothEStep { label_ids: labels.iter().copied().collect(), end_vertex_ids: None }));
         self
     }
 
@@ -122,7 +149,7 @@ impl GraphTraversal {
     }
 
     pub fn hasLabel(&mut self, labels: &[u16]) -> &mut Self {
-        self.ast.steps.push(LogicalStep::HasLabel(HasLabelStep { label_ids: labels.to_vec() }));
+        self.ast.steps.push(LogicalStep::HasLabel(HasLabelStep { label_ids: labels.iter().copied().collect() }));
         self
     }
 
@@ -152,7 +179,7 @@ impl GraphTraversal {
     }
 
     pub fn values(&mut self, keys: &[SmolStr]) -> &mut Self {
-        self.ast.steps.push(LogicalStep::Values(ValuesStep { property_keys: keys.to_vec() }));
+        self.ast.steps.push(LogicalStep::Values(ValuesStep { property_keys: keys.iter().cloned().collect() }));
         self
     }
 
@@ -179,11 +206,11 @@ impl GraphTraversal {
         self
     }
     pub fn hasId(&mut self, ids: &[i64]) -> &mut Self {
-        self.ast.steps.push(LogicalStep::HasId(HasIdStep { ids: ids.to_vec() }));
+        self.ast.steps.push(LogicalStep::HasId(HasIdStep { ids: ids.iter().copied().collect() }));
         self
     }
     pub fn properties(&mut self, keys: &[SmolStr]) -> &mut Self {
-        self.ast.steps.push(LogicalStep::Properties(PropertiesStep { property_keys: keys.to_vec() }));
+        self.ast.steps.push(LogicalStep::Properties(PropertiesStep { property_keys: keys.iter().cloned().collect() }));
         self
     }
 }

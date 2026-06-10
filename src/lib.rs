@@ -37,7 +37,6 @@
 pub mod engine;
 pub mod graph;
 pub mod gremlin;
-pub mod optimizer;
 pub mod planner;
 pub mod schema;
 pub mod store;

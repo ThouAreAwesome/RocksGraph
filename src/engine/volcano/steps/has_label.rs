@@ -26,11 +26,11 @@ use crate::{
 #[derive(Debug)]
 pub struct HasLabelStep {
     upstream: Option<StepRef>,
-    label_ids: Vec<LabelId>,
+    label_ids: SmallVec<[LabelId; 4]>,
 }
 
 impl HasLabelStep {
-    pub fn new(label_ids: Vec<LabelId>) -> Self {
+    pub fn new(label_ids: SmallVec<[LabelId; 4]>) -> Self {
         Self { upstream: None, label_ids }
     }
 }

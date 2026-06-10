@@ -26,12 +26,12 @@ use crate::{
 #[derive(Debug)]
 pub struct ValuesStep {
     upstream: Option<StepRef>,
-    property_keys: Vec<PropKey>,
+    property_keys: SmallVec<[PropKey; 4]>,
     emit_property: bool,
 }
 
 impl ValuesStep {
-    pub fn new(property_keys: Vec<PropKey>, emit_property: bool) -> Self {
+    pub fn new(property_keys: SmallVec<[PropKey; 4]>, emit_property: bool) -> Self {
         Self { upstream: None, property_keys, emit_property }
     }
 }

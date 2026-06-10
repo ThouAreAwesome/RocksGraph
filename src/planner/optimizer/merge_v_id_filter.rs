@@ -14,13 +14,14 @@ use crate::{
     planner::logical_step::{LogicalPlan, LogicalStep},
     types::{gvalue::Primitive, prop_key::ID, StoreError},
 };
+use smallvec::smallvec;
 
 /// Folds `V().has("id", N)` into `V(N)`, removing the redundant property scan.
 ///
 /// "id" is a structural key stored in the index, not in property storage. A bare
 /// `HasPropertyStep` would never match it, so we must convert the filter into an
 /// explicit seed ID on `VStep` where the storage layer can resolve it directly.
-pub(super) fn merget_v_id_filter(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
+pub fn merget_v_id_filter(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
     let mut plan_changed = false;
     let mut i = 0; // current index of the last non-merged step
     let mut j = 1; // next step to consider for merging
@@ -29,8 +30,8 @@ pub(super) fn merget_v_id_filter(plan: &mut LogicalPlan) -> Result<bool, StoreEr
         let v_ids = match (&plan.steps[i], &plan.steps[j]) {
             (LogicalStep::V(v), LogicalStep::HasProperty(hp)) if hp.key.as_str() == ID && v.ids.is_empty() => {
                 match hp.value {
-                    Primitive::Int64(id) => Some(vec![id]),
-                    Primitive::Int32(id) => Some(vec![id as i64]),
+                    Primitive::Int64(id) => Some(smallvec![id]),
+                    Primitive::Int32(id) => Some(smallvec![id as i64]),
                     _ => None,
                 }
             }
@@ -67,13 +68,14 @@ mod tests {
         planner::logical_step::{HasPropertyStep, VStep},
         types::{gvalue::Primitive, VertexKey},
     };
+    use smallvec::smallvec;
 
     fn v_all() -> LogicalStep {
-        LogicalStep::V(VStep { ids: vec![] })
+        LogicalStep::V(VStep { ids: smallvec![] })
     }
 
     fn v_ids(ids: Vec<VertexKey>) -> LogicalStep {
-        LogicalStep::V(VStep { ids })
+        LogicalStep::V(VStep { ids: ids.into_iter().collect() })
     }
 
     fn has(key: &str, value: Primitive) -> LogicalStep {
@@ -81,7 +83,7 @@ mod tests {
     }
 
     fn has_id(ids: Vec<VertexKey>) -> LogicalStep {
-        LogicalStep::HasId(crate::planner::logical_step::HasIdStep { ids })
+        LogicalStep::HasId(crate::planner::logical_step::HasIdStep { ids: ids.into_iter().collect() })
     }
 
     #[test]
@@ -92,7 +94,7 @@ mod tests {
         assert!(opt, "plan should be changed");
         assert_eq!(plan.steps.len(), 1);
         if let LogicalStep::V(v) = &plan.steps[0] {
-            assert_eq!(v.ids, vec![7]);
+            assert_eq!(&v.ids[..], &[7]);
         } else {
             panic!("expected VStep");
         }
@@ -106,7 +108,7 @@ mod tests {
         assert!(opt, "plan should be changed");
         assert_eq!(plan.steps.len(), 1);
         if let LogicalStep::V(v) = &plan.steps[0] {
-            assert_eq!(v.ids, vec![7]);
+            assert_eq!(&v.ids[..], &[7]);
         } else {
             panic!("expected VStep");
         }
@@ -132,7 +134,7 @@ mod tests {
         assert_eq!(plan.steps.len(), 2);
         assert!(matches!(plan.steps[0], LogicalStep::V(_)));
         if let LogicalStep::V(v) = &plan.steps[0] {
-            assert_eq!(v.ids, vec![2]);
+            assert_eq!(&v.ids[..], &[2]);
         } else {
             panic!("expected VStep");
         }
@@ -160,7 +162,7 @@ mod tests {
         assert!(opt, "plan should be changed");
         assert_eq!(plan.steps.len(), 2);
         if let LogicalStep::V(v) = &plan.steps[0] {
-            assert_eq!(v.ids, vec![3]);
+            assert_eq!(&v.ids[..], &[3]);
         } else {
             panic!("expected VStep");
         }

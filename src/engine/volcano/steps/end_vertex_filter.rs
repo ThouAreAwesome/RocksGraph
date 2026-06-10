@@ -26,11 +26,11 @@ use crate::{
 #[derive(Default, Debug)]
 pub struct EndVertexFilter {
     upstream: Option<StepRef>,
-    ids: Vec<VertexKey>,
+    ids: SmallVec<[VertexKey; 4]>,
 }
 
 impl EndVertexFilter {
-    pub fn new(ids: Vec<VertexKey>) -> Self {
+    pub fn new(ids: SmallVec<[VertexKey; 4]>) -> Self {
         Self { upstream: None, ids }
     }
 }

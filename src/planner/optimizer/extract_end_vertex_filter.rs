@@ -14,14 +14,15 @@ use crate::{
     planner::logical_step::{EndVertexFilter, HasIdStep, HasPropertyStep, LogicalPlan, LogicalStep},
     types::{prop_key::ID, Primitive, StoreError},
 };
+use smallvec::smallvec;
 
-pub(super) fn extract_end_vertex_filter(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
+pub fn extract_end_vertex_filter(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
     let mut changed = false;
     for step in plan.steps.iter_mut() {
         if let LogicalStep::Where(wh) = step {
             match wh.plan.steps.as_slice() {
                 [LogicalStep::OtherV(_), LogicalStep::HasId(HasIdStep { ids })] => {
-                    *step = LogicalStep::EndVertexFilter(EndVertexFilter { ids: ids.to_vec() });
+                    *step = LogicalStep::EndVertexFilter(EndVertexFilter { ids: ids.clone() });
                     changed = true;
                 }
                 [LogicalStep::OtherV(_), LogicalStep::HasProperty(HasPropertyStep { key, value })]
@@ -29,11 +30,11 @@ pub(super) fn extract_end_vertex_filter(plan: &mut LogicalPlan) -> Result<bool, 
                 {
                     match *value {
                         Primitive::Int64(vl) => {
-                            *step = LogicalStep::EndVertexFilter(EndVertexFilter { ids: vec![vl] });
+                            *step = LogicalStep::EndVertexFilter(EndVertexFilter { ids: smallvec![vl] });
                             changed = true;
                         }
                         Primitive::Int32(vl) => {
-                            *step = LogicalStep::EndVertexFilter(EndVertexFilter { ids: vec![vl as i64] });
+                            *step = LogicalStep::EndVertexFilter(EndVertexFilter { ids: smallvec![vl as i64] });
                             changed = true;
                         }
                         _ => return Err(StoreError::UnexpectedDataType("expect i32 or i64 type for vertex id".into())),
@@ -54,15 +55,19 @@ mod tests {
         planner::logical_step::{OtherVStep, VStep, WhereStep},
         types::keys::VertexKey,
     };
+    use smallvec::smallvec;
 
     fn v_ids(ids: Vec<VertexKey>) -> LogicalStep {
-        LogicalStep::V(VStep { ids })
+        LogicalStep::V(VStep { ids: ids.into_iter().collect() })
     }
 
     fn whr_all() -> LogicalStep {
         LogicalStep::Where(WhereStep {
             plan: LogicalPlan {
-                steps: vec![LogicalStep::OtherV(OtherVStep {}), LogicalStep::HasId(HasIdStep { ids: vec![1, 2, 3] })],
+                steps: vec![
+                    LogicalStep::OtherV(OtherVStep {}),
+                    LogicalStep::HasId(HasIdStep { ids: smallvec![1, 2, 3] }),
+                ],
             },
         })
     }
@@ -101,7 +106,7 @@ mod tests {
         assert!(opt, "plan should be changed");
         assert_eq!(plan.steps.len(), 1);
         if let LogicalStep::EndVertexFilter(evf) = &plan.steps[0] {
-            assert_eq!(evf.ids, vec![1, 2, 3]);
+            assert_eq!(&evf.ids[..], &[1, 2, 3]);
         } else {
             panic!("expected EndVertexFilter");
         }
@@ -114,7 +119,7 @@ mod tests {
         assert!(opt, "plan should be changed");
         assert_eq!(plan.steps.len(), 2);
         if let LogicalStep::EndVertexFilter(evf) = &plan.steps[1] {
-            assert_eq!(evf.ids, vec![1, 2, 3]);
+            assert_eq!(&evf.ids[..], &[1, 2, 3]);
         } else {
             panic!("expected EndVertexFilter");
         }
@@ -128,7 +133,7 @@ mod tests {
         assert!(opt, "plan should be changed");
         assert_eq!(plan.steps.len(), 2);
         if let LogicalStep::EndVertexFilter(evf) = &plan.steps[1] {
-            assert_eq!(evf.ids, vec![123]);
+            assert_eq!(&evf.ids[..], &[123]);
         } else {
             panic!("expected EndVertexFilter");
         }

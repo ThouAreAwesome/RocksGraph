@@ -26,11 +26,11 @@ use crate::{
 #[derive(Debug)]
 pub struct HasIdStep {
     upstream: Option<StepRef>,
-    target_ids: Vec<VertexKey>,
+    target_ids: SmallVec<[VertexKey; 4]>,
 }
 
 impl HasIdStep {
-    pub fn new(target_ids: Vec<VertexKey>) -> Self {
+    pub fn new(target_ids: SmallVec<[VertexKey; 4]>) -> Self {
         Self { upstream: None, target_ids }
     }
 }

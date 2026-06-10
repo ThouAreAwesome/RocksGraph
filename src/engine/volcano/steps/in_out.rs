@@ -26,16 +26,16 @@ use crate::{
 #[derive(Debug)]
 pub struct InOutStep {
     upstream: Option<StepRef>,
-    label_ids: Vec<LabelId>,
+    label_ids: SmallVec<[LabelId; 4]>,
     direction: Direction,
     limit: Option<u32>,
-    end_vertex_ids: Option<Vec<VertexKey>>,
+    end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
     current_input: Option<Rc<Traverser>>,
     current_label_idx: usize,
 }
 
 impl InOutStep {
-    pub fn new(label_ids: Vec<LabelId>, direction: Direction, end_vertex_ids: Option<Vec<VertexKey>>) -> Self {
+    pub fn new(label_ids: SmallVec<[LabelId; 4]>, direction: Direction, end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>) -> Self {
         Self {
             upstream: None,
             label_ids,

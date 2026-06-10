@@ -14,8 +14,9 @@ use crate::{
     planner::logical_step::{HasPropertyStep, LogicalPlan, LogicalStep},
     types::{prop_key::ID, Primitive, StoreError},
 };
+use smallvec::smallvec;
 
-pub(super) fn merge_end_vertex_filter(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
+pub fn merge_end_vertex_filter(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
     let mut plan_changed = false;
     let mut i = 0;
     let mut j = 1;
@@ -33,8 +34,8 @@ pub(super) fn merge_end_vertex_filter(plan: &mut LogicalPlan) -> Result<bool, St
                 if ID == *key =>
             {
                 match value {
-                    Primitive::Int32(id) => Some(vec![*id as i64]),
-                    Primitive::Int64(id) => Some(vec![*id]),
+                    Primitive::Int32(id) => Some(smallvec![*id as i64]),
+                    Primitive::Int64(id) => Some(smallvec![*id]),
                     _ => return Err(StoreError::UnexpectedDataType("only i32 and i64 can be vertex id".into())),
                 }
             }
@@ -84,17 +85,18 @@ mod tests {
         planner::logical_step::{EndVertexFilter, OutEStep, OutVStep, VStep},
         types::keys::VertexKey,
     };
+    use smallvec::smallvec;
 
     fn out_e() -> LogicalStep {
-        LogicalStep::OutE(OutEStep { label_ids: vec![], end_vertex_ids: None })
+        LogicalStep::OutE(OutEStep { label_ids: smallvec![], end_vertex_ids: None })
     }
 
     fn evf(ids: Vec<VertexKey>) -> LogicalStep {
-        LogicalStep::EndVertexFilter(EndVertexFilter { ids })
+        LogicalStep::EndVertexFilter(EndVertexFilter { ids: ids.into_iter().collect() })
     }
 
     fn v(ids: Vec<VertexKey>) -> LogicalStep {
-        LogicalStep::V(VStep { ids })
+        LogicalStep::V(VStep { ids: ids.into_iter().collect() })
     }
 
     fn out_v() -> LogicalStep {
@@ -109,7 +111,7 @@ mod tests {
         assert!(changed);
         assert_eq!(plan.steps.len(), 1);
         if let LogicalStep::OutE(oute) = &plan.steps[0] {
-            assert_eq!(oute.end_vertex_ids, Some(vec![1, 2]));
+            assert_eq!(oute.end_vertex_ids.as_deref(), Some(&[1, 2][..]));
         } else {
             panic!("expected OutE at step 0");
         }
@@ -124,7 +126,7 @@ mod tests {
         assert_eq!(plan.steps.len(), 3);
         assert!(matches!(plan.steps[0], LogicalStep::V(_)));
         if let LogicalStep::OutE(oute) = &plan.steps[1] {
-            assert_eq!(oute.end_vertex_ids, Some(vec![20]));
+            assert_eq!(oute.end_vertex_ids.as_deref(), Some(&[20][..]));
         } else {
             panic!("expected OutE at step 1");
         }
@@ -139,13 +141,13 @@ mod tests {
         assert!(changed);
         assert_eq!(plan.steps.len(), 3);
         if let LogicalStep::OutE(oute) = &plan.steps[0] {
-            assert_eq!(oute.end_vertex_ids, Some(vec![1]));
+            assert_eq!(oute.end_vertex_ids.as_deref(), Some(&[1][..]));
         } else {
             panic!("expected OutE at step 0");
         }
         assert!(matches!(plan.steps[1], LogicalStep::OutV(_)));
         if let LogicalStep::OutE(oute) = &plan.steps[2] {
-            assert_eq!(oute.end_vertex_ids, Some(vec![2]));
+            assert_eq!(oute.end_vertex_ids.as_deref(), Some(&[2][..]));
         } else {
             panic!("expected OutE at step 2");
         }

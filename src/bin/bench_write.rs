@@ -35,6 +35,8 @@ use std::{
 const RETRY_DELAY_MS: u64 = 1;
 const MAX_RETRIES: usize = 3;
 
+const EDGE_LABEL: u16 = 2;
+
 fn generate_random_string(len: usize) -> String {
     rand::thread_rng().sample_iter(rand::distributions::Alphanumeric).take(len).map(char::from).collect()
 }
@@ -100,7 +102,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let graph_store = traversal::open_rocks_store(Some(&data_dir))?;
 
-    let file = File::open("./bench_data/soc-LiveJournal1-1M.txt")?;
+    let file = File::open("./bench_data/soc-LiveJournal1-shuffled.txt")?;
     let reader = BufReader::new(file);
     let lines: Arc<Vec<String>> = Arc::new(reader.lines().collect::<Result<_, _>>()?);
 
@@ -147,7 +149,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     // 1. Stage the mutations in the overlay
                     let v1_new = upsert_vertex(&mut lg, 1u16, src).unwrap_or(false);
                     let v2_new = upsert_vertex(&mut lg, 1u16, dst).unwrap_or(false);
-                    let e_new = upsert_edge(&mut lg, src, dst, 2u16).unwrap_or(false);
+                    let e_new = upsert_edge(&mut lg, src, dst, EDGE_LABEL).unwrap_or(false);
 
                     // 2. Attempt to commit the transaction
                     match lg.commit() {

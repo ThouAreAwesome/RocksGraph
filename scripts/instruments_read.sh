@@ -10,7 +10,8 @@ echo "=== Running Gremlin Write Profile ==="
 cd "$PROJECT_ROOT" || exit
 
 PARALLELISM=3
-STORE_DIR="$PROJECT_ROOT/data/rocksGraph_1M"
+STORE_DIR="$PROJECT_ROOT/data/rocksGraph-shuffled"
+FILE_PATH="$PROJECT_ROOT/bench_data/soc-LiveJournal1-shuffled.txt"
 
 if [ -d "$STORE_DIR" ]; then
     rm -rf "$STORE_DIR"
@@ -18,7 +19,7 @@ fi
 
 # Execute the benchmark binary, passing all arguments to the binary itself.
 # The '--' separates arguments for 'cargo run' from arguments for the binary.
-cargo instruments -t cpu  --bin bench_read --release -- --data-dir "$STORE_DIR" --parallelism $PARALLELISM "$@"
+cargo instruments -t cpu  --bin bench_read --release -- --data-dir "$STORE_DIR"  --file-path "$FILE_PATH" --parallelism $PARALLELISM "$@"
 
 EXIT_CODE=$?
 rm -rf "$STORE_DIR"
