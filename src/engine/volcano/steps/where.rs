@@ -26,6 +26,7 @@ use crate::{
     types::error::StoreError,
 };
 
+#[derive(Debug)]
 pub struct WhereStep {
     upstream: Option<StepRef>,
     physical_plans: PhysicalPlan,
@@ -64,5 +65,9 @@ impl CoreStep for WhereStep {
             up.reset();
         }
         self.physical_plans.reset();
+    }
+
+    fn upper(&self) -> Option<StepRef> {
+        self.upstream.clone()
     }
 }

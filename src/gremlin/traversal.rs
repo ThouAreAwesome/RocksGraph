@@ -4,9 +4,9 @@ use crate::{
     planner::logical_step::{
         AddEStep, AddVStep, BothEStep, BothStep, CoalesceStep, CountStep, FromStep, HasIdStep, HasLabelStep,
         HasPropertyStep, InEStep, InStep, InVStep, LimitStep, LogicalPlan, LogicalStep, OtherVStep, OutEStep, OutStep,
-        OutVStep, PropertyStep, ScalarFilterStep, ToStep, UnionStep, ValuesStep, WhereStep,
+        OutVStep, PropertiesStep, PropertyStep, ScalarFilterStep, ToStep, UnionStep, ValuesStep, WhereStep,
     },
-    types::Primitive,
+    types::{Primitive, StoreError},
 };
 use smol_str::SmolStr;
 use std::collections::HashMap;
@@ -40,7 +40,7 @@ impl GraphTraversal {
         LogicalPlan { steps: self.ast.steps.clone() }
     }
 
-    pub fn build(&self) -> PhysicalPlan {
+    pub fn build(&self) -> Result<PhysicalPlan, StoreError> {
         let mut logical_plan = LogicalPlan { steps: self.ast.steps.clone() };
 
         let _ = apply_rules(&mut logical_plan).unwrap();
@@ -180,6 +180,10 @@ impl GraphTraversal {
     }
     pub fn hasId(&mut self, ids: &[i64]) -> &mut Self {
         self.ast.steps.push(LogicalStep::HasId(HasIdStep { ids: ids.to_vec() }));
+        self
+    }
+    pub fn properties(&mut self, keys: &[SmolStr]) -> &mut Self {
+        self.ast.steps.push(LogicalStep::Properties(PropertiesStep { property_keys: keys.to_vec() }));
         self
     }
 }

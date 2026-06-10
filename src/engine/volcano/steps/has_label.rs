@@ -23,6 +23,7 @@ use crate::{
     types::{error::StoreError, keys::LabelId, prop_key::LABEL, CanonicalKey, GValue, Primitive},
 };
 
+#[derive(Debug)]
 pub struct HasLabelStep {
     upstream: Option<StepRef>,
     label_ids: Vec<LabelId>,
@@ -63,5 +64,9 @@ impl CoreStep for HasLabelStep {
         if let Some(up) = &self.upstream {
             up.reset();
         }
+    }
+
+    fn upper(&self) -> Option<StepRef> {
+        self.upstream.clone()
     }
 }

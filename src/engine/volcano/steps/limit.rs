@@ -23,6 +23,7 @@ use crate::{
     types::error::StoreError,
 };
 
+#[derive(Debug)]
 pub struct LimitStep {
     upstream: Option<StepRef>,
     limit: u32,
@@ -55,5 +56,9 @@ impl CoreStep for LimitStep {
         if let Some(up) = &self.upstream {
             up.reset();
         }
+    }
+
+    fn upper(&self) -> Option<StepRef> {
+        self.upstream.clone()
     }
 }

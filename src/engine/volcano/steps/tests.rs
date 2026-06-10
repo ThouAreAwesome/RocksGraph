@@ -7,7 +7,6 @@
 //
 // As of the Change Date (2030-01-01), in accordance with the Business Source
 // License, use of this software will be governed by the Apache License 2.
-//
 // SPDX-License-Identifier: BUSL-1.1
 
 #[cfg(test)]
@@ -15,11 +14,13 @@ mod cases {
     use crate::{
         engine::volcano::builder::PhysicalPlanBuilder,
         graph::LogicalGraph,
+        optimizer::apply_rules,
         planner::logical_step::{
             AddEStep as LogicalAddEStep, AddVStep as LogicalAddVStep, BothEStep as LogicalBothEStep,
-            BothStep as LogicalBothStep, CountStep as LogicalCountStep, DropStep as LogicalDropStep,
-            HasLabelStep as LogicalHasLabelStep, HasPropertyStep as LogicalHasPropertyStep, InEStep as LogicalInEStep,
-            InStep as LogicalInStep, InVStep as LogicalInVStep, LogicalPlan, LogicalStep,
+            BothStep as LogicalBothStep, CoalesceStep as LogicalCoalesceStep, CountStep as LogicalCountStep,
+            DropStep as LogicalDropStep, HasIdStep as LogicalHasIdStep, HasLabelStep as LogicalHasLabelStep,
+            HasPropertyStep as LogicalHasPropertyStep, InEStep as LogicalInEStep, InStep as LogicalInStep,
+            InVStep as LogicalInVStep, LimitStep as LogicalLimitStep, LogicalPlan, LogicalStep,
             OtherVStep as LogicalOtherVStep, OutEStep as LogicalOutEStep, OutStep as LogicalOutStep,
             OutVStep as LogicalOutVStep, PropertiesStep as LogicalPropertiesStep, PropertyStep as LogicalPropertyStep,
             ScalarFilterStep as LogicalScalarFilterStep, UnionStep as LogicalUnionStep, VStep as LogicalVStep,
@@ -439,7 +440,7 @@ mod cases {
         };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan);
+        let physical_plan = builder.build(&logical_plan).unwrap();
         let Some(result) = physical_plan.next(&mut graph).unwrap() else { panic!("Expected a result") };
 
         if let GValue::Vertex(v_key) = &result.value {
@@ -486,7 +487,7 @@ mod cases {
         };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan);
+        let physical_plan = builder.build(&logical_plan).unwrap();
         let result = physical_plan.next(&mut graph).unwrap().unwrap();
         if let GValue::Edge(e_key) = &result.value {
             let added_edge = graph.get_edge(e_key).unwrap().unwrap(); // Fetch the actual edge
@@ -523,7 +524,7 @@ mod cases {
         };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan);
+        let physical_plan = builder.build(&logical_plan).unwrap();
         let result = physical_plan.next(&mut graph).unwrap().unwrap();
 
         if let GValue::Vertex(v_key) = &result.value {
@@ -566,7 +567,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan);
+        let physical_plan = builder.build(&logical_plan).unwrap();
         let result = physical_plan.next(&mut graph).unwrap().unwrap();
 
         if let GValue::Edge(e_key) = &result.value {
@@ -607,7 +608,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan);
+        let physical_plan = builder.build(&logical_plan).unwrap();
         let result = physical_plan.next(&mut graph).unwrap().unwrap();
         if let GValue::Vertex(v_key) = &result.value {
             assert_eq!(*v_key, marko_id);
@@ -643,7 +644,7 @@ mod cases {
         };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan);
+        let physical_plan = builder.build(&logical_plan).unwrap();
         let result = physical_plan.next(&mut graph).unwrap().unwrap();
 
         if let GValue::Edge(e_key) = &result.value {
@@ -673,7 +674,7 @@ mod cases {
         ];
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan);
+        let physical_plan = builder.build(&logical_plan).unwrap();
         let result = physical_plan.next(&mut graph).unwrap().unwrap();
 
         if let GValue::Edge(e_key) = &result.value {
@@ -723,7 +724,7 @@ mod cases {
         };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan);
+        let physical_plan = builder.build(&logical_plan).unwrap();
 
         let mut results = Vec::new();
         while let Ok(Some(traverser)) = physical_plan.next(&mut graph) {
@@ -749,7 +750,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan);
+        let physical_plan = builder.build(&logical_plan).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -773,7 +774,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan);
+        let physical_plan = builder.build(&logical_plan).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -799,7 +800,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan);
+        let physical_plan = builder.build(&logical_plan).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -818,7 +819,7 @@ mod cases {
             ],
         };
         let mut builder2: PhysicalPlanBuilder = Default::default();
-        let physical_plan2 = builder2.build(&logical_plan2);
+        let physical_plan2 = builder2.build(&logical_plan2).unwrap();
         let mut results2 = Vec::new();
         while let Ok(Some(t)) = physical_plan2.next(&mut graph) {
             results2.push(t.as_ref().value.clone());
@@ -840,7 +841,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan);
+        let physical_plan = builder.build(&logical_plan).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -857,7 +858,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan_e = builder.build(&logical_plan_e);
+        let physical_plan_e = builder.build(&logical_plan_e).unwrap();
         let mut results_e = Vec::new();
         while let Ok(Some(t)) = physical_plan_e.next(&mut graph) {
             results_e.push(t.as_ref().value.clone());
@@ -879,7 +880,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan);
+        let physical_plan = builder.build(&logical_plan).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -902,7 +903,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan);
+        let physical_plan = builder.build(&logical_plan).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -928,7 +929,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan);
+        let physical_plan = builder.build(&logical_plan).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -953,7 +954,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan);
+        let physical_plan = builder.build(&logical_plan).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -1000,7 +1001,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan);
+        let physical_plan = builder.build(&logical_plan).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -1027,7 +1028,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan);
+        let physical_plan = builder.build(&logical_plan).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -1053,7 +1054,7 @@ mod cases {
         };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan);
+        let physical_plan = builder.build(&logical_plan).unwrap();
         let result = physical_plan.next(&mut graph);
 
         assert!(matches!(result, Err(StoreError::DuplicateVertex(1))));
@@ -1075,7 +1076,7 @@ mod cases {
         };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan);
+        let physical_plan = builder.build(&logical_plan).unwrap();
         let result = physical_plan.next(&mut graph);
 
         assert!(matches!(result, Err(StoreError::DuplicateEdge(_))));
@@ -1097,7 +1098,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan);
+        let physical_plan = builder.build(&logical_plan).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -1127,7 +1128,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan);
+        let physical_plan = builder.build(&logical_plan).unwrap();
         assert!(physical_plan.next(&mut graph).unwrap().is_none());
         graph.commit().unwrap();
 
@@ -1158,7 +1159,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan);
+        let physical_plan = builder.build(&logical_plan).unwrap();
         assert!(physical_plan.next(&mut graph).unwrap().is_none());
         graph.commit().unwrap();
 
@@ -1187,7 +1188,7 @@ mod cases {
             steps: vec![LogicalStep::V(LogicalVStep { ids: vec![99] }), LogicalStep::Drop(LogicalDropStep {})],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan);
+        let physical_plan = builder.build(&logical_plan).unwrap();
         assert!(physical_plan.next(&mut graph).unwrap().is_none());
         graph.commit().unwrap();
 
@@ -1205,7 +1206,7 @@ mod cases {
             steps: vec![LogicalStep::V(LogicalVStep { ids: vec![1] }), LogicalStep::Drop(LogicalDropStep {})],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan);
+        let physical_plan = builder.build(&logical_plan).unwrap();
         assert!(matches!(physical_plan.next(&mut graph), Err(StoreError::IncidentEdges)));
     }
 
@@ -1225,7 +1226,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan);
+        let physical_plan = builder.build(&logical_plan).unwrap();
         assert!(physical_plan.next(&mut graph).unwrap().is_none());
         graph.commit().unwrap();
 
@@ -1261,7 +1262,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan);
+        let physical_plan = builder.build(&logical_plan).unwrap();
         assert!(physical_plan.next(&mut graph).unwrap().is_none());
         graph.commit().unwrap();
 
@@ -1292,7 +1293,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&drop_edge_plan);
+        let physical_plan = builder.build(&drop_edge_plan).unwrap();
         assert!(physical_plan.next(&mut graph).unwrap().is_none());
         graph.commit().unwrap();
 
@@ -1302,7 +1303,7 @@ mod cases {
             steps: vec![LogicalStep::V(LogicalVStep { ids: vec![vadas_id] }), LogicalStep::Drop(LogicalDropStep {})],
         };
         let mut builder2: PhysicalPlanBuilder = Default::default();
-        let physical_plan2 = builder2.build(&drop_v_plan);
+        let physical_plan2 = builder2.build(&drop_v_plan).unwrap();
         assert!(physical_plan2.next(&mut graph2).unwrap().is_none());
         graph2.commit().unwrap();
 
@@ -1311,5 +1312,155 @@ mod cases {
         assert!(verify.get_vertex(vadas_id).unwrap().is_none());
         assert!(verify.get_edge(&edge_cek.out_key()).unwrap().is_none());
         assert!(verify.get_vertex(marko_id).unwrap().is_some());
+    }
+    #[test]
+    fn test_limit_step() {
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+
+        // g.V(1).hasLabel("person").outE("knows").limit(1)
+        let logical_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: vec![1] }),
+                LogicalStep::HasLabel(LogicalHasLabelStep { label_ids: vec![PERSON_LABEL_ID] }),
+                LogicalStep::OutE(LogicalOutEStep { label_ids: vec![KNOWS_LABEL_ID], end_vertex_ids: None }),
+                LogicalStep::Limit(LogicalLimitStep { limit: 1 }),
+            ],
+        };
+
+        let mut builder: PhysicalPlanBuilder = Default::default();
+        let physical_plan = builder.build(&logical_plan).unwrap();
+
+        let mut results = Vec::new();
+        while let Ok(Some(t)) = physical_plan.next(&mut graph) {
+            results.push(t.as_ref().value.clone());
+        }
+        // Marko is the only person with outgoing "knows" edges (he has 2).
+        // limit(1) should reduce the output to a single edge.
+        assert_eq!(results.len(), 1);
+        assert!(matches!(results[0], GValue::Edge(_)));
+    }
+
+    #[test]
+    fn test_coalesce_step() {
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+        let marko_id = 1;
+
+        // g.V(1).coalesce(__.outE("created"), __.outE("knows"))
+        // First branch: outE("created")
+        let created_plan = LogicalPlan {
+            steps: vec![LogicalStep::OutE(LogicalOutEStep { label_ids: vec![CREATED_LABEL_ID], end_vertex_ids: None })],
+        };
+
+        // Second branch: outE("knows")
+        let knows_plan = LogicalPlan {
+            steps: vec![LogicalStep::OutE(LogicalOutEStep { label_ids: vec![KNOWS_LABEL_ID], end_vertex_ids: None })],
+        };
+
+        let logical_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: vec![marko_id] }),
+                LogicalStep::Coalesce(LogicalCoalesceStep { plans: vec![created_plan, knows_plan] }),
+            ],
+        };
+
+        let mut builder: PhysicalPlanBuilder = Default::default();
+        let physical_plan = builder.build(&logical_plan).unwrap();
+
+        let mut results = Vec::new();
+        while let Ok(Some(t)) = physical_plan.next(&mut graph) {
+            results.push(t.as_ref().value.clone());
+        }
+
+        // Marko has one "created" edge to lop. Coalesce should return this and stop.
+        assert_eq!(results.len(), 1);
+        if let GValue::Edge(edge) = &results[0] {
+            assert_eq!(edge.primary_id, 1);
+            assert_eq!(edge.secondary_id, 3);
+            assert_eq!(edge.label_id, CREATED_LABEL_ID);
+        } else {
+            panic!("Expected an edge result");
+        }
+    }
+
+    #[test]
+    fn test_has_id_step() {
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+        let marko_id = 1;
+
+        // g.V(1).out().hasId(3, 4)
+        let logical_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: vec![marko_id] }),
+                LogicalStep::Out(LogicalOutStep { label_ids: vec![], end_vertex_ids: None }),
+                LogicalStep::HasId(LogicalHasIdStep { ids: vec![3, 4] }),
+            ],
+        };
+
+        let mut builder: PhysicalPlanBuilder = Default::default();
+        let physical_plan = builder.build(&logical_plan).unwrap();
+
+        let mut results = Vec::new();
+        while let Ok(Some(t)) = physical_plan.next(&mut graph) {
+            results.push(t.as_ref().value.clone());
+        }
+        results.sort_by_key(|v| if let GValue::Vertex(id) = v { *id } else { 0 });
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0], GValue::Vertex(3)); // lop
+        assert_eq!(results[1], GValue::Vertex(4)); // josh
+    }
+
+    #[test]
+    fn test_get_e_step_via_optimizer() {
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+        let marko_id = 1;
+        let josh_id = 4;
+
+        // g.V(1).outE("knows").where(__.otherV().hasId(4))
+        let where_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::OtherV(LogicalOtherVStep {}),
+                LogicalStep::HasId(LogicalHasIdStep { ids: vec![josh_id] }),
+            ],
+        };
+
+        let mut logical_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: vec![marko_id] }),
+                LogicalStep::OutE(LogicalOutEStep { label_ids: vec![KNOWS_LABEL_ID], end_vertex_ids: None }),
+                LogicalStep::Where(LogicalWhereStep { plan: where_plan }),
+            ],
+        };
+
+        // The optimizer should convert this into a plan that uses GetEStep
+        apply_rules(&mut logical_plan).unwrap();
+
+        // Verify the optimizer folded the `where` clause into the `OutE` step
+        if let LogicalStep::OutE(s) = &logical_plan.steps[1] {
+            assert_eq!(s.end_vertex_ids, Some(vec![josh_id]));
+        } else {
+            panic!("Optimizer did not modify OutE step as expected");
+        }
+
+        let mut builder: PhysicalPlanBuilder = Default::default();
+        let physical_plan = builder.build(&logical_plan).unwrap();
+
+        let mut results = Vec::new();
+        while let Ok(Some(t)) = physical_plan.next(&mut graph) {
+            results.push(t.as_ref().value.clone());
+        }
+
+        assert_eq!(results.len(), 1);
+        if let GValue::Edge(edge) = &results[0] {
+            assert_eq!(edge.primary_id, marko_id);
+            assert_eq!(edge.secondary_id, josh_id);
+            assert_eq!(edge.label_id, KNOWS_LABEL_ID);
+        } else {
+            panic!("Expected an edge result");
+        }
     }
 }

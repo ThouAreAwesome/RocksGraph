@@ -20,24 +20,26 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{error::StoreError, EdgeKey, GValue, LabelId, VertexKey},
+    types::{error::StoreError, Direction, EdgeKey, GValue, LabelId, VertexKey},
 };
 
-pub struct GetOutEStep {
+#[derive(Debug)]
+pub struct GetEStep {
     upstream: Option<StepRef>,
     // label_ids should not be empty.
     label_ids: Vec<LabelId>,
     // end_vertex_ids should not be empty.
     end_vertex_ids: Vec<VertexKey>,
+    direction: Direction,
 }
 
-impl GetOutEStep {
-    pub fn new(label_ids: Vec<LabelId>, end_vertex_ids: Vec<VertexKey>) -> Self {
-        Self { upstream: None, label_ids, end_vertex_ids }
+impl GetEStep {
+    pub fn new(label_ids: Vec<LabelId>, end_vertex_ids: Vec<VertexKey>, direction: Direction) -> Self {
+        Self { upstream: None, label_ids, end_vertex_ids, direction }
     }
 }
 
-impl CoreStep for GetOutEStep {
+impl CoreStep for GetEStep {
     fn add_upper(&mut self, upstream: StepRef) {
         self.upstream = Some(upstream);
     }
@@ -56,8 +58,10 @@ impl CoreStep for GetOutEStep {
 
             for label_id in &self.label_ids {
                 for dst in &self.end_vertex_ids {
-                    let edge_key = EdgeKey::out_e(src, *label_id, *dst, 0);
-
+                    let edge_key = match self.direction {
+                        Direction::OUT => EdgeKey::out_e(src, *label_id, *dst, 0),
+                        Direction::IN => EdgeKey::in_e(*dst, *label_id, src, 0),
+                    };
                     if let Some(_e) = ctx.get_edge(&edge_key)? {
                         results.push(Traverser::new_rc_with_parent(GValue::Edge(edge_key), Rc::clone(&t)));
                     }
@@ -73,5 +77,9 @@ impl CoreStep for GetOutEStep {
         if let Some(up) = &self.upstream {
             up.reset();
         }
+    }
+
+    fn upper(&self) -> Option<StepRef> {
+        self.upstream.clone()
     }
 }

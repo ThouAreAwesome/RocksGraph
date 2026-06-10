@@ -23,6 +23,7 @@ use crate::{
     types::{error::StoreError, gvalue::GValue, keys::VertexKey},
 };
 
+#[derive(Debug)]
 pub struct HasIdStep {
     upstream: Option<StepRef>,
     target_ids: Vec<VertexKey>,
@@ -55,5 +56,9 @@ impl CoreStep for HasIdStep {
         if let Some(up) = &self.upstream {
             up.reset();
         }
+    }
+
+    fn upper(&self) -> Option<StepRef> {
+        self.upstream.clone()
     }
 }

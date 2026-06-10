@@ -1,7 +1,0 @@
-[server]
-host = "127.0.0.1"
-port = 8183 # Use a different port to avoid conflict with main server if run manually
-
-[storage]
-# Use a separate directory for benchmark data
-data_dir = "data/rocksdb_graph_1"

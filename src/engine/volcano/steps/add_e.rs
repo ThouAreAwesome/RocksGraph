@@ -29,6 +29,7 @@ use crate::{
     },
 };
 
+#[derive(Debug)]
 pub struct AddEStep {
     label_id: LabelId,
     out_v_id: VertexKey,
@@ -51,7 +52,7 @@ impl AddEStep {
                 key,
                 value,
             })
-            .collect();
+            .collect::<SmallVec<[Property; 8]>>();
         Self { label_id, out_v_id, in_v_id, properties, emitted: false }
     }
 }

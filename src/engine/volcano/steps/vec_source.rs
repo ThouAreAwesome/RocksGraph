@@ -23,6 +23,7 @@ use crate::{
     types::error::StoreError,
 };
 
+#[derive(Debug)]
 pub struct VecSourceStep {
     items: SmallVec<[Rc<Traverser>; 4]>,
 }

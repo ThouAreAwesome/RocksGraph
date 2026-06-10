@@ -23,6 +23,7 @@ use crate::{
     types::{error::StoreError, keys::VertexKey, GValue},
 };
 
+#[derive(Debug)]
 pub struct VStep {
     vertex_ids: Vec<VertexKey>,
     current_idx: usize,

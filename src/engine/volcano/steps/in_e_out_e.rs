@@ -23,10 +23,11 @@ use crate::{
     types::{error::StoreError, Direction, GValue, LabelId, VertexKey},
 };
 
+#[derive(Debug)]
 pub struct InEOutEStep {
     upstream: Option<StepRef>,
     label_ids: Vec<LabelId>,
-    dirction: Direction,
+    direction: Direction,
     limit: Option<u32>,
     current_input: Option<Rc<Traverser>>,
     current_label_idx: usize,
@@ -38,7 +39,7 @@ impl InEOutEStep {
         Self {
             upstream: None,
             label_ids,
-            dirction: direction,
+            direction,
             limit: None,
             current_input: None,
             current_label_idx: 0,
@@ -70,7 +71,7 @@ impl CoreStep for InEOutEStep {
                 let label = if self.label_ids.is_empty() { None } else { Some(self.label_ids[self.current_label_idx]) };
 
                 let edges =
-                    ctx.get_adjacent_edges(*vk, label, self.dirction, self.end_vertex_ids.as_deref(), self.limit)?;
+                    ctx.get_adjacent_edges(*vk, label, self.direction, self.end_vertex_ids.as_deref(), self.limit)?;
                 let results: SmallVec<[_; 4]> =
                     edges.into_iter().map(|e| Traverser::new_rc_with_parent(GValue::Edge(e), Rc::clone(&t))).collect();
 
@@ -93,5 +94,9 @@ impl CoreStep for InEOutEStep {
         }
         self.current_input = None;
         self.current_label_idx = 0;
+    }
+
+    fn upper(&self) -> Option<StepRef> {
+        self.upstream.clone()
     }
 }

@@ -23,6 +23,7 @@ use crate::{
     types::{error::StoreError, Direction, GValue, LabelId, VertexKey},
 };
 
+#[derive(Debug)]
 pub struct InOutStep {
     upstream: Option<StepRef>,
     label_ids: Vec<LabelId>,
@@ -95,5 +96,9 @@ impl CoreStep for InOutStep {
         }
         self.current_input = None;
         self.current_label_idx = 0;
+    }
+
+    fn upper(&self) -> Option<StepRef> {
+        self.upstream.clone()
     }
 }

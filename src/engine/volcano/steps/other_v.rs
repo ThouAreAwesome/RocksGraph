@@ -23,7 +23,7 @@ use crate::{
     types::{error::StoreError, GValue},
 };
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct OtherVStep {
     upstream: Option<StepRef>,
 }
@@ -47,5 +47,9 @@ impl CoreStep for OtherVStep {
         if let Some(up) = &self.upstream {
             up.reset();
         }
+    }
+
+    fn upper(&self) -> Option<StepRef> {
+        self.upstream.clone()
     }
 }

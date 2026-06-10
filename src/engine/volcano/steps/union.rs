@@ -26,6 +26,7 @@ use crate::{
     types::error::StoreError,
 };
 
+#[derive(Debug)]
 pub struct UnionStep {
     upstream: Option<StepRef>,
     physical_plans: Vec<PhysicalPlan>,
@@ -88,5 +89,9 @@ impl CoreStep for UnionStep {
         }
         self.current_input = None;
         self.current_plan_idx = 0;
+    }
+
+    fn upper(&self) -> Option<StepRef> {
+        self.upstream.clone()
     }
 }

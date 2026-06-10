@@ -23,6 +23,7 @@ use crate::{
     types::{error::StoreError, gvalue::Primitive, prop_key::PropKey, CanonicalKey, GValue},
 };
 
+#[derive(Debug)]
 pub struct HasPropertyStep {
     upstream: Option<StepRef>,
     prop_key: PropKey,
@@ -68,5 +69,9 @@ impl CoreStep for HasPropertyStep {
         if let Some(up) = &self.upstream {
             up.reset();
         }
+    }
+
+    fn upper(&self) -> Option<StepRef> {
+        self.upstream.clone()
     }
 }

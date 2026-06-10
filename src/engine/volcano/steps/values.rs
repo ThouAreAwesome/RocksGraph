@@ -23,6 +23,7 @@ use crate::{
     types::{error::StoreError, keys::CanonicalKey, prop_key::PropKey, GValue},
 };
 
+#[derive(Debug)]
 pub struct ValuesStep {
     upstream: Option<StepRef>,
     property_keys: Vec<PropKey>,
@@ -80,5 +81,9 @@ impl CoreStep for ValuesStep {
         if let Some(up) = &self.upstream {
             up.reset();
         }
+    }
+
+    fn upper(&self) -> Option<StepRef> {
+        self.upstream.clone()
     }
 }

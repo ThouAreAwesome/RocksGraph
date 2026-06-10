@@ -27,7 +27,7 @@
 //! [`build_step`]: PhysicalPlanBuilder::build_step
 //! [`VecSourceStep`]: crate::engine::volcano::steps::vec_source::VecSourceStep
 
-use std::rc::Rc;
+use std::{fmt, rc::Rc};
 
 use smallvec::SmallVec;
 
@@ -50,6 +50,24 @@ pub struct PhysicalPlan {
     pub tail: StepRef,
 }
 
+impl fmt::Debug for PhysicalPlan {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut chain = Vec::new();
+        let mut current = Some(self.tail.clone());
+
+        while let Some(step) = current {
+            // Once GremlinStep: Debug is added, we can format the step chain.
+            chain.push(format!("{:?}", step));
+            // Traverse upstream towards the source
+            current = step.upper();
+        }
+        // Volcano is a pull-based engine (tail is the root); reverse to show Source -> Result flow.
+        chain.reverse();
+
+        write!(f, "PhysicalPlan({})", chain.join(" -> "))
+    }
+}
+
 impl PhysicalPlan {
     pub fn inject(&self, items: SmallVec<[Rc<Traverser>; 4]>) {
         self.source.inner.borrow_mut().core.inject(items);
@@ -68,23 +86,23 @@ impl PhysicalPlan {
 pub struct PhysicalPlanBuilder;
 
 impl PhysicalPlanBuilder {
-    pub fn build(&mut self, plan: &LogicalPlan) -> PhysicalPlan {
+    pub fn build(&mut self, plan: &LogicalPlan) -> Result<PhysicalPlan, StoreError> {
         let source = BufferedStep::new(VecSourceStep::empty());
 
         if plan.steps.is_empty() {
             let tail: StepRef = source.clone();
-            return PhysicalPlan { source, tail };
+            return Ok(PhysicalPlan { source, tail });
         }
 
         let mut upstream: Option<StepRef> = Some(source.clone());
         for step in &plan.steps {
-            upstream = self.build_step(step, upstream);
+            upstream = self.build_step(step, upstream)?;
         }
 
-        PhysicalPlan { source, tail: upstream.expect("plan must have at least one step") }
+        Ok(PhysicalPlan { source, tail: upstream.expect("plan must have at least one step") })
     }
 
-    fn build_step(&mut self, step: &LogicalStep, upstream: Option<StepRef>) -> Option<StepRef> {
+    fn build_step(&mut self, step: &LogicalStep, upstream: Option<StepRef>) -> Result<Option<StepRef>, StoreError> {
         use crate::engine::volcano::steps;
 
         macro_rules! wire {
@@ -93,7 +111,7 @@ impl PhysicalPlanBuilder {
                 if let Some(up) = $up {
                     phys.add_upper(up);
                 }
-                Some(phys as StepRef)
+                Ok(Some(phys as StepRef))
             }};
         }
         macro_rules! wire_required {
@@ -101,9 +119,11 @@ impl PhysicalPlanBuilder {
                 let phys = $phys;
                 match $up {
                     Some(up) => phys.add_upper(up),
-                    None => panic!(concat!($name, " must have an upstream")),
+                    None => {
+                        return Err(StoreError::RuntimeError(format!("{} must have an upstream", $name)));
+                    }
                 }
-                Some(phys as StepRef)
+                Ok(Some(phys as StepRef))
             }};
         }
 
@@ -123,6 +143,13 @@ impl PhysicalPlanBuilder {
                 )
             }
             LogicalStep::V(s) => {
+                if s.ids.is_empty() {
+                    return Err(StoreError::RuntimeError(
+                        "VStep cannot be built with empty IDs. A `g.V()` traversal must be followed by an optimizable \
+                         filter like `hasId()` or `has('id', ...)` that the optimizer can fold into the V-step."
+                            .to_string(),
+                    ));
+                }
                 wire!(BufferedStep::new(steps::v::VStep::new(s.ids.clone())), None::<StepRef>)
             }
             LogicalStep::Count(_) => {
@@ -152,6 +179,19 @@ impl PhysicalPlanBuilder {
                 )
             }
             LogicalStep::InE(s) => {
+                if let Some(end_ids) = &s.end_vertex_ids {
+                    if !s.label_ids.is_empty() && !end_ids.is_empty() {
+                        return wire_required!(
+                            BufferedStep::new(steps::get_e::GetEStep::new(
+                                s.label_ids.clone(),
+                                end_ids.clone(),
+                                Direction::IN
+                            )),
+                            upstream,
+                            "GetOutEStep"
+                        );
+                    }
+                }
                 wire_required!(
                     BufferedStep::new(steps::in_e_out_e::InEOutEStep::new(
                         s.label_ids.clone(),
@@ -177,7 +217,11 @@ impl PhysicalPlanBuilder {
                 if let Some(end_ids) = &s.end_vertex_ids {
                     if !s.label_ids.is_empty() && !end_ids.is_empty() {
                         return wire_required!(
-                            BufferedStep::new(steps::get_out_e::GetOutEStep::new(s.label_ids.clone(), end_ids.clone())),
+                            BufferedStep::new(steps::get_e::GetEStep::new(
+                                s.label_ids.clone(),
+                                end_ids.clone(),
+                                Direction::OUT
+                            )),
                             upstream,
                             "GetOutEStep"
                         );
@@ -232,31 +276,51 @@ impl PhysicalPlanBuilder {
                 )
             }
             LogicalStep::Where(s) => {
-                let physical_plan = self.build(&s.plan);
+                if s.plan.steps.is_empty() {
+                    return Err(StoreError::RuntimeError("WhereStep must have a non-empty sub-plan.".to_string()));
+                }
+                let physical_plan = self.build(&s.plan)?;
                 wire_required!(BufferedStep::new(steps::r#where::WhereStep::new(physical_plan)), upstream, "WhereStep")
             }
             LogicalStep::Union(s) => {
-                let physical_plans = s.plans.iter().map(|p| self.build(p)).collect();
+                if s.plans.is_empty() {
+                    return Err(StoreError::RuntimeError(
+                        "UnionStep must have at least one child traversal.".to_string(),
+                    ));
+                }
+                let physical_plans = s.plans.iter().map(|p| self.build(p)).collect::<Result<_, _>>()?;
                 wire_required!(BufferedStep::new(steps::union::UnionStep::new(physical_plans)), upstream, "UnionStep")
             }
             LogicalStep::AddV(s) => {
+                let Some(vertex_id) = s.vertex_id else {
+                    return Err(StoreError::RuntimeError(
+                        "AddVStep cannot be built without a vertex ID. A preceding `property('id', ...)` step is required \
+                         and should have been folded by the optimizer."
+                            .to_string(),
+                    ));
+                };
                 wire!(
-                    BufferedStep::new(steps::add_v::AddVStep::new(
-                        s.label_id,
-                        s.vertex_id.expect("vertex is not provide in the query"),
-                        s.properties.clone()
-                    )),
+                    BufferedStep::new(steps::add_v::AddVStep::new(s.label_id, vertex_id, s.properties.clone())),
                     None::<StepRef>
                 )
             }
             LogicalStep::AddE(s) => {
+                let Some(out_v_id) = s.out_v_id else {
+                    return Err(StoreError::RuntimeError(
+                        "AddEStep cannot be built without an out-vertex ID. A preceding `from(...)` step is required \
+                         and should have been folded by the optimizer."
+                            .to_string(),
+                    ));
+                };
+                let Some(in_v_id) = s.in_v_id else {
+                    return Err(StoreError::RuntimeError(
+                        "AddEStep cannot be built without an in-vertex ID. A preceding `to(...)` step is required \
+                         and should have been folded by the optimizer."
+                            .to_string(),
+                    ));
+                };
                 wire!(
-                    BufferedStep::new(steps::add_e::AddEStep::new(
-                        s.label_id,
-                        s.out_v_id.expect("end vertex id has not been provided in query"),
-                        s.in_v_id.expect("end vertex id has not been provided in query"),
-                        s.properties.clone()
-                    )),
+                    BufferedStep::new(steps::add_e::AddEStep::new(s.label_id, out_v_id, in_v_id, s.properties.clone())),
                     None::<StepRef>
                 )
             }
@@ -272,7 +336,12 @@ impl PhysicalPlanBuilder {
                 wire_required!(BufferedStep::new(steps::has_id::HasIdStep::new(s.ids.clone())), upstream, "HasIdStep")
             }
             LogicalStep::Coalesce(s) => {
-                let physical_plans = s.plans.iter().map(|p| self.build(p)).collect();
+                if s.plans.is_empty() {
+                    return Err(StoreError::RuntimeError(
+                        "CoalesceStep must have at least one child traversal.".to_string(),
+                    ));
+                }
+                let physical_plans = s.plans.iter().map(|p| self.build(p)).collect::<Result<_, _>>()?;
                 wire_required!(
                     BufferedStep::new(steps::coalesce::CoalesceStep::new(physical_plans)),
                     upstream,
@@ -320,7 +389,7 @@ mod tests {
             LogicalPlan { steps: vec![LogicalStep::ScalarFilter(ScalarFilterStep { value: Primitive::Int64(2) })] };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&plan);
+        let physical_plan = builder.build(&plan).unwrap();
 
         physical_plan.inject(smallvec![traverser(1), traverser(2), traverser(3)]);
 
@@ -335,7 +404,7 @@ mod tests {
         let plan = LogicalPlan { steps: vec![LogicalStep::Count(CountStep {})] };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&plan);
+        let physical_plan = builder.build(&plan).unwrap();
 
         physical_plan.inject(smallvec![traverser(1), traverser(2), traverser(3)]);
         let mut ctx = NoopCtx;
@@ -357,7 +426,7 @@ mod tests {
         let plan = LogicalPlan { steps: vec![LogicalStep::Where(WhereStep { plan: sub_plan })] };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&plan);
+        let physical_plan = builder.build(&plan).unwrap();
 
         physical_plan.inject(smallvec![traverser(1), traverser(2), traverser(3)]);
 
@@ -365,5 +434,134 @@ mod tests {
         let result = physical_plan.next(&mut ctx).expect("store error").expect("Expected one result");
         assert_eq!(result.as_ref().value, gvalue(2));
         assert!(physical_plan.next(&mut ctx).expect("store error").is_none());
+    }
+
+    #[cfg(test)]
+    mod debug_print {
+        use super::*;
+        use crate::{
+            planner::logical_step::{
+                CoalesceStep, CountStep, HasIdStep, HasPropertyStep, InEStep, InStep, LogicalPlan, LogicalStep,
+                OtherVStep, OutEStep, OutStep, PropertiesStep, UnionStep, VStep, WhereStep,
+            },
+            types::{gvalue::Primitive, prop_key::ID},
+        };
+
+        fn assert_plan_contains_in_order(steps: Vec<LogicalStep>, expected_step_names: &[&str]) {
+            let mut plan = LogicalPlan { steps };
+            crate::optimizer::apply_rules(&mut plan).expect("Optimizer rules failed");
+            let mut builder: PhysicalPlanBuilder = Default::default();
+            let physical_plan = builder.build(&plan).unwrap();
+            let debug_str = format!("{:?}", physical_plan);
+
+            let mut last_pos = 0;
+            for step_name in expected_step_names {
+                if let Some(pos) = debug_str[last_pos..].find(step_name) {
+                    last_pos += pos + step_name.len(); // Start next search after this one
+                } else {
+                    panic!("Did not find '{}' in order in plan string: {}", step_name, debug_str);
+                }
+            }
+        }
+
+        #[test]
+        fn test_print_v_hasid_properties() {
+            let steps = vec![
+                LogicalStep::V(VStep { ids: vec![1] }),
+                LogicalStep::Properties(PropertiesStep { property_keys: vec![] }),
+            ];
+            assert_plan_contains_in_order(steps, &["VStep", "ValuesStep"]);
+        }
+
+        #[test]
+        fn test_print_v_hasid_out_properties() {
+            let steps = vec![
+                LogicalStep::V(VStep { ids: vec![1] }),
+                LogicalStep::Out(OutStep { label_ids: vec![], end_vertex_ids: None }),
+                LogicalStep::Properties(PropertiesStep { property_keys: vec![] }),
+            ];
+            assert_plan_contains_in_order(steps, &["VStep", "InOutStep", "ValuesStep"]);
+        }
+
+        #[test]
+        fn test_print_v_hasid_oute_count() {
+            let steps = vec![
+                LogicalStep::V(VStep { ids: vec![1] }),
+                LogicalStep::OutE(OutEStep { label_ids: vec![], end_vertex_ids: None }),
+                LogicalStep::Count(CountStep {}),
+            ];
+            assert_plan_contains_in_order(steps, &["VStep", "InEOutEStep", "CountStep"]);
+        }
+
+        #[test]
+        fn test_print_v_hasid_oute_where_otherv_hasid() {
+            let where_plan = LogicalPlan {
+                steps: vec![LogicalStep::OtherV(OtherVStep {}), LogicalStep::HasId(HasIdStep { ids: vec![2] })],
+            };
+            let steps = vec![
+                LogicalStep::V(VStep { ids: vec![1] }),
+                LogicalStep::OutE(OutEStep { label_ids: vec![], end_vertex_ids: None }),
+                LogicalStep::Where(WhereStep { plan: where_plan }),
+            ];
+            assert_plan_contains_in_order(steps, &["VStep", "InEOutEStep"]);
+        }
+
+        #[test]
+        fn test_print_v_hasid_oute_label_where_otherv_hasid() {
+            let where_plan = LogicalPlan {
+                steps: vec![LogicalStep::OtherV(OtherVStep {}), LogicalStep::HasId(HasIdStep { ids: vec![2] })],
+            };
+            let steps = vec![
+                LogicalStep::V(VStep { ids: vec![1] }),
+                LogicalStep::OutE(OutEStep { label_ids: vec![123], end_vertex_ids: None }),
+                LogicalStep::Where(WhereStep { plan: where_plan }),
+            ];
+            assert_plan_contains_in_order(steps, &["VStep", "GetEStep"]);
+        }
+
+        #[test]
+        fn test_print_v_hasid_ine_label_where_otherv_hasid() {
+            let where_plan = LogicalPlan {
+                steps: vec![LogicalStep::OtherV(OtherVStep {}), LogicalStep::HasId(HasIdStep { ids: vec![2] })],
+            };
+            let steps = vec![
+                LogicalStep::V(VStep { ids: vec![1] }),
+                LogicalStep::InE(InEStep { label_ids: vec![456], end_vertex_ids: None }),
+                LogicalStep::Where(WhereStep { plan: where_plan }),
+            ];
+            assert_plan_contains_in_order(steps, &["VStep", "GetEStep"]);
+        }
+
+        #[test]
+        fn test_print_v_hasprop_id_ine_otherv_hasid() {
+            let steps = vec![
+                LogicalStep::V(VStep { ids: vec![] }),
+                LogicalStep::HasProperty(HasPropertyStep { key: ID, value: Primitive::Int64(1) }),
+                LogicalStep::InE(InEStep { label_ids: vec![], end_vertex_ids: None }),
+                LogicalStep::OtherV(OtherVStep {}),
+                LogicalStep::HasId(HasIdStep { ids: vec![2] }),
+            ];
+            assert_plan_contains_in_order(steps, &["VStep", "InEOutEStep", "OtherVStep", "HasIdStep"]);
+        }
+
+        #[test]
+        fn test_print_union_and_coalesce() {
+            let out_plan =
+                LogicalPlan { steps: vec![LogicalStep::Out(OutStep { label_ids: vec![], end_vertex_ids: None })] };
+            let in_plan =
+                LogicalPlan { steps: vec![LogicalStep::In(InStep { label_ids: vec![], end_vertex_ids: None })] };
+
+            let union_steps = vec![
+                LogicalStep::V(VStep { ids: vec![1] }),
+                LogicalStep::Union(UnionStep { plans: vec![out_plan.clone(), in_plan.clone()] }),
+            ];
+            assert_plan_contains_in_order(union_steps, &["VStep", "UnionStep", "InOutStep", "InOutStep"]);
+
+            let coalesce_steps = vec![
+                LogicalStep::V(VStep { ids: vec![1] }),
+                LogicalStep::Coalesce(CoalesceStep { plans: vec![out_plan, in_plan] }),
+            ];
+            assert_plan_contains_in_order(coalesce_steps, &["VStep", "CoalesceStep", "InOutStep", "InOutStep"]);
+        }
     }
 }

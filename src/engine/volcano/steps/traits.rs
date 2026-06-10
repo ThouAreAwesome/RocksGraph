@@ -27,17 +27,18 @@ pub type StepRef = Rc<dyn GremlinStep>;
 
 /// The interface callers and downstream steps use. All methods take `&self`
 /// because interior mutability is encapsulated inside [`BufferedStep`].
-pub trait GremlinStep {
+pub trait GremlinStep: std::fmt::Debug {
     fn next(&self, ctx: &mut dyn GraphCtx) -> Result<Option<Rc<Traverser>>, StoreError>;
     fn reset(&self);
     fn add_upper(&self, upstream: StepRef);
+    fn upper(&self) -> Option<StepRef>;
 }
 
 // ── CoreStep — what each step author implements ───────────────────────────────
 
 /// The trait step authors implement. `&mut self` is safe here because
 /// [`BufferedStep`] wraps every `CoreStep` in a single `RefCell`.
-pub trait CoreStep {
+pub trait CoreStep: std::fmt::Debug {
     /// Wire an upstream step. Called once per upstream during plan construction.
     fn add_upper(&mut self, upstream: StepRef);
 
@@ -47,6 +48,11 @@ pub trait CoreStep {
 
     /// Reset all mutable state and propagate to upstreams.
     fn reset(&mut self);
+
+    /// Access the upstream step if one exists. Defaults to None for source steps.
+    fn upper(&self) -> Option<StepRef> {
+        None
+    }
 }
 
 // ── BufferedStep — the single generic wrapper ─────────────────────────────────
@@ -75,6 +81,12 @@ impl<T: CoreStep + 'static> BufferedStep<T> {
     }
 }
 
+impl<T: CoreStep + 'static> std::fmt::Debug for BufferedStep<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.inner.borrow().core.fmt(f)
+    }
+}
+
 impl<T: CoreStep + 'static> GremlinStep for BufferedStep<T> {
     fn next(&self, ctx: &mut dyn GraphCtx) -> Result<Option<Rc<Traverser>>, StoreError> {
         // One borrow covers the buffer check, the produce call, and the pop.
@@ -96,5 +108,9 @@ impl<T: CoreStep + 'static> GremlinStep for BufferedStep<T> {
 
     fn add_upper(&self, upstream: StepRef) {
         self.inner.borrow_mut().core.add_upper(upstream);
+    }
+
+    fn upper(&self) -> Option<StepRef> {
+        self.inner.borrow().core.upper()
     }
 }

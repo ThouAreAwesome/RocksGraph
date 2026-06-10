@@ -23,6 +23,7 @@ use crate::{
     types::{error::StoreError, Direction, GValue, LabelId, VertexKey},
 };
 
+#[derive(Debug)]
 pub struct BothEStep {
     upstream: Option<StepRef>,
     label_ids: Vec<LabelId>,
@@ -121,5 +122,9 @@ impl CoreStep for BothEStep {
         self.current_input = None;
         self.current_label_idx = 0;
         self.current_direction = Direction::OUT;
+    }
+
+    fn upper(&self) -> Option<StepRef> {
+        self.upstream.clone()
     }
 }

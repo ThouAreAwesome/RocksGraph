@@ -26,6 +26,7 @@ use crate::{
     types::error::StoreError,
 };
 
+#[derive(Debug)]
 pub struct CoalesceStep {
     upstream: Option<StepRef>,
     physical_plans: Vec<PhysicalPlan>,
@@ -100,5 +101,9 @@ impl CoreStep for CoalesceStep {
         self.current_input = None;
         self.current_plan_idx = 0;
         self.winning_plan_idx = None;
+    }
+
+    fn upper(&self) -> Option<StepRef> {
+        self.upstream.clone()
     }
 }

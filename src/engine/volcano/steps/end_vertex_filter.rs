@@ -23,7 +23,7 @@ use crate::{
     types::{GValue, StoreError, VertexKey},
 };
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct EndVertexFilter {
     upstream: Option<StepRef>,
     ids: Vec<VertexKey>,
@@ -58,5 +58,9 @@ impl CoreStep for EndVertexFilter {
         if let Some(up) = &self.upstream {
             up.reset();
         }
+    }
+
+    fn upper(&self) -> Option<StepRef> {
+        self.upstream.clone()
     }
 }

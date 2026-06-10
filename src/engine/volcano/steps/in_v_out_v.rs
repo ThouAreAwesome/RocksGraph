@@ -23,6 +23,7 @@ use crate::{
     types::{error::StoreError, Direction, GValue},
 };
 
+#[derive(Debug)]
 pub struct InVOutVStep {
     upstream: Option<StepRef>,
     direction: Direction,
@@ -64,5 +65,9 @@ impl CoreStep for InVOutVStep {
         if let Some(up) = &self.upstream {
             up.reset();
         }
+    }
+
+    fn upper(&self) -> Option<StepRef> {
+        self.upstream.clone()
     }
 }

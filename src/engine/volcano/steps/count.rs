@@ -26,7 +26,7 @@ use crate::{
     },
 };
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct CountStep {
     upstream: Option<StepRef>,
     done: bool,
@@ -55,5 +55,9 @@ impl CoreStep for CountStep {
         if let Some(up) = &self.upstream {
             up.reset();
         }
+    }
+
+    fn upper(&self) -> Option<StepRef> {
+        self.upstream.clone()
     }
 }

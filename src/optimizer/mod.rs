@@ -80,6 +80,10 @@ mod tests {
         LogicalStep::OutE(OutEStep { label_ids: vec![], end_vertex_ids: None })
     }
 
+    fn out_e_label() -> LogicalStep {
+        LogicalStep::OutE(OutEStep { label_ids: vec![1], end_vertex_ids: None })
+    }
+
     fn other_v() -> LogicalStep {
         LogicalStep::OtherV(OtherVStep {})
     }
@@ -141,6 +145,25 @@ mod tests {
         assert!(matches!(plan.steps[4], LogicalStep::HasId(_)));
     }
 
+    // V().hasId(1).outE().where(otherV().hasId(2))
+    #[test]
+    fn test_v_has_id_where_otherv_has_id() {
+        let steps = vec![v_all(), has_id_prop(1), out_e_label(), whr(vec![other_v(), has_id(vec![2])])];
+        let mut plan = LogicalPlan { steps };
+        let _ = apply_rules(&mut plan).unwrap();
+        assert_eq!(plan.steps.len(), 2);
+        if let LogicalStep::V(v) = &plan.steps[0] {
+            assert_eq!(v.ids, vec![1], "has(\"id\",1) should be folded into V");
+        } else {
+            panic!("expected VStep at step 0");
+        }
+        if let LogicalStep::OutE(oute) = &plan.steps[1] {
+            assert_eq!(oute.label_ids, vec![1], "has(\"id\",1) should be folded into V");
+            assert_eq!(oute.end_vertex_ids, Some(vec![2]), "where(otherV().hasId(2)) should be folded into OutE");
+        } else {
+            panic!("expected VStep at step 0");
+        }
+    }
     // V().has("id",1).outE().where(otherV().hasId(2)).outV().bothE().where(otherV().hasId(3))
     // merget_v_id_filter folds has("id",1) into V; extract_end_vertex_filter lifts both where() steps.
     // Result: [V(1), OutE, EndVertexFilter(2), OutV, BothE, EndVertexFilter(3)]

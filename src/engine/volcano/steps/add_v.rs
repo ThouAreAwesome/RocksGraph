@@ -30,6 +30,7 @@ use crate::{
     },
 };
 
+#[derive(Debug)]
 pub struct AddVStep {
     label_id: LabelId,
     vertex_id: VertexKey,

@@ -23,6 +23,7 @@ use crate::{
     types::{error::StoreError, GValue, Primitive},
 };
 
+#[derive(Debug)]
 pub struct ScalarFilterStep {
     upstream: Option<StepRef>,
     expected: Primitive,
@@ -53,5 +54,9 @@ impl CoreStep for ScalarFilterStep {
         if let Some(up) = &self.upstream {
             up.reset();
         }
+    }
+
+    fn upper(&self) -> Option<StepRef> {
+        self.upstream.clone()
     }
 }
