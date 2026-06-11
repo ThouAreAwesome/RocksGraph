@@ -1,14 +1,19 @@
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 //
-// This file is part of MultiGraph.
+// This file is part of RocksGraph.
 //
-// Use of this software is governed by the Business Source License 1.1
-// included in the LICENSE file at the root of this repository.
+// RocksGraph is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 2 of the License, or
+// (at your option) any later version.
 //
-// As of the Change Date (2030-01-01), in accordance with the Business Source
-// License, use of this software will be governed by the Apache License 2.0.
+// RocksGraph is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
 //
-// SPDX-License-Identifier: BUSL-1.1
+// You should have received a copy of the GNU General Public License
+// along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 //! On-disk byte layout for RocksDB keys and values.
 //!
@@ -43,7 +48,7 @@ use crate::types::{
 
 pub(crate) const EDGE_PREFIX_LENGHT: usize = 8;
 
-/// Build the prefix for an edge CF scan:
+/// Builds the prefix for an edge Column Family (CF) scan.
 /// `vertex_id` (8 B), optionally followed by `label_id` (2 B).
 pub fn edge_scan_prefix(vertex: VertexKey, label: Option<LabelId>) -> Vec<u8> {
     let mut prefix = Vec::with_capacity(10);
@@ -54,9 +59,9 @@ pub fn edge_scan_prefix(vertex: VertexKey, label: Option<LabelId>) -> Vec<u8> {
     prefix
 }
 
-/// Compute the exclusive upper-bound for a prefix scan by incrementing the
-/// last non-`0xFF` byte.  Returns `None` when all bytes are `0xFF` (scan to
-/// end of CF instead).
+/// Computes the exclusive upper-bound for a prefix scan.
+/// This is done by incrementing the last non-`0xFF` byte. Returns `None` when all bytes are `0xFF` (indicating a scan
+/// to end of CF instead).
 pub fn prefix_upper_bound(prefix: &[u8]) -> Option<Vec<u8>> {
     let mut upper = prefix.to_vec();
     for byte in upper.iter_mut().rev() {
@@ -80,11 +85,13 @@ pub const CF_EDGES_IN: &str = "edges_in";
 
 pub const VERTEX_KEY_SIZE: usize = 8;
 /// Edge key: 8 (vertex) + 2 (label) + 8 (vertex) + 2 (rank) = 20 bytes.
-/// No direction byte — each CF encodes direction implicitly.
+/// No direction byte is included; each Column Family (CF) encodes direction implicitly.
 pub const EDGE_KEY_SIZE: usize = 20;
 
 // ── VertexKey encoding ────────────────────────────────────────────────────────
 
+/// Encodes a `VertexKey` (i64) into an 8-byte big-endian array.
+/// The `^ (1 << 63)` operation is used to ensure lexicographical ordering matches numerical order for signed integers.
 pub fn encode_vertex_key(key: VertexKey) -> [u8; VERTEX_KEY_SIZE] {
     (key ^ (1 << 63)).to_be_bytes()
 }
@@ -111,6 +118,7 @@ pub fn encode_edge_key(k: &EdgeKey) -> [u8; EDGE_KEY_SIZE] {
     buf
 }
 
+/// Decodes a byte slice into an `EdgeKey`.
 pub fn decode_edge_key(bytes: &[u8], dir: Direction) -> Option<EdgeKey> {
     if bytes.len() < EDGE_KEY_SIZE {
         return None;
@@ -126,8 +134,8 @@ pub fn decode_edge_key(bytes: &[u8], dir: Direction) -> Option<EdgeKey> {
 // ── VertexValue ───────────────────────────────────────────────────────────────
 
 /// `[ label_id:u16 | property_blob ]` — value in the `vertices` CF.
-///
-/// The label string is NOT stored here; `label_id` is resolved to a string
+/// The `label_id` is a numeric identifier for the vertex's label.
+/// The label string itself is NOT stored here; `label_id` is resolved to a string
 /// via the process-wide `Schema` when needed.
 #[derive(Debug, Clone)]
 pub struct VertexValue {
@@ -136,6 +144,7 @@ pub struct VertexValue {
 }
 
 impl VertexValue {
+    /// Encodes the `VertexValue` into a byte vector.
     pub fn encode(&self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(2 + self.property_blob.len());
         buf.extend_from_slice(&self.label_id.to_be_bytes());
@@ -143,6 +152,7 @@ impl VertexValue {
         buf
     }
 
+    /// Decodes a byte slice into a `VertexValue`.
     pub fn decode(bytes: &[u8]) -> Option<Self> {
         if bytes.len() < 2 {
             return None;
@@ -166,6 +176,7 @@ pub struct VertexDegree {
 }
 
 impl VertexDegree {
+    /// Encodes the `VertexDegree` into an 8-byte array.
     pub fn encode(&self) -> [u8; 8] {
         let mut buf = [0u8; 8];
         buf[0..4].copy_from_slice(&self.out_e_cnt.to_be_bytes());
@@ -173,6 +184,7 @@ impl VertexDegree {
         buf
     }
 
+    /// Decodes a byte slice into a `VertexDegree`.
     pub fn decode(bytes: &[u8]) -> Option<Self> {
         if bytes.len() != 8 {
             return None;
@@ -192,10 +204,12 @@ pub struct EdgeValue {
 }
 
 impl EdgeValue {
+    /// Encodes the `EdgeValue` into a byte slice (which is just the property blob).
     pub fn encode(&self) -> &[u8] {
         &self.property_blob
     }
 
+    /// Decodes a byte slice into an `EdgeValue`.
     pub fn decode(bytes: &[u8]) -> Self {
         Self { property_blob: bytes.to_vec() }
     }
@@ -203,7 +217,7 @@ impl EdgeValue {
 
 // ── Property codec ────────────────────────────────────────────────────────────
 
-/// Serialize a property list to the binary format described in the module comment.
+/// Serializes a property list to a binary format.
 pub(super) fn encode_props(props: &[Property]) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.extend_from_slice(&(props.len() as u16).to_be_bytes());
@@ -250,8 +264,8 @@ pub(super) fn encode_props(props: &[Property]) -> Vec<u8> {
     buf
 }
 
-/// Deserialize a property blob produced by `encode_props`.  Returns `None` on
-/// any structural error so callers can surface a `StoreError::CorruptData`.
+/// Deserializes a property blob produced by `encode_props`.
+/// Returns `None` on any structural error, allowing callers to surface a `StoreError::CorruptData`.
 pub(super) fn decode_props(blob: &[u8], owner: CanonicalKey) -> Option<Vec<Property>> {
     if blob.len() < 2 {
         return None;
@@ -421,6 +435,7 @@ mod tests {
         buf
     }
 
+    /// Decodes a property blob into a vector of (PropKey, Primitive) tuples.
     fn decode_props(blob: &[u8]) -> Vec<(PropKey, Primitive)> {
         let mut pos = 0;
         let count = u16::from_be_bytes(blob[pos..pos + 2].try_into().unwrap()) as usize;
@@ -479,26 +494,31 @@ mod tests {
         out
     }
 
+    /// Helper to create a `Vertex` for testing.
     fn make_vertex(id: i64, label_id: u16, raw: &[(PropKey, Primitive)]) -> Vertex {
         let owner = CanonicalKey::Vertex(id);
         let props = raw.iter().map(|(k, v)| Property { owner, key: k.clone(), value: v.clone() }).collect();
         Vertex { id, label_id, props }
     }
 
+    /// Helper to create an `Edge` for testing.
     fn make_edge(cek: CanonicalEdgeKey, raw: &[(PropKey, Primitive)]) -> Edge {
         let owner = CanonicalKey::Edge(cek);
         let props = raw.iter().map(|(k, v)| Property { owner, key: k.clone(), value: v.clone() }).collect();
         Edge { src_id: cek.src_id, label_id: cek.label_id, rank: cek.rank, dst_id: cek.dst_id, props }
     }
 
+    /// Encodes an edge key in the OUT direction.
     fn encode_edge_key_out(cek: CanonicalEdgeKey) -> [u8; super::EDGE_KEY_SIZE] {
         super::encode_edge_key(&cek.out_key())
     }
 
+    /// Decodes an edge key in the OUT direction.
     fn decode_edge_key_out(bytes: &[u8]) -> Option<CanonicalEdgeKey> {
         Some(super::decode_edge_key(bytes, crate::types::Direction::OUT)?.canonical_edge_key())
     }
 
+    /// Encodes an edge key in the IN direction.
     fn encode_edge_key_in(cek: CanonicalEdgeKey) -> [u8; super::EDGE_KEY_SIZE] {
         super::encode_edge_key(&cek.in_key())
     }

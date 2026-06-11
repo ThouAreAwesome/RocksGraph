@@ -1,13 +1,19 @@
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 //
-// This file is part of MultiGraph.
+// This file is part of RocksGraph.
 //
-// Use of this software is governed by the Business Source License 1.1
-// included in the LICENSE file at the root of this repository.
+// RocksGraph is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 2 of the License, or
+// (at your option) any later version.
 //
-// As of the Change Date (2030-01-01), in accordance with the Business Source
-// License, use of this software will be governed by the Apache License 2.
-// SPDX-License-Identifier: BUSL-1.1
+// RocksGraph is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 #[cfg(test)]
 mod cases {
@@ -47,14 +53,16 @@ mod cases {
     const SOFTWARE_LABEL_ID: LabelId = 2;
     const KNOWS_LABEL_ID: LabelId = 3;
     const CREATED_LABEL_ID: LabelId = 4;
-    const FRIENDS_LABEL_ID: LabelId = 5;
-    // --- Test Helpers ---
+    const FRIENDS_LABEL_ID: LabelId = 5; // Added for clarity, though not used in TinkerPop Modern Graph setup
+                                         // --- Test Helpers ---
+    /// Opens a new `RocksStorage` instance in a temporary directory for testing.
     fn open_rocks_store() -> (RocksStorage, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let store = RocksStorage::open(dir.path()).unwrap();
         (store, dir)
     }
 
+    /// Creates a new `LogicalGraph` instance from the given `RocksStorage`.
     fn create_logical_graph(store: &RocksStorage) -> LogicalGraph<RocksStorage> {
         //let dir = tempfile::tempdir().unwrap();
         //let store = RocksStorage::open(dir.path()).unwrap();

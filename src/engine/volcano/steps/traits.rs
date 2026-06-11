@@ -1,14 +1,19 @@
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 //
-// This file is part of MultiGraph.
+// This file is part of RocksGraph.
 //
-// Use of this software is governed by the Business Source License 1.1
-// included in the LICENSE file at the root of this repository.
+// RocksGraph is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 2 of the License, or
+// (at your option) any later version.
 //
-// As of the Change Date (2030-01-01), in accordance with the Business Source
-// License, use of this software will be governed by the Apache License 2.0.
+// RocksGraph is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
 //
-// SPDX-License-Identifier: BUSL-1.1
+// You should have received a copy of the GNU General Public License
+// along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::{
     engine::{context::GraphCtx, traverser::Traverser},
@@ -28,7 +33,7 @@ pub type StepRef = Rc<dyn GremlinStep>;
 /// The interface callers and downstream steps use. All methods take `&self`
 /// because interior mutability is encapsulated inside [`BufferedStep`].
 pub trait GremlinStep: std::fmt::Debug {
-    fn next(&self, ctx: &mut dyn GraphCtx) -> Result<Option<Rc<Traverser>>, StoreError>;
+    fn next(&self, ctx: &mut dyn GraphCtx) -> Result<Option<Rc<Traverser>>, StoreError>; // Retrieves the next traverser from the step.
     fn reset(&self);
     fn add_upper(&self, upstream: StepRef);
     fn upper(&self) -> Option<StepRef>;
@@ -39,7 +44,7 @@ pub trait GremlinStep: std::fmt::Debug {
 /// The trait step authors implement. `&mut self` is safe here because
 /// [`BufferedStep`] wraps every `CoreStep` in a single `RefCell`.
 pub trait CoreStep: std::fmt::Debug {
-    /// Wire an upstream step. Called once per upstream during plan construction.
+    /// Wires an upstream step. Called once per upstream during plan construction.
     fn add_upper(&mut self, upstream: StepRef);
 
     /// Pull the next batch of results. Returns `Ok(None)` when exhausted,
@@ -47,7 +52,7 @@ pub trait CoreStep: std::fmt::Debug {
     fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError>;
 
     /// Reset all mutable state and propagate to upstreams.
-    fn reset(&mut self);
+    fn reset(&mut self); // Resets the internal state of the step.
 
     /// Access the upstream step if one exists. Defaults to None for source steps.
     fn upper(&self) -> Option<StepRef> {
@@ -58,7 +63,7 @@ pub trait CoreStep: std::fmt::Debug {
 // ── BufferedStep — the single generic wrapper ─────────────────────────────────
 
 /// Joint container for a step's core logic and its output buffer.
-/// Kept together so [`BufferedStep`] only needs one [`RefCell`] borrow per
+/// Kept together so [`BufferedStep`] only needs one [`RefCell`] borrow per,
 /// [`GremlinStep::next`] call.
 pub(crate) struct StepInner<T: CoreStep> {
     pub(crate) core: T,
@@ -68,13 +73,14 @@ pub(crate) struct StepInner<T: CoreStep> {
 /// Wraps any [`CoreStep`] and provides the full [`GremlinStep`] interface for
 /// free. The buffer drains items produced by `core.produce` one at a time so
 /// callers always get exactly one traverser per `next` call.
-///
+/// This struct manages the buffering of results and ensures safe interior mutability using `RefCell`.
 /// A single `RefCell` guards both `core` and `buffer` so each `next` call
 /// performs exactly one borrow rather than four.
 pub struct BufferedStep<T: CoreStep> {
     pub(crate) inner: RefCell<StepInner<T>>,
 }
 
+/// Implements `BufferedStep` for any `CoreStep`.
 impl<T: CoreStep + 'static> BufferedStep<T> {
     pub fn new(core: T) -> Rc<Self> {
         Rc::new(Self { inner: RefCell::new(StepInner { core, buffer: VecDeque::new() }) })
@@ -88,6 +94,7 @@ impl<T: CoreStep + 'static> std::fmt::Debug for BufferedStep<T> {
 }
 
 impl<T: CoreStep + 'static> GremlinStep for BufferedStep<T> {
+    /// Retrieves the next traverser from the buffer, or produces more if the buffer is empty.
     fn next(&self, ctx: &mut dyn GraphCtx) -> Result<Option<Rc<Traverser>>, StoreError> {
         // One borrow covers the buffer check, the produce call, and the pop.
         // Safety: produce only calls upstream steps (different Rc objects),
@@ -101,16 +108,19 @@ impl<T: CoreStep + 'static> GremlinStep for BufferedStep<T> {
     }
 
     fn reset(&self) {
+        // Resets the buffer and the wrapped `CoreStep`.
         let mut inner = self.inner.borrow_mut();
         inner.buffer.clear();
         inner.core.reset();
     }
 
     fn add_upper(&self, upstream: StepRef) {
+        // Delegates to the wrapped `CoreStep` to add an upstream.
         self.inner.borrow_mut().core.add_upper(upstream);
     }
 
     fn upper(&self) -> Option<StepRef> {
+        // Delegates to the wrapped `CoreStep` to get the upstream.
         self.inner.borrow().core.upper()
     }
 }

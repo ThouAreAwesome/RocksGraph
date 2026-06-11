@@ -13,10 +13,12 @@ jobs:
       - uses: "actions-rust-lang/setup-rust-toolchain@v1"
         with:
           components: "clippy,rustfmt"
-          toolchain: "nightly"
+          toolchain: "stable"
       - uses: "extractions/setup-just@v3"
+      - uses: "Swatinem/rust-cache@v2"
       - run: "just full-check"
       - run: "just test"
-      - run: | # shell
+      - run: "cargo build --bins"
+      - run: |
           echo "## CI result" >> $GITHUB_STEP_SUMMARY
           echo "✅ Passed" >> $GITHUB_STEP_SUMMARY

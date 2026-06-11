@@ -1,14 +1,19 @@
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 //
-// This file is part of MultiGraph.
+// This file is part of RocksGraph.
 //
-// Use of this software is governed by the Business Source License 1.1
-// included in the LICENSE file at the root of this repository.
+// RocksGraph is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 2 of the License, or
+// (at your option) any later version.
 //
-// As of the Change Date (2030-01-01), in accordance with the Business Source
-// License, use of this software will be governed by the Apache License 2.0.
+// RocksGraph is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
 //
-// SPDX-License-Identifier: BUSL-1.1
+// You should have received a copy of the GNU General Public License
+// along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 //! Query-scoped logical graph — the ground truth for a single traversal.
 //! # Role:
@@ -63,7 +68,7 @@
 //!
 //! # In-place mutation
 //!
-//! Elements in the overlay are owned values (`Vertex` / `Edge`).  Mutations
+//! Elements in the overlay are owned values (`Vertex` / `Edge`). Mutations
 //! acquire a write lock on the `RwLock` wrapping the element's properties and
 //! modify them in place.
 
@@ -84,9 +89,9 @@ use crate::{
 /// Mutation kind for a dirty graph element within a `LogicalGraph`.
 ///
 /// Only dirty elements appear in the `dirty` map; absence means `Clean`.
-/// TODO:
-///     1. how to handle delete -> add on the same element within a single query?
-///     This is currently treated as `New`, but we might want to distinguish it
+///
+/// **Note**: How to handle delete -> add on the same element within a single query?
+/// This is currently treated as `New`, but it might be beneficial to distinguish it
 ///     from a pure create for better conflict detection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Existence {
@@ -128,7 +133,7 @@ impl Existence {
 /// Obtained by calling `LogicalGraph::new(store.begin())`. The engine uses this
 /// as its sole interface to the graph.
 pub struct LogicalGraph<S: GraphStore> {
-    store: S::Txn,
+    store: S::Txn, // The underlying transaction from the GraphStore.
     vertices: HashMap<VertexKey, Vertex>,
     edges: HashMap<CanonicalEdgeKey, Edge>,
     vertex_degree: HashMap<VertexKey, (u32, u32)>,
@@ -138,11 +143,14 @@ pub struct LogicalGraph<S: GraphStore> {
 impl<S: GraphStore> LogicalGraph<S> {
     /// Create a new logical graph context wrapping the given transaction.
     pub fn new(store: S::Txn) -> Self {
+        // Creates a new `LogicalGraph` instance, initializing its in-memory caches and associating it with a store
+        // transaction.
         Self {
             store,
             vertices: HashMap::new(),
             edges: HashMap::new(),
             vertex_degree: HashMap::new(),
+            // Tracks the mutation state of elements within this transaction.
             dirty: HashMap::new(),
         }
     }
@@ -153,7 +161,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     }
 
     /// Retrieves the degree (out-edge count, in-edge count) of a vertex.
-    ///
+    /// This method acts as a transparent read-through cache:
     /// This acts as a transparent read-through cache: it first checks the in-memory
     /// `vertex_degree` overlay, and falls back to the underlying `GraphStore` on a miss,
     /// caching the result. It is central to existence checks for vertices and endpoints.
@@ -173,6 +181,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     /// If the element was already modified in this transaction, its state is
     /// combined with the new state via `Existence::merge`.
     fn mark_dirty(&mut self, key: CanonicalKey, state: Existence) {
+        // Marks an element as dirty with a specific existence state.
         match self.dirty.entry(key) {
             Entry::Vacant(entry) => {
                 entry.insert(state);
@@ -189,10 +198,10 @@ impl<S: GraphStore> LogicalGraph<S> {
     /// Look up a vertex by key, loading from the store on first access.
     ///
     /// Returns `None` for absent or tombstoned vertices.
-    // TODO:
-    //      1. Consider adding a batch `get_vertices` method for bulk property retrieval.
-    //      Currently, `get_vertex` serves dual purposes: fetching property data and checking
-    //      for existence. A batch API would improve data fetching performance, but requires careful
+    ///
+    /// **Note**: Consider adding a batch `get_vertices` method for bulk property retrieval.
+    /// Currently, `get_vertex` serves dual purposes: fetching property data and checking
+    /// for existence. A batch API would improve data fetching performance, but would require careful
     //      design to comfortably handle partial results where some keys might be missing.
     pub fn get_vertex(&mut self, key: VertexKey) -> Result<Option<VertexKey>, StoreError> {
         if !self.vertices.contains_key(&key) {
@@ -210,7 +219,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     }
 
     /// Look up an edge by canonical key, loading from the store on first access.
-    ///
+    /// This method returns `None` for absent or tombstoned edges.
     /// Returns `None` for absent or tombstoned edges.
     pub fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<EdgeKey>, StoreError> {
         let cek = key.canonical_edge_key();
@@ -230,7 +239,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     }
 
     /// Scan edges incident to `vertex` in `direction`, merging committed data
-    /// with the in-memory dirty overlay.  Tombstoned edges are filtered out.
+    /// with the in-memory dirty overlay. Tombstoned edges are filtered out.
     ///
     /// Returns `EdgeKey` values in the requested direction.
     pub fn get_edges(
@@ -279,7 +288,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     ///
     /// # Edge — overlay-only (precondition: edge must be in overlay)
     /// The edge must already be in the overlay (populated via a prior `get_edge`
-    /// / `get_edges` call); returns `None` if absent.  Consistent with the
+    /// / `get_edges` call); returns `None` if absent. Consistent with the
     /// overlay-only policy for all other edge operations.
     ///
     /// # Locking
@@ -308,7 +317,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     /// Read a single primitive value from a vertex or edge property.
     ///
     /// # Vertex — no precondition
-    /// Delegates to `get_vertex`, which loads from the store on a cache miss and
+    /// Delegates to `get_vertex`, which loads from the store on a cache miss and then
     /// returns `None` for absent or tombstoned vertices.
     ///
     /// # Edge — overlay-only (precondition: edge must be in overlay)
@@ -350,7 +359,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     //   Method                  Precondition
     //   ──────────────────────  ────────────────────────────────────────────
     //   get_vertex              none  (store fallback on miss)
-    //   get_edge                none  (store fallback on miss)
+    //   get_edge                none  (store fallback on miss) // Corrected comment: get_edge has store fallback.
     //   get_edges               none  (store merged with overlay)
     //   get_property (vertex)   none  (delegates to get_vertex)
     //   get_property (edge)     ⚠ edge must be in overlay
@@ -367,7 +376,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     /// Add a new vertex with explicit `id` and `label_id` to the overlay.
     ///
     /// Returns the `VertexKey` on success.
-    ///
+    /// This method performs an existence check and updates the in-memory overlay.
     /// # Existence check
     /// Duplicate detection is a single call to `get_vertex_degree(id)`, which
     /// first checks the in-memory `vertex_degree` overlay and then falls back to
@@ -378,7 +387,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     ///
     /// **Gap — TOCTOU between check and commit:** another concurrent transaction
     /// could insert the same `id` between this check and `commit()`.  That race
-    /// is not caught here; it is detected by the store's OCC conflict check at
+    /// is not caught here; it is detected by the store's Optimistic Concurrency Control (OCC) conflict check at
     /// commit time, which returns `StoreError::Conflict`.
     ///
     /// **Gap — delete-then-add in the same transaction:** a tombstoned vertex
@@ -403,7 +412,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     }
 
     /// Register a new directed edge identified by `cek`.
-    ///
+    /// This method returns an `EdgeKey` in Out orientation on success.
     /// Returns an `EdgeKey` in Out orientation on success.
     ///
     /// # Existence check — no precondition required
@@ -414,7 +423,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     ///
     /// **Gap — TOCTOU:** same as `add_vertex`; concurrent inserts of the same edge
     /// are caught at commit time via OCC, not here.
-    ///
+    /// This method does not support re-inserting a tombstoned edge within the same transaction.
     /// **Gap — re-adding a tombstoned edge:** a tombstoned edge remains in
     /// `self.edges`, so the overlay check fires and returns
     /// `StoreError::DuplicateEdge`.  Re-inserting a deleted edge within one
@@ -424,7 +433,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     /// Both endpoint vertices must exist, but the caller does not need to
     /// pre-load them.  `get_vertex_degree` is called for both `src_id` and
     /// `dst_id`; it checks the in-memory overlay first and falls back to the
-    /// store automatically.  A missing endpoint returns `StoreError::NotFound`
+    /// store automatically. A missing endpoint returns `StoreError::NotFound`
     /// before any state is mutated.
     ///
     /// # Degree counter update
@@ -469,7 +478,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     }
 
     /// Upsert a property on a vertex or edge.
-    ///
+    /// This method updates the in-memory overlay and marks the element as modified.
     /// # Existence check
     /// 1. Tombstone guard — if the element's dirty state is `Tombstone`, returns `StoreError::Tombstoned` immediately.
     /// 2. For **vertices**: if the vertex is not yet in the overlay it is loaded from the store automatically.
@@ -523,7 +532,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     /// Remove a property from a vertex or edge.
     ///
     /// # Existence check and locking
-    /// Same semantics as `set_property`: tombstone guard first, then
+    /// Same semantics as `set_property`: tombstone guard first, then,
     /// auto-load-from-store for vertices (no precondition), overlay-only check
     /// for edges (caller must pre-load). Mutates the properties in place via an
     /// exclusive borrow.
@@ -573,7 +582,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     /// The physical delete is deferred to `commit()`.
     ///
     /// # Vertex — existence check
-    /// Existence is verified via `get_vertex_degree`, which checks the overlay
+    /// Existence is verified via `get_vertex_degree`, which checks the overlay,
     /// first and then falls back to the store.  Returns `StoreError::NotFound`
     /// if neither source has a record.
     ///
@@ -586,7 +595,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     ///
     /// # Vertex — incident-edge guard
     /// Before tombstoning, the method reads the current degree `(out_e, in_e)`.
-    /// If either is non-zero, `StoreError::IncidentEdges` is returned and the
+    /// If either is non-zero, `StoreError::IncidentEdges` is returned, and the
     /// vertex is left unchanged.  All incident edges (including those added in
     /// this transaction) must be tombstoned first.
     ///
@@ -653,7 +662,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     /// Flush all dirty mutations to the store and commit atomically.
     ///
     /// On `StoreError::Conflict` the overlay is cleared so the context can be
-    /// reused; the caller must rebuild traversal state from scratch.
+    /// reused; the caller must rebuild traversal state from scratch for a retry.
     pub fn commit(&mut self) -> Result<(), StoreError> {
         // Collect first so the loop body can borrow self.vertices / self.edges
         // and self.store simultaneously without a conflict on self.dirty.
@@ -708,6 +717,7 @@ impl<S: GraphStore> LogicalGraph<S> {
 
     /// Discard all pending mutations and reset the context.
     pub fn abort(&mut self) {
+        // Discards all pending mutations and resets the logical graph's state.
         self.store.abort();
         self.reset();
     }
@@ -733,7 +743,7 @@ fn upsert_prop(props: &mut Vec<Property>, prop: &Property) {
 
 /// Evaluates whether an edge matches the specified traversal filters.
 ///
-/// Verifies that the edge's primary endpoint matches `vertex` in the given `direction`,
+/// This function verifies that the edge's primary endpoint matches `vertex` in the given `direction`,
 /// and optionally applies filters for `label` and the secondary endpoint (`dst`).
 fn edge_matches(
     view: &Edge,

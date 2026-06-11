@@ -1,21 +1,28 @@
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 //
-// This file is part of MultiGraph.
+// This file is part of RocksGraph.
 //
-// Use of this software is governed by the Business Source License 1.1
-// included in the LICENSE file at the root of this repository.
+// RocksGraph is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 2 of the License, or
+// (at your option) any later version.
 //
-// SPDX-License-Identifier: BUSL-1.1
+// RocksGraph is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 use hdrhistogram::Histogram;
-use multigraph::{
+use rocksgraph::{
     graph::LogicalGraph,
     gremlin::traversal::{self, graphTraversalSource, __},
     store::{GraphStore, RocksStorage},
     types::error::StoreError,
 };
 
-use smol_str::SmolStr;
 use std::{
     env,
     fs::File,
@@ -26,6 +33,7 @@ use std::{
 
 pub const EDGE_LABEL: u16 = 2;
 
+/// Main function to run read benchmarks.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     let data_dir = args
@@ -59,10 +67,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &graph_store,
         parallelism,
         |lg, src, _dst| {
-            let mut t = graphTraversalSource();
-            t.V(&[]).hasId(&[src]).values(&[SmolStr::new("name"), SmolStr::new("age")]).count();
-            let p = t.build()?;
-            while p.next(lg)?.is_some() {}
+            let mut p = graphTraversalSource().V([src]).hasId([src]).values(["name", "age"]).count().build(lg)?;
+            while p.next().unwrap().is_ok() {}
             Ok(())
         },
     )?;
@@ -74,15 +80,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &graph_store,
         parallelism,
         |lg, src, dst| {
-            let mut t = graphTraversalSource();
-            t.V(&[])
-                .hasId(&[src])
-                .outE(&[EDGE_LABEL])
-                .r#where(__().otherV().hasId(&[dst]))
-                .values(&[SmolStr::new("weight"), SmolStr::new("timestamp")])
-                .count();
-            let p = t.build()?;
-            while p.next(lg)?.is_some() {}
+            let mut p = graphTraversalSource()
+                .V([src])
+                .hasId([src])
+                .outE([EDGE_LABEL])
+                .r#where(__().otherV().hasId([dst]))
+                .values(["weight", "timestamp"])
+                .count()
+                .build(lg)?;
+            while p.next().unwrap().is_ok() {}
             Ok(())
         },
     )?;
@@ -94,10 +100,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &graph_store,
         parallelism,
         |lg, src, _dst| {
-            let mut t = graphTraversalSource();
-            t.V(&[]).hasId(&[src]).both(&[EDGE_LABEL]).values(&[SmolStr::new("name"), SmolStr::new("age")]).count();
-            let p = t.build()?;
-            while p.next(lg)?.is_some() {}
+            let mut t = graphTraversalSource()
+                .V([src])
+                .hasId([src])
+                .both([EDGE_LABEL])
+                .values(["name", "age"])
+                .count()
+                .build(lg)?;
+            while t.next().unwrap().is_ok() {}
             Ok(())
         },
     )?;
@@ -109,10 +119,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &graph_store,
         parallelism,
         |lg, src, _dst| {
-            let mut t = graphTraversalSource();
-            t.V(&[src]).out(&[EDGE_LABEL]).out(&[EDGE_LABEL]).count();
-            let p = t.build()?;
-            while p.next(lg)?.is_some() {}
+            let mut t = graphTraversalSource().V([src]).out([EDGE_LABEL]).out([EDGE_LABEL]).count().build(lg)?;
+            while t.next().unwrap().is_ok() {}
             Ok(())
         },
     )?;
@@ -120,6 +128,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Runs a benchmark for a given query function.
 fn run_query_benchmark<F>(
     name: &str,
     lines: &Arc<Vec<String>>,

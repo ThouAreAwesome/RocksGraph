@@ -1,23 +1,27 @@
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 //
-// This file is part of MultiGraph.
+// This file is part of RocksGraph.
 //
-// Use of this software is governed by the Business Source License 1.1
-// included in the LICENSE file at the root of this repository.
+// RocksGraph is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 2 of the License, or
+// (at your option) any later version.
 //
-// As of the Change Date (2030-01-01), in accordance with the Business Source
-// License, use of this software will be governed by the Apache License 2.0.
+// RocksGraph is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
 //
-// SPDX-License-Identifier: BUSL-1.1
+// You should have received a copy of the GNU General Public License
+// along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 use hdrhistogram::Histogram;
-use multigraph::{
+use rocksgraph::{
     graph::LogicalGraph,
-    gremlin::traversal::{self, graphTraversalSource, __},
+    gremlin::traversal::{self, graphTraversalSource},
     store::{GraphStore, RocksStorage},
-    types::{error::StoreError, gvalue::Primitive, prop_key::ID},
+    types::{error::StoreError, prop_key::ID},
 };
-use smol_str::SmolStr;
 
 use rand::Rng;
 use std::{
@@ -37,53 +41,55 @@ const MAX_RETRIES: usize = 3;
 
 const EDGE_LABEL: u16 = 2;
 
+/// Generates a random alphanumeric string of a given length.
 fn generate_random_string(len: usize) -> String {
     rand::thread_rng().sample_iter(rand::distributions::Alphanumeric).take(len).map(char::from).collect()
 }
 
 /// Creates a vertex; if it already exists the error is silently ignored.
+/// Returns `Ok(true)` if a new vertex was created, `Ok(false)` if it already existed.
 fn upsert_vertex(graph: &mut LogicalGraph<RocksStorage>, label: u16, vertex_id: i64) -> Result<bool, StoreError> {
     let mut rng = rand::thread_rng();
-    let mut traversal = graphTraversalSource();
-    traversal
+    let mut traversal = graphTraversalSource()
         .addV(label)
-        .property(ID, Primitive::Int64(vertex_id))
-        .property(SmolStr::new("name"), Primitive::String(generate_random_string(10).into()))
-        .property(SmolStr::new("age"), Primitive::Int64(rng.gen_range(18..100)));
-    let physical_plan = traversal.build()?;
+        .property(ID, vertex_id)
+        .property("name", generate_random_string(10))
+        .property("age", rng.gen_range::<i64, _>(18..100))
+        .build(graph)?;
 
-    match physical_plan.next(graph) {
-        Ok(Some(_)) => Ok(true),
-        Ok(None) => Ok(false), // vertex already exists (addV is idempotent)
-        Err(e) => Err(e),
+    match traversal.next() {
+        Some(Ok(_)) => Ok(true),                                // Vertex was newly added
+        Some(Err(StoreError::DuplicateVertex(_))) => Ok(false), // Vertex already existed
+        Some(Err(e)) => Err(e),                                 // Other errors
+        None => Ok(false),                                      /* Should not happen for addV unless there was an
+                                                                  * error before next() */
     }
 }
 
-/// Creates an edge from src to dst if it does not already exist, using coalesce.
+/// Creates an edge from `src` to `dst` if it does not already exist, using `coalesce`.
 /// Returns Ok(true) if created, Ok(false) if it already existed.
 fn upsert_edge(graph: &mut LogicalGraph<RocksStorage>, src: i64, dst: i64, edge_type: u16) -> Result<bool, StoreError> {
     let mut rng = rand::thread_rng();
 
     // Using the fluent API to construct the query
-    let mut traversal = graphTraversalSource();
-    traversal.V(&[src]).coalesce(vec![
-        __().outE(&[edge_type]).r#where(__().otherV().hasId(&[dst])),
-        __().addE(edge_type)
-            .from(src)
-            .to(dst)
-            .property(SmolStr::new("weight"), Primitive::Float64(rng.gen_range(0.1..10.0)))
-            .property(SmolStr::new("timestamp"), Primitive::Int64(rng.gen_range(0..1000000))),
-    ]);
+    let mut traversal = graphTraversalSource() // Directly attempt to add the edge
+        .addE(edge_type)
+        .from(src)
+        .to(dst)
+        .property("weight", rng.gen_range::<f64, _>(0.1..10.0))
+        .property("timestamp", rng.gen_range::<i64, _>(0..1000000))
+        .build(graph)?;
 
-    let physical_plan = traversal.build()?;
-
-    match physical_plan.next(graph) {
-        Ok(Some(_)) => Ok(true),
-        Ok(None) => Ok(false),
-        Err(e) => Err(e),
+    match traversal.next() {
+        Some(Ok(_)) => Ok(true),                              // Edge was newly added
+        Some(Err(StoreError::DuplicateEdge(_))) => Ok(false), // Edge already existed
+        Some(Err(e)) => Err(e),                               // Other errors
+        None => Ok(false),                                    /* Should not happen for addE unless there was an
+                                                                * error before next() */
     }
 }
 
+/// Main function to run write benchmarks.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     let data_dir = if let Some(pos) = args.iter().position(|arg| arg == "--data-dir") {

@@ -1,14 +1,19 @@
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 //
-// This file is part of MultiGraph.
+// This file is part of RocksGraph.
 //
-// Use of this software is governed by the Business Source License 1.1
-// included in the LICENSE file at the root of this repository.
+// RocksGraph is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 2 of the License, or
+// (at your option) any later version.
 //
-// As of the Change Date (2030-01-01), in accordance with the Business Source
-// License, use of this software will be governed by the Apache License 2.0.
+// RocksGraph is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
 //
-// SPDX-License-Identifier: BUSL-1.1
+// You should have received a copy of the GNU General Public License
+// along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::{
     graph::LogicalGraph,
@@ -35,7 +40,7 @@ use crate::{
 ///
 /// **Not every method is precondition-free.**  All vertex-targeting operations
 /// auto-load from the store when the overlay is cold.  Edge operations (other
-/// than `get_edge` / `get_edges`) are overlay-only — the caller must call
+/// than `get_edge` / `get_adjacent_edges`) are overlay-only — the caller must call
 /// `get_edge` or `get_edges` first.
 ///
 /// | Method                   | Store fallback (vertex) | Store fallback (edge) | Lock acquired  | Precondition                  |
@@ -43,7 +48,7 @@ use crate::{
 /// | `get_vertex`             | ✅ on miss               | n/a                   | none          | none                          |
 /// | `get_edge`               | n/a                     | ✅ on miss             | none          | none                          |
 /// | `get_adjacent_xxx`       | n/a                     | ✅ merged              | none          | none                          |
-/// | `get_property` (vertex)  | ✅ via `get_vertex`      | —                     | none          | none                          |
+/// | `get_property` (vertex)  | ✅ via `get_vertex`      | n/a                   | none          | none                          |
 /// | `get_property` (edge)    | —                       | ✗ overlay-only        | none           | ⚠ **edge must be pre-loaded** |
 /// | `get_value` (vertex)     | ✅ via `get_vertex`      | —                     | none          | none                          |
 /// | `get_value` (edge)       | —                       | ✗ overlay-only        | none           | ⚠ **edge must be pre-loaded** |
@@ -51,10 +56,12 @@ use crate::{
 /// | `add_edge`               | ✅ via degree record     | ✅ via OUT record     | none           | none                         |
 /// | `set_property` (vertex)  | ✅ auto-load             | —                     | none          | none                          |
 /// | `set_property` (edge)    | —                       | ✗ overlay-only        | none           | ⚠ **edge must be pre-loaded** |
-/// | `drop_property` (vertex) | ✅ auto-load             | —                     | none          | none                          |
+/// | `drop_property` (vertex) | ✅ auto-load             | n/a                   | none          | none                          |
 /// | `drop_property` (edge)   | —                       | ✗ overlay-only        | none           | ⚠ **edge must be pre-loaded** |
 pub trait GraphCtx {
+    /// Retrieves a vertex by its key.
     fn get_vertex(&mut self, key: VertexKey) -> Result<Option<VertexKey>, StoreError>;
+    /// Retrieves an edge by its key.
     fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<EdgeKey>, StoreError>;
     fn get_adjacent_vertices(
         &mut self,
@@ -65,6 +72,8 @@ pub trait GraphCtx {
         limit: Option<u32>,
     ) -> Result<Vec<VertexKey>, StoreError>;
     fn get_adjacent_edges(
+        // Retrieves adjacent edges for a given vertex, filtered by label, direction, and optional destination
+        // vertices.
         &mut self,
         vertex_key: VertexKey,
         label: Option<LabelId>,
@@ -72,7 +81,9 @@ pub trait GraphCtx {
         end_vertex_ids: Option<&[VertexKey]>,
         limit: Option<u32>,
     ) -> Result<Vec<EdgeKey>, StoreError>;
+    /// Retrieves a property for a given canonical key (vertex or edge) and property key.
     fn get_property(&mut self, key: &CanonicalKey, prop: &PropKey) -> Result<Option<Property>, StoreError>;
+    /// Retrieves the primitive value of a property for a given canonical key and property key.
     fn get_value(&mut self, key: &CanonicalKey, prop: &PropKey) -> Result<Option<Primitive>, StoreError>;
     /// Insert a vertex.  See `LogicalGraph::add_vertex` for existence-check and
     /// locking details.
@@ -84,14 +95,20 @@ pub trait GraphCtx {
     /// Upsert a property.  For vertices the element is auto-loaded from the store
     /// if absent from the overlay (no precondition).  For edges the edge must
     /// already be in the overlay — call `get_edge` first.
+    /// Sets a property on a vertex or an edge.
     fn set_property(&mut self, prop: &Property) -> Result<(), StoreError>;
+    /// Drops a property from a vertex or an edge.
     fn drop_property(&mut self, prop: &Property) -> Result<(), StoreError>;
+    /// Drops a vertex from the graph.
     fn drop_vertex(&mut self, vertex: VertexKey) -> Result<(), StoreError>;
+    /// Drops an edge from the graph.
     fn drop_edge(&mut self, edge: &EdgeKey) -> Result<(), StoreError>;
 }
 
 /// Zero-cost context used in unit tests where no real graph is needed.
+#[cfg(test)]
 pub struct NoopCtx;
+#[cfg(test)]
 impl GraphCtx for NoopCtx {
     fn get_vertex(&mut self, _key: VertexKey) -> Result<Option<VertexKey>, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support get_vertex".to_string()))
@@ -107,7 +124,7 @@ impl GraphCtx for NoopCtx {
         _end_vertex_ids: Option<&[VertexKey]>,
         _limit: Option<u32>,
     ) -> Result<Vec<VertexKey>, StoreError> {
-        Err(StoreError::UnsupportedOperation("NoopCtx does not support get_outs".to_string()))
+        Err(StoreError::UnsupportedOperation("NoopCtx does not support get_adjacent_vertices".to_string()))
     }
     fn get_adjacent_edges(
         &mut self,
@@ -117,7 +134,7 @@ impl GraphCtx for NoopCtx {
         _end_vertex_ids: Option<&[VertexKey]>,
         _limit: Option<u32>,
     ) -> Result<Vec<EdgeKey>, StoreError> {
-        Err(StoreError::UnsupportedOperation("NoopCtx does not support get_out_edges".to_string()))
+        Err(StoreError::UnsupportedOperation("NoopCtx does not support get_adjacent_edges".to_string()))
     }
     fn get_property(&mut self, _key: &CanonicalKey, _prop: &PropKey) -> Result<Option<Property>, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support get_property".to_string()))

@@ -22,9 +22,22 @@ default:
 build:
     cargo build
 
+# Build the program for release
+build-release:
+    cargo build --release
+alias br := build-release
+
+# Check the program for errors without building
+check:
+    cargo check
+
 # Run the program
 run:
     cargo run
+
+# Generate documentation
+doc:
+    cargo doc --open
 
 # Run all code checks
 full-check:

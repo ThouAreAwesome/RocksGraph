@@ -1,14 +1,19 @@
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 //
-// This file is part of MultiGraph.
+// This file is part of RocksGraph.
 //
-// Use of this software is governed by the Business Source License 1.1
-// included in the LICENSE file at the root of this repository.
+// RocksGraph is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 2 of the License, or
+// (at your option) any later version.
 //
-// As of the Change Date (2030-01-01), in accordance with the Business Source
-// License, use of this software will be governed by the Apache License 2.0.
+// RocksGraph is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
 //
-// SPDX-License-Identifier: BUSL-1.1
+// You should have received a copy of the GNU General Public License
+// along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 use std::rc::Rc;
 
@@ -26,12 +31,14 @@ use crate::{
     types::error::StoreError,
 };
 
+/// A physical step that filters incoming traversers based on the results of a sub-plan.
 #[derive(Debug)]
 pub struct WhereStep {
     upstream: Option<StepRef>,
     physical_plans: PhysicalPlan,
 }
 
+/// Creates a new `WhereStep` with the given physical sub-plan.
 impl WhereStep {
     pub fn new(physical_sub_plan: PhysicalPlan) -> Self {
         Self { upstream: None, physical_plans: physical_sub_plan }
@@ -40,10 +47,12 @@ impl WhereStep {
 
 impl CoreStep for WhereStep {
     fn add_upper(&mut self, upstream: StepRef) {
+        // Sets the upstream step for this filter.
         self.upstream = Some(upstream);
     }
 
     fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+        // Produces traversers from its upstream if the sub-plan yields any results for that traverser.
         loop {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
             let Some(t) = upstream.next(ctx)? else { return Ok(None) };
@@ -61,6 +70,7 @@ impl CoreStep for WhereStep {
     }
 
     fn reset(&mut self) {
+        // Resets the state of this step, its upstream, and its sub-plan.
         if let Some(up) = &self.upstream {
             up.reset();
         }
@@ -68,6 +78,7 @@ impl CoreStep for WhereStep {
     }
 
     fn upper(&self) -> Option<StepRef> {
+        // Returns a clone of the upstream step reference.
         self.upstream.clone()
     }
 }

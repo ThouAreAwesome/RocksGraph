@@ -1,14 +1,19 @@
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 //
-// This file is part of MultiGraph.
+// This file is part of RocksGraph.
 //
-// Use of this software is governed by the Business Source License 1.1
-// included in the LICENSE file at the root of this repository.
+// RocksGraph is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 2 of the License, or
+// (at your option) any later version.
 //
-// As of the Change Date (2030-01-01), in accordance with the Business Source
-// License, use of this software will be governed by the Apache License 2.0.
+// RocksGraph is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
 //
-// SPDX-License-Identifier: BUSL-1.1
+// You should have received a copy of the GNU General Public License
+// along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 //! Engine-agnostic logical IR — the intermediate representation shared by the
 //! optimizer and all execution engines.
@@ -28,11 +33,13 @@ use std::collections::HashMap;
 pub type OptimizerRule = fn(&mut LogicalPlan) -> Result<bool, StoreError>;
 
 pub trait Optimizer {
+    /// Applies an optimization rule to the implementor.
     fn optimize(&mut self, _: &OptimizerRule) -> Result<bool, StoreError> {
         Ok(false)
     }
 }
 
+/// Represents a sequence of logical steps that form a query plan.
 #[derive(Clone)]
 pub struct LogicalPlan {
     pub steps: Vec<LogicalStep>,
@@ -53,6 +60,7 @@ impl Optimizer for LogicalPlan {
     }
 }
 
+/// An enumeration of all possible logical steps in a query plan.
 #[derive(Clone)]
 pub enum LogicalStep {
     Both(BothStep),
@@ -85,11 +93,13 @@ pub enum LogicalStep {
     Drop(DropStep),
 }
 
+/// Represents a logical `drop` step in a query plan.
 #[derive(Clone)]
 pub struct DropStep {}
 
 impl Optimizer for DropStep {}
 
+/// Implements the `Optimizer` trait for `LogicalStep`, allowing optimization rules to be applied to individual steps.
 impl Optimizer for LogicalStep {
     fn optimize(&mut self, optimizer_rule: &OptimizerRule) -> Result<bool, StoreError> {
         let mut changed = false;
@@ -103,11 +113,13 @@ impl Optimizer for LogicalStep {
     }
 }
 
+/// Represents a filter step that checks if the current traverser's vertex ID is among a list of target IDs.
 #[derive(Clone)]
 pub struct EndVertexFilter {
     pub ids: SmallVec<[VertexKey; 4]>,
 }
 
+/// Implements the `Optimizer` trait for `EndVertexFilter`.
 impl Optimizer for EndVertexFilter {}
 
 #[derive(Clone)]
@@ -125,11 +137,13 @@ impl Optimizer for CoalesceStep {
     }
 }
 
+/// Represents a logical `count` step in a query plan.
 #[derive(Clone)]
 pub struct CountStep {}
 
 impl Optimizer for CountStep {}
 #[derive(Clone)]
+/// Represents a logical `both` step, traversing both incoming and outgoing edges.
 pub struct BothStep {
     pub label_ids: SmallVec<[LabelId; 4]>,
     pub end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
@@ -137,6 +151,7 @@ pub struct BothStep {
 
 impl Optimizer for BothStep {}
 
+/// Represents a logical `bothE` step, traversing both incoming and outgoing edges and returning the edges themselves.
 #[derive(Clone)]
 pub struct BothEStep {
     pub label_ids: SmallVec<[LabelId; 4]>,
@@ -145,11 +160,13 @@ pub struct BothEStep {
 
 impl Optimizer for BothEStep {}
 
+/// Represents a logical `hasLabel` step, filtering elements by their label IDs.
 #[derive(Clone)]
 pub struct HasLabelStep {
     pub label_ids: SmallVec<[LabelId; 4]>,
 }
 
+/// Implements the `Optimizer` trait for `HasLabelStep`.
 impl Optimizer for HasLabelStep {}
 
 #[derive(Clone)]
@@ -160,12 +177,14 @@ pub struct HasPropertyStep {
 
 impl Optimizer for HasPropertyStep {}
 
+/// Represents a logical `in` step, traversing incoming edges and returning the source vertices.
 #[derive(Clone)]
 pub struct InStep {
     pub label_ids: SmallVec<[LabelId; 4]>,
     pub end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
 }
 
+/// Implements the `Optimizer` trait for `InStep`.
 impl Optimizer for InStep {}
 
 #[derive(Clone)]
@@ -175,12 +194,14 @@ pub struct InEStep {
 }
 impl Optimizer for InEStep {}
 
+/// Represents a logical `out` step, traversing outgoing edges and returning the destination vertices.
 #[derive(Clone)]
 pub struct OutStep {
     pub label_ids: SmallVec<[LabelId; 4]>,
     pub end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
 }
 
+/// Implements the `Optimizer` trait for `OutStep`.
 impl Optimizer for OutStep {}
 
 #[derive(Clone)]
@@ -189,8 +210,10 @@ pub struct OutEStep {
     pub end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
 }
 
+/// Implements the `Optimizer` trait for `OutEStep`.
 impl Optimizer for OutEStep {}
 
+/// Represents a logical `inV` step, which extracts the incoming vertex from an edge traverser.
 #[derive(Clone)]
 pub struct InVStep {}
 
@@ -201,11 +224,13 @@ pub struct OtherVStep {}
 
 impl Optimizer for OtherVStep {}
 
+/// Represents a logical `outV` step, which extracts the outgoing vertex from an edge traverser.
 #[derive(Clone)]
 pub struct OutVStep {}
 
 impl Optimizer for OutVStep {}
 
+/// Represents a logical `scalarFilter` step, filtering traversers based on a scalar value.
 #[derive(Clone)]
 pub struct ScalarFilterStep {
     pub value: Primitive,
@@ -213,11 +238,13 @@ pub struct ScalarFilterStep {
 
 impl Optimizer for ScalarFilterStep {}
 
+/// Represents a logical `values` step, extracting property values from elements.
 #[derive(Clone)]
 pub struct ValuesStep {
     pub property_keys: SmallVec<[PropKey; 4]>,
 }
 
+/// Implements the `Optimizer` trait for `ValuesStep`.
 impl Optimizer for ValuesStep {}
 
 #[derive(Clone)]
@@ -226,11 +253,13 @@ pub struct PropertiesStep {
 }
 impl Optimizer for PropertiesStep {}
 
+/// Represents a logical `where` step, applying a sub-plan as a filter.
 #[derive(Clone)]
 pub struct WhereStep {
     pub plan: LogicalPlan,
 }
 
+/// Implements the `Optimizer` trait for `WhereStep`, optimizing its sub-plan.
 impl Optimizer for WhereStep {
     fn optimize(&mut self, optimizer_rule: &OptimizerRule) -> Result<bool, StoreError> {
         optimizer_rule(&mut self.plan)
@@ -238,10 +267,12 @@ impl Optimizer for WhereStep {
 }
 
 #[derive(Clone)]
+/// Represents a logical `union` step, combining results from multiple sub-plans.
 pub struct UnionStep {
     pub plans: SmallVec<[LogicalPlan; 0]>,
 }
 
+/// Implements the `Optimizer` trait for `UnionStep`, optimizing its sub-plans.
 impl Optimizer for UnionStep {
     fn optimize(&mut self, optimizer_rule: &OptimizerRule) -> Result<bool, StoreError> {
         let mut changed = false;
@@ -253,6 +284,7 @@ impl Optimizer for UnionStep {
 }
 
 #[derive(Clone)]
+/// Represents a logical `addV` step, adding a new vertex to the graph.
 pub struct AddVStep {
     pub label_id: LabelId,
     pub vertex_id: Option<VertexKey>,
@@ -261,6 +293,7 @@ pub struct AddVStep {
 
 impl Optimizer for AddVStep {}
 
+/// Represents a logical `addE` step, adding a new edge to the graph.
 #[derive(Clone)]
 pub struct AddEStep {
     pub label_id: LabelId,
@@ -271,11 +304,13 @@ pub struct AddEStep {
 
 impl Optimizer for AddEStep {}
 
+/// Represents a logical `from` step, specifying the source vertex for an edge.
 #[derive(Clone)]
 pub struct FromStep {
     pub vertex_id: VertexKey,
 }
 
+/// Implements the `Optimizer` trait for `FromStep`.
 impl Optimizer for FromStep {}
 
 #[derive(Clone)]
@@ -285,12 +320,14 @@ pub struct ToStep {
 
 impl Optimizer for ToStep {}
 
+/// Represents a logical `property` step, setting a property on an element.
 #[derive(Clone)]
 pub struct PropertyStep {
     pub prop_key: PropKey,
     pub prop_value: Primitive,
 }
 
+/// Implements the `Optimizer` trait for `PropertyStep`.
 impl Optimizer for PropertyStep {}
 
 #[derive(Clone)]
@@ -300,11 +337,13 @@ pub struct VStep {
 
 impl Optimizer for VStep {}
 
+/// Represents a logical `limit` step, restricting the number of traversers.
 #[derive(Clone)]
 pub struct LimitStep {
     pub limit: u32,
 }
 
+/// Implements the `Optimizer` trait for `LimitStep`.
 impl Optimizer for LimitStep {}
 
 #[derive(Clone)]

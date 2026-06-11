@@ -1,14 +1,19 @@
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 //
-// This file is part of MultiGraph.
+// This file is part of RocksGraph.
 //
-// Use of this software is governed by the Business Source License 1.1
-// included in the LICENSE file at the root of this repository.
+// RocksGraph is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 2 of the License, or
+// (at your option) any later version.
 //
-// As of the Change Date (2030-01-01), in accordance with the Business Source
-// License, use of this software will be governed by the Apache License 2.0.
+// RocksGraph is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
 //
-// SPDX-License-Identifier: BUSL-1.1
+// You should have received a copy of the GNU General Public License
+// along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 //! Thin RocksDB transaction adapter.
 //!
@@ -17,7 +22,7 @@
 //! `Transaction` is a pure I/O layer: it encodes and decodes graph elements
 //! to/from RocksDB bytes and stages reads/writes on an `OptimisticTransactionDB`
 //! handle.  All overlay logic (dirty tracking, query-scoped caching, key
-//! allocation) lives in `LogicalGraph`, one layer above.
+//! allocation) lives in [`LogicalGraph`], one layer above.
 //!
 //! # Read path
 //!
@@ -36,7 +41,7 @@
 //! # Lifetime erasure
 //!
 //! `rocksdb::Transaction<'_, OptimisticTransactionDB>` borrows the DB.
-//! We transmute the lifetime to `'static` so the transaction can live
+//! This implementation transmutes the lifetime to `'static` so the transaction can live
 //! alongside `Arc<OptimisticTransactionDB>` in the same struct.
 //!
 //! **Safety invariant**: `db_txn` is declared *before* `db` in the struct.
@@ -69,10 +74,12 @@ type OwnedRocksTxn = rocksdb::Transaction<'static, OptimisticTransactionDB>;
 ///
 /// # Safety
 ///
-/// The caller must ensure the returned `OwnedRocksTxn` is dropped before the
-/// `Arc<OptimisticTransactionDB>` it was created from.  In `Transaction` this
-/// is guaranteed by field declaration order (`db_txn` before `db`).
+/// The caller must ensure the returned `OwnedRocksTxn` is dropped before the `Arc<OptimisticTransactionDB>`
+/// it was created from. In the `Transaction` struct, this is guaranteed by field declaration order
+/// (`db_txn` is declared before `db`).
 fn begin_txn(db: &Arc<OptimisticTransactionDB>) -> OwnedRocksTxn {
+    // Creates a new optimistic transaction. The transaction object borrows the `OptimisticTransactionDB`
+    // instance.
     let txn: rocksdb::Transaction<'_, OptimisticTransactionDB> = db.transaction();
     // SAFETY: see module doc and function safety note.
     unsafe { std::mem::transmute(txn) }
@@ -80,6 +87,7 @@ fn begin_txn(db: &Arc<OptimisticTransactionDB>) -> OwnedRocksTxn {
 
 // ── Transaction ───────────────────────────────────────────────────────────────
 
+/// A wrapper around `rocksdb::Transaction` that manages its lifetime and provides `GraphTransaction` capabilities.
 pub struct Transaction {
     // IMPORTANT: `db_txn` must come before `db` — drop order is declaration order.
     db_txn: Option<OwnedRocksTxn>,
@@ -88,6 +96,7 @@ pub struct Transaction {
 
 impl Drop for Transaction {
     fn drop(&mut self) {
+        // Ensures that if the transaction is dropped without an explicit commit or abort, it is rolled back.
         if let Some(txn) = self.db_txn.take() {
             let _ = txn.rollback();
         }
@@ -96,6 +105,7 @@ impl Drop for Transaction {
 }
 
 impl Transaction {
+    /// Creates a new `Transaction` instance, initiating an optimistic RocksDB transaction.
     pub fn new(db: Arc<OptimisticTransactionDB>) -> Self {
         let db_txn = begin_txn(&db);
         Self { db_txn: Some(db_txn), db }
@@ -105,6 +115,7 @@ impl Transaction {
 // ── GraphTransaction ──────────────────────────────────────────────────────────
 
 impl GraphTransaction for Transaction {
+    /// Retrieves a vertex by its key, enrolling it in the OCC read-set.
     fn get_vertex(&mut self, key: VertexKey) -> Result<Option<Vertex>, StoreError> {
         let cf_vertices = self.db.cf_handle(CF_VERTICES).ok_or(StoreError::MissingColumnFamily("vertices"))?;
         let vv_raw = self
@@ -123,6 +134,7 @@ impl GraphTransaction for Transaction {
         }
     }
 
+    /// Retrieves the degree (in-edges, out-edges) of a vertex, enrolling it in the OCC read-set.
     fn get_vertex_degree(&mut self, key: VertexKey) -> Result<Option<(u32, u32)>, StoreError> {
         let cf_degree = self.db.cf_handle(CF_VERTEX_DEGREE).ok_or(StoreError::MissingColumnFamily("vertex_degree"))?;
         let vd_raw = self
@@ -140,6 +152,7 @@ impl GraphTransaction for Transaction {
         }
     }
 
+    /// Retrieves a single edge by its key, enrolling it in the OCC read-set.
     fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<Edge>, StoreError> {
         let cf_name = match key.direction {
             Direction::OUT => CF_EDGES_OUT,
@@ -160,6 +173,7 @@ impl GraphTransaction for Transaction {
         }
     }
 
+    /// Scans for edges incident to a vertex, applying optional filters for label, destination, and limit.
     fn get_edges(
         &mut self,
         vertex: VertexKey,
@@ -208,6 +222,7 @@ impl GraphTransaction for Transaction {
         Ok(result)
     }
 
+    /// Inserts or updates a vertex record with its label and properties.
     fn put_vertex(&mut self, key: VertexKey, label_id: LabelId, props: &[Property]) -> Result<(), StoreError> {
         let txn = self.db_txn.as_ref().expect("no active transaction");
         let cf_vertices = self.db.cf_handle(CF_VERTICES).ok_or(StoreError::MissingColumnFamily("vertices"))?;
@@ -215,6 +230,7 @@ impl GraphTransaction for Transaction {
         txn.put_cf(&cf_vertices, encode_vertex_key(key), vv.encode()).map_err(StoreError::RocksDb)
     }
 
+    /// Inserts or updates the degree counts for a vertex.
     fn put_vertex_degree(&mut self, key: VertexKey, out_e_cnt: u32, in_e_cnt: u32) -> Result<(), StoreError> {
         let txn = self.db_txn.as_ref().expect("no active transaction");
         let cf_degree = self.db.cf_handle(CF_VERTEX_DEGREE).ok_or(StoreError::MissingColumnFamily("vertex_degree"))?;
@@ -222,6 +238,7 @@ impl GraphTransaction for Transaction {
         txn.put_cf(&cf_degree, encode_vertex_key(key), vd.encode()).map_err(StoreError::RocksDb)
     }
 
+    /// Inserts or updates a single edge record (either `edges_out` or `edges_in`).
     fn put_edge(&mut self, key: &EdgeKey, props: &[Property]) -> Result<(), StoreError> {
         let txn = self.db_txn.as_ref().expect("no active transaction");
         let cf_name = match key.direction {
@@ -234,18 +251,21 @@ impl GraphTransaction for Transaction {
         txn.put_cf(&cf, key_bytes, &ev_bytes).map_err(StoreError::RocksDb)
     }
 
+    /// Deletes a vertex record.
     fn delete_vertex(&mut self, key: VertexKey) -> Result<(), StoreError> {
         let cf_vertices = self.db.cf_handle(CF_VERTICES).ok_or(StoreError::MissingColumnFamily("vertices"))?;
         let txn = self.db_txn.as_ref().expect("no active transaction");
         txn.delete_cf(&cf_vertices, encode_vertex_key(key)).map_err(StoreError::RocksDb)
     }
 
+    /// Deletes a vertex degree record.
     fn delete_vertex_degree(&mut self, key: VertexKey) -> Result<(), StoreError> {
         let cf_degree = self.db.cf_handle(CF_VERTEX_DEGREE).ok_or(StoreError::MissingColumnFamily("vertex_degree"))?;
         let txn = self.db_txn.as_ref().expect("no active transaction");
         txn.delete_cf(&cf_degree, encode_vertex_key(key)).map_err(StoreError::RocksDb)
     }
 
+    /// Deletes a single edge record from the appropriate column family.
     fn delete_edge(&mut self, key: &EdgeKey) -> Result<(), StoreError> {
         let cf_name = match key.direction {
             Direction::OUT => CF_EDGES_OUT,
@@ -257,6 +277,7 @@ impl GraphTransaction for Transaction {
         txn.delete_cf(&cf, key_bytes).map_err(StoreError::RocksDb)
     }
 
+    /// Attempts to commit the transaction. Returns `StoreError::Conflict` on OCC failure.
     fn commit(&mut self) -> Result<(), StoreError> {
         let txn = self.db_txn.take().expect("no active transaction");
         let result = txn.commit().map_err(|e| {
@@ -270,6 +291,7 @@ impl GraphTransaction for Transaction {
         result
     }
 
+    /// Rolls back the transaction, discarding all staged writes.
     fn abort(&mut self) {
         if let Some(txn) = self.db_txn.take() {
             let _ = txn.rollback();

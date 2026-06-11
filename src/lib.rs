@@ -1,43 +1,54 @@
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 //
-// This file is part of MultiGraph.
+// This file is part of RocksGraph.
 //
-// Use of this software is governed by the Business Source License 1.1
-// included in the LICENSE file at the root of this repository.
+// RocksGraph is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 2 of the License, or
+// (at your option) any later version.
 //
-// As of the Change Date (2030-01-01), in accordance with the Business Source
-// License, use of this software will be governed by the Apache License 2.0.
+// RocksGraph is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
 //
-// SPDX-License-Identifier: BUSL-1.1
+// You should have received a copy of the GNU General Public License
+// along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
-//! MultiGraph — a Gremlin-compatible graph database engine.
+//! RocksGraph — a Gremlin-compatible graph database engine.
 //!
 //! ## Architecture
 //!
 //! ```text
-//! client  ──►  server  ──►  planner  ──►  optimizer  ──►  engine/{volcano,data_flow}
-//!                              │                                     │
-//!                         logical IR                            graph / store
+//! gremlin API  ──►  planner  ──►  optimizer  ──►  engine/volcano
+//!                      │                                │
+//!                 logical IR                      LogicalGraph       ← query-scoped overlay (OCC)
+//!                                                      │
+//!                                            GraphStore / RocksDB
 //! ```
 //!
-//! | Module      | Role |
-//! |-------------|------|
-//! [`planner`]   | Translates a Gremlin AST into engine-agnostic [`LogicalPlan`] IR. |
-//! [`optimizer`] | Rewrites a `LogicalPlan` into a more efficient equivalent. |
-//! [`engine`]    | Execution engines (`volcano`, `data_flow`) and their shared primitives (`GraphCtx`, `Traverser`,
-//! `GroupId`). | [`graph`]     | Query-scoped in-memory overlay over a `GraphStore` transaction. |
-//! [`store`]     | Pluggable storage backends (RocksDB, distributed). |
-//! [`server`]    | WebSocket/Gremlin server and bytecode deserializer. |
-//! [`client`]    | Lightweight Gremlin WebSocket client. |
-//! [`schema`]    | Schema definitions and validation. |
-//! [`types`]     | Shared value types (`GValue`, `Primitive`, keys). |
+//! | Module | Role |
+//! |--------|------|
+//! [`gremlin`]           | Fluent query builder; converts Gremlin API calls into a `LogicalPlan`. |
+//! [`planner`]           | Translates a Gremlin AST into engine-agnostic [`LogicalPlan`] IR. |
+//! [`planner::optimizer`]| Rewrites a `LogicalPlan` into a more efficient equivalent (fixpoint iteration). |
+//! [`engine`]            | Execution engine (`volcano`) and shared primitives (`GraphCtx`, `Traverser`). |
+//! [`graph`]             | Query-scoped in-memory overlay over a `GraphStore` transaction with OCC support. |
+//! [`store`]             | Pluggable storage backend abstraction; RocksDB implementation. |
+//! [`schema`]            | Label-ID ↔ label-string bidirectional mapping. |
+//! [`types`]             | Shared value types (`GValue`, `Primitive`, keys). |
 //!
 //! [`LogicalPlan`]: planner::logical_step::LogicalPlan
 
 pub mod engine;
 pub mod graph;
 pub mod gremlin;
-pub mod planner;
+pub(crate) mod planner;
 pub mod schema;
 pub mod store;
 pub mod types;
+
+// ── User-facing re-exports ────────────────────────────────────────────────────
+pub use graph::LogicalGraph;
+pub use gremlin::traversal::{graphTraversalSource, open_rocks_store, BuiltTraversal, GraphTraversal, __};
+pub use types::{GValue, Primitive, StoreError};

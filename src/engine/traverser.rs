@@ -1,14 +1,19 @@
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 //
-// This file is part of MultiGraph.
+// This file is part of RocksGraph.
 //
-// Use of this software is governed by the Business Source License 1.1
-// included in the LICENSE file at the root of this repository.
+// RocksGraph is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 2 of the License, or
+// (at your option) any later version.
 //
-// As of the Change Date (2030-01-01), in accordance with the Business Source
-// License, use of this software will be governed by the Apache License 2.0.
+// RocksGraph is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
 //
-// SPDX-License-Identifier: BUSL-1.1
+// You should have received a copy of the GNU General Public License
+// along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 use std::rc::Rc;
 
@@ -19,10 +24,10 @@ use crate::types::GValue;
 
 /// The unit of work that flows between steps in a traversal pipeline.
 ///
-/// * `labels` holds the `as(…)` labels active at the current step; the traversal engine uses them to build
-///   label→position maps for `select()` and `path()` evaluation.  `None` when no labels are attached. Stack-allocates
-///   up to 2 labels without heap allocation.
-///
+/// * `value`: The current data element being traversed (e.g., a vertex, an edge, or a scalar).
+/// * `labels`: Holds the `as(...)` labels active at the current step. The traversal engine uses these to build
+///   label-to-position maps for `select()` and `path()` evaluation. `None` when no labels are attached. Uses `SmallVec`
+///   to stack-allocate up to 2 labels without heap allocation, optimizing for common cases.
 /// * `parent` is a back-pointer to the traverser at the previous step, forming a persistent tree (child → parent).
 ///   Following the chain and collecting `(value, labels)` pairs reconstructs the full traversal history. Allocated only
 ///   when path tracking is active.
@@ -31,16 +36,20 @@ pub struct Traverser {
     /// The current value carried by this traverser.
     pub value: GValue,
     /// Back-pointer to the spawning traverser — `Some` only when path tracking is active.
+    #[allow(dead_code)]
     pub parent: Option<Rc<Traverser>>,
     /// Labels assigned to the current step via `as(…)`.  `None` = no labels.
+    #[allow(dead_code)]
     pub labels: Option<SmallVec<[SmolStr; 2]>>,
 }
 
 impl Traverser {
+    /// Creates a new `Traverser` with a given value and no parent or labels.
     pub fn new(value: GValue) -> Self {
         Self { value, labels: None, parent: None }
     }
 
+    /// Creates a new `Traverser` wrapped in an `Rc` with a given value.
     pub fn new_rc(value: GValue) -> Rc<Self> {
         Rc::new(Self::new(value))
     }
@@ -52,6 +61,7 @@ impl Traverser {
 
     /// Collect the full traversal history as `(value, labels)` pairs,
     /// oldest entry first (including the current traverser).
+    #[allow(dead_code)]
     pub fn collect_path(&self) -> Vec<(GValue, Option<&SmallVec<[SmolStr; 2]>>)> {
         let mut entries: Vec<(GValue, Option<&SmallVec<[SmolStr; 2]>>)> =
             vec![(self.value.clone(), self.labels.as_ref())];

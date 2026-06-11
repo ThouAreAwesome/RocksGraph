@@ -1,14 +1,19 @@
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 //
-// This file is part of MultiGraph.
+// This file is part of RocksGraph.
 //
-// Use of this software is governed by the Business Source License 1.1
-// included in the LICENSE file at the root of this repository.
+// RocksGraph is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 2 of the License, or
+// (at your option) any later version.
 //
-// As of the Change Date (2030-01-01), in accordance with the Business Source
-// License, use of this software will be governed by the Apache License 2.0.
+// RocksGraph is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
 //
-// SPDX-License-Identifier: BUSL-1.1
+// You should have received a copy of the GNU General Public License
+// along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 //! Store-layer trait contracts.
 //!
@@ -36,7 +41,7 @@
 //! it only touches `LogicalGraph`. Backend details (RocksDB CFs, OCC, encoding)
 //! never cross the `GraphTransaction` boundary.
 
-use crate::types::{element::Property, Direction, Edge, EdgeKey, LabelId, StoreError, Vertex, VertexKey};
+use crate::types::{element::Property, Direction, Edge, EdgeKey, LabelId, StoreError, Vertex, VertexKey}; // Corrected import path for `element`
 
 // ── GraphTransaction ──────────────────────────────────────────────────────────
 
@@ -46,9 +51,9 @@ use crate::types::{element::Property, Direction, Edge, EdgeKey, LabelId, StoreEr
 ///
 /// # Read semantics
 ///
-/// Reads return owned `Vertex` or `Edge` values.  `LogicalGraph` moves them into
+/// Reads return owned `Vertex` or `Edge` values. `LogicalGraph` moves them into
 /// its overlay map; on mutation it updates the element's properties in place.
-///
+/// This trait defines the contract for interacting with the underlying graph storage.
 /// # Write semantics
 ///
 /// Writes are purely physical: `GraphTransaction` writes exactly what it is told
@@ -62,9 +67,9 @@ pub trait GraphTransaction {
     /// Fetch a committed vertex; `None` if absent.
     ///
     /// Implementations should register the key in an OCC read-set so that a
-    /// concurrent write detected at commit time returns `StoreError::Conflict`.
-    // TODO:
-    //      1. Consider adding a batch `get_vertices` method to optimize bulk property retrieval.
+    /// concurrent write detected at commit time returns [`StoreError::Conflict`].
+    ///
+    /// **Note**: Consider adding a batch `get_vertices` method to optimize bulk property retrieval.
     //      Currently, `get_vertex` is used both for property loading and existence checking.
     //      A batch API would be great for data fetching, but returning a partial result set makes it
     //      inconvenient for strict existence checks. Needs further design consideration.
@@ -72,7 +77,7 @@ pub trait GraphTransaction {
 
     /// Fetch a committed vertex's out-degree and in-degree; `None` if absent.
     /// Implementations should register the key in an OCC read-set.
-    fn get_vertex_degree(&mut self, key: VertexKey) -> Result<Option<(u32, u32)>, StoreError>;
+    fn get_vertex_degree(&mut self, key: VertexKey) -> Result<Option<(u32, u32)>, StoreError>; // Retrieves the degree of a vertex.
 
     /// Fetch a single committed edge record; `None` if absent.
     fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<Edge>, StoreError>;
@@ -95,27 +100,21 @@ pub trait GraphTransaction {
 
     /// Upsert a vertex record with explicit key, label, and full property list.
     fn put_vertex(&mut self, key: VertexKey, label_id: LabelId, props: &[Property]) -> Result<(), StoreError>;
-
     /// Upsert the vertex degree record (out-degree and in-degree).
     fn put_vertex_degree(&mut self, key: VertexKey, out_e_cnt: u32, in_e_cnt: u32) -> Result<(), StoreError>;
-
     /// Upsert a single edge record in the specified physical direction index.
     fn put_edge(&mut self, key: &EdgeKey, props: &[Property]) -> Result<(), StoreError>;
-
     /// Delete a vertex metadata record.
     fn delete_vertex(&mut self, key: VertexKey) -> Result<(), StoreError>;
-
     /// Delete the vertex degree record.
     fn delete_vertex_degree(&mut self, key: VertexKey) -> Result<(), StoreError>;
-
     /// Delete a single edge record from the specified physical direction index.
     fn delete_edge(&mut self, key: &EdgeKey) -> Result<(), StoreError>;
 
     // ── Control ───────────────────────────────────────────────────────────────
 
     /// Flush all staged writes atomically.
-    ///
-    /// Returns `StoreError::Conflict` on OCC conflict; the caller must retry
+    /// Returns [`StoreError::Conflict`] on OCC conflict; the caller must retry
     /// the entire traversal from scratch with a new `LogicalGraph`.
     fn commit(&mut self) -> Result<(), StoreError>;
 

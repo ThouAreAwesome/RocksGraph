@@ -1,14 +1,19 @@
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 //
-// This file is part of MultiGraph.
+// This file is part of RocksGraph.
 //
-// Use of this software is governed by the Business Source License 1.1
-// included in the LICENSE file at the root of this repository.
+// RocksGraph is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 2 of the License, or
+// (at your option) any later version.
 //
-// As of the Change Date (2030-01-01), in accordance with the Business Source
-// License, use of this software will be governed by the Apache License 2.0.
+// RocksGraph is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
 //
-// SPDX-License-Identifier: BUSL-1.1
+// You should have received a copy of the GNU General Public License
+// along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 use std::{
     collections::HashMap,
@@ -69,6 +74,49 @@ impl Hash for Primitive {
             Self::Uuid(v) => v.hash(state),
             Self::Null => {}
         }
+    }
+}
+
+// ── Primitive conversions ─────────────────────────────────────────────────────
+
+impl From<bool> for Primitive {
+    fn from(v: bool) -> Self {
+        Self::Bool(v)
+    }
+}
+impl From<i32> for Primitive {
+    fn from(v: i32) -> Self {
+        Self::Int32(v)
+    }
+}
+impl From<i64> for Primitive {
+    fn from(v: i64) -> Self {
+        Self::Int64(v)
+    }
+}
+impl From<f32> for Primitive {
+    fn from(v: f32) -> Self {
+        Self::Float32(v)
+    }
+}
+impl From<f64> for Primitive {
+    fn from(v: f64) -> Self {
+        Self::Float64(v)
+    }
+}
+impl From<&str> for Primitive {
+    fn from(v: &str) -> Self {
+        Self::String(SmolStr::new(v))
+    }
+}
+impl From<String> for Primitive {
+    fn from(v: String) -> Self {
+        Self::String(SmolStr::from(v))
+    }
+}
+impl From<SmolStr> for Primitive {
+    fn from(v: SmolStr) -> Self {
+        Self::String(v)
     }
 }
 

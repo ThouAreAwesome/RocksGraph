@@ -1,14 +1,19 @@
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 //
-// This file is part of MultiGraph.
+// This file is part of RocksGraph.
 //
-// Use of this software is governed by the Business Source License 1.1
-// included in the LICENSE file at the root of this repository.
+// RocksGraph is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 2 of the License, or
+// (at your option) any later version.
 //
-// As of the Change Date (2030-01-01), in accordance with the Business Source
-// License, use of this software will be governed by the Apache License 2.0.
+// RocksGraph is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
 //
-// SPDX-License-Identifier: BUSL-1.1
+// You should have received a copy of the GNU General Public License
+// along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 use std::rc::Rc;
 
@@ -23,16 +28,20 @@ use crate::{
     types::error::StoreError,
 };
 
+/// A physical step that acts as a source, emitting a predefined vector of `Traverser` items.
 #[derive(Debug)]
 pub struct VecSourceStep {
     items: SmallVec<[Rc<Traverser>; 4]>,
 }
 
 impl VecSourceStep {
+    /// Creates an empty `VecSourceStep`.
     pub fn empty() -> Self {
         Self { items: SmallVec::new() }
     }
 
+    /// Injects a collection of `Traverser` items into this source step.
+    /// These items will be emitted when `produce` is called.
     pub fn inject(&mut self, items: SmallVec<[Rc<Traverser>; 4]>) {
         self.items.extend(items);
     }
@@ -40,10 +49,12 @@ impl VecSourceStep {
 
 impl CoreStep for VecSourceStep {
     fn add_upper(&mut self, _upstream: StepRef) {
+        // `VecSourceStep` is a source step and does not have an upstream.
         panic!("VecSourceStep is a source step and cannot have an upstream");
     }
 
     fn produce(&mut self, _ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+        // Emits all currently held `Traverser` items and then clears its internal buffer.
         if !self.items.is_empty() {
             Ok(Some(self.items.drain(..).collect()))
         } else {
@@ -52,6 +63,7 @@ impl CoreStep for VecSourceStep {
     }
 
     fn reset(&mut self) {
+        // Resets the step by clearing its internal buffer of items.
         self.items.clear();
     }
 }

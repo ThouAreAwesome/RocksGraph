@@ -1,14 +1,19 @@
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 //
-// This file is part of MultiGraph.
+// This file is part of RocksGraph.
 //
-// Use of this software is governed by the Business Source License 1.1
-// included in the LICENSE file at the root of this repository.
+// RocksGraph is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 2 of the License, or
+// (at your option) any later version.
 //
-// As of the Change Date (2030-01-01), in accordance with the Business Source
-// License, use of this software will be governed by the Apache License 2.0.
+// RocksGraph is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
 //
-// SPDX-License-Identifier: BUSL-1.1
+// You should have received a copy of the GNU General Public License
+// along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 use std::rc::Rc;
 
@@ -26,6 +31,7 @@ use crate::{
     types::error::StoreError,
 };
 
+/// A physical step that implements the `coalesce` logical step.
 #[derive(Debug)]
 pub struct CoalesceStep {
     upstream: Option<StepRef>,
@@ -36,6 +42,7 @@ pub struct CoalesceStep {
 }
 
 impl CoalesceStep {
+    /// Creates a new `CoalesceStep` with the given physical sub-plans.
     pub fn new(physical_plans: SmallVec<[PhysicalPlan; 4]>) -> Self {
         Self { upstream: None, physical_plans, current_input: None, current_plan_idx: 0, winning_plan_idx: None }
     }
@@ -43,10 +50,12 @@ impl CoalesceStep {
 
 impl CoreStep for CoalesceStep {
     fn add_upper(&mut self, upstream: StepRef) {
+        // Sets the upstream step for this coalesce step.
         self.upstream = Some(upstream);
     }
 
     fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+        // Produces traversers from the first sub-plan that yields results.
         loop {
             // If we found a winning branch, keep draining it
             if let Some(winning_idx) = self.winning_plan_idx {
@@ -92,6 +101,7 @@ impl CoreStep for CoalesceStep {
     }
 
     fn reset(&mut self) {
+        // Resets the state of this step and all its upstream and sub-plans.
         if let Some(up) = &self.upstream {
             up.reset();
         }
@@ -104,6 +114,7 @@ impl CoreStep for CoalesceStep {
     }
 
     fn upper(&self) -> Option<StepRef> {
+        // Returns a clone of the upstream step reference.
         self.upstream.clone()
     }
 }

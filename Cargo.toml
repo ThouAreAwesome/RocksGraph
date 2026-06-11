@@ -2,8 +2,8 @@
 authors = ["Austin Han <austinhan1024@gmail.com>"]
 description = "A Gremlin-compatible property graph engine"
 edition = "2021"
-license = "BUSL-1.1"
-name = "multigraph"
+license = "GPL-2.0"
+name = "rocksgraph"
 version = "0.1.0"
 
 [dependencies]

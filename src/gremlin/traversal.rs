@@ -1,17 +1,25 @@
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 //
-// This file is part of MultiGraph.
+// This file is part of RocksGraph.
 //
-// Use of this software is governed by the Business Source License 1.1
-// included in the LICENSE file at the root of this repository.
+// RocksGraph is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 2 of the License, or
+// (at your option) any later version.
 //
-// As of the Change Date (2030-01-01), in accordance with the Business Source
-// License, use of this software will be governed by the Apache License 2.0.
+// RocksGraph is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
 //
-// SPDX-License-Identifier: BUSL-1.1
+// You should have received a copy of the GNU General Public License
+// along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::{
-    engine::volcano::builder::{PhysicalPlan, PhysicalPlanBuilder},
+    engine::{
+        volcano::builder::{PhysicalPlan, PhysicalPlanBuilder},
+        GraphCtx,
+    },
     planner::{
         apply_rules,
         logical_step::{
@@ -21,10 +29,24 @@ use crate::{
             WhereStep,
         },
     },
-    types::{Primitive, StoreError},
+    types::{GValue, Primitive, StoreError},
 };
 use smol_str::SmolStr;
 use std::collections::HashMap;
+
+// Return type of build() - user-facing iterator
+pub struct BuiltTraversal<'g> {
+    graph: &'g mut dyn GraphCtx, // #[doc(hidden)] type, but users never name it
+    plan: PhysicalPlan,          // fully hidden
+}
+
+impl<'g> Iterator for BuiltTraversal<'g> {
+    type Item = Result<GValue, StoreError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.plan.next(self.graph).map(|res| res.map(|t| t.value.clone())).transpose()
+    }
+}
 
 #[derive(Clone)]
 pub struct GremlinQueryAst {
@@ -51,28 +73,28 @@ pub fn __() -> GraphTraversal {
 
 #[allow(non_snake_case)]
 impl GraphTraversal {
+    pub fn build<'g>(&self, graph: &'g mut impl GraphCtx) -> Result<BuiltTraversal<'g>, StoreError> {
+        let mut logical = self.build_logical();
+        apply_rules(&mut logical)?; // Apply optimization rules to the logical plan.
+        let plan = PhysicalPlanBuilder {}.build(&logical)?; // Construct PhysicalPlanBuilder directly.
+        Ok(BuiltTraversal { graph, plan })
+    }
+
     fn build_logical(&self) -> LogicalPlan {
         LogicalPlan { steps: self.ast.steps.clone() }
     }
 
-    pub fn build(&self) -> Result<PhysicalPlan, StoreError> {
-        let mut logical_plan = LogicalPlan { steps: self.ast.steps.clone() };
-
-        let _ = apply_rules(&mut logical_plan).unwrap();
-
-        let mut builder: PhysicalPlanBuilder = Default::default();
-        builder.build(&logical_plan)
-    }
-
-    pub fn has(&mut self, key: SmolStr, value: Primitive) -> &mut Self {
-        self.ast.steps.push(LogicalStep::HasProperty(HasPropertyStep { key, value }));
+    pub fn has(&mut self, key: impl Into<SmolStr>, value: impl Into<Primitive>) -> &mut Self {
+        self.ast.steps.push(LogicalStep::HasProperty(HasPropertyStep { key: key.into(), value: value.into() }));
         self
     }
 
     /// Spawns a traversal with the `V()` step.
     /// This method is available on `GraphTraversal` for sub-traversals (e.g., `__.V()`).
-    pub fn V(&mut self, ids: &[i64]) -> &mut Self {
-        self.ast.steps.push(LogicalStep::V(crate::planner::logical_step::VStep { ids: ids.iter().copied().collect() }));
+    pub fn V(&mut self, ids: impl IntoIterator<Item = impl Into<i64>>) -> &mut Self {
+        self.ast.steps.push(LogicalStep::V(crate::planner::logical_step::VStep {
+            ids: ids.into_iter().map(Into::into).collect(),
+        }));
         self
     }
 
@@ -101,45 +123,51 @@ impl GraphTraversal {
         self
     }
 
-    pub fn out(&mut self, labels: &[u16]) -> &mut Self {
-        self.ast
-            .steps
-            .push(LogicalStep::Out(OutStep { label_ids: labels.iter().copied().collect(), end_vertex_ids: None }));
+    pub fn out(&mut self, labels: impl IntoIterator<Item = impl Into<u16>>) -> &mut Self {
+        self.ast.steps.push(LogicalStep::Out(OutStep {
+            label_ids: labels.into_iter().map(Into::into).collect(),
+            end_vertex_ids: None,
+        }));
         self
     }
 
-    pub fn outE(&mut self, labels: &[u16]) -> &mut Self {
-        self.ast
-            .steps
-            .push(LogicalStep::OutE(OutEStep { label_ids: labels.iter().copied().collect(), end_vertex_ids: None }));
+    pub fn outE(&mut self, labels: impl IntoIterator<Item = impl Into<u16>>) -> &mut Self {
+        self.ast.steps.push(LogicalStep::OutE(OutEStep {
+            label_ids: labels.into_iter().map(Into::into).collect(),
+            end_vertex_ids: None,
+        }));
         self
     }
 
-    pub fn r#in(&mut self, labels: &[u16]) -> &mut Self {
-        self.ast
-            .steps
-            .push(LogicalStep::In(InStep { label_ids: labels.iter().copied().collect(), end_vertex_ids: None }));
+    pub fn r#in(&mut self, labels: impl IntoIterator<Item = impl Into<u16>>) -> &mut Self {
+        self.ast.steps.push(LogicalStep::In(InStep {
+            label_ids: labels.into_iter().map(Into::into).collect(),
+            end_vertex_ids: None,
+        }));
         self
     }
 
-    pub fn inE(&mut self, labels: &[u16]) -> &mut Self {
-        self.ast
-            .steps
-            .push(LogicalStep::InE(InEStep { label_ids: labels.iter().copied().collect(), end_vertex_ids: None }));
+    pub fn inE(&mut self, labels: impl IntoIterator<Item = impl Into<u16>>) -> &mut Self {
+        self.ast.steps.push(LogicalStep::InE(InEStep {
+            label_ids: labels.into_iter().map(Into::into).collect(),
+            end_vertex_ids: None,
+        }));
         self
     }
 
-    pub fn both(&mut self, labels: &[u16]) -> &mut Self {
-        self.ast
-            .steps
-            .push(LogicalStep::Both(BothStep { label_ids: labels.iter().copied().collect(), end_vertex_ids: None }));
+    pub fn both(&mut self, labels: impl IntoIterator<Item = impl Into<u16>>) -> &mut Self {
+        self.ast.steps.push(LogicalStep::Both(BothStep {
+            label_ids: labels.into_iter().map(Into::into).collect(),
+            end_vertex_ids: None,
+        }));
         self
     }
 
-    pub fn bothE(&mut self, labels: &[u16]) -> &mut Self {
-        self.ast
-            .steps
-            .push(LogicalStep::BothE(BothEStep { label_ids: labels.iter().copied().collect(), end_vertex_ids: None }));
+    pub fn bothE(&mut self, labels: impl IntoIterator<Item = impl Into<u16>>) -> &mut Self {
+        self.ast.steps.push(LogicalStep::BothE(BothEStep {
+            label_ids: labels.into_iter().map(Into::into).collect(),
+            end_vertex_ids: None,
+        }));
         self
     }
 
@@ -148,8 +176,10 @@ impl GraphTraversal {
         self
     }
 
-    pub fn hasLabel(&mut self, labels: &[u16]) -> &mut Self {
-        self.ast.steps.push(LogicalStep::HasLabel(HasLabelStep { label_ids: labels.iter().copied().collect() }));
+    pub fn hasLabel(&mut self, labels: impl IntoIterator<Item = impl Into<u16>>) -> &mut Self {
+        self.ast
+            .steps
+            .push(LogicalStep::HasLabel(HasLabelStep { label_ids: labels.into_iter().map(Into::into).collect() }));
         self
     }
 
@@ -168,18 +198,20 @@ impl GraphTraversal {
         self
     }
 
-    pub fn is(&mut self, value: Primitive) -> &mut Self {
-        self.ast.steps.push(LogicalStep::ScalarFilter(ScalarFilterStep { value }));
+    pub fn is(&mut self, value: impl Into<Primitive>) -> &mut Self {
+        self.ast.steps.push(LogicalStep::ScalarFilter(ScalarFilterStep { value: value.into() }));
         self
     }
 
-    pub fn property(&mut self, key: SmolStr, value: Primitive) -> &mut Self {
-        self.ast.steps.push(LogicalStep::Property(PropertyStep { prop_key: key, prop_value: value }));
+    pub fn property(&mut self, key: impl Into<SmolStr>, value: impl Into<Primitive>) -> &mut Self {
+        self.ast.steps.push(LogicalStep::Property(PropertyStep { prop_key: key.into(), prop_value: value.into() }));
         self
     }
 
-    pub fn values(&mut self, keys: &[SmolStr]) -> &mut Self {
-        self.ast.steps.push(LogicalStep::Values(ValuesStep { property_keys: keys.iter().cloned().collect() }));
+    pub fn values(&mut self, keys: impl IntoIterator<Item = impl AsRef<str>>) -> &mut Self {
+        self.ast.steps.push(LogicalStep::Values(ValuesStep {
+            property_keys: keys.into_iter().map(|k| SmolStr::new(k.as_ref())).collect(),
+        }));
         self
     }
 
@@ -205,12 +237,14 @@ impl GraphTraversal {
         self.ast.steps.push(LogicalStep::Limit(LimitStep { limit }));
         self
     }
-    pub fn hasId(&mut self, ids: &[i64]) -> &mut Self {
-        self.ast.steps.push(LogicalStep::HasId(HasIdStep { ids: ids.iter().copied().collect() }));
+    pub fn hasId(&mut self, ids: impl IntoIterator<Item = impl Into<i64>>) -> &mut Self {
+        self.ast.steps.push(LogicalStep::HasId(HasIdStep { ids: ids.into_iter().map(Into::into).collect() }));
         self
     }
-    pub fn properties(&mut self, keys: &[SmolStr]) -> &mut Self {
-        self.ast.steps.push(LogicalStep::Properties(PropertiesStep { property_keys: keys.iter().cloned().collect() }));
+    pub fn properties(&mut self, keys: impl IntoIterator<Item = impl AsRef<str>>) -> &mut Self {
+        self.ast.steps.push(LogicalStep::Properties(PropertiesStep {
+            property_keys: keys.into_iter().map(|k| SmolStr::new(k.as_ref())).collect(),
+        }));
         self
     }
 }

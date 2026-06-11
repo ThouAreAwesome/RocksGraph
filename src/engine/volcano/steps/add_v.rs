@@ -1,14 +1,19 @@
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 //
-// This file is part of MultiGraph.
+// This file is part of RocksGraph.
 //
-// Use of this software is governed by the Business Source License 1.1
-// included in the LICENSE file at the root of this repository.
+// RocksGraph is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 2 of the License, or
+// (at your option) any later version.
 //
-// As of the Change Date (2030-01-01), in accordance with the Business Source
-// License, use of this software will be governed by the Apache License 2.0.
+// RocksGraph is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
 //
-// SPDX-License-Identifier: BUSL-1.1
+// You should have received a copy of the GNU General Public License
+// along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 use std::{collections::HashMap, rc::Rc};
 
@@ -30,6 +35,7 @@ use crate::{
     },
 };
 
+/// A physical step that adds a new vertex to the graph.
 #[derive(Debug)]
 pub struct AddVStep {
     label_id: LabelId,
@@ -38,6 +44,7 @@ pub struct AddVStep {
     emitted: bool,
 }
 
+/// Creates a new `AddVStep` with the specified vertex details.
 impl AddVStep {
     pub fn new(label_id: LabelId, vk: VertexKey, properties: HashMap<PropKey, Primitive>) -> Self {
         let properties = properties
@@ -50,10 +57,12 @@ impl AddVStep {
 
 impl CoreStep for AddVStep {
     fn add_upper(&mut self, _upstream: StepRef) {
+        // `AddVStep` is a source step and does not have an upstream.
         panic!("AddVStep is a source step and cannot have an upstream");
     }
 
     fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+        // Emits the newly created vertex as a traverser.
         if self.emitted {
             return Ok(None);
         }
@@ -66,6 +75,7 @@ impl CoreStep for AddVStep {
     }
 
     fn reset(&mut self) {
+        // Resets the step's state, allowing it to be re-executed.
         self.emitted = false;
     }
 }

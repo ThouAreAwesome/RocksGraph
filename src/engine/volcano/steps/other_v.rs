@@ -1,14 +1,19 @@
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 //
-// This file is part of MultiGraph.
+// This file is part of RocksGraph.
 //
-// Use of this software is governed by the Business Source License 1.1
-// included in the LICENSE file at the root of this repository.
+// RocksGraph is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 2 of the License, or
+// (at your option) any later version.
 //
-// As of the Change Date (2030-01-01), in accordance with the Business Source
-// License, use of this software will be governed by the Apache License 2.0.
+// RocksGraph is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
 //
-// SPDX-License-Identifier: BUSL-1.1
+// You should have received a copy of the GNU General Public License
+// along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 use std::rc::Rc;
 
@@ -23,11 +28,13 @@ use crate::{
     types::{error::StoreError, GValue},
 };
 
+/// A physical step that extracts the "other" vertex from an edge traverser.
 #[derive(Default, Debug)]
 pub struct OtherVStep {
     upstream: Option<StepRef>,
 }
 
+/// Implements the `CoreStep` trait for `OtherVStep`.
 impl CoreStep for OtherVStep {
     fn add_upper(&mut self, upstream: StepRef) {
         self.upstream = Some(upstream);
@@ -36,19 +43,22 @@ impl CoreStep for OtherVStep {
     fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
         loop {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
+            // Pull a traverser from the upstream.
             let Some(t) = upstream.next(ctx)? else { return Ok(None) };
+            // If the traverser carries an edge, extract its secondary ID (the "other" vertex) and emit it as a new
+            // traverser.
             if let GValue::Edge(ek) = &t.value {
                 return Ok(Some(smallvec![Traverser::new_rc(GValue::Vertex(ek.secondary_id))]));
             }
         }
     }
 
+    /// Resets the state of this step and its upstream.
     fn reset(&mut self) {
         if let Some(up) = &self.upstream {
             up.reset();
         }
     }
-
     fn upper(&self) -> Option<StepRef> {
         self.upstream.clone()
     }
