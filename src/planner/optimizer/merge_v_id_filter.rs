@@ -173,4 +173,34 @@ mod tests {
         }
         assert!(matches!(plan.steps[1], LogicalStep::HasProperty(_)));
     }
+
+    #[test]
+    fn test_id_filter_int64_folded_into_v_step() {
+        let steps = vec![v_all(), has("id", Primitive::Int64(42))];
+        let mut plan = LogicalPlan { steps };
+        let opt = merget_v_id_filter(&mut plan).unwrap();
+        assert!(opt, "plan should be changed");
+        assert_eq!(plan.steps.len(), 1);
+        if let LogicalStep::V(v) = &plan.steps[0] {
+            assert_eq!(&v.ids[..], &[42i64]);
+        } else {
+            panic!("expected VStep");
+        }
+    }
+
+    #[test]
+    fn test_two_consecutive_has_id_second_wins() {
+        // V().hasId(1).hasId(2): the HasId arm has no is_empty guard, so both fold in
+        // sequence — the second value overwrites the first. Final plan: V(2), 1 step.
+        let steps = vec![v_all(), has_id(vec![1]), has_id(vec![2])];
+        let mut plan = LogicalPlan { steps };
+        let opt = merget_v_id_filter(&mut plan).unwrap();
+        assert!(opt, "plan should be changed");
+        assert_eq!(plan.steps.len(), 1);
+        if let LogicalStep::V(v) = &plan.steps[0] {
+            assert_eq!(&v.ids[..], &[2i64], "second hasId overwrites the first");
+        } else {
+            panic!("expected VStep");
+        }
+    }
 }

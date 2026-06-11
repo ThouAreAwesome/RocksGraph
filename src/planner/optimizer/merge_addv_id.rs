@@ -66,3 +66,110 @@ pub fn merge_addv_id(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
     plan.steps.truncate(i + 1);
     Ok(plan_changed)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::planner::logical_step::{AddVStep, PropertyStep};
+    use smol_str::SmolStr;
+    use std::collections::HashMap;
+
+    fn addv() -> LogicalStep {
+        LogicalStep::AddV(AddVStep { label_id: 1, vertex_id: None, properties: HashMap::new() })
+    }
+
+    fn prop(key: &str, value: Primitive) -> LogicalStep {
+        LogicalStep::Property(PropertyStep { prop_key: SmolStr::new(key), prop_value: value })
+    }
+
+    #[test]
+    fn test_id_int32_merged_into_addv() {
+        let mut plan = LogicalPlan { steps: vec![addv(), prop("id", Primitive::Int32(7))] };
+        let changed = merge_addv_id(&mut plan).unwrap();
+        assert!(changed);
+        assert_eq!(plan.steps.len(), 1);
+        if let LogicalStep::AddV(av) = &plan.steps[0] {
+            assert_eq!(av.vertex_id, Some(7));
+        } else {
+            panic!("expected AddV");
+        }
+    }
+
+    #[test]
+    fn test_id_int64_merged_into_addv() {
+        let mut plan = LogicalPlan { steps: vec![addv(), prop("id", Primitive::Int64(1_000_000_000))] };
+        let changed = merge_addv_id(&mut plan).unwrap();
+        assert!(changed);
+        assert_eq!(plan.steps.len(), 1);
+        if let LogicalStep::AddV(av) = &plan.steps[0] {
+            assert_eq!(av.vertex_id, Some(1_000_000_000));
+        } else {
+            panic!("expected AddV");
+        }
+    }
+
+    #[test]
+    fn test_non_id_property_not_merged() {
+        let mut plan = LogicalPlan { steps: vec![addv(), prop("name", Primitive::Int32(5))] };
+        let changed = merge_addv_id(&mut plan).unwrap();
+        assert!(!changed);
+        assert_eq!(plan.steps.len(), 2);
+        assert!(matches!(plan.steps[0], LogicalStep::AddV(_)));
+        assert!(matches!(plan.steps[1], LogicalStep::Property(_)));
+    }
+
+    #[test]
+    fn test_non_id_property_before_id_property_not_merged() {
+        // addV().property("name", "x").property("id", 3)
+        // Once i advances past AddV to the name-prop, the (AddV, Property("id")) pattern
+        // never fires for the id-prop — the plan is returned unchanged.
+        let mut plan = LogicalPlan {
+            steps: vec![addv(), prop("name", Primitive::String(SmolStr::new("x"))), prop("id", Primitive::Int32(3))],
+        };
+        let changed = merge_addv_id(&mut plan).unwrap();
+        assert!(!changed, "id property not immediately after addV should not be merged");
+        assert_eq!(plan.steps.len(), 3);
+        if let LogicalStep::AddV(av) = &plan.steps[0] {
+            assert_eq!(av.vertex_id, None, "vertex_id should remain unset");
+        } else {
+            panic!("expected AddV");
+        }
+    }
+
+    #[test]
+    fn test_id_prop_bad_type_errors() {
+        let mut plan = LogicalPlan { steps: vec![addv(), prop("id", Primitive::String(SmolStr::new("bad")))] };
+        let res = merge_addv_id(&mut plan);
+        assert!(res.is_err(), "non-integer id type should return error");
+    }
+
+    #[test]
+    fn test_duplicate_id_property_errors() {
+        let mut plan =
+            LogicalPlan { steps: vec![addv(), prop("id", Primitive::Int32(1)), prop("id", Primitive::Int32(2))] };
+        let res = merge_addv_id(&mut plan);
+        assert!(res.is_err(), "duplicate id assignment should return error");
+    }
+
+    #[test]
+    fn test_trailing_non_id_properties_preserved() {
+        let mut plan = LogicalPlan {
+            steps: vec![
+                addv(),
+                prop("id", Primitive::Int32(5)),
+                prop("name", Primitive::String(SmolStr::new("alice"))),
+                prop("age", Primitive::Int32(30)),
+            ],
+        };
+        let changed = merge_addv_id(&mut plan).unwrap();
+        assert!(changed);
+        assert_eq!(plan.steps.len(), 3);
+        if let LogicalStep::AddV(av) = &plan.steps[0] {
+            assert_eq!(av.vertex_id, Some(5));
+        } else {
+            panic!("expected AddV");
+        }
+        assert!(matches!(plan.steps[1], LogicalStep::Property(_)));
+        assert!(matches!(plan.steps[2], LogicalStep::Property(_)));
+    }
+}

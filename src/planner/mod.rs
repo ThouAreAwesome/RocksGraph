@@ -107,14 +107,16 @@ mod tests {
     }
 
     // V().has("id",1).has("id",2).outE().otherV().hasId(4)
+    // First has("id") is folded into V; second has("id") stays (V already has ids set).
+    // The trailing hasId(4) after otherV() is not affected by merge_v_id_filter (not preceded by V).
     #[test]
-    fn test_v_has_id_prop_twice_merge_into_v() {
+    fn test_v_has_id_prop_twice_first_wins() {
         let steps = vec![v_all(), has_id_prop(1), has_id_prop(2), out_e(), other_v(), has_id(vec![4])];
         let mut plan = LogicalPlan { steps };
         let _ = apply_rules(&mut plan).unwrap();
         assert_eq!(plan.steps.len(), 5);
         if let LogicalStep::V(v) = &plan.steps[0] {
-            assert_eq!(&v.ids[..], &[1i64], "second has(\"id\") should win");
+            assert_eq!(&v.ids[..], &[1i64], "first has(\"id\") should be folded into V");
         } else {
             panic!("expected VStep at step 0");
         }
@@ -124,21 +126,22 @@ mod tests {
         assert!(matches!(plan.steps[4], LogicalStep::HasId(_)));
     }
 
+    // V().hasId(1).outE().otherV().hasId(4)
+    // hasId(1) is folded into V; trailing hasId(4) after otherV() is preserved.
     #[test]
     fn test_v_has_id_merged_into_v() {
-        let steps = vec![v_all(), has_id_prop(1), has_id_prop(2), out_e(), other_v(), has_id(vec![4])];
+        let steps = vec![v_all(), has_id(vec![1]), out_e(), other_v(), has_id(vec![4])];
         let mut plan = LogicalPlan { steps };
         let _ = apply_rules(&mut plan).unwrap();
-        assert_eq!(plan.steps.len(), 5);
+        assert_eq!(plan.steps.len(), 4);
         if let LogicalStep::V(v) = &plan.steps[0] {
-            assert_eq!(&v.ids[..], &[1i64], "second has(\"id\") should win");
+            assert_eq!(&v.ids[..], &[1i64], "hasId(1) should be folded into V");
         } else {
             panic!("expected VStep at step 0");
         }
-        assert!(matches!(plan.steps[1], LogicalStep::HasProperty(_)));
-        assert!(matches!(plan.steps[2], LogicalStep::OutE(_)));
-        assert!(matches!(plan.steps[3], LogicalStep::OtherV(_)));
-        assert!(matches!(plan.steps[4], LogicalStep::HasId(_)));
+        assert!(matches!(plan.steps[1], LogicalStep::OutE(_)));
+        assert!(matches!(plan.steps[2], LogicalStep::OtherV(_)));
+        assert!(matches!(plan.steps[3], LogicalStep::HasId(_)));
     }
 
     // V().hasId(1).outE().where(otherV().hasId(2))
@@ -165,8 +168,9 @@ mod tests {
         }
     }
     // V().has("id",1).outE().where(otherV().hasId(2)).outV().bothE().where(otherV().hasId(3))
-    // merget_v_id_filter folds has("id",1) into V; extract_end_vertex_filter lifts both where() steps.
-    // Result: [V(1), OutE, EndVertexFilter(2), OutV, BothE, EndVertexFilter(3)]
+    // merget_v_id_filter folds has("id",1) into V; extract_end_vertex_filter lifts both where() steps;
+    // merge_end_vertex_filter pushes them into OutE and BothE.
+    // Result: [V(1), OutE(ev=2), OutV, BothE(ev=3)]
     #[test]
     fn test_v_has_id_prop_with_where_extracted_and_merged() {
         let steps = vec![
@@ -186,9 +190,25 @@ mod tests {
         } else {
             panic!("expected VStep at step 0");
         }
-        assert!(matches!(plan.steps[1], LogicalStep::OutE(_)));
+        if let LogicalStep::OutE(oute) = &plan.steps[1] {
+            assert_eq!(
+                oute.end_vertex_ids.as_deref(),
+                Some(&[2i64][..]),
+                "end vertex filter should be merged into OutE"
+            );
+        } else {
+            panic!("expected OutE at step 1");
+        }
         assert!(matches!(plan.steps[2], LogicalStep::OutV(_)));
-        assert!(matches!(plan.steps[3], LogicalStep::BothE(_)));
+        if let LogicalStep::BothE(bothe) = &plan.steps[3] {
+            assert_eq!(
+                bothe.end_vertex_ids.as_deref(),
+                Some(&[3i64][..]),
+                "end vertex filter should be merged into BothE"
+            );
+        } else {
+            panic!("expected BothE at step 3");
+        }
     }
 
     // V().hasId(1, 2).hasId(3).outE().otherV().hasId(4)
@@ -206,7 +226,7 @@ mod tests {
     }
 
     // V().hasId(1).outE().where(otherV().hasId(2)).outV().bothE().where(otherV().hasId(3))
-    // optimized into V(1).outE().EndVertexFilter().outV().bothE().EndVertexFilter()
+    // optimized into V(1).outE(ev=2).outV().bothE(ev=3)
     #[test]
     fn test_where_other_v_has_id_extracted_at_multiple_positions() {
         let steps = vec![
@@ -221,10 +241,30 @@ mod tests {
         let mut plan = LogicalPlan { steps };
         let _ = apply_rules(&mut plan).unwrap();
         assert_eq!(plan.steps.len(), 4);
-        assert!(matches!(plan.steps[0], LogicalStep::V(_)));
-        assert!(matches!(plan.steps[1], LogicalStep::OutE(_)));
+        if let LogicalStep::V(v) = &plan.steps[0] {
+            assert_eq!(&v.ids[..], &[1i64], "hasId(1) should be folded into V");
+        } else {
+            panic!("expected VStep at step 0");
+        }
+        if let LogicalStep::OutE(oute) = &plan.steps[1] {
+            assert_eq!(
+                oute.end_vertex_ids.as_deref(),
+                Some(&[2i64][..]),
+                "end vertex filter should be merged into OutE"
+            );
+        } else {
+            panic!("expected OutE at step 1");
+        }
         assert!(matches!(plan.steps[2], LogicalStep::OutV(_)));
-        assert!(matches!(plan.steps[3], LogicalStep::BothE(_)));
+        if let LogicalStep::BothE(bothe) = &plan.steps[3] {
+            assert_eq!(
+                bothe.end_vertex_ids.as_deref(),
+                Some(&[3i64][..]),
+                "end vertex filter should be merged into BothE"
+            );
+        } else {
+            panic!("expected BothE at step 3");
+        }
     }
 
     // addV().property("id", 1)

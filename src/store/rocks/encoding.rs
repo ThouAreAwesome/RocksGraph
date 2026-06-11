@@ -370,6 +370,7 @@ pub(super) fn build_full_vertex(id: VertexKey, vv: &VertexValue) -> Result<Verte
 
 /// Decode an `EdgeValue` from storage into an `Edge`.
 pub(super) fn build_full_edge(ek: &EdgeKey, ev: &EdgeValue) -> Result<Edge, StoreError> {
+    // Use the canonical_edge_key method to correctly derive the direction-agnostic source and destination IDs.
     let cek = ek.canonical_edge_key();
     let owner = CanonicalKey::Edge(cek);
     let props = decode_props(&ev.property_blob, owner).ok_or(StoreError::CorruptData("edge property blob"))?;

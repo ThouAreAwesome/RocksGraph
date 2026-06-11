@@ -187,4 +187,157 @@ mod tests {
         assert!(matches!(plan.steps[0], LogicalStep::V(_)));
         assert!(matches!(plan.steps[1], LogicalStep::EndVertexFilter(_)));
     }
+
+    fn in_e() -> LogicalStep {
+        use crate::planner::logical_step::InEStep;
+        LogicalStep::InE(InEStep { label_ids: smallvec![], end_vertex_ids: None })
+    }
+
+    fn both_e() -> LogicalStep {
+        use crate::planner::logical_step::BothEStep;
+        LogicalStep::BothE(BothEStep { label_ids: smallvec![], end_vertex_ids: None })
+    }
+
+    fn out_step() -> LogicalStep {
+        use crate::planner::logical_step::OutStep;
+        LogicalStep::Out(OutStep { label_ids: smallvec![], end_vertex_ids: None })
+    }
+
+    fn in_step() -> LogicalStep {
+        use crate::planner::logical_step::InStep;
+        LogicalStep::In(InStep { label_ids: smallvec![], end_vertex_ids: None })
+    }
+
+    fn both_step() -> LogicalStep {
+        use crate::planner::logical_step::BothStep;
+        LogicalStep::Both(BothStep { label_ids: smallvec![], end_vertex_ids: None })
+    }
+
+    fn has_id(ids: Vec<VertexKey>) -> LogicalStep {
+        use crate::planner::logical_step::HasIdStep;
+        LogicalStep::HasId(HasIdStep { ids: ids.into_iter().collect() })
+    }
+
+    fn has_prop_id(id: i32) -> LogicalStep {
+        use crate::planner::logical_step::HasPropertyStep;
+        use smol_str::SmolStr;
+        LogicalStep::HasProperty(HasPropertyStep { key: SmolStr::new("id"), value: crate::types::Primitive::Int32(id) })
+    }
+
+    #[test]
+    fn test_in_e_evf_merged() {
+        let mut plan = LogicalPlan { steps: vec![in_e(), evf(vec![5])] };
+        let changed = merge_end_vertex_filter(&mut plan).unwrap();
+        assert!(changed);
+        assert_eq!(plan.steps.len(), 1);
+        if let LogicalStep::InE(ine) = &plan.steps[0] {
+            assert_eq!(ine.end_vertex_ids.as_deref(), Some(&[5i64][..]));
+        } else {
+            panic!("expected InE");
+        }
+    }
+
+    #[test]
+    fn test_both_e_evf_merged() {
+        let mut plan = LogicalPlan { steps: vec![both_e(), evf(vec![7])] };
+        let changed = merge_end_vertex_filter(&mut plan).unwrap();
+        assert!(changed);
+        assert_eq!(plan.steps.len(), 1);
+        if let LogicalStep::BothE(be) = &plan.steps[0] {
+            assert_eq!(be.end_vertex_ids.as_deref(), Some(&[7i64][..]));
+        } else {
+            panic!("expected BothE");
+        }
+    }
+
+    #[test]
+    fn test_out_has_id_merged() {
+        let mut plan = LogicalPlan { steps: vec![out_step(), has_id(vec![3])] };
+        let changed = merge_end_vertex_filter(&mut plan).unwrap();
+        assert!(changed);
+        assert_eq!(plan.steps.len(), 1);
+        if let LogicalStep::Out(out) = &plan.steps[0] {
+            assert_eq!(out.end_vertex_ids.as_deref(), Some(&[3i64][..]));
+        } else {
+            panic!("expected Out");
+        }
+    }
+
+    #[test]
+    fn test_in_has_id_merged() {
+        let mut plan = LogicalPlan { steps: vec![in_step(), has_id(vec![4])] };
+        let changed = merge_end_vertex_filter(&mut plan).unwrap();
+        assert!(changed);
+        assert_eq!(plan.steps.len(), 1);
+        if let LogicalStep::In(in_s) = &plan.steps[0] {
+            assert_eq!(in_s.end_vertex_ids.as_deref(), Some(&[4i64][..]));
+        } else {
+            panic!("expected In");
+        }
+    }
+
+    #[test]
+    fn test_both_has_id_merged() {
+        let mut plan = LogicalPlan { steps: vec![both_step(), has_id(vec![9])] };
+        let changed = merge_end_vertex_filter(&mut plan).unwrap();
+        assert!(changed);
+        assert_eq!(plan.steps.len(), 1);
+        if let LogicalStep::Both(both) = &plan.steps[0] {
+            assert_eq!(both.end_vertex_ids.as_deref(), Some(&[9i64][..]));
+        } else {
+            panic!("expected Both");
+        }
+    }
+
+    #[test]
+    fn test_out_has_property_id_merged() {
+        let mut plan = LogicalPlan { steps: vec![out_step(), has_prop_id(11)] };
+        let changed = merge_end_vertex_filter(&mut plan).unwrap();
+        assert!(changed);
+        assert_eq!(plan.steps.len(), 1);
+        if let LogicalStep::Out(out) = &plan.steps[0] {
+            assert_eq!(out.end_vertex_ids.as_deref(), Some(&[11i64][..]));
+        } else {
+            panic!("expected Out");
+        }
+    }
+
+    #[test]
+    fn test_in_has_property_id_merged() {
+        let mut plan = LogicalPlan { steps: vec![in_step(), has_prop_id(22)] };
+        let changed = merge_end_vertex_filter(&mut plan).unwrap();
+        assert!(changed);
+        assert_eq!(plan.steps.len(), 1);
+        if let LogicalStep::In(in_s) = &plan.steps[0] {
+            assert_eq!(in_s.end_vertex_ids.as_deref(), Some(&[22i64][..]));
+        } else {
+            panic!("expected In");
+        }
+    }
+
+    #[test]
+    fn test_both_has_property_id_merged() {
+        let mut plan = LogicalPlan { steps: vec![both_step(), has_prop_id(33)] };
+        let changed = merge_end_vertex_filter(&mut plan).unwrap();
+        assert!(changed);
+        assert_eq!(plan.steps.len(), 1);
+        if let LogicalStep::Both(both) = &plan.steps[0] {
+            assert_eq!(both.end_vertex_ids.as_deref(), Some(&[33i64][..]));
+        } else {
+            panic!("expected Both");
+        }
+    }
+
+    #[test]
+    fn test_out_has_property_bad_type_errors() {
+        use crate::planner::logical_step::HasPropertyStep;
+        use smol_str::SmolStr;
+        let bad_prop = LogicalStep::HasProperty(HasPropertyStep {
+            key: SmolStr::new("id"),
+            value: crate::types::Primitive::String(SmolStr::new("oops")),
+        });
+        let mut plan = LogicalPlan { steps: vec![out_step(), bad_prop] };
+        let res = merge_end_vertex_filter(&mut plan);
+        assert!(res.is_err(), "non-integer id type should return error");
+    }
 }

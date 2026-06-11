@@ -96,21 +96,33 @@ Labels and edge labels are represented as `u16` integer IDs mapped through a sch
 | `union(traversals)` | `.union(vec![&mut t1, &mut t2])` |
 | `coalesce(traversals)` | `.coalesce(vec![&mut t1, &mut t2])` |
 
-## Optimizer Rules
-
-The optimizer applies these rewrite rules to a fixpoint:
-
-| Rule | Rewrite |
-|------|---------|
-| `merge_v_id_filter` | `V().hasId(x)` → `V(x)` |
-| `extract_end_vertex_filter` | `where(otherV().hasId(x))` → `EndVertexFilter(x)` |
-| `merge_end_vertex_filter` | `outE().EndVertexFilter(x)` → `outE(end_ids=[x])` |
-| `merge_addv_id` | `addV(label).property("id", x)` → `addV(label, id=x)` |
-| `merge_adde_ids` | `addE(label).from(x).to(y)` → `addE(label, out=x, in=y)` |
-
 ## Consistency Model
 
-RocksGraph uses **Optimistic Concurrency Control (OCC)** via RocksDB's `OptimisticTransactionDB`. Each query operates against a `LogicalGraph`: a query-scoped in-memory overlay that tracks all mutations (adds, modifies, deletions) using a dirty-state machine. The overlay is committed atomically; on conflict, the caller retries with a fresh overlay.
+RocksGraph uses **Optimistic Concurrency Control (OCC)** via RocksDB's `OptimisticTransactionDB`. Each query operates against a `LogicalGraph`: an in-memory overlay that tracks all mutations (adds, modifies, deletions) using a dirty-state machine. The overlay is committed atomically when `graph.commit()` is called.
+
+### Batching multiple queries in one transaction
+
+Multiple traversals can be built and executed against the same `LogicalGraph` instance before committing. All mutations are staged in the overlay and flushed to RocksDB atomically as a single transaction. Reads within the same `LogicalGraph` see the uncommitted writes of earlier traversals in the same batch (read-your-writes).
+
+```rust
+let mut graph = LogicalGraph::<RocksStorage>::new(store.begin());
+
+// Both traversals share the same transaction
+graphTraversalSource()
+    .addV(1).property("name", "alice")
+    .build(&mut graph)?.next().transpose()?;
+
+graphTraversalSource()
+    .addV(1).property("name", "bob")
+    .build(&mut graph)?.next().transpose()?;
+
+graph.commit()?; // alice and bob are written atomically
+```
+
+### LogicalGraph reuse after commit
+
+- **After a successful `commit()`**: the overlay is cleared and a fresh RocksDB transaction is started internally. The same `LogicalGraph` instance **can be reused** for the next batch of queries without creating a new one.
+- **After a `StoreError::Conflict`**: the underlying transaction is replaced with a fresh one, but the in-memory overlay is **not** cleared — it still holds the mutations from the failed attempt. Create a new `LogicalGraph` via `LogicalGraph::new(store.begin())` for a clean retry.
 
 **Key invariants enforced by `LogicalGraph`:**
 - Bidirectional edge indexing: both OUT and IN indices are written on commit
@@ -201,19 +213,6 @@ graphTraversalSource()
 graph.commit()?;
 ```
 
-## RocksDB Storage Layout
-
-Four column families:
-
-| Column family | Key | Value |
-|---------------|-----|-------|
-| `vertices` | vertex ID | label ID + serialised properties |
-| `vertex_degree` | vertex ID | out-degree + in-degree counters |
-| `edges_out` | `(src_id, label_id, rank, dst_id)` | edge properties |
-| `edges_in` | `(dst_id, label_id, rank, src_id)` | edge properties (mirror) |
-
-Bloom filters and 8-byte prefix extraction are enabled on the edge column families for efficient range scans.
-
 ## Development
 
 **Prerequisites:** Rust toolchain (stable), [`just`](https://github.com/casey/just)
@@ -251,6 +250,7 @@ Benchmark binaries live in `src/bin/`. The `scripts/` directory contains helpers
 | `instruments_write.sh` | Profile write benchmark with macOS Instruments |
 
 [Current benchmark records](BENCHMARKS.md)
+
 ## Known Limitations
 
 - **Embedded only:** no server/client mode; queries are executed in-process.

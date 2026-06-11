@@ -157,4 +157,73 @@ mod tests {
         assert_eq!(plan.steps.len(), 2);
         assert!(matches!(&plan.steps[1], LogicalStep::Where(_)), "plan should not be changed")
     }
+
+    #[test]
+    fn test_where_other_v_has_property_int64_extracted() {
+        let steps = vec![LogicalStep::Where(WhereStep {
+            plan: LogicalPlan {
+                steps: vec![
+                    LogicalStep::OtherV(OtherVStep {}),
+                    LogicalStep::HasProperty(HasPropertyStep { key: ID, value: Primitive::Int64(999) }),
+                ],
+            },
+        })];
+        let mut plan = LogicalPlan { steps };
+        let opt = extract_end_vertex_filter(&mut plan).unwrap();
+        assert!(opt, "plan should be changed");
+        if let LogicalStep::EndVertexFilter(evf) = &plan.steps[0] {
+            assert_eq!(&evf.ids[..], &[999i64]);
+        } else {
+            panic!("expected EndVertexFilter");
+        }
+    }
+
+    #[test]
+    fn test_where_other_v_has_property_bad_type_errors() {
+        use smol_str::SmolStr;
+        let steps = vec![LogicalStep::Where(WhereStep {
+            plan: LogicalPlan {
+                steps: vec![
+                    LogicalStep::OtherV(OtherVStep {}),
+                    LogicalStep::HasProperty(HasPropertyStep {
+                        key: ID,
+                        value: Primitive::String(SmolStr::new("bad")),
+                    }),
+                ],
+            },
+        })];
+        let mut plan = LogicalPlan { steps };
+        let res = extract_end_vertex_filter(&mut plan);
+        assert!(res.is_err(), "non-integer id should return error");
+    }
+
+    #[test]
+    fn test_where_with_extra_steps_not_extracted() {
+        // where(otherV().hasId(1).hasLabel(2)) — 3-step sub-plan, should not match
+        use crate::planner::logical_step::HasLabelStep;
+        let steps = vec![LogicalStep::Where(WhereStep {
+            plan: LogicalPlan {
+                steps: vec![
+                    LogicalStep::OtherV(OtherVStep {}),
+                    LogicalStep::HasId(HasIdStep { ids: smallvec![1] }),
+                    LogicalStep::HasLabel(HasLabelStep { label_ids: smallvec![2] }),
+                ],
+            },
+        })];
+        let mut plan = LogicalPlan { steps };
+        let opt = extract_end_vertex_filter(&mut plan).unwrap();
+        assert!(!opt, "plan should not be changed");
+        assert!(matches!(&plan.steps[0], LogicalStep::Where(_)));
+    }
+
+    #[test]
+    fn test_multiple_where_steps_all_extracted() {
+        let steps = vec![whr_all(), whr_has_pro()];
+        let mut plan = LogicalPlan { steps };
+        let opt = extract_end_vertex_filter(&mut plan).unwrap();
+        assert!(opt);
+        assert_eq!(plan.steps.len(), 2);
+        assert!(matches!(plan.steps[0], LogicalStep::EndVertexFilter(_)));
+        assert!(matches!(plan.steps[1], LogicalStep::EndVertexFilter(_)));
+    }
 }

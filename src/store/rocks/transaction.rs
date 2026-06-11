@@ -300,10 +300,47 @@ impl GraphTransaction for Transaction {
     }
 }
 
+// ── Test coverage summary ─────────────────────────────────────────────────────
+//
+// Each row maps a `GraphTransaction` method to the test(s) that cover it.
+//
+// | Method                | Tests                                                    |
+// |-----------------------|----------------------------------------------------------|
+// | get_vertex            | test_put_and_get_vertex                                  |
+// |                       | test_put_and_get_vertex_with_properties                  |
+// | put_vertex            | test_put_and_get_vertex                                  |
+// |                       | test_put_vertex_overwrite (overwrites existing record)   |
+// | get_vertex_degree     | test_put_and_get_vertex_degree                           |
+// | put_vertex_degree     | test_put_and_get_vertex_degree                           |
+// | get_edge              | test_put_and_get_edge                                    |
+// |                       | test_put_and_get_edge_with_properties                    |
+// | put_edge              | test_put_and_get_edge                                    |
+// |                       | test_put_edge_overwrite (overwrites existing record)     |
+// | get_edges             | test_get_edges                                           |
+// |   OUT: no filter      |   - no filter, label, dst, limit, negative vertex ID     |
+// |   IN: no filter       |   - no filter                                            |
+// |   IN: all filters     | test_get_edges_in_direction_filters                      |
+// |                       |   - label, limit, src, combined label+src                |
+// | delete_vertex         | test_delete_vertex (positive and negative IDs)           |
+// | delete_vertex_degree  | test_delete_vertex                                       |
+// | delete_edge           | test_delete_edge (positive and negative IDs)             |
+// |                       | test_edges_with_nonzero_rank (rank-specific delete)      |
+// | commit                | test_commit_and_abort (success path)                     |
+// |                       | test_commit_returns_conflict (OCC conflict → Conflict)   |
+// | abort                 | test_commit_and_abort (staged writes discarded)          |
+// | non-zero rank         | test_edges_with_nonzero_rank                             |
+// |                       |   - distinct keys, scan, point-delete                    |
+
 #[cfg(test)]
 mod tests {
-
     use rocksdb::{DBCommon, OptimisticTransactionDB, Options, SingleThreaded, DB};
+    use smol_str::SmolStr;
+
+    use crate::store::{traits::GraphTransaction, RocksStorage}; // Import the trait and RocksStorage
+    use crate::{
+        store::GraphStore,
+        types::{CanonicalKey, Direction, Edge, EdgeKey, Primitive, Property, Vertex},
+    };
 
     /// This test simulates a read-write conflict between two transactions (`txn1` and `txn2`) on the same keys in a
     /// RocksDB database using `OptimisticTransactionDB`. The test verifies that if `txn2` commits first after
@@ -355,5 +392,387 @@ mod tests {
         print!("[Result] txn1 failed to commit as expected due to conflict.");
         // Clean up
         let _ = DB::destroy(&Options::default(), dir.path());
+    }
+
+    // Helper function to open a temporary RocksDB store
+    fn open_temp_store() -> (RocksStorage, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = RocksStorage::open(dir.path()).unwrap();
+        (store, dir)
+    }
+
+    // Helper to get a new transaction from the store
+    fn ctx(store: &RocksStorage) -> super::Transaction {
+        // Begins a new `Transaction` for this `RocksStorage`.
+        store.begin()
+    }
+
+    // Helper to create a simple vertex
+    fn create_test_vertex(id: i64, label_id: u16) -> Vertex {
+        Vertex { id, label_id, props: vec![] }
+    }
+
+    // Helper to create a simple edge
+    fn create_test_edge(src: i64, label: u16, dst: i64, _dir: Direction) -> Edge {
+        Edge { src_id: src, label_id: label, dst_id: dst, rank: 0, props: vec![] }
+    }
+
+    #[test]
+    fn test_put_and_get_vertex() {
+        let (store, _dir) = open_temp_store();
+        let mut txn = ctx(&store);
+        // Test with positive ID
+        let v_pos = create_test_vertex(1, 100);
+        txn.put_vertex(v_pos.id, v_pos.label_id, &v_pos.props).unwrap();
+        let fetched_v_pos = txn.get_vertex(v_pos.id).unwrap().unwrap();
+        assert_eq!(fetched_v_pos.id, v_pos.id);
+        assert_eq!(fetched_v_pos.label_id, v_pos.label_id);
+
+        // Test with negative ID
+        let v_neg = create_test_vertex(-2, 200);
+        txn.put_vertex(v_neg.id, v_neg.label_id, &v_neg.props).unwrap();
+        let fetched_v_neg = txn.get_vertex(v_neg.id).unwrap().unwrap();
+        assert_eq!(fetched_v_neg.id, v_neg.id);
+        assert_eq!(fetched_v_neg.label_id, v_neg.label_id);
+
+        // Test non-existent vertex
+        assert!(txn.get_vertex(999).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_put_and_get_vertex_degree() {
+        let (store, _dir) = open_temp_store();
+        let mut txn = ctx(&store);
+        // Test with positive ID
+        txn.put_vertex_degree(1, 5, 10).unwrap();
+        let (out_pos, in_pos) = txn.get_vertex_degree(1).unwrap().unwrap();
+        assert_eq!(out_pos, 5);
+        assert_eq!(in_pos, 10);
+
+        // Test with negative ID
+        txn.put_vertex_degree(-2, 15, 20).unwrap();
+        let (out_neg, in_neg) = txn.get_vertex_degree(-2).unwrap().unwrap();
+        assert_eq!(out_neg, 15);
+        assert_eq!(in_neg, 20);
+
+        // Test non-existent vertex degree
+        assert!(txn.get_vertex_degree(999).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_put_and_get_edge() {
+        let (store, _dir) = open_temp_store();
+        let mut txn = ctx(&store);
+        // Test with positive IDs
+        let ek_pos = EdgeKey::out_e(1, 100, 2, 0);
+        let e_pos = create_test_edge(1, 100, 2, Direction::OUT);
+        txn.put_edge(&ek_pos, &e_pos.props).unwrap();
+        let fetched_e_pos = txn.get_edge(&ek_pos).unwrap().unwrap();
+        assert_eq!(fetched_e_pos.src_id, ek_pos.primary_id);
+        assert_eq!(fetched_e_pos.dst_id, ek_pos.secondary_id);
+
+        // Test with negative IDs
+        let ek_neg = EdgeKey::in_e(-3, 200, -4, 0);
+        let e_neg = create_test_edge(-3, 200, -4, Direction::IN);
+        txn.put_edge(&ek_neg, &e_neg.props).unwrap();
+        let fetched_e_neg = txn.get_edge(&ek_neg).unwrap().unwrap();
+        assert_eq!(fetched_e_neg.src_id, ek_neg.secondary_id); // For IN edge, primary_id is dst, secondary_id is src
+        assert_eq!(fetched_e_neg.dst_id, ek_neg.primary_id);
+
+        // Test non-existent edge
+        let non_existent_ek = EdgeKey::out_e(999, 1, 1000, 0);
+        assert!(txn.get_edge(&non_existent_ek).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_get_edges() {
+        let (store, _dir) = open_temp_store();
+        let mut txn = ctx(&store);
+        // Add some vertices
+        txn.put_vertex(1, 1, &[]).unwrap();
+        txn.put_vertex(2, 1, &[]).unwrap();
+        txn.put_vertex(3, 1, &[]).unwrap();
+        txn.put_vertex(-1, 1, &[]).unwrap();
+        txn.put_vertex(-2, 1, &[]).unwrap();
+
+        // Add some edges
+        txn.put_edge(&EdgeKey::out_e(1, 10, 2, 0), &[]).unwrap(); // 1 --10--> 2
+        txn.put_edge(&EdgeKey::out_e(1, 10, 3, 0), &[]).unwrap(); // 1 --10--> 3
+        txn.put_edge(&EdgeKey::out_e(1, 20, 2, 0), &[]).unwrap(); // 1 --20--> 2
+        txn.put_edge(&EdgeKey::in_e(1, 10, 2, 0), &[]).unwrap(); // 1 --10--> 2 (in-direction for 2)
+        txn.put_edge(&EdgeKey::in_e(1, 20, 2, 0), &[]).unwrap(); // 1 --20--> 2 (in-direction for 2)
+        txn.put_edge(&EdgeKey::out_e(-1, 30, -2, 0), &[]).unwrap(); // -1 --30--> -2
+
+        // Test get_edges with positive vertex ID, OUT direction, no filters
+        let edges = txn.get_edges(1, Direction::OUT, None, None, None).unwrap();
+        assert_eq!(edges.len(), 3);
+
+        // Test get_edges with positive vertex ID, OUT direction, label filter
+        let edges_label_10 = txn.get_edges(1, Direction::OUT, Some(10), None, None).unwrap();
+        assert_eq!(edges_label_10.len(), 2);
+        assert!(edges_label_10.iter().all(|e| e.label_id == 10));
+
+        // Test get_edges with positive vertex ID, OUT direction, destination filter
+        let edges_dst_2 = txn.get_edges(1, Direction::OUT, None, Some(&[2]), None).unwrap();
+        assert_eq!(edges_dst_2.len(), 2); // Edges (1,10,2) and (1,20,2)
+
+        // Test get_edges with positive vertex ID, OUT direction, limit
+        let edges_limit_1 = txn.get_edges(1, Direction::OUT, None, None, Some(1)).unwrap();
+        assert_eq!(edges_limit_1.len(), 1);
+
+        // Test get_edges with negative vertex ID, OUT direction, no filters
+        let edges_neg = txn.get_edges(-1, Direction::OUT, None, None, None).unwrap();
+        assert_eq!(edges_neg.len(), 1);
+        assert_eq!(edges_neg[0].src_id, -1);
+        assert_eq!(edges_neg[0].dst_id, -2);
+
+        // Test get_edges with IN direction
+        let edges_in_2 = txn.get_edges(2, Direction::IN, None, None, None).unwrap();
+        assert_eq!(edges_in_2.len(), 2); // Edges from 1 to 2
+    }
+
+    #[test]
+    fn test_delete_vertex() {
+        let (store, _dir) = open_temp_store();
+        let mut txn = ctx(&store);
+        // Add and delete positive ID vertex
+        let v_pos = create_test_vertex(1, 100);
+        txn.put_vertex(v_pos.id, v_pos.label_id, &v_pos.props).unwrap();
+        txn.put_vertex_degree(v_pos.id, 0, 0).unwrap();
+        assert!(txn.get_vertex(v_pos.id).unwrap().is_some());
+        txn.delete_vertex(v_pos.id).unwrap();
+        txn.delete_vertex_degree(v_pos.id).unwrap();
+        assert!(txn.get_vertex(v_pos.id).unwrap().is_none());
+        assert!(txn.get_vertex_degree(v_pos.id).unwrap().is_none());
+
+        // Add and delete negative ID vertex
+        let v_neg = create_test_vertex(-2, 200);
+        txn.put_vertex(v_neg.id, v_neg.label_id, &v_neg.props).unwrap();
+        txn.put_vertex_degree(v_neg.id, 0, 0).unwrap();
+        assert!(txn.get_vertex(v_neg.id).unwrap().is_some());
+        txn.delete_vertex(v_neg.id).unwrap();
+        txn.delete_vertex_degree(v_neg.id).unwrap();
+        assert!(txn.get_vertex(v_neg.id).unwrap().is_none());
+        assert!(txn.get_vertex_degree(v_neg.id).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_delete_edge() {
+        let (store, _dir) = open_temp_store();
+        let mut txn = ctx(&store);
+        // Add and delete positive ID edge
+        let ek_pos = EdgeKey::out_e(1, 100, 2, 0);
+        let e_pos = create_test_edge(1, 100, 2, Direction::OUT);
+        txn.put_edge(&ek_pos, &e_pos.props).unwrap();
+        assert!(txn.get_edge(&ek_pos).unwrap().is_some());
+        txn.delete_edge(&ek_pos).unwrap();
+        assert!(txn.get_edge(&ek_pos).unwrap().is_none());
+
+        // Add and delete negative ID edge
+        let ek_neg = EdgeKey::in_e(-3, 200, -4, 0);
+        let e_neg = create_test_edge(-3, 200, -4, Direction::IN);
+        txn.put_edge(&ek_neg, &e_neg.props).unwrap();
+        assert!(txn.get_edge(&ek_neg).unwrap().is_some());
+        txn.delete_edge(&ek_neg).unwrap();
+        assert!(txn.get_edge(&ek_neg).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_commit_and_abort() {
+        let (store, _dir) = open_temp_store();
+        let mut txn = ctx(&store);
+
+        // Test commit
+        let v1 = create_test_vertex(1, 1);
+        txn.put_vertex(v1.id, v1.label_id, &v1.props).unwrap();
+        txn.commit().unwrap();
+
+        // Verify committed data in a new transaction from the same store
+        let mut new_txn = ctx(&store);
+        assert!(new_txn.get_vertex(v1.id).unwrap().is_some());
+
+        // Test abort
+        let v2 = create_test_vertex(2, 2);
+        txn.put_vertex(v2.id, v2.label_id, &v2.props).unwrap();
+        txn.abort();
+        // After abort, txn is reset, so we can use it again.
+        // Verify aborted data is not present
+        let mut new_txn_after_abort = ctx(&store);
+        assert!(new_txn_after_abort.get_vertex(v2.id).unwrap().is_none());
+
+        // Verify previously committed data is still there after abort
+        assert!(new_txn_after_abort.get_vertex(v1.id).unwrap().is_some());
+    }
+
+    #[test]
+    fn test_put_and_get_vertex_with_properties() {
+        let (store, _dir) = open_temp_store();
+        let mut txn = ctx(&store);
+
+        let v1_id = 1;
+        let v1_label = 10;
+        let props = vec![
+            Property {
+                owner: CanonicalKey::Vertex(v1_id),
+                key: SmolStr::new("name"),
+                value: Primitive::String(SmolStr::new("Alice")),
+            },
+            Property { owner: CanonicalKey::Vertex(v1_id), key: SmolStr::new("age"), value: Primitive::Int32(30) },
+        ];
+
+        txn.put_vertex(v1_id, v1_label, &props).unwrap();
+        let fetched_v = txn.get_vertex(v1_id).unwrap().unwrap();
+
+        assert_eq!(fetched_v.id, v1_id);
+        assert_eq!(fetched_v.label_id, v1_label);
+        assert_eq!(fetched_v.props.len(), 2);
+        assert!(fetched_v.props.contains(&props[0]));
+        assert!(fetched_v.props.contains(&props[1]));
+    }
+
+    // ── Gap coverage ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_get_edges_in_direction_filters() {
+        let (store, _dir) = open_temp_store();
+        let mut txn = ctx(&store);
+
+        // Store in-edges for vertex 5: two with label 10, one with label 20
+        txn.put_edge(&EdgeKey::in_e(1, 10, 5, 0), &[]).unwrap(); // 1 --10--> 5
+        txn.put_edge(&EdgeKey::in_e(2, 10, 5, 0), &[]).unwrap(); // 2 --10--> 5
+        txn.put_edge(&EdgeKey::in_e(3, 20, 5, 0), &[]).unwrap(); // 3 --20--> 5
+
+        // Label filter on IN direction
+        let by_label = txn.get_edges(5, Direction::IN, Some(10), None, None).unwrap();
+        assert_eq!(by_label.len(), 2);
+        assert!(by_label.iter().all(|e| e.label_id == 10));
+
+        // Limit on IN direction
+        let limited = txn.get_edges(5, Direction::IN, None, None, Some(2)).unwrap();
+        assert_eq!(limited.len(), 2);
+
+        // Src filter on IN direction: secondary_id is the source vertex
+        let by_src = txn.get_edges(5, Direction::IN, None, Some(&[2, 3]), None).unwrap();
+        assert_eq!(by_src.len(), 2);
+        assert!(by_src.iter().all(|e| e.src_id == 2 || e.src_id == 3));
+
+        // Combined label + src filter
+        let combined = txn.get_edges(5, Direction::IN, Some(10), Some(&[2]), None).unwrap();
+        assert_eq!(combined.len(), 1);
+        assert_eq!(combined[0].src_id, 2);
+        assert_eq!(combined[0].label_id, 10);
+    }
+
+    #[test]
+    fn test_commit_returns_conflict() {
+        let (store, _dir) = open_temp_store();
+
+        // Seed a vertex that both transactions will read
+        let mut seed = ctx(&store);
+        seed.put_vertex(42, 1, &[]).unwrap();
+        seed.commit().unwrap();
+
+        // txn1 reads vertex 42 (enrolls it in its OCC read-set)
+        let mut txn1 = ctx(&store);
+        txn1.get_vertex(42).unwrap();
+
+        // txn2 overwrites vertex 42 and commits first
+        let mut txn2 = ctx(&store);
+        txn2.put_vertex(42, 2, &[]).unwrap();
+        txn2.commit().unwrap();
+
+        // txn1 now writes and tries to commit — must see Conflict
+        txn1.put_vertex(42, 3, &[]).unwrap();
+        assert!(matches!(txn1.commit(), Err(crate::types::StoreError::Conflict)));
+    }
+
+    #[test]
+    fn test_put_vertex_overwrite() {
+        let (store, _dir) = open_temp_store();
+        let mut txn = ctx(&store);
+
+        txn.put_vertex(7, 1, &[]).unwrap();
+        let first = txn.get_vertex(7).unwrap().unwrap();
+        assert_eq!(first.label_id, 1);
+
+        txn.put_vertex(7, 99, &[]).unwrap();
+        let second = txn.get_vertex(7).unwrap().unwrap();
+        assert_eq!(second.label_id, 99);
+    }
+
+    #[test]
+    fn test_put_edge_overwrite() {
+        let (store, _dir) = open_temp_store();
+        let mut txn = ctx(&store);
+
+        let ek = EdgeKey::out_e(1, 10, 2, 0);
+        txn.put_edge(&ek, &[]).unwrap();
+        let first = txn.get_edge(&ek).unwrap().unwrap();
+        assert_eq!(first.props.len(), 0);
+
+        let props = vec![Property {
+            owner: crate::types::CanonicalKey::Edge(ek.canonical_edge_key()),
+            key: smol_str::SmolStr::new("w"),
+            value: Primitive::Int32(7),
+        }];
+        txn.put_edge(&ek, &props).unwrap();
+        let second = txn.get_edge(&ek).unwrap().unwrap();
+        assert_eq!(second.props.len(), 1);
+        assert_eq!(second.props[0].value, Primitive::Int32(7));
+    }
+
+    #[test]
+    fn test_edges_with_nonzero_rank() {
+        let (store, _dir) = open_temp_store();
+        let mut txn = ctx(&store);
+
+        // Two parallel edges between the same vertices — differ only by rank
+        let ek0 = EdgeKey::out_e(1, 10, 2, 0);
+        let ek1 = EdgeKey::out_e(1, 10, 2, 1);
+        txn.put_edge(&ek0, &[]).unwrap();
+        txn.put_edge(&ek1, &[]).unwrap();
+
+        // Both are distinct keys and are independently readable
+        assert!(txn.get_edge(&ek0).unwrap().is_some());
+        assert!(txn.get_edge(&ek1).unwrap().is_some());
+
+        // Scan returns both
+        let edges = txn.get_edges(1, Direction::OUT, Some(10), None, None).unwrap();
+        assert_eq!(edges.len(), 2);
+
+        // Deleting rank-0 leaves rank-1 intact
+        txn.delete_edge(&ek0).unwrap();
+        assert!(txn.get_edge(&ek0).unwrap().is_none());
+        assert!(txn.get_edge(&ek1).unwrap().is_some());
+    }
+
+    #[test]
+    fn test_put_and_get_edge_with_properties() {
+        let (store, _dir) = open_temp_store();
+        let mut txn = ctx(&store);
+
+        let ek = EdgeKey::out_e(1, 100, 2, 0);
+        let props = vec![
+            Property {
+                owner: CanonicalKey::Edge(ek.canonical_edge_key()),
+                key: SmolStr::new("weight"),
+                value: Primitive::Float64(0.5),
+            },
+            Property {
+                owner: CanonicalKey::Edge(ek.canonical_edge_key()),
+                key: SmolStr::new("timestamp"),
+                value: Primitive::Int64(12345),
+            },
+        ];
+
+        txn.put_edge(&ek, &props).unwrap();
+        let fetched_e = txn.get_edge(&ek).unwrap().unwrap();
+
+        assert_eq!(fetched_e.src_id, ek.primary_id);
+        assert_eq!(fetched_e.dst_id, ek.secondary_id);
+        assert_eq!(fetched_e.label_id, ek.label_id);
+        assert_eq!(fetched_e.props.len(), 2);
+        assert!(fetched_e.props.contains(&props[0]));
+        assert!(fetched_e.props.contains(&props[1]));
     }
 }

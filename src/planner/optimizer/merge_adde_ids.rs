@@ -65,3 +65,107 @@ pub fn merge_adde_from(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
     plan.steps.truncate(i + 1);
     Ok(plan_changed)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::planner::logical_step::{AddEStep, FromStep, ToStep};
+    use std::collections::HashMap;
+
+    fn adde() -> LogicalStep {
+        LogicalStep::AddE(AddEStep { label_id: 1, out_v_id: None, in_v_id: None, properties: HashMap::new() })
+    }
+
+    fn from(id: i64) -> LogicalStep {
+        LogicalStep::From(FromStep { vertex_id: id })
+    }
+
+    fn to(id: i64) -> LogicalStep {
+        LogicalStep::To(ToStep { vertex_id: id })
+    }
+
+    #[test]
+    fn test_from_and_to_merged() {
+        let mut plan = LogicalPlan { steps: vec![adde(), from(10), to(20)] };
+        let changed = merge_adde_from(&mut plan).unwrap();
+        assert!(changed);
+        assert_eq!(plan.steps.len(), 1);
+        if let LogicalStep::AddE(ae) = &plan.steps[0] {
+            assert_eq!(ae.out_v_id, Some(10));
+            assert_eq!(ae.in_v_id, Some(20));
+        } else {
+            panic!("expected AddE");
+        }
+    }
+
+    #[test]
+    fn test_from_only_merged() {
+        let mut plan = LogicalPlan { steps: vec![adde(), from(5)] };
+        let changed = merge_adde_from(&mut plan).unwrap();
+        assert!(changed);
+        assert_eq!(plan.steps.len(), 1);
+        if let LogicalStep::AddE(ae) = &plan.steps[0] {
+            assert_eq!(ae.out_v_id, Some(5));
+            assert_eq!(ae.in_v_id, None);
+        } else {
+            panic!("expected AddE");
+        }
+    }
+
+    #[test]
+    fn test_to_only_merged() {
+        let mut plan = LogicalPlan { steps: vec![adde(), to(8)] };
+        let changed = merge_adde_from(&mut plan).unwrap();
+        assert!(changed);
+        assert_eq!(plan.steps.len(), 1);
+        if let LogicalStep::AddE(ae) = &plan.steps[0] {
+            assert_eq!(ae.out_v_id, None);
+            assert_eq!(ae.in_v_id, Some(8));
+        } else {
+            panic!("expected AddE");
+        }
+    }
+
+    #[test]
+    fn test_to_before_from_merged() {
+        // addE().to(20).from(10) — reversed order is legal
+        let mut plan = LogicalPlan { steps: vec![adde(), to(20), from(10)] };
+        let changed = merge_adde_from(&mut plan).unwrap();
+        assert!(changed);
+        assert_eq!(plan.steps.len(), 1);
+        if let LogicalStep::AddE(ae) = &plan.steps[0] {
+            assert_eq!(ae.out_v_id, Some(10));
+            assert_eq!(ae.in_v_id, Some(20));
+        } else {
+            panic!("expected AddE");
+        }
+    }
+
+    #[test]
+    fn test_duplicate_from_errors() {
+        let mut plan = LogicalPlan { steps: vec![adde(), from(1), from(2)] };
+        let res = merge_adde_from(&mut plan);
+        assert!(res.is_err(), "duplicate from() should return error");
+    }
+
+    #[test]
+    fn test_duplicate_to_errors() {
+        let mut plan = LogicalPlan { steps: vec![adde(), to(1), to(2)] };
+        let res = merge_adde_from(&mut plan);
+        assert!(res.is_err(), "duplicate to() should return error");
+    }
+
+    #[test]
+    fn test_no_from_or_to_unchanged() {
+        use crate::planner::logical_step::PropertyStep;
+        use smol_str::SmolStr;
+        let prop = LogicalStep::Property(PropertyStep {
+            prop_key: SmolStr::new("weight"),
+            prop_value: crate::types::Primitive::Int32(1),
+        });
+        let mut plan = LogicalPlan { steps: vec![adde(), prop] };
+        let changed = merge_adde_from(&mut plan).unwrap();
+        assert!(!changed);
+        assert_eq!(plan.steps.len(), 2);
+    }
+}
