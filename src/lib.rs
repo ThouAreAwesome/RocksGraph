@@ -39,9 +39,9 @@
 //! [`types`]             | Shared value types (`GValue`, `Primitive`, keys). |
 //!
 //! [`LogicalPlan`]: planner::logical_step::LogicalPlan
-
+#[doc(hidden)]
 pub mod engine;
-pub mod graph;
+pub(crate) mod graph;
 pub mod gremlin;
 pub(crate) mod planner;
 pub mod schema;
@@ -49,6 +49,11 @@ pub mod store;
 pub mod types;
 
 // ── User-facing re-exports ────────────────────────────────────────────────────
-pub use graph::LogicalGraph;
+pub use engine::GraphCtx;
 pub use gremlin::traversal::{graphTraversalSource, open_rocks_store, BuiltTraversal, GraphTraversal, __};
-pub use types::{GValue, Primitive, StoreError};
+pub use types::{GValue, Primitive, StoreError}; // now users write `rocksgraph::GraphCtx`
+
+/// Begin a new graph transaction, returning an opaque context that implements [`engine::GraphCtx`].
+pub fn begin_graph<S: store::traits::GraphStore>(txn: S::Txn) -> impl engine::GraphCtx {
+    graph::LogicalGraph::<S>::new(txn)
+}

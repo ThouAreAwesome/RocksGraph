@@ -53,8 +53,8 @@ mod cases {
     const SOFTWARE_LABEL_ID: LabelId = 2;
     const KNOWS_LABEL_ID: LabelId = 3;
     const CREATED_LABEL_ID: LabelId = 4;
-    const FRIENDS_LABEL_ID: LabelId = 5; // Added for clarity, though not used in TinkerPop Modern Graph setup
-                                         // --- Test Helpers ---
+    const FRIENDS_LABEL_ID: LabelId = 5;
+    // --- Test Helpers ---
     /// Opens a new `RocksStorage` instance in a temporary directory for testing.
     fn open_rocks_store() -> (RocksStorage, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();

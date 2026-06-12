@@ -24,6 +24,7 @@ use crate::{
         logical_step::{LogicalPlan, Optimizer, OptimizerRule},
         optimizer::{
             extract_end_vertex_filter, merge_adde_ids, merge_addv_id, merge_end_vertex_filter, merge_v_id_filter,
+            reorder_filter,
         },
     },
     types::StoreError,
@@ -33,11 +34,12 @@ use crate::{
 pub fn apply_rules(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
     // all the optimizers we want to apply to the logical plan.
     let optimizers: Vec<OptimizerRule> = vec![
-        extract_end_vertex_filter::extract_end_vertex_filter,
-        merge_v_id_filter::merget_v_id_filter,
-        merge_end_vertex_filter::merge_end_vertex_filter,
+        reorder_filter::reorder_filters,
+        merge_v_id_filter::merge_v_id_filter,
         merge_addv_id::merge_addv_id,
         merge_adde_ids::merge_adde_from,
+        extract_end_vertex_filter::extract_end_vertex_filter,
+        merge_end_vertex_filter::merge_end_vertex_filter,
     ];
     let mut plan_changed = true;
     // apply optimizers to each step first, then to the whole plan. this allows optimizers to terget specific patterns
@@ -218,11 +220,17 @@ mod tests {
         let steps = vec![v_all(), has_id(vec![1, 2]), has_id(vec![3]), out_e(), other_v(), has_id(vec![4])];
         let mut plan = LogicalPlan { steps };
         let _ = apply_rules(&mut plan).unwrap();
-        assert_eq!(plan.steps.len(), 4);
+        assert_eq!(plan.steps.len(), 5);
         assert!(matches!(plan.steps[0], LogicalStep::V(_)));
-        assert!(matches!(plan.steps[1], LogicalStep::OutE(_)));
-        assert!(matches!(plan.steps[2], LogicalStep::OtherV(_)));
-        assert!(matches!(plan.steps[3], LogicalStep::HasId(_)));
+        if let LogicalStep::HasId(has_id) = &plan.steps[1] {
+            assert_eq!(&has_id.ids[..], &[3i64], "hasId(3) should be preserved");
+        } else {
+            panic!("expected HasId at step 1");
+        }
+        assert!(matches!(plan.steps[1], LogicalStep::HasId(_)));
+        assert!(matches!(plan.steps[2], LogicalStep::OutE(_)));
+        assert!(matches!(plan.steps[3], LogicalStep::OtherV(_)));
+        assert!(matches!(plan.steps[4], LogicalStep::HasId(_)));
     }
 
     // V().hasId(1).outE().where(otherV().hasId(2)).outV().bothE().where(otherV().hasId(3))

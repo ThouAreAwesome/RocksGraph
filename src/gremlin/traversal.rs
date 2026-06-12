@@ -23,10 +23,10 @@ use crate::{
     planner::{
         apply_rules,
         logical_step::{
-            AddEStep, AddVStep, BothEStep, BothStep, CoalesceStep, CountStep, FromStep, HasIdStep, HasLabelStep,
-            HasPropertyStep, InEStep, InStep, InVStep, LimitStep, LogicalPlan, LogicalStep, OtherVStep, OutEStep,
-            OutStep, OutVStep, PropertiesStep, PropertyStep, ScalarFilterStep, ToStep, UnionStep, ValuesStep,
-            WhereStep,
+            AddEStep, AddVStep, BothEStep, BothStep, CoalesceStep, CountStep, DedupStep, FromStep, HasIdStep,
+            HasLabelStep, HasPropertyStep, InEStep, InStep, InVStep, LimitStep, LogicalPlan, LogicalStep, OtherVStep,
+            OutEStep, OutStep, OutVStep, PathStep, PropertiesStep, PropertyStep, ScalarFilterStep, ToListStep, ToStep,
+            UnionStep, ValuesStep, WhereStep,
         },
     },
     types::{GValue, Primitive, StoreError},
@@ -73,7 +73,7 @@ pub fn __() -> GraphTraversal {
 
 #[allow(non_snake_case)]
 impl GraphTraversal {
-    pub fn build<'g>(&self, graph: &'g mut impl GraphCtx) -> Result<BuiltTraversal<'g>, StoreError> {
+    pub fn build<'g>(&self, graph: &'g mut dyn GraphCtx) -> Result<BuiltTraversal<'g>, StoreError> {
         let mut logical = self.build_logical();
         apply_rules(&mut logical)?; // Apply optimization rules to the logical plan.
         let plan = PhysicalPlanBuilder {}.build(&logical)?; // Construct PhysicalPlanBuilder directly.
@@ -91,10 +91,8 @@ impl GraphTraversal {
 
     /// Spawns a traversal with the `V()` step.
     /// This method is available on `GraphTraversal` for sub-traversals (e.g., `__.V()`).
-    pub fn V(&mut self, ids: impl IntoIterator<Item = impl Into<i64>>) -> &mut Self {
-        self.ast.steps.push(LogicalStep::V(crate::planner::logical_step::VStep {
-            ids: ids.into_iter().map(Into::into).collect(),
-        }));
+    pub fn V(&mut self, ids: impl IntoIterator<Item = i64>) -> &mut Self {
+        self.ast.steps.push(LogicalStep::V(crate::planner::logical_step::VStep { ids: ids.into_iter().collect() }));
         self
     }
 
@@ -220,14 +218,14 @@ impl GraphTraversal {
         self
     }
 
-    pub fn union(&mut self, traversals: Vec<&mut GraphTraversal>) -> &mut Self {
+    pub fn union<'a>(&mut self, traversals: impl IntoIterator<Item = &'a mut GraphTraversal>) -> &mut Self {
         self.ast
             .steps
             .push(LogicalStep::Union(UnionStep { plans: traversals.into_iter().map(|t| t.build_logical()).collect() }));
         self
     }
 
-    pub fn coalesce(&mut self, traversals: Vec<&mut GraphTraversal>) -> &mut Self {
+    pub fn coalesce<'a>(&mut self, traversals: impl IntoIterator<Item = &'a mut GraphTraversal>) -> &mut Self {
         self.ast.steps.push(LogicalStep::Coalesce(CoalesceStep {
             plans: traversals.into_iter().map(|t| t.build_logical()).collect(),
         }));
@@ -237,14 +235,28 @@ impl GraphTraversal {
         self.ast.steps.push(LogicalStep::Limit(LimitStep { limit }));
         self
     }
-    pub fn hasId(&mut self, ids: impl IntoIterator<Item = impl Into<i64>>) -> &mut Self {
-        self.ast.steps.push(LogicalStep::HasId(HasIdStep { ids: ids.into_iter().map(Into::into).collect() }));
+    pub fn hasId(&mut self, ids: impl IntoIterator<Item = i64>) -> &mut Self {
+        self.ast.steps.push(LogicalStep::HasId(HasIdStep { ids: ids.into_iter().collect() }));
         self
     }
     pub fn properties(&mut self, keys: impl IntoIterator<Item = impl AsRef<str>>) -> &mut Self {
         self.ast.steps.push(LogicalStep::Properties(PropertiesStep {
             property_keys: keys.into_iter().map(|k| SmolStr::new(k.as_ref())).collect(),
         }));
+        self
+    }
+    pub fn path(&mut self) -> &mut Self {
+        self.ast.steps.push(LogicalStep::Path(PathStep {}));
+        self
+    }
+
+    pub fn dedup(&mut self) -> &mut Self {
+        self.ast.steps.push(LogicalStep::Dedup(DedupStep {}));
+        self
+    }
+
+    pub fn toList(&mut self) -> &mut Self {
+        self.ast.steps.push(LogicalStep::ToList(ToListStep {}));
         self
     }
 }

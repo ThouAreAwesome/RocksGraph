@@ -17,7 +17,8 @@
 
 use hdrhistogram::Histogram;
 use rocksgraph::{
-    graph::LogicalGraph,
+    begin_graph,
+    engine::GraphCtx,
     gremlin::traversal::{self, graphTraversalSource},
     store::{GraphStore, RocksStorage},
     types::{error::StoreError, prop_key::ID},
@@ -48,7 +49,7 @@ fn generate_random_string(len: usize) -> String {
 
 /// Creates a vertex; if it already exists the error is silently ignored.
 /// Returns `Ok(true)` if a new vertex was created, `Ok(false)` if it already existed.
-fn upsert_vertex(graph: &mut LogicalGraph<RocksStorage>, label: u16, vertex_id: i64) -> Result<bool, StoreError> {
+fn upsert_vertex(graph: &mut dyn GraphCtx, label: u16, vertex_id: i64) -> Result<bool, StoreError> {
     let mut rng = rand::thread_rng();
     let mut traversal = graphTraversalSource()
         .addV(label)
@@ -68,7 +69,7 @@ fn upsert_vertex(graph: &mut LogicalGraph<RocksStorage>, label: u16, vertex_id: 
 
 /// Creates an edge from `src` to `dst` if it does not already exist, using `coalesce`.
 /// Returns Ok(true) if created, Ok(false) if it already existed.
-fn upsert_edge(graph: &mut LogicalGraph<RocksStorage>, src: i64, dst: i64, edge_type: u16) -> Result<bool, StoreError> {
+fn upsert_edge(graph: &mut dyn GraphCtx, src: i64, dst: i64, edge_type: u16) -> Result<bool, StoreError> {
     let mut rng = rand::thread_rng();
 
     // Using the fluent API to construct the query
@@ -148,7 +149,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let (src, dst) = (parts[0], parts[1]);
 
                 let op_start = Instant::now();
-                let mut lg = LogicalGraph::new(store.begin());
+                let mut lg = begin_graph::<RocksStorage>(store.begin());
                 let mut success = false;
 
                 for attempt in 0..MAX_RETRIES {

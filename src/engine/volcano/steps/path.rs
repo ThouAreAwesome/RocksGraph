@@ -17,7 +17,7 @@
 
 use std::rc::Rc;
 
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 
 use crate::{
     engine::{
@@ -28,37 +28,52 @@ use crate::{
     types::{error::StoreError, GValue},
 };
 
-/// A physical step that extracts the "other" vertex from an edge traverser.
-#[derive(Default, Debug)]
-pub struct OtherVStep {
+/// A physical step that collects the full path of traversers.
+#[derive(Debug)]
+pub struct PathStep {
     upstream: Option<StepRef>,
+    emitted: bool,
 }
 
-/// Implements the `CoreStep` trait for `OtherVStep`.
-impl CoreStep for OtherVStep {
+impl PathStep {
+    pub fn new() -> Self {
+        Self { upstream: None, emitted: false }
+    }
+}
+
+impl CoreStep for PathStep {
     fn add_upper(&mut self, upstream: StepRef) {
         self.upstream = Some(upstream);
     }
 
     fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
-        loop {
-            let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
-            // Pull a traverser from the upstream.
-            let Some(t) = upstream.next(ctx)? else { return Ok(None) };
-            // If the traverser carries an edge, extract its secondary ID (the "other" vertex) and emit it as a new
-            // traverser.
-            if let GValue::Edge(ek) = &t.value {
-                return Ok(Some(smallvec![Traverser::new_rc_with_parent(GValue::Vertex(ek.secondary_id), t.clone())]));
-            }
+        if self.emitted {
+            return Ok(None);
+        }
+
+        let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
+
+        let mut paths = SmallVec::new();
+        while let Some(t) = upstream.next(ctx)? {
+            let path_gvalues: Vec<GValue> = t.collect_path().into_iter().map(|(gv, _)| gv).collect();
+            paths.push(Traverser::new_rc(GValue::List(Rc::new(path_gvalues))));
+        }
+
+        self.emitted = true;
+        if paths.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(paths))
         }
     }
 
-    /// Resets the state of this step and its upstream.
     fn reset(&mut self) {
+        self.emitted = false;
         if let Some(up) = &self.upstream {
             up.reset();
         }
     }
+
     fn upper(&self) -> Option<StepRef> {
         self.upstream.clone()
     }

@@ -35,7 +35,8 @@ Gremlin fluent API  (gremlin::traversal)
 | `planner` | Gremlin AST → engine-agnostic `LogicalPlan` IR |
 | `planner::optimizer` | Rewrites a `LogicalPlan` into a more efficient equivalent (fixpoint iteration) |
 | `engine::volcano` | Pull-based volcano iterator execution engine |
-| `graph` | Query-scoped in-memory overlay over a `GraphStore` transaction |
+| `engine::GraphCtx` | Public trait for graph access and transaction lifecycle (`commit`, `abort`) |
+| `graph` | Internal: query-scoped in-memory overlay over a `GraphStore` transaction (not public) |
 | `store` | Pluggable storage backend abstraction; RocksDB implementation |
 | `schema` | Label-ID ↔ label-string bidirectional mapping (planned) |
 | `types` | Shared value types: `GValue`, `Primitive`, keys |
@@ -77,6 +78,8 @@ Labels and edge labels are represented as `u16` integer IDs mapped through a sch
 | `count()` | `.count()` |
 | `values(keys)` | `.values([key])` |
 | `properties(keys)` | `.properties([key])` |
+| `dedup()` | `.dedup()` |
+| `toList()` | `.toList()` |
 
 ### Mutation
 
@@ -98,14 +101,16 @@ Labels and edge labels are represented as `u16` integer IDs mapped through a sch
 
 ## Consistency Model
 
-RocksGraph uses **Optimistic Concurrency Control (OCC)** via RocksDB's `OptimisticTransactionDB`. Each query operates against a `LogicalGraph`: an in-memory overlay that tracks all mutations (adds, modifies, deletions) using a dirty-state machine. The overlay is committed atomically when `graph.commit()` is called.
+RocksGraph uses **Optimistic Concurrency Control (OCC)** via RocksDB's `OptimisticTransactionDB`. Each query operates against a transaction context that implements `GraphCtx`: an in-memory overlay that tracks all mutations (adds, modifies, deletions) using a dirty-state machine. The overlay is committed atomically when `ctx.commit()` is called.
+
+The concrete implementation (`LogicalGraph`) is internal to the crate. Callers interact exclusively through the `GraphCtx` trait, obtained via `begin_graph`.
 
 ### Batching multiple queries in one transaction
 
-Multiple traversals can be built and executed against the same `LogicalGraph` instance before committing. All mutations are staged in the overlay and flushed to RocksDB atomically as a single transaction. Reads within the same `LogicalGraph` see the uncommitted writes of earlier traversals in the same batch (read-your-writes).
+Multiple traversals can be built and executed against the same `GraphCtx` before committing. All mutations are staged in the overlay and flushed to RocksDB atomically as a single transaction. Reads within the same context see the uncommitted writes of earlier traversals in the same batch (read-your-writes).
 
 ```rust
-let mut graph = LogicalGraph::<RocksStorage>::new(store.begin());
+let mut graph = begin_graph::<RocksStorage>(store.begin()); // impl GraphCtx
 
 // Both traversals share the same transaction
 graphTraversalSource()
@@ -119,12 +124,12 @@ graphTraversalSource()
 graph.commit()?; // alice and bob are written atomically
 ```
 
-### LogicalGraph reuse after commit
+### Context reuse after commit
 
-- **After a successful `commit()`**: the overlay is cleared and a fresh RocksDB transaction is started internally. The same `LogicalGraph` instance **can be reused** for the next batch of queries without creating a new one.
-- **After a `StoreError::Conflict`**: the underlying transaction is replaced with a fresh one, but the in-memory overlay is **not** cleared — it still holds the mutations from the failed attempt. Create a new `LogicalGraph` via `LogicalGraph::new(store.begin())` for a clean retry.
+- **After a successful `commit()`**: the overlay is cleared and a fresh RocksDB transaction is started internally. The same `GraphCtx` instance **can be reused** for the next batch of queries without creating a new one.
+- **After a `StoreError::Conflict`**: create a new context via `begin_graph` for a clean retry.
 
-**Key invariants enforced by `LogicalGraph`:**
+**Key invariants enforced by the transaction context:**
 - Bidirectional edge indexing: both OUT and IN indices are written on commit
 - Dangling edge prevention: edge endpoints are verified to exist before insertion
 - Degree validation: vertices with incident edges cannot be dropped
@@ -146,13 +151,13 @@ let store = open_rocks_store(Some("/path/to/db"))?;
 
 ```rust
 use rocksgraph::{
-    graph::LogicalGraph,
+    begin_graph,
     gremlin::traversal::{graphTraversalSource, open_rocks_store},
-    store::RocksStorage,
+    store::{GraphStore, RocksStorage},
 };
 
 let store = open_rocks_store::<&str>(None)?;
-let mut graph = LogicalGraph::<RocksStorage>::new(store.begin());
+let mut graph = begin_graph::<RocksStorage>(store.begin());
 
 // Build a traversal: find all vertices adjacent to vertex 1 via label 3, count them
 let mut traversal = graphTraversalSource()
@@ -170,13 +175,13 @@ for result in &mut traversal {
 
 ```rust
 use rocksgraph::{
-    graph::LogicalGraph,
-    gremlin::traversal::{graphTraversalSource, open_rocks_store},
-    store::RocksStorage,
+    begin_graph,
+    gremlin::traversal::{graphTraversalSource, open_rocks_store, __},
+    store::{GraphStore, RocksStorage},
 };
 
 let store = open_rocks_store::<&str>(None)?;
-let mut graph = LogicalGraph::<RocksStorage>::new(store.begin());
+let mut graph = begin_graph::<RocksStorage>(store.begin());
 
 // Add a vertex (label_id = 1) with a name property
 graphTraversalSource()
@@ -198,14 +203,13 @@ graphTraversalSource()
 
 graph.commit()?;
 
-
 // Find an edge (label_id = 3) from vertex 42 to vertex 99 and update its weight
-let mut graph = LogicalGraph::<RocksStorage>::new(store.begin());
+let mut graph = begin_graph::<RocksStorage>(store.begin());
 graphTraversalSource()
     .V([])
     .hasId([42])
     .outE([3])
-    .where(__().otherV().hasId([99]))
+    .r#where(__().otherV().hasId([99]))
     .property("weight", 99.99_f64)
     .build(&mut graph)?
     .next()

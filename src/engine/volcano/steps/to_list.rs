@@ -28,37 +28,40 @@ use crate::{
     types::{error::StoreError, GValue},
 };
 
-/// A physical step that extracts the "other" vertex from an edge traverser.
-#[derive(Default, Debug)]
-pub struct OtherVStep {
+/// A physical step that collects all upstream traversers into a single list.
+#[derive(Debug, Default)]
+pub struct ToListStep {
     upstream: Option<StepRef>,
+    emitted: bool,
 }
 
-/// Implements the `CoreStep` trait for `OtherVStep`.
-impl CoreStep for OtherVStep {
+impl CoreStep for ToListStep {
     fn add_upper(&mut self, upstream: StepRef) {
         self.upstream = Some(upstream);
     }
 
     fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
-        loop {
-            let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
-            // Pull a traverser from the upstream.
-            let Some(t) = upstream.next(ctx)? else { return Ok(None) };
-            // If the traverser carries an edge, extract its secondary ID (the "other" vertex) and emit it as a new
-            // traverser.
-            if let GValue::Edge(ek) = &t.value {
-                return Ok(Some(smallvec![Traverser::new_rc_with_parent(GValue::Vertex(ek.secondary_id), t.clone())]));
-            }
+        if self.emitted {
+            return Ok(None);
         }
+
+        let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
+        let mut list = Vec::new();
+        while let Some(t) = upstream.next(ctx)? {
+            list.push(t.value.clone());
+        }
+
+        self.emitted = true;
+        Ok(Some(smallvec![Traverser::new_rc(GValue::List(Rc::new(list)))]))
     }
 
-    /// Resets the state of this step and its upstream.
     fn reset(&mut self) {
+        self.emitted = false;
         if let Some(up) = &self.upstream {
             up.reset();
         }
     }
+
     fn upper(&self) -> Option<StepRef> {
         self.upstream.clone()
     }

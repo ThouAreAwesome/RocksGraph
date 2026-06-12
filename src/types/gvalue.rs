@@ -18,7 +18,7 @@
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},
-    sync::Arc,
+    rc::Rc,
 };
 
 use smol_str::SmolStr;
@@ -126,7 +126,7 @@ impl From<SmolStr> for Primitive {
 ///
 /// `Vertex` wraps a `VertexKey`; `Edge` wraps an `EdgeKey` (direction-aware).
 /// The engine calls `ctx.get_vertex(key)` / `ctx.get_edges(…)` to obtain
-/// `Arc<Vertex>` / `Arc<Edge>` references when it needs property data.
+/// `Rc<Vertex>` / `Rc<Edge>` references when it needs property data.
 ///
 /// Both key types are `Copy` (8 / 24 bytes), so `GValue` is cheap to clone.
 #[derive(Debug, Clone)]
@@ -139,9 +139,9 @@ pub enum GValue {
     /// A property travelling through the pipeline as a standalone element.
     Property(Property),
     Scalar(Primitive),
-    List(Arc<Vec<GValue>>),
-    Map(Arc<HashMap<GValue, GValue>>),
-    Path(Arc<Vec<GValue>>),
+    List(Rc<Vec<GValue>>),
+    Map(Rc<HashMap<GValue, GValue>>),
+    Path(Rc<Vec<GValue>>),
 }
 
 impl PartialEq for GValue {

@@ -132,7 +132,7 @@ impl Existence {
 ///
 /// Obtained by calling `LogicalGraph::new(store.begin())`. The engine uses this
 /// as its sole interface to the graph.
-pub struct LogicalGraph<S: GraphStore> {
+pub(crate) struct LogicalGraph<S: GraphStore> {
     store: S::Txn, // The underlying transaction from the GraphStore.
     vertices: HashMap<VertexKey, Vertex>,
     edges: HashMap<CanonicalEdgeKey, Edge>,
@@ -203,7 +203,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     /// Currently, `get_vertex` serves dual purposes: fetching property data and checking
     /// for existence. A batch API would improve data fetching performance, but would require careful
     //      design to comfortably handle partial results where some keys might be missing.
-    pub fn get_vertex(&mut self, key: VertexKey) -> Result<Option<VertexKey>, StoreError> {
+    pub(crate) fn get_vertex(&mut self, key: VertexKey) -> Result<Option<VertexKey>, StoreError> {
         if !self.vertices.contains_key(&key) {
             match self.store.get_vertex(key)? {
                 None => return Ok(None),
@@ -221,7 +221,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     /// Look up an edge by canonical key, loading from the store on first access.
     /// This method returns `None` for absent or tombstoned edges.
     /// Returns `None` for absent or tombstoned edges.
-    pub fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<EdgeKey>, StoreError> {
+    pub(crate) fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<EdgeKey>, StoreError> {
         let cek = key.canonical_edge_key();
         if !self.edges.contains_key(&cek) {
             // Load the primary physical record (OUT) to populate the canonical edge.
@@ -242,7 +242,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     /// with the in-memory dirty overlay. Tombstoned edges are filtered out.
     ///
     /// Returns `EdgeKey` values in the requested direction.
-    pub fn get_edges(
+    pub(crate) fn get_edges(
         &mut self,
         vertex: VertexKey,
         direction: Direction,
@@ -293,7 +293,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     ///
     /// # Locking
     /// No lock is acquired. The method operates via an exclusive borrow (`&mut self`).
-    pub fn get_property(&mut self, key: &CanonicalKey, prop: &PropKey) -> Result<Option<Property>, StoreError> {
+    pub(crate) fn get_property(&mut self, key: &CanonicalKey, prop: &PropKey) -> Result<Option<Property>, StoreError> {
         match *key {
             CanonicalKey::Vertex(vk) => {
                 if self.get_vertex(vk).unwrap().is_some() {
@@ -325,7 +325,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     ///
     /// # Locking
     /// No lock is acquired. The method operates via an exclusive borrow (`&mut self`).
-    pub fn get_value(&mut self, key: &CanonicalKey, prop: &PropKey) -> Result<Option<Primitive>, StoreError> {
+    pub(crate) fn get_value(&mut self, key: &CanonicalKey, prop: &PropKey) -> Result<Option<Primitive>, StoreError> {
         match *key {
             CanonicalKey::Vertex(vk) => {
                 if self.get_vertex(vk).unwrap().is_some() {
@@ -398,7 +398,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     /// # Locking
     /// No lock is acquired. The new vertex's `props` field is an empty
     /// `Vec<Property>`.
-    pub fn add_vertex(&mut self, id: VertexKey, label_id: LabelId) -> Result<VertexKey, StoreError> {
+    pub(crate) fn add_vertex(&mut self, id: VertexKey, label_id: LabelId) -> Result<VertexKey, StoreError> {
         // Single-call check: covers both overlay (vertex_degree map) and store.
         if self.get_vertex_degree(id)?.is_some() {
             return Err(StoreError::DuplicateVertex(id));
@@ -445,7 +445,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     ///
     /// # Locking
     /// No lock is acquired.  The new edge's `props` field starts empty.
-    pub fn add_edge(&mut self, ek: &EdgeKey) -> Result<EdgeKey, StoreError> {
+    pub(crate) fn add_edge(&mut self, ek: &EdgeKey) -> Result<EdgeKey, StoreError> {
         let cek = ek.canonical_edge_key();
         if self.edges.contains_key(&cek) {
             return Err(StoreError::DuplicateEdge(cek));
@@ -488,7 +488,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     ///
     /// # Locking
     /// No lock is acquired. Mutates the properties in place via an exclusive borrow.
-    pub fn set_property(&mut self, prop: &Property) -> Result<(), StoreError> {
+    pub(crate) fn set_property(&mut self, prop: &Property) -> Result<(), StoreError> {
         let key = prop.owner;
         match key {
             CanonicalKey::Vertex(id) => {
@@ -536,7 +536,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     /// auto-load-from-store for vertices (no precondition), overlay-only check
     /// for edges (caller must pre-load). Mutates the properties in place via an
     /// exclusive borrow.
-    pub fn drop_property(&mut self, prop: &Property) -> Result<(), StoreError> {
+    pub(crate) fn drop_property(&mut self, prop: &Property) -> Result<(), StoreError> {
         let key = prop.owner;
         match key {
             CanonicalKey::Vertex(id) => {
@@ -623,7 +623,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     /// # Locking
     /// No lock is acquired.  Property data is not read or modified during a drop;
     /// the element is only marked in the dirty map.
-    pub fn drop_element(&mut self, key: &CanonicalKey) -> Result<(), StoreError> {
+    pub(crate) fn drop_element(&mut self, key: &CanonicalKey) -> Result<(), StoreError> {
         match *key {
             CanonicalKey::Vertex(id) => {
                 let (out_e, in_e) = self.get_vertex_degree(id)?.ok_or(StoreError::NotFound)?;

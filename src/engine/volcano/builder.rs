@@ -360,8 +360,17 @@ impl PhysicalPlanBuilder {
                     "EndVertexFilterStep"
                 )
             }
+            LogicalStep::Path(_) => {
+                wire_required!(BufferedStep::new(steps::path::PathStep::new()), upstream, "PathStep")
+            }
             LogicalStep::Drop(_) => {
                 wire_required!(BufferedStep::new(steps::drop::DropStep::default()), upstream, "DropStep")
+            }
+            LogicalStep::Dedup(_) => {
+                wire_required!(BufferedStep::new(steps::dedup::DedupStep::default()), upstream, "DedupStep")
+            }
+            LogicalStep::ToList(_) => {
+                wire_required!(BufferedStep::new(steps::to_list::ToListStep::default()), upstream, "ToListStep")
             }
             _ => unreachable!("unreachable"),
         }

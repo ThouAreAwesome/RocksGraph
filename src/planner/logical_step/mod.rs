@@ -91,6 +91,9 @@ pub enum LogicalStep {
     Coalesce(CoalesceStep),
     EndVertexFilter(EndVertexFilter),
     Drop(DropStep),
+    Path(PathStep),
+    Dedup(DedupStep),
+    ToList(ToListStep),
 }
 
 /// Represents a logical `drop` step in a query plan.
@@ -99,6 +102,23 @@ pub struct DropStep {}
 
 impl Optimizer for DropStep {}
 
+/// Represents a logical `path` step in a query plan.
+#[derive(Clone, Debug)]
+pub struct PathStep {}
+
+impl Optimizer for PathStep {}
+
+/// Represents a logical `dedup` step in a query plan.
+#[derive(Clone, Debug)]
+pub struct DedupStep {}
+
+impl Optimizer for DedupStep {}
+
+/// Represents a logical `toList` step in a query plan.
+#[derive(Clone, Debug)]
+pub struct ToListStep {}
+
+impl Optimizer for ToListStep {}
 /// Implements the `Optimizer` trait for `LogicalStep`, allowing optimization rules to be applied to individual steps.
 impl Optimizer for LogicalStep {
     fn optimize(&mut self, optimizer_rule: &OptimizerRule) -> Result<bool, StoreError> {

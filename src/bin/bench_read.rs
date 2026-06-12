@@ -17,7 +17,8 @@
 
 use hdrhistogram::Histogram;
 use rocksgraph::{
-    graph::LogicalGraph,
+    begin_graph,
+    engine::GraphCtx,
     gremlin::traversal::{self, graphTraversalSource, __},
     store::{GraphStore, RocksStorage},
     types::error::StoreError,
@@ -137,7 +138,7 @@ fn run_query_benchmark<F>(
     query_fn: F,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
-    F: Fn(&mut LogicalGraph<RocksStorage>, i64, i64) -> Result<(), StoreError> + Send + Sync + 'static,
+    F: Fn(&mut dyn GraphCtx, i64, i64) -> Result<(), StoreError> + Send + Sync + 'static,
 {
     println!("\n--- Running Benchmark for: {} ---", name);
     let start = Instant::now();
@@ -166,7 +167,7 @@ where
                 }
                 let (src, dst) = (parts[0], parts[1]);
 
-                let mut lg = LogicalGraph::new(store.begin());
+                let mut lg = begin_graph::<RocksStorage>(store.begin());
                 let op_start = Instant::now();
                 if let Err(e) = query_fn(&mut lg, src, dst) {
                     eprintln!("Query failed: {}", e);

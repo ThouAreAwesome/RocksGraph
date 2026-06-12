@@ -36,6 +36,7 @@ pub mod both;
 pub mod both_e;
 pub mod coalesce;
 pub mod count;
+pub mod dedup;
 pub mod drop;
 pub mod end_vertex_filter;
 pub mod get_e;
@@ -47,15 +48,18 @@ pub mod in_out;
 pub mod in_v_out_v;
 pub mod limit;
 pub mod other_v;
+pub mod path;
 pub mod property;
 pub mod scalar_filter;
 pub mod tests;
+pub mod to_list;
 pub mod traits;
 pub mod union;
 pub mod v;
 pub mod values;
 pub mod vec_source;
 pub mod r#where;
+
 // ── Physical plan operators (storage-layer stubs) ─────────────────────────────
 
 pub use traits::{CoreStep, StepRef};

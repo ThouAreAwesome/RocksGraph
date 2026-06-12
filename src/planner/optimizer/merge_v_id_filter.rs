@@ -26,7 +26,7 @@ use smallvec::smallvec;
 /// "id" is a structural key stored in the index, not in property storage. A bare
 /// `HasPropertyStep` would never match it, so we must convert the filter into an
 /// explicit seed ID on `VStep` where the storage layer can resolve it directly.
-pub fn merget_v_id_filter(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
+pub fn merge_v_id_filter(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
     let mut plan_changed = false;
     let mut i = 0; // current index of the last non-merged step
     let mut j = 1; // next step to consider for merging
@@ -37,10 +37,10 @@ pub fn merget_v_id_filter(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
                 match hp.value {
                     Primitive::Int64(id) => Some(smallvec![id]),
                     Primitive::Int32(id) => Some(smallvec![id as i64]),
-                    _ => None,
+                    _ => return Err(StoreError::UnexpectedDataType("expect i32 or i64 type for vertex id".into())),
                 }
             }
-            (LogicalStep::V(_), LogicalStep::HasId(hi)) => Some(hi.ids.clone()),
+            (LogicalStep::V(v), LogicalStep::HasId(hi)) if v.ids.is_empty() => Some(hi.ids.clone()),
             _ => None,
         };
         if let Some(ids) = v_ids {
@@ -70,7 +70,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        planner::logical_step::{HasPropertyStep, VStep},
+        planner::logical_step::{HasIdStep, HasPropertyStep, VStep},
         types::{gvalue::Primitive, VertexKey},
     };
     use smallvec::smallvec;
@@ -95,7 +95,7 @@ mod tests {
     fn test_ids_filter_folded_into_v_step() {
         let steps = vec![v_all(), has_id(vec![7])];
         let mut plan = LogicalPlan { steps };
-        let opt = merget_v_id_filter(&mut plan).unwrap();
+        let opt = merge_v_id_filter(&mut plan).unwrap();
         assert!(opt, "plan should be changed");
         assert_eq!(plan.steps.len(), 1);
         if let LogicalStep::V(v) = &plan.steps[0] {
@@ -109,7 +109,7 @@ mod tests {
     fn test_id_filter_folded_into_v_step() {
         let steps = vec![v_all(), has("id", Primitive::Int32(7))];
         let mut plan = LogicalPlan { steps };
-        let opt = merget_v_id_filter(&mut plan).unwrap();
+        let opt = merge_v_id_filter(&mut plan).unwrap();
         assert!(opt, "plan should be changed");
         assert_eq!(plan.steps.len(), 1);
         if let LogicalStep::V(v) = &plan.steps[0] {
@@ -123,7 +123,7 @@ mod tests {
     fn test_non_id_has_not_folded() {
         let steps = vec![v_all(), has("name", Primitive::String(SmolStr::new("marko")))];
         let mut plan = LogicalPlan { steps };
-        let opt = merget_v_id_filter(&mut plan).unwrap();
+        let opt = merge_v_id_filter(&mut plan).unwrap();
         assert!(!opt, "plan should not be changed");
         assert_eq!(plan.steps.len(), 2);
         assert!(matches!(plan.steps[0], LogicalStep::V(_)));
@@ -134,7 +134,7 @@ mod tests {
     fn test_v_with_explicit_ids_should_be_optimized() {
         let steps = vec![v_ids(vec![2]), has("id", Primitive::Int32(3))];
         let mut plan = LogicalPlan { steps };
-        let opt = merget_v_id_filter(&mut plan).unwrap();
+        let opt = merge_v_id_filter(&mut plan).unwrap();
         assert!(!opt, "plan should not be changed");
         assert_eq!(plan.steps.len(), 2);
         assert!(matches!(plan.steps[0], LogicalStep::V(_)));
@@ -151,19 +151,18 @@ mod tests {
     }
 
     #[test]
-    fn test_id_filter_with_non_int_value_not_folded() {
+    fn test_id_filter_with_non_int_value_cause_error() {
         let steps = vec![v_all(), has("id", Primitive::String(SmolStr::new("abc")))];
         let mut plan = LogicalPlan { steps };
-        let opt = merget_v_id_filter(&mut plan).unwrap();
-        assert!(!opt, "plan should not be changed");
-        assert_eq!(plan.steps.len(), 2);
+        let opt = merge_v_id_filter(&mut plan);
+        assert!(opt.is_err(), "non-integer id type should return error");
     }
 
     #[test]
     fn test_trailing_steps_preserved() {
         let steps = vec![v_all(), has("id", Primitive::Int32(3)), has("name", Primitive::String(SmolStr::new("lop")))];
         let mut plan = LogicalPlan { steps };
-        let opt = merget_v_id_filter(&mut plan).unwrap();
+        let opt = merge_v_id_filter(&mut plan).unwrap();
         assert!(opt, "plan should be changed");
         assert_eq!(plan.steps.len(), 2);
         if let LogicalStep::V(v) = &plan.steps[0] {
@@ -178,7 +177,7 @@ mod tests {
     fn test_id_filter_int64_folded_into_v_step() {
         let steps = vec![v_all(), has("id", Primitive::Int64(42))];
         let mut plan = LogicalPlan { steps };
-        let opt = merget_v_id_filter(&mut plan).unwrap();
+        let opt = merge_v_id_filter(&mut plan).unwrap();
         assert!(opt, "plan should be changed");
         assert_eq!(plan.steps.len(), 1);
         if let LogicalStep::V(v) = &plan.steps[0] {
@@ -189,18 +188,23 @@ mod tests {
     }
 
     #[test]
-    fn test_two_consecutive_has_id_second_wins() {
+    fn test_two_consecutive_has_id_merge_first() {
         // V().hasId(1).hasId(2): the HasId arm has no is_empty guard, so both fold in
         // sequence — the second value overwrites the first. Final plan: V(2), 1 step.
         let steps = vec![v_all(), has_id(vec![1]), has_id(vec![2])];
         let mut plan = LogicalPlan { steps };
-        let opt = merget_v_id_filter(&mut plan).unwrap();
+        let opt = merge_v_id_filter(&mut plan).unwrap();
         assert!(opt, "plan should be changed");
-        assert_eq!(plan.steps.len(), 1);
+        assert_eq!(plan.steps.len(), 2);
         if let LogicalStep::V(v) = &plan.steps[0] {
-            assert_eq!(&v.ids[..], &[2i64], "second hasId overwrites the first");
+            assert_eq!(&v.ids[..], &[1i64], "second hasId overwrites the first");
         } else {
             panic!("expected VStep");
+        }
+        if let LogicalStep::HasId(HasIdStep { ids }) = &plan.steps[1] {
+            assert_eq!(&ids[..], &[2]);
+        } else {
+            panic!("expected HasIdStep");
         }
     }
 }
