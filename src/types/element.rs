@@ -18,7 +18,7 @@
 use crate::types::{
     gvalue::Primitive,
     keys::{CanonicalEdgeKey, CanonicalKey, LabelId, Rank, VertexKey},
-    prop_key::{PropKey, LABEL},
+    prop_key::{PropKey, ID, LABEL},
     EdgeKey,
 };
 
@@ -42,6 +42,9 @@ pub struct Vertex {
 impl Vertex {
     #[inline]
     pub fn get_property(&self, key: &PropKey) -> Option<Property> {
+        if ID == *key {
+            return Some(Property { owner: CanonicalKey::Vertex(self.id), key: ID, value: Primitive::Int64(self.id) });
+        }
         if LABEL == *key {
             return Some(Property {
                 owner: CanonicalKey::Vertex(self.id),
@@ -53,6 +56,9 @@ impl Vertex {
     }
     #[inline]
     pub fn get_value(&self, key: &PropKey) -> Option<Primitive> {
+        if ID == *key {
+            return Some(Primitive::Int64(self.id));
+        }
         if LABEL == *key {
             return Some(Primitive::Int32(self.label_id as i32));
         }

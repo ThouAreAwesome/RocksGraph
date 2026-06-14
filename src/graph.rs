@@ -143,8 +143,8 @@ pub(crate) struct LogicalGraph<S: GraphStore> {
 impl<S: GraphStore> LogicalGraph<S> {
     /// Create a new logical graph context wrapping the given transaction.
     pub fn new(store: S::Txn) -> Self {
-        // Creates a new `LogicalGraph` instance, initializing its in-memory caches and associating it with a store
-        // transaction.
+        // Creates a new `LogicalGraph` instance, initializing its in-memory caches
+        // and associating it with a store transaction.
         Self {
             store,
             vertices: HashMap::new(),
@@ -156,16 +156,16 @@ impl<S: GraphStore> LogicalGraph<S> {
     }
 
     #[cfg(test)]
-    pub(crate) fn get_vertex_degree_for_test(&mut self, key: VertexKey) -> Result<Option<(u32, u32)>, StoreError> {
+    pub(crate) fn vertex_degree_for_test(&mut self, key: VertexKey) -> Result<Option<(u32, u32)>, StoreError> {
         self.get_vertex_degree(key)
     }
 
     /// Retrieves the degree (out-edge count, in-edge count) of a vertex.
     /// This method acts as a transparent read-through cache:
-    /// This acts as a transparent read-through cache: it first checks the in-memory
-    /// `vertex_degree` overlay, and falls back to the underlying `GraphStore` on a miss,
-    /// caching the result. It is central to existence checks for vertices and endpoints.
-    /// Returns `None` if the vertex does not exist.
+    ///     it first checks the in-memory `vertex_degree` overlay,
+    ///     and falls back to the underlying `GraphStore` on a miss, caching the result.
+    ///     It is central to existence checks for vertex existence.
+    ///     Returns `None` if the vertex does not exist.
     fn get_vertex_degree(&mut self, key: VertexKey) -> Result<Option<(u32, u32)>, StoreError> {
         if let Some(counts) = self.vertex_degree.get(&key) {
             return Ok(Some(*counts));
@@ -710,9 +710,8 @@ impl<S: GraphStore> LogicalGraph<S> {
                 }
             }
         }
-        self.store.commit()?;
         self.reset();
-        Ok(())
+        self.store.commit()
     }
 
     /// Discard all pending mutations and reset the context.
@@ -2387,7 +2386,7 @@ mod tests {
         assert_eq!(out.len(), 4);
 
         // check vertex counter is correct after multiple contexts
-        let (out_e, in_e) = c.get_vertex_degree_for_test(hub).unwrap().unwrap();
+        let (out_e, in_e) = c.vertex_degree_for_test(hub).unwrap().unwrap();
         assert_eq!(out_e, 4);
         assert_eq!(in_e, 0);
 
@@ -2484,7 +2483,7 @@ mod tests {
             c.get_value(&CanonicalKey::Vertex(alice), &SmolStr::new("age")).unwrap(),
             Some(Primitive::Int32(30))
         );
-        let (alice_out_e, alice_in_e) = c.get_vertex_degree_for_test(alice).unwrap().unwrap();
+        let (alice_out_e, alice_in_e) = c.vertex_degree_for_test(alice).unwrap().unwrap();
         assert_eq!(alice_out_e, 1);
         assert_eq!(alice_in_e, 0);
 
@@ -2493,7 +2492,7 @@ mod tests {
             c.get_value(&CanonicalKey::Vertex(bob), &SmolStr::new("name")).unwrap(),
             Some(Primitive::String(SmolStr::new("Bob")))
         );
-        let (bob_out_e, bob_in_e) = c.get_vertex_degree_for_test(bob).unwrap().unwrap();
+        let (bob_out_e, bob_in_e) = c.vertex_degree_for_test(bob).unwrap().unwrap();
         assert_eq!(bob_out_e, 1);
         assert_eq!(bob_in_e, 0);
 
@@ -2502,7 +2501,7 @@ mod tests {
             c.get_value(&CanonicalKey::Vertex(london), &SmolStr::new("name")).unwrap(),
             Some(Primitive::String(SmolStr::new("London")))
         );
-        let (london_out_e, london_in_e) = c.get_vertex_degree_for_test(london).unwrap().unwrap();
+        let (london_out_e, london_in_e) = c.vertex_degree_for_test(london).unwrap().unwrap();
         assert_eq!(london_out_e, 0);
         assert_eq!(london_in_e, 2);
 
@@ -2557,7 +2556,7 @@ mod tests {
         assert!(matches!(err, Err(StoreError::NotFound)));
 
         // step 4, check that get_vertex in txn2 now returns None for the deleted vertex
-        let counts = txn2.get_vertex_degree_for_test(v1).unwrap();
+        let counts = txn2.vertex_degree_for_test(v1).unwrap();
         assert!(counts.is_none());
     }
 }

@@ -61,7 +61,7 @@ impl CoreStep for PropertyStep {
             let mut prop = self.prop.clone();
             prop.owner = canonical_key;
             ctx.set_property(&prop)?;
-            return Ok(Some(smallvec![Rc::clone(&t)]));
+            return Ok(Some(smallvec![t]));
         }
     }
 

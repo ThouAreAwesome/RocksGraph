@@ -23,6 +23,5 @@ use smol_str::SmolStr;
 /// unusually long key names.  No interning or numeric mapping — the raw
 /// string is the identity.
 pub type PropKey = SmolStr;
-
 pub const ID: PropKey = SmolStr::new_static("id");
 pub const LABEL: PropKey = SmolStr::new_static("label");

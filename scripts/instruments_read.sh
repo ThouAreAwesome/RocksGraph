@@ -20,24 +20,20 @@
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-echo "=== Running Gremlin Write Profile ==="
+echo "=== Running Gremlin Read Profile ==="
 
 cd "$PROJECT_ROOT" || exit
 
 PARALLELISM=3
-STORE_DIR="$PROJECT_ROOT/data/rocksGraph-shuffled"
-FILE_PATH="$PROJECT_ROOT/bench_data/soc-LiveJournal1-shuffled.txt"
+STORE_DIR="$PROJECT_ROOT/data/rocksGraph-1M"
+FILE_PATH="$PROJECT_ROOT/bench_data/soc-LiveJournal1-1M.txt"
 
-if [ -d "$STORE_DIR" ]; then
-    rm -rf "$STORE_DIR"
-fi
 
 # Execute the benchmark binary, passing all arguments to the binary itself.
 # The '--' separates arguments for 'cargo run' from arguments for the binary.
 cargo instruments -t cpu  --bin bench_read --release -- --data-dir "$STORE_DIR"  --file-path "$FILE_PATH" --parallelism $PARALLELISM "$@"
 
 EXIT_CODE=$?
-rm -rf "$STORE_DIR"
 
 if [ $EXIT_CODE -ne 0 ]; then
     echo "=== Benchmark failed with exit code $EXIT_CODE. ==="

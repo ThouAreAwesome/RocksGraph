@@ -22,7 +22,12 @@ mod integration_test {
         graph::LogicalGraph,
         gremlin::traversal::{graphTraversalSource, __},
         store::{GraphStore, RocksStorage},
-        types::{gvalue::Primitive, keys::LabelId, StoreError},
+        types::{
+            gvalue::Primitive,
+            keys::LabelId,
+            prop_key::{ID, LABEL},
+            StoreError,
+        },
         GValue,
     };
 
@@ -496,5 +501,83 @@ mod integration_test {
         // Marko has both created and knows edges. coalesce picks the first branch that yields results.
         // Created should return 1 (Marko created Lop).
         assert_eq!(ct, GValue::Scalar(Primitive::Int64(1)));
+    }
+
+    #[test]
+    fn test_tinkerpop_modern_coalesce_upsert_vertex() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = RocksStorage::open(dir.path()).unwrap();
+        let mut g = LogicalGraph::<RocksStorage>::new(store.begin());
+        create_tinkerpop_modern_graph(&mut g).unwrap();
+
+        // g.V(id).count().coalesce(__().V(id), __().addV(label).property("id", id))
+        let mut t = graphTraversalSource()
+            .V([1])
+            .coalesce([
+                __().V([1]).values(["name", "age"]),
+                __().addV(PERSON_LABEL_ID).property("id", 1i64).property("name", "marko").property("age", 29i32),
+            ])
+            .count()
+            .build(&mut g)
+            .unwrap();
+
+        let GValue::Scalar(Primitive::Int64(ct)) = t.next().unwrap().unwrap() else {
+            panic!("unexpected gremlin result type")
+        };
+        assert_eq!(ct, 2);
+        assert!(g.commit().is_ok());
+
+        // g.V(id).count().coalesce(__().V(id), __().addV(label).property("id", id))
+        let mut t = graphTraversalSource()
+            .V([1])
+            .coalesce([
+                __().V([1]).values([LABEL, ID]),
+                __().addV(PERSON_LABEL_ID).property("id", 1i64).property("name", "marko").property("age", 29i32),
+            ])
+            .count()
+            .build(&mut g)
+            .unwrap();
+
+        let GValue::Scalar(Primitive::Int64(ct)) = t.next().unwrap().unwrap() else {
+            panic!("unexpected gremlin result type")
+        };
+        assert_eq!(ct, 2);
+        assert!(g.commit().is_ok());
+
+        // g.V(id).count().coalesce(__().V(id), __().addV(label).property("id", id))
+        let mut t = graphTraversalSource()
+            .V([10])
+            .count()
+            .coalesce([
+                __().V([10]).values(["name", "age"]),
+                __().addV(PERSON_LABEL_ID).property("id", 10i64).property("name", "marko").property("age", 18i32),
+            ])
+            .count()
+            .build(&mut g)
+            .unwrap();
+
+        let GValue::Scalar(Primitive::Int64(ct)) = t.next().unwrap().unwrap() else {
+            panic!("unexpected gremlin result type")
+        };
+        assert_eq!(ct, 1);
+        assert!(g.commit().is_ok());
+
+        // g.V(id).count().coalesce(__().V(id), __().addV(label).property("id", id))
+        let mut t = graphTraversalSource()
+            .V([10])
+            .count()
+            .coalesce([
+                __().V([10]).values(["name", "age"]),
+                __().addV(PERSON_LABEL_ID).property("id", 10i64).property("name", "marko").property("age", 18i32),
+            ])
+            .count()
+            .build(&mut g)
+            .unwrap();
+
+        let GValue::Scalar(Primitive::Int64(ct)) = t.next().unwrap().unwrap() else {
+            panic!("unexpected gremlin result type")
+        };
+        assert_eq!(ct, 2);
+        assert!(g.commit().is_ok());
     }
 }

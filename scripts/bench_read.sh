@@ -23,11 +23,12 @@ echo "=== Running Gremlin Read Benchmark ==="
 cd "$PROJECT_ROOT" || exit
 
 PARALLELISM=3
-STORE_DIR="$PROJECT_ROOT/data/rocksGraph_shuffled"
-FILE_PATH="$PROJECT_ROOT/bench_data/soc-LiveJournal1-shuffled.txt"
+STORE_DIR="$PROJECT_ROOT/data/rocksGraph-1M"
+FILE_PATH="$PROJECT_ROOT/bench_data/soc-LiveJournal1-1M.txt"
 
 # Execute the benchmark binary
-cargo run --bin bench_read --release -- --data-dir "$STORE_DIR" --file-path "$FILE_PATH" --parallelism $PARALLELISM "$@"
+# adding `--features rocksdb-stats` to show RocksDB statistics
+cargo run --bin bench_read --release  -- --data-dir "$STORE_DIR" --file-path "$FILE_PATH" --parallelism $PARALLELISM "$@"
 
 EXIT_CODE=$?
 if [ $EXIT_CODE -ne 0 ]; then

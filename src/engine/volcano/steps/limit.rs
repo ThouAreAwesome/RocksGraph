@@ -57,7 +57,7 @@ impl CoreStep for LimitStep {
         let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
         let Some(t) = upstream.next(ctx)? else { return Ok(None) };
         self.current_idx += 1;
-        Ok(Some(smallvec![Rc::clone(&t)]))
+        Ok(Some(smallvec![t]))
     }
 
     fn reset(&mut self) {

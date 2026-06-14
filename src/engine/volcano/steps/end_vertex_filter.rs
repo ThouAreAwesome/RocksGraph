@@ -55,7 +55,7 @@ impl CoreStep for EndVertexFilter {
             let Some(t) = upstream.next(ctx)? else { return Ok(None) };
             if let GValue::Edge(edge) = &t.value {
                 if self.ids.contains(&edge.secondary_id) {
-                    return Ok(Some(smallvec![Rc::clone(&t)]));
+                    return Ok(Some(smallvec![t]));
                 }
             } else {
                 return Err(StoreError::UnexpectedDataType("end vertex filter can only be applied on Edge".into()));

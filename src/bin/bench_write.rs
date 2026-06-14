@@ -19,9 +19,13 @@ use hdrhistogram::Histogram;
 use rocksgraph::{
     begin_graph,
     engine::GraphCtx,
-    gremlin::traversal::{self, graphTraversalSource},
+    gremlin::traversal::{self, graphTraversalSource, __},
     store::{GraphStore, RocksStorage},
-    types::{error::StoreError, prop_key::ID},
+    types::{
+        error::StoreError,
+        prop_key::{ID, LABEL},
+    },
+    GValue, Primitive,
 };
 
 use rand::Rng;
@@ -51,19 +55,25 @@ fn generate_random_string(len: usize) -> String {
 /// Returns `Ok(true)` if a new vertex was created, `Ok(false)` if it already existed.
 fn upsert_vertex(graph: &mut dyn GraphCtx, label: u16, vertex_id: i64) -> Result<bool, StoreError> {
     let mut rng = rand::thread_rng();
-    let mut traversal = graphTraversalSource()
-        .addV(label)
-        .property(ID, vertex_id)
-        .property("name", generate_random_string(10))
-        .property("age", rng.gen_range::<i64, _>(18..100))
-        .build(graph)?;
+    let mut t = graphTraversalSource()
+        .V([vertex_id])
+        .count()
+        .coalesce([
+            __().V([vertex_id]).values([ID]),
+            __().addV(label)
+                .property(ID, vertex_id)
+                .property("name", generate_random_string(10))
+                .property("age", rng.gen_range::<i64, _>(18..100)),
+        ])
+        .build(graph)
+        .unwrap();
 
-    match traversal.next() {
-        Some(Ok(_)) => Ok(true),                                // Vertex was newly added
-        Some(Err(StoreError::DuplicateVertex(_))) => Ok(false), // Vertex already existed
-        Some(Err(e)) => Err(e),                                 // Other errors
-        None => Ok(false),                                      /* Should not happen for addV unless there was an
-                                                                  * error before next() */
+    match t.next() {
+        Some(Ok(GValue::Scalar(Primitive::Int64(_)))) => Ok(false),
+        Some(Ok(GValue::Vertex(_))) => Ok(true),
+        Some(Ok(_)) => unreachable!("unexpected gremlin result type"),
+        Some(Err(e)) => Err(e),
+        None => unreachable!("unexpected gremlin result type"),
     }
 }
 
@@ -73,20 +83,25 @@ fn upsert_edge(graph: &mut dyn GraphCtx, src: i64, dst: i64, edge_type: u16) -> 
     let mut rng = rand::thread_rng();
 
     // Using the fluent API to construct the query
-    let mut traversal = graphTraversalSource() // Directly attempt to add the edge
-        .addE(edge_type)
-        .from(src)
-        .to(dst)
-        .property("weight", rng.gen_range::<f64, _>(0.1..10.0))
-        .property("timestamp", rng.gen_range::<i64, _>(0..1000000))
-        .build(graph)?;
+    let mut t = graphTraversalSource()
+        .V([src])
+        .coalesce([
+            __().outE([edge_type]).r#where(__().otherV().hasId([dst])).values([LABEL]),
+            __().addE(edge_type)
+                .from(src)
+                .to(dst)
+                .property("weight", rng.gen_range::<f64, _>(0.1..10.0))
+                .property("timestamp", rng.gen_range::<i64, _>(0..1000000)),
+        ])
+        .build(graph)
+        .unwrap();
 
-    match traversal.next() {
-        Some(Ok(_)) => Ok(true),                              // Edge was newly added
-        Some(Err(StoreError::DuplicateEdge(_))) => Ok(false), // Edge already existed
-        Some(Err(e)) => Err(e),                               // Other errors
-        None => Ok(false),                                    /* Should not happen for addE unless there was an
-                                                                * error before next() */
+    match t.next() {
+        Some(Ok(GValue::Scalar(Primitive::Int32(_)))) => Ok(false),
+        Some(Ok(GValue::Edge(_))) => Ok(true),
+        Some(Ok(_)) => unreachable!("unexpected gremlin result type"),
+        Some(Err(e)) => Err(e),
+        None => unreachable!("unexpected gremlin result type"),
     }
 }
 
@@ -100,6 +115,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     .expect("Please provide a --data-dir fold path for the benchmark");
 
+    let file_path = if let Some(pos) = args.iter().position(|arg| arg == "--file-path") {
+        args.get(pos + 1).map(PathBuf::from)
+    } else {
+        None
+    }
+    .expect("Please provide a --file-path input graph path for the benchmark");
+
     let parallelism = args
         .iter()
         .position(|arg| arg == "--parallelism")
@@ -109,7 +131,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let graph_store = traversal::open_rocks_store(Some(&data_dir))?;
 
-    let file = File::open("./bench_data/soc-LiveJournal1-shuffled.txt")?;
+    let file = File::open(file_path)?;
     let reader = BufReader::new(file);
     let lines: Arc<Vec<String>> = Arc::new(reader.lines().collect::<Result<_, _>>()?);
 
@@ -151,45 +173,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let op_start = Instant::now();
                 let mut lg = begin_graph::<RocksStorage>(store.begin());
                 let mut success = false;
+                let mut new_edge = false;
 
                 for attempt in 0..MAX_RETRIES {
-                    // 1. Stage the mutations in the overlay
-                    let v1_new = upsert_vertex(&mut lg, 1u16, src).unwrap_or(false);
-                    let v2_new = upsert_vertex(&mut lg, 1u16, dst).unwrap_or(false);
-                    let e_new = upsert_edge(&mut lg, src, dst, EDGE_LABEL).unwrap_or(false);
+                    // Stage all three mutations onto the overlay in one pass.
+                    let staged = upsert_vertex(&mut lg, 1u16, src)
+                        .and_then(|_| upsert_vertex(&mut lg, 1u16, dst))
+                        .and_then(|_| upsert_edge(&mut lg, src, dst, EDGE_LABEL));
 
-                    // 2. Attempt to commit the transaction
-                    match lg.commit() {
-                        Ok(_) => {
-                            if v1_new {
-                                mutation_counter.fetch_add(1, Ordering::Relaxed);
-                            }
-                            if v2_new {
-                                mutation_counter.fetch_add(1, Ordering::Relaxed);
-                            }
-                            if e_new {
-                                mutation_counter.fetch_add(1, Ordering::Relaxed);
-                            }
-                            success = true;
-                            let _ = local_hist.record(op_start.elapsed().as_nanos() as u64);
-                            break;
-                        }
-                        Err(StoreError::Conflict) => {
-                            if attempt < MAX_RETRIES - 1 {
-                                std::thread::sleep(Duration::from_millis(RETRY_DELAY_MS));
-                                // LogicalGraph::commit() automatically calls reset() on conflict,
-                                // so 'lg' is fresh and ready for the next attempt.
-                            }
-                        }
+                    match staged {
                         Err(e) => {
-                            eprintln!("Transaction failed with non-retryable error ({} -> {}): {}", src, dst, e);
+                            println!("Failed to stage ({} -> {}): {}", src, dst, e);
                             break;
                         }
+                        Ok(is_new) => match lg.commit() {
+                            Ok(_) => {
+                                success = true;
+                                new_edge = is_new;
+                                break;
+                            }
+                            Err(StoreError::Conflict) if attempt < MAX_RETRIES - 1 => {
+                                std::thread::sleep(Duration::from_millis(RETRY_DELAY_MS));
+                            }
+                            Err(e) => {
+                                println!("Commit failed ({} -> {}): {}", src, dst, e);
+                                break;
+                            }
+                        },
                     }
                 }
 
-                if !success {
-                    eprintln!("Failed to upsert edge ({} -> {}) after {} retries", src, dst, MAX_RETRIES);
+                if success {
+                    let _ = local_hist.record(op_start.elapsed().as_nanos() as u64);
+                    if new_edge {
+                        mutation_counter.fetch_add(1, Ordering::Relaxed);
+                    }
+                } else {
+                    println!("Failed to upsert edge ({} -> {}) after {} retries", src, dst, MAX_RETRIES);
                 }
             }
             hist_tx.send(local_hist).unwrap();
@@ -225,6 +245,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             h.value_at_quantile(0.99) as f64 / 1000.0,
             h.max() as f64 / 1000.0
         );
+    }
+
+    #[cfg(feature = "rocksdb-stats")]
+    if let Some(stats) = graph_store.statistics() {
+        println!("\n--- RocksDB Statistics ---\n{}", stats);
     }
 
     Ok(())

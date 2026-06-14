@@ -25,8 +25,8 @@ echo "=== Running Gremlin Write Benchmark ==="
 cd "$PROJECT_ROOT" || exit
 
 PARALLELISM=3
-STORE_DIR="$PROJECT_ROOT/data/rocksGraph-shuffled"
-FILE_PATH="$PROJECT_ROOT/bench_data/soc-LiveJournal1-shuffled.txt"
+STORE_DIR="$PROJECT_ROOT/data/rocksGraph-1M"
+FILE_PATH="$PROJECT_ROOT/bench_data/soc-LiveJournal1-1M.txt"
 
 if [ -d "$STORE_DIR" ]; then
     echo "=== remove existing database $STORE_DIR"

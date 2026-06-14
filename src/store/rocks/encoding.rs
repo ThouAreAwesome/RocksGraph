@@ -46,7 +46,7 @@ use crate::types::{
 
 // ── Scan helpers ──────────────────────────────────────────────────────────────
 
-pub(crate) const EDGE_PREFIX_LENGHT: usize = 8;
+pub(crate) const EDGE_PREFIX_LENGTH: usize = 8;
 
 /// Builds the prefix for an edge Column Family (CF) scan.
 /// `vertex_id` (8 B), optionally followed by `label_id` (2 B).

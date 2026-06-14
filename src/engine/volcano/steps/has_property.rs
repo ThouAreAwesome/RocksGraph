@@ -58,14 +58,14 @@ impl CoreStep for HasPropertyStep {
                 GValue::Vertex(vk) => {
                     if let Some(vl) = ctx.get_value(&CanonicalKey::Vertex(*vk), &self.prop_key)? {
                         if vl == self.expected_value {
-                            return Ok(Some(smallvec![Rc::clone(&t)]));
+                            return Ok(Some(smallvec![t]));
                         }
                     }
                 }
                 GValue::Edge(ek) => {
                     if let Some(et) = ctx.get_value(&CanonicalKey::Edge(ek.canonical_edge_key()), &self.prop_key)? {
                         if et == self.expected_value {
-                            return Ok(Some(smallvec![Rc::clone(&t)]));
+                            return Ok(Some(smallvec![t]));
                         }
                     }
                 }

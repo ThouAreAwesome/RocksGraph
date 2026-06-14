@@ -64,7 +64,7 @@ impl CoreStep for HasLabelStep {
                 _ => false,
             };
             if matched {
-                return Ok(Some(smallvec![Rc::clone(&t)]));
+                return Ok(Some(smallvec![t]));
             }
         }
     }

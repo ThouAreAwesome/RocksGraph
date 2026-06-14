@@ -6,6 +6,11 @@ license = "GPL-2.0"
 name = "rocksgraph"
 version = "0.1.0"
 
+[features]
+# Enable RocksDB statistics collection. Adds ~5-10% overhead on every storage
+# operation (atomic counter increments). Use only for profiling/diagnostics.
+rocksdb-stats = []
+
 [dependencies]
 
 serde = { version = "1.0", features = ["derive"] }

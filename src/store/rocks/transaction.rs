@@ -189,6 +189,7 @@ impl GraphTransaction for Transaction {
 
         let prefix = edge_scan_prefix(vertex, label);
         let mut read_opts = ReadOptions::default();
+        read_opts.set_prefix_same_as_start(true);
 
         if let Some(upper) = prefix_upper_bound(&prefix) {
             read_opts.set_iterate_upper_bound(upper);
@@ -203,9 +204,6 @@ impl GraphTransaction for Transaction {
         let mut result = Vec::new();
         for item in iter {
             let (key_bytes, val_bytes) = item.map_err(StoreError::RocksDb)?;
-            if !key_bytes.starts_with(&prefix) {
-                break;
-            }
             let ek = decode_edge_key(&key_bytes, direction).ok_or(StoreError::CorruptData("edge key"))?;
             if let Some(ref set) = dst_set {
                 if !set.contains(&ek.secondary_id) {

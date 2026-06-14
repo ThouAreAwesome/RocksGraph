@@ -22,6 +22,7 @@ use rocksgraph::{
     gremlin::traversal::{self, graphTraversalSource, __},
     store::{GraphStore, RocksStorage},
     types::error::StoreError,
+    GValue, Primitive,
 };
 
 use std::{
@@ -68,8 +69,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &graph_store,
         parallelism,
         |lg, src, _dst| {
-            let mut p = graphTraversalSource().V([src]).hasId([src]).values(["name", "age"]).count().build(lg)?;
-            while p.next().unwrap().is_ok() {}
+            let mut p = graphTraversalSource().V([]).hasId([src]).values(["name", "age"]).count().build(lg).unwrap();
+            let ct = p.next().unwrap()?;
+            assert_eq!(ct, GValue::Scalar(Primitive::Int64(2)));
             Ok(())
         },
     )?;
@@ -82,49 +84,86 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         parallelism,
         |lg, src, dst| {
             let mut p = graphTraversalSource()
-                .V([src])
+                .V([])
                 .hasId([src])
                 .outE([EDGE_LABEL])
                 .r#where(__().otherV().hasId([dst]))
                 .values(["weight", "timestamp"])
                 .count()
-                .build(lg)?;
-            while p.next().unwrap().is_ok() {}
+                .build(lg)
+                .unwrap();
+            let ct = p.next().unwrap()?;
+            assert_eq!(ct, GValue::Scalar(Primitive::Int64(2)));
             Ok(())
         },
     )?;
 
     // --- Query 3 ---
     run_query_benchmark(
-        "Q3: g.V().hasId(id).both(label).values('weight', 'timestamp').count()",
+        "Q3: g.V().hasId(id).bothE(label).values('weight', 'timestamp').count()",
         &lines,
         &graph_store,
         parallelism,
         |lg, src, _dst| {
             let mut t = graphTraversalSource()
-                .V([src])
+                .V([])
                 .hasId([src])
-                .both([EDGE_LABEL])
-                .values(["name", "age"])
+                .bothE([EDGE_LABEL])
+                .values(["weight", "timestamp"])
                 .count()
-                .build(lg)?;
-            while t.next().unwrap().is_ok() {}
+                .build(lg)
+                .unwrap();
+            let GValue::Scalar(Primitive::Int64(ct)) = t.next().unwrap()? else {
+                unreachable!("unexpected gremlin result type")
+            };
+            assert!(ct >= 2);
             Ok(())
         },
     )?;
 
     // --- Query 4 ---
     run_query_benchmark(
-        "Q4: g.V(id).out(label).out(label).count()",
+        "Q4: g.V().hasId(id).both(label).values('name', 'age').count()",
         &lines,
         &graph_store,
         parallelism,
         |lg, src, _dst| {
-            let mut t = graphTraversalSource().V([src]).out([EDGE_LABEL]).out([EDGE_LABEL]).count().build(lg)?;
-            while t.next().unwrap().is_ok() {}
+            let mut t = graphTraversalSource()
+                .V([])
+                .hasId([src])
+                .both([EDGE_LABEL])
+                .values(["name", "age"])
+                .count()
+                .build(lg)
+                .unwrap();
+            let GValue::Scalar(Primitive::Int64(ct)) = t.next().unwrap()? else {
+                unreachable!("unexpected gremlin result type")
+            };
+            assert!(ct >= 2);
             Ok(())
         },
     )?;
+
+    // --- Query 5 ---
+    run_query_benchmark(
+        "Q5: g.V(id).out(label).both(label).count()",
+        &lines,
+        &graph_store,
+        parallelism,
+        |lg, src, _dst| {
+            let mut t = graphTraversalSource().V([src]).out([EDGE_LABEL]).both([EDGE_LABEL]).count().build(lg).unwrap();
+            let GValue::Scalar(Primitive::Int64(ct)) = t.next().unwrap()? else {
+                unreachable!("unexpected gremlin result type")
+            };
+            assert!(ct >= 1);
+            Ok(())
+        },
+    )?;
+
+    #[cfg(feature = "rocksdb-stats")]
+    if let Some(stats) = graph_store.statistics() {
+        println!("\n--- RocksDB Statistics ---\n{}", stats);
+    }
 
     Ok(())
 }

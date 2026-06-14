@@ -54,7 +54,7 @@ impl CoreStep for ScalarFilterStep {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
             let Some(t) = upstream.next(ctx)? else { return Ok(None) };
             if matches!(&t.value, GValue::Scalar(p) if p == &self.expected) {
-                return Ok(Some(smallvec![Rc::clone(&t)]));
+                return Ok(Some(smallvec![t]));
             }
         }
     }

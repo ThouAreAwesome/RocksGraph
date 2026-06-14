@@ -36,7 +36,6 @@ pub struct Traverser {
     /// The current value carried by this traverser.
     pub value: GValue,
     /// Back-pointer to the spawning traverser — `Some` only when path tracking is active.
-    #[allow(dead_code)]
     pub parent: Option<Rc<Traverser>>,
     /// Labels assigned to the current step via `as(…)`.  `None` = no labels.
     #[allow(dead_code)]
