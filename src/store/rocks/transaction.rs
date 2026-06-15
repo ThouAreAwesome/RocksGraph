@@ -334,11 +334,11 @@ mod tests {
     use rocksdb::{DBCommon, OptimisticTransactionDB, Options, SingleThreaded, DB};
     use smol_str::SmolStr;
 
-    use crate::store::{traits::GraphTransaction, RocksStorage}; // Import the trait and RocksStorage
-    use crate::{
-        store::GraphStore,
-        types::{CanonicalKey, Direction, Edge, EdgeKey, Primitive, Property, Vertex},
+    use crate::store::{
+        traits::{GraphStore, GraphTransaction},
+        RocksStorage,
     };
+    use crate::types::{CanonicalKey, Direction, Edge, EdgeKey, Primitive, Property, Vertex};
 
     /// This test simulates a read-write conflict between two transactions (`txn1` and `txn2`) on the same keys in a
     /// RocksDB database using `OptimisticTransactionDB`. The test verifies that if `txn2` commits first after

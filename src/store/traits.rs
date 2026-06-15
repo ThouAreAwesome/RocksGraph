@@ -41,7 +41,27 @@
 //! it only touches `LogicalGraph`. Backend details (RocksDB CFs, OCC, encoding)
 //! never cross the `GraphTransaction` boundary.
 
-use crate::types::{element::Property, Direction, Edge, EdgeKey, LabelId, StoreError, Vertex, VertexKey}; // Corrected import path for `element`
+use crate::types::{element::Property, Direction, Edge, EdgeKey, LabelId, StoreError, Vertex, VertexKey};
+
+// ── GraphSnapshot ─────────────────────────────────────────────────────────────
+
+/// A read-only point-in-time view of the persistent graph store.
+///
+/// Obtained via [`GraphStore::snapshot`]. Uses plain RocksDB `get()` calls
+/// pinned to a snapshot for consistent reads without OCC tracking.
+/// Independent of [`GraphTransaction`] — the two share no interface.
+pub trait GraphSnapshot {
+    fn get_vertex(&mut self, key: VertexKey) -> Result<Option<Vertex>, StoreError>;
+    fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<Edge>, StoreError>;
+    fn get_edges(
+        &mut self,
+        vertex: VertexKey,
+        direction: Direction,
+        label: Option<LabelId>,
+        dst: Option<&[VertexKey]>,
+        limit: Option<u32>,
+    ) -> Result<Vec<Edge>, StoreError>;
+}
 
 // ── GraphTransaction ──────────────────────────────────────────────────────────
 
@@ -130,9 +150,13 @@ pub trait GraphTransaction {
 /// backends. The engine (and `LogicalGraph`) is generic over `S: GraphStore`
 /// and never imports concrete backend types.
 pub trait GraphStore {
+    /// Read-only point-in-time snapshot type.
+    type Snapshot: GraphSnapshot;
     /// The concrete transaction type produced by this store.
     type Txn: GraphTransaction;
 
-    /// Begin a fresh transaction.
+    /// Open a read-only snapshot pinned to the current committed state.
+    fn snapshot(&self) -> Self::Snapshot;
+    /// Begin a fresh read-write transaction.
     fn begin(&self) -> Self::Txn;
 }

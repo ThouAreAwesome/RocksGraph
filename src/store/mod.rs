@@ -19,4 +19,3 @@ pub mod rocks;
 pub mod traits;
 
 pub use rocks::RocksStorage;
-pub use traits::{GraphStore, GraphTransaction};

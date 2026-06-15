@@ -75,7 +75,7 @@
 use std::collections::{hash_map::Entry, HashMap};
 
 use crate::{
-    store::traits::{GraphStore, GraphTransaction},
+    store::traits::{GraphSnapshot, GraphStore, GraphTransaction},
     types::{
         element::{Edge, Property, Vertex},
         keys::{CanonicalEdgeKey, CanonicalKey, Direction, EdgeKey, LabelId, VertexKey},
@@ -726,6 +726,107 @@ impl<S: GraphStore> LogicalGraph<S> {
         self.vertices.clear();
         self.edges.clear();
         self.vertex_degree.clear();
+    }
+}
+
+// ── LogicalSnapshot ───────────────────────────────────────────────────────────
+
+/// Read-only query context backed by a [`GraphSnapshot`].
+///
+/// Like `LogicalGraph` it maintains `vertices`, `edges`, and `vertex_degree`
+/// caches so repeated reads within one traversal are O(1) map lookups.
+/// Unlike `LogicalGraph` there is no dirty map and no write path — mutations
+/// are rejected at the [`GraphCtx`] boundary with [`StoreError::ReadOnly`].
+pub(crate) struct LogicalSnapshot<S: GraphStore> {
+    store: S::Snapshot,
+    vertices: HashMap<VertexKey, Vertex>,
+    edges: HashMap<CanonicalEdgeKey, Edge>,
+}
+
+impl<S: GraphStore> LogicalSnapshot<S> {
+    pub fn new(snapshot: S::Snapshot) -> Self {
+        Self { store: snapshot, vertices: HashMap::new(), edges: HashMap::new() }
+    }
+
+    pub(crate) fn get_vertex(&mut self, key: VertexKey) -> Result<Option<VertexKey>, StoreError> {
+        if !self.vertices.contains_key(&key) {
+            match self.store.get_vertex(key)? {
+                None => return Ok(None),
+                Some(vt) => {
+                    self.vertices.insert(key, vt);
+                }
+            }
+        }
+        Ok(Some(key))
+    }
+
+    pub(crate) fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<EdgeKey>, StoreError> {
+        let cek = key.canonical_edge_key();
+        if !self.edges.contains_key(&cek) {
+            match self.store.get_edge(key)? {
+                None => return Ok(None),
+                Some(eg) => {
+                    self.edges.insert(cek, eg);
+                }
+            }
+        }
+        Ok(Some(*key))
+    }
+
+    pub(crate) fn get_edges(
+        &mut self,
+        vertex: VertexKey,
+        direction: Direction,
+        label: Option<LabelId>,
+        dst: Option<&[VertexKey]>,
+        limit: Option<u32>,
+    ) -> Result<Vec<EdgeKey>, StoreError> {
+        // The store's RocksDB snapshot is the authoritative source — no dirty
+        // overlay exists on a read-only session. Return store results directly.
+        // We still populate the edge cache as a side effect so that subsequent
+        // ValuesStep / PropertiesStep calls can look up edge properties in O(1)
+        // by canonical key without issuing a second store read.
+        let committed = self.store.get_edges(vertex, direction, label, dst, limit)?;
+        let mut result = Vec::with_capacity(committed.len());
+        for edge in committed {
+            let cek = edge.canonical_key();
+            result.push(match direction {
+                Direction::OUT => cek.out_key(),
+                Direction::IN => cek.in_key(),
+            });
+            self.edges.entry(cek).or_insert(edge);
+        }
+        Ok(result)
+    }
+
+    pub(crate) fn get_property(&mut self, key: &CanonicalKey, prop: &PropKey) -> Result<Option<Property>, StoreError> {
+        match *key {
+            CanonicalKey::Vertex(vk) => {
+                if self.get_vertex(vk)?.is_some() {
+                    Ok(self.vertices.get(&vk).unwrap().get_property(prop))
+                } else {
+                    Ok(None)
+                }
+            }
+            CanonicalKey::Edge(ek) => Ok(self.edges.get(&ek).and_then(|e| e.get_property(prop))),
+            CanonicalKey::Empty => Err(StoreError::RuntimeError("Property owner cannot be empty".to_string())),
+        }
+    }
+
+    pub(crate) fn get_value(&mut self, key: &CanonicalKey, prop: &PropKey) -> Result<Option<Primitive>, StoreError> {
+        match *key {
+            CanonicalKey::Vertex(vk) => {
+                if self.get_vertex(vk)?.is_some() {
+                    Ok(self.vertices.get(&vk).unwrap().get_value(prop))
+                } else {
+                    Ok(None)
+                }
+            }
+            CanonicalKey::Edge(ek) => Ok(self.edges.get(&ek).and_then(|e| e.get_value(prop))),
+            CanonicalKey::Empty => {
+                Err(StoreError::UnexpectedDataType("expected Vertex or Edge for get property value".to_string()))
+            }
+        }
     }
 }
 

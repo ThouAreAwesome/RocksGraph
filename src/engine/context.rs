@@ -16,7 +16,7 @@
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::{
-    graph::LogicalGraph,
+    graph::{LogicalGraph, LogicalSnapshot},
     store::traits::GraphStore,
     types::{
         element::Property,
@@ -228,4 +228,62 @@ impl<S: GraphStore> GraphCtx for LogicalGraph<S> {
     fn abort(&mut self) {
         self.abort()
     }
+}
+
+impl<S: GraphStore> GraphCtx for LogicalSnapshot<S> {
+    fn get_vertex(&mut self, key: VertexKey) -> Result<Option<VertexKey>, StoreError> {
+        self.get_vertex(key)
+    }
+    fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<EdgeKey>, StoreError> {
+        self.get_edge(key)
+    }
+    fn get_adjacent_vertices(
+        &mut self,
+        vertex_key: VertexKey,
+        label: Option<LabelId>,
+        direction: Direction,
+        end_vertex_ids: Option<&[VertexKey]>,
+        limit: Option<u32>,
+    ) -> Result<Vec<VertexKey>, StoreError> {
+        let edges = self.get_edges(vertex_key, direction, label, end_vertex_ids, limit)?;
+        Ok(edges.into_iter().map(|ek| ek.secondary_id).collect())
+    }
+    fn get_adjacent_edges(
+        &mut self,
+        vertex_key: VertexKey,
+        label: Option<LabelId>,
+        direction: Direction,
+        end_vertex_ids: Option<&[VertexKey]>,
+        limit: Option<u32>,
+    ) -> Result<Vec<EdgeKey>, StoreError> {
+        self.get_edges(vertex_key, direction, label, end_vertex_ids, limit)
+    }
+    fn get_property(&mut self, key: &CanonicalKey, prop: &PropKey) -> Result<Option<Property>, StoreError> {
+        self.get_property(key, prop)
+    }
+    fn get_value(&mut self, key: &CanonicalKey, prop: &PropKey) -> Result<Option<Primitive>, StoreError> {
+        self.get_value(key, prop)
+    }
+    fn add_vertex(&mut self, _id: VertexKey, _label_id: LabelId) -> Result<VertexKey, StoreError> {
+        Err(StoreError::ReadOnly)
+    }
+    fn add_edge(&mut self, _cek: &EdgeKey) -> Result<EdgeKey, StoreError> {
+        Err(StoreError::ReadOnly)
+    }
+    fn set_property(&mut self, _prop: &Property) -> Result<(), StoreError> {
+        Err(StoreError::ReadOnly)
+    }
+    fn drop_property(&mut self, _prop: &Property) -> Result<(), StoreError> {
+        Err(StoreError::ReadOnly)
+    }
+    fn drop_vertex(&mut self, _vertex: VertexKey) -> Result<(), StoreError> {
+        Err(StoreError::ReadOnly)
+    }
+    fn drop_edge(&mut self, _edge: &EdgeKey) -> Result<(), StoreError> {
+        Err(StoreError::ReadOnly)
+    }
+    fn commit(&mut self) -> Result<(), StoreError> {
+        Err(StoreError::ReadOnly)
+    }
+    fn abort(&mut self) {}
 }

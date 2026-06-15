@@ -23,6 +23,7 @@ use crate::{
     store::{
         rocks::{
             encoding::{CF_EDGES_IN, CF_EDGES_OUT, CF_VERTEX_DEGREE, CF_VERTICES, EDGE_PREFIX_LENGTH},
+            snapshot::Snapshot,
             transaction::Transaction,
         },
         traits::GraphStore,
@@ -130,7 +131,12 @@ impl RocksStorage {
 }
 
 impl GraphStore for RocksStorage {
+    type Snapshot = Snapshot;
     type Txn = Transaction;
+
+    fn snapshot(&self) -> Snapshot {
+        Snapshot::new(Arc::clone(&self.db))
+    }
 
     fn begin(&self) -> Transaction {
         Transaction::new(Arc::clone(&self.db))

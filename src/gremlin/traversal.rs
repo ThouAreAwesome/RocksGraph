@@ -23,7 +23,7 @@ use crate::{
     planner::{
         apply_rules,
         logical_step::{
-            AddEStep, AddVStep, BothEStep, BothStep, CoalesceStep, CountStep, DedupStep, FromStep, HasIdStep,
+            AddEStep, AddVStep, BothEStep, BothStep, CoalesceStep, CountStep, DedupStep, DropStep, FromStep, HasIdStep,
             HasLabelStep, HasPropertyStep, InEStep, InStep, InVStep, LimitStep, LogicalPlan, LogicalStep, OtherVStep,
             OutEStep, OutStep, OutVStep, PathStep, PropertiesStep, PropertyStep, ScalarFilterStep, ToListStep, ToStep,
             UnionStep, ValuesStep, WhereStep,
@@ -59,11 +59,6 @@ pub struct GraphTraversal {
 }
 
 // ── Fluent Query Builder ──────────────────────────────────────────────────────
-
-#[allow(non_snake_case)]
-pub fn graphTraversalSource() -> GraphTraversal {
-    GraphTraversal { ast: GremlinQueryAst { steps: vec![] } }
-}
 
 /// Entry point for anonymous traversals (sub-traversals).
 /// Mimics Gremlin's `__` (double underscore) for nested traversals.
@@ -261,15 +256,280 @@ impl GraphTraversal {
     }
 }
 
-use crate::store::RocksStorage;
-use std::{path::Path, sync::Arc};
+// ── Traversal builder types ───────────────────────────────────────────────────
 
-pub fn open_rocks_store<P: AsRef<Path>>(path: Option<P>) -> Result<Arc<RocksStorage>, Box<dyn std::error::Error>> {
-    match path {
-        Some(pth) => Ok(Arc::new(RocksStorage::open(pth)?)),
-        None => {
-            let dir = tempfile::tempdir()?;
-            Ok(Arc::new(RocksStorage::open(dir.path())?))
-        }
+/// Shared read step methods for both [`ReadTraversal`] and [`WriteTraversal`].
+///
+/// Each method appends one [`LogicalStep`] to the AST and returns `&mut Self`
+/// for fluent chaining. Terminal operations (`next`, `to_list`, `exec`) are
+/// inherent methods on each concrete type.
+pub trait TraversalBuilder {
+    #[doc(hidden)]
+    fn ast_mut(&mut self) -> &mut GremlinQueryAst;
+
+    #[allow(non_snake_case)]
+    fn V(&mut self, ids: impl IntoIterator<Item = i64>) -> &mut Self {
+        use crate::planner::logical_step::VStep;
+        self.ast_mut().steps.push(LogicalStep::V(VStep { ids: ids.into_iter().collect() }));
+        self
+    }
+    fn out(&mut self, labels: impl IntoIterator<Item = impl Into<u16>>) -> &mut Self {
+        use crate::planner::logical_step::OutStep;
+        self.ast_mut().steps.push(LogicalStep::Out(OutStep {
+            label_ids: labels.into_iter().map(Into::into).collect(),
+            end_vertex_ids: None,
+        }));
+        self
+    }
+    fn in_(&mut self, labels: impl IntoIterator<Item = impl Into<u16>>) -> &mut Self {
+        use crate::planner::logical_step::InStep;
+        self.ast_mut().steps.push(LogicalStep::In(InStep {
+            label_ids: labels.into_iter().map(Into::into).collect(),
+            end_vertex_ids: None,
+        }));
+        self
+    }
+    fn both(&mut self, labels: impl IntoIterator<Item = impl Into<u16>>) -> &mut Self {
+        use crate::planner::logical_step::BothStep;
+        self.ast_mut().steps.push(LogicalStep::Both(BothStep {
+            label_ids: labels.into_iter().map(Into::into).collect(),
+            end_vertex_ids: None,
+        }));
+        self
+    }
+    #[allow(non_snake_case)]
+    fn outE(&mut self, labels: impl IntoIterator<Item = impl Into<u16>>) -> &mut Self {
+        use crate::planner::logical_step::OutEStep;
+        self.ast_mut().steps.push(LogicalStep::OutE(OutEStep {
+            label_ids: labels.into_iter().map(Into::into).collect(),
+            end_vertex_ids: None,
+        }));
+        self
+    }
+    #[allow(non_snake_case)]
+    fn inE(&mut self, labels: impl IntoIterator<Item = impl Into<u16>>) -> &mut Self {
+        use crate::planner::logical_step::InEStep;
+        self.ast_mut().steps.push(LogicalStep::InE(InEStep {
+            label_ids: labels.into_iter().map(Into::into).collect(),
+            end_vertex_ids: None,
+        }));
+        self
+    }
+    #[allow(non_snake_case)]
+    fn bothE(&mut self, labels: impl IntoIterator<Item = impl Into<u16>>) -> &mut Self {
+        use crate::planner::logical_step::BothEStep;
+        self.ast_mut().steps.push(LogicalStep::BothE(BothEStep {
+            label_ids: labels.into_iter().map(Into::into).collect(),
+            end_vertex_ids: None,
+        }));
+        self
+    }
+    #[allow(non_snake_case)]
+    fn inV(&mut self) -> &mut Self {
+        use crate::planner::logical_step::InVStep;
+        self.ast_mut().steps.push(LogicalStep::InV(InVStep {}));
+        self
+    }
+    #[allow(non_snake_case)]
+    fn outV(&mut self) -> &mut Self {
+        use crate::planner::logical_step::OutVStep;
+        self.ast_mut().steps.push(LogicalStep::OutV(OutVStep {}));
+        self
+    }
+    #[allow(non_snake_case)]
+    fn otherV(&mut self) -> &mut Self {
+        use crate::planner::logical_step::OtherVStep;
+        self.ast_mut().steps.push(LogicalStep::OtherV(OtherVStep {}));
+        self
+    }
+    fn has(&mut self, key: impl Into<SmolStr>, value: impl Into<Primitive>) -> &mut Self {
+        self.ast_mut().steps.push(LogicalStep::HasProperty(HasPropertyStep { key: key.into(), value: value.into() }));
+        self
+    }
+    #[allow(non_snake_case)]
+    fn hasLabel(&mut self, label_ids: impl IntoIterator<Item = impl Into<u16>>) -> &mut Self {
+        use crate::planner::logical_step::HasLabelStep;
+        self.ast_mut()
+            .steps
+            .push(LogicalStep::HasLabel(HasLabelStep { label_ids: label_ids.into_iter().map(Into::into).collect() }));
+        self
+    }
+    #[allow(non_snake_case)]
+    fn hasId(&mut self, ids: impl IntoIterator<Item = i64>) -> &mut Self {
+        self.ast_mut().steps.push(LogicalStep::HasId(HasIdStep { ids: ids.into_iter().collect() }));
+        self
+    }
+    fn values(&mut self, keys: impl IntoIterator<Item = impl Into<SmolStr>>) -> &mut Self {
+        self.ast_mut()
+            .steps
+            .push(LogicalStep::Values(ValuesStep { property_keys: keys.into_iter().map(Into::into).collect() }));
+        self
+    }
+    fn count(&mut self) -> &mut Self {
+        self.ast_mut().steps.push(LogicalStep::Count(CountStep {}));
+        self
+    }
+    fn limit(&mut self, n: u32) -> &mut Self {
+        self.ast_mut().steps.push(LogicalStep::Limit(LimitStep { limit: n }));
+        self
+    }
+    fn path(&mut self) -> &mut Self {
+        self.ast_mut().steps.push(LogicalStep::Path(PathStep {}));
+        self
+    }
+    fn dedup(&mut self) -> &mut Self {
+        self.ast_mut().steps.push(LogicalStep::Dedup(DedupStep {}));
+        self
+    }
+    /// Filter traversers using an anonymous sub-traversal.
+    ///
+    /// The sub-traversal is built with [`__`] and carries no execution context
+    /// — it is compiled to a logical plan and evaluated at query execution time.
+    ///
+    /// ```ignore
+    /// snap.g().V([]).outE([EDGE]).r#where(__().otherV().hasId([dst])).to_list()?
+    /// ```
+    fn r#where(&mut self, sub: &mut GraphTraversal) -> &mut Self {
+        self.ast_mut().steps.push(LogicalStep::Where(WhereStep { plan: sub.build_logical() }));
+        self
+    }
+    /// Evaluate each sub-traversal and emit results from the first that yields
+    /// at least one result (short-circuits).
+    ///
+    /// ```ignore
+    /// tx.g().V([id]).coalesce([
+    ///     __().values(["name"]),
+    ///     __().addV(LABEL).property("name", "default"),
+    /// ]).next()?
+    /// ```
+    fn coalesce<'a>(&mut self, subs: impl IntoIterator<Item = &'a mut GraphTraversal>) -> &mut Self {
+        self.ast_mut()
+            .steps
+            .push(LogicalStep::Coalesce(CoalesceStep { plans: subs.into_iter().map(|t| t.build_logical()).collect() }));
+        self
+    }
+    /// Evaluate all sub-traversals and merge their result streams.
+    ///
+    /// ```ignore
+    /// snap.g().V([id]).union([__().outE([A]), __().outE([B])]).count().next()?
+    /// ```
+    fn union<'a>(&mut self, subs: impl IntoIterator<Item = &'a mut GraphTraversal>) -> &mut Self {
+        self.ast_mut()
+            .steps
+            .push(LogicalStep::Union(UnionStep { plans: subs.into_iter().map(|t| t.build_logical()).collect() }));
+        self
+    }
+}
+
+// ── ReadTraversal ─────────────────────────────────────────────────────────────
+
+/// A read-only traversal bound to a [`ReadSession`] context.
+///
+/// Write steps (`addV`, `addE`, `property`, `drop`) are not available.
+/// Attempting to call them is a compile-time error.
+pub struct ReadTraversal<'s> {
+    ast: GremlinQueryAst,
+    ctx: &'s mut dyn GraphCtx,
+}
+
+impl<'s> ReadTraversal<'s> {
+    pub(crate) fn new(ctx: &'s mut dyn GraphCtx) -> Self {
+        Self { ast: GremlinQueryAst { steps: vec![] }, ctx }
+    }
+
+    #[allow(clippy::should_implement_trait)]
+    pub fn next(&mut self) -> Result<Option<GValue>, StoreError> {
+        let gt = GraphTraversal { ast: self.ast.clone() };
+        gt.build(self.ctx)?.next().transpose()
+    }
+
+    pub fn exec(&mut self) -> Result<BuiltTraversal<'_>, StoreError> {
+        let gt = GraphTraversal { ast: self.ast.clone() };
+        gt.build(self.ctx)
+    }
+}
+
+impl TraversalBuilder for ReadTraversal<'_> {
+    fn ast_mut(&mut self) -> &mut GremlinQueryAst {
+        &mut self.ast
+    }
+}
+
+// ── WriteTraversal ────────────────────────────────────────────────────────────
+
+/// A read-write traversal bound to a [`TxSession`] context.
+///
+/// Includes all read steps from [`TraversalBuilder`] plus mutation steps.
+pub struct WriteTraversal<'s> {
+    ast: GremlinQueryAst,
+    ctx: &'s mut dyn GraphCtx,
+}
+
+impl<'s> WriteTraversal<'s> {
+    pub(crate) fn new(ctx: &'s mut dyn GraphCtx) -> Self {
+        Self { ast: GremlinQueryAst { steps: vec![] }, ctx }
+    }
+
+    // ── Write steps ───────────────────────────────────────────────────────────
+
+    #[allow(non_snake_case)]
+    pub fn addV(&mut self, label_id: u16) -> &mut Self {
+        self.ast.steps.push(LogicalStep::AddV(AddVStep { label_id, vertex_id: None, properties: HashMap::new() }));
+        self
+    }
+
+    #[allow(non_snake_case)]
+    pub fn addE(&mut self, label_id: u16) -> &mut Self {
+        self.ast.steps.push(LogicalStep::AddE(AddEStep {
+            label_id,
+            out_v_id: None,
+            in_v_id: None,
+            properties: HashMap::new(),
+        }));
+        self
+    }
+
+    pub fn from(&mut self, vertex_id: i64) -> &mut Self {
+        self.ast.steps.push(LogicalStep::From(FromStep { vertex_id }));
+        self
+    }
+
+    pub fn to(&mut self, vertex_id: i64) -> &mut Self {
+        self.ast.steps.push(LogicalStep::To(ToStep { vertex_id }));
+        self
+    }
+
+    pub fn property(&mut self, key: impl Into<SmolStr>, value: impl Into<Primitive>) -> &mut Self {
+        self.ast.steps.push(LogicalStep::Property(PropertyStep { prop_key: key.into(), prop_value: value.into() }));
+        self
+    }
+
+    pub fn drop(&mut self) -> &mut Self {
+        self.ast.steps.push(LogicalStep::Drop(DropStep {}));
+        self
+    }
+
+    // ── Terminal ops ──────────────────────────────────────────────────────────
+
+    #[allow(clippy::should_implement_trait)]
+    pub fn next(&mut self) -> Result<Option<GValue>, StoreError> {
+        let gt = GraphTraversal { ast: self.ast.clone() };
+        gt.build(self.ctx)?.next().transpose()
+    }
+
+    pub fn to_list(&mut self) -> Result<Vec<GValue>, StoreError> {
+        let gt = GraphTraversal { ast: self.ast.clone() };
+        gt.build(self.ctx)?.collect::<Result<Vec<_>, _>>()
+    }
+
+    pub fn exec(&mut self) -> Result<BuiltTraversal<'_>, StoreError> {
+        let gt = GraphTraversal { ast: self.ast.clone() };
+        gt.build(self.ctx)
+    }
+}
+
+impl TraversalBuilder for WriteTraversal<'_> {
+    fn ast_mut(&mut self) -> &mut GremlinQueryAst {
+        &mut self.ast
     }
 }

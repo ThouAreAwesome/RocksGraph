@@ -32,7 +32,7 @@ mod cases {
             ScalarFilterStep as LogicalScalarFilterStep, UnionStep as LogicalUnionStep, VStep as LogicalVStep,
             ValuesStep as LogicalValuesStep, WhereStep as LogicalWhereStep,
         },
-        store::{GraphStore, RocksStorage}, // Assuming RocksStorage is in src/store.rs
+        store::{traits::GraphStore, RocksStorage},
         types::{
             element::Property,
             error::StoreError,

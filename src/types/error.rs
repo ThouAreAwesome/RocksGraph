@@ -39,6 +39,8 @@ pub enum StoreError {
     Tombstoned,
     /// A vertex cannot be deleted because it still has one or more incident edges.
     IncidentEdges,
+    /// A write operation was attempted on a read-only snapshot context.
+    ReadOnly,
     /// A stored byte sequence could not be decoded. The carried string names the
     /// field that failed (e.g. `"vertex value"`, `"edge key"`).
     CorruptData(&'static str),
@@ -64,6 +66,7 @@ impl fmt::Display for StoreError {
             StoreError::DuplicateEdge(key) => write!(f, "duplicate edge: {key}"),
             StoreError::Tombstoned => write!(f, "element is tombstoned"),
             StoreError::IncidentEdges => write!(f, "cannot drop vertex with incident edges"),
+            StoreError::ReadOnly => write!(f, "write operation on read-only snapshot"),
             StoreError::CorruptData(ctx) => write!(f, "corrupt data: {ctx}"),
             StoreError::MissingColumnFamily(name) => write!(f, "missing column family: {name}"),
             StoreError::RocksDb(e) => write!(f, "storage engine error: {e}"),

@@ -17,15 +17,8 @@
 
 use hdrhistogram::Histogram;
 use rocksgraph::{
-    begin_graph,
-    engine::GraphCtx,
-    gremlin::traversal::{self, graphTraversalSource, __},
-    store::{GraphStore, RocksStorage},
-    types::{
-        error::StoreError,
-        prop_key::{ID, LABEL},
-    },
-    GValue, Primitive,
+    types::prop_key::{ID, LABEL},
+    GValue, Graph, Primitive, StoreError, TraversalBuilder, TxSession, __,
 };
 
 use rand::Rng;
@@ -43,19 +36,17 @@ use std::{
 
 const RETRY_DELAY_MS: u64 = 1;
 const MAX_RETRIES: usize = 3;
-
 const EDGE_LABEL: u16 = 2;
 
-/// Generates a random alphanumeric string of a given length.
 fn generate_random_string(len: usize) -> String {
     rand::thread_rng().sample_iter(rand::distributions::Alphanumeric).take(len).map(char::from).collect()
 }
 
-/// Creates a vertex; if it already exists the error is silently ignored.
-/// Returns `Ok(true)` if a new vertex was created, `Ok(false)` if it already existed.
-fn upsert_vertex(graph: &mut dyn GraphCtx, label: u16, vertex_id: i64) -> Result<bool, StoreError> {
+/// Upsert a vertex; returns `Ok(true)` if newly created, `Ok(false)` if it already existed.
+fn upsert_vertex(tx: &mut TxSession, label: u16, vertex_id: i64) -> Result<bool, StoreError> {
     let mut rng = rand::thread_rng();
-    let mut t = graphTraversalSource()
+    let result = tx
+        .g()
         .V([vertex_id])
         .count()
         .coalesce([
@@ -65,25 +56,21 @@ fn upsert_vertex(graph: &mut dyn GraphCtx, label: u16, vertex_id: i64) -> Result
                 .property("name", generate_random_string(10))
                 .property("age", rng.gen_range::<i64, _>(18..100)),
         ])
-        .build(graph)
-        .unwrap();
+        .next()?;
 
-    match t.next() {
-        Some(Ok(GValue::Scalar(Primitive::Int64(_)))) => Ok(false),
-        Some(Ok(GValue::Vertex(_))) => Ok(true),
-        Some(Ok(_)) => unreachable!("unexpected gremlin result type"),
-        Some(Err(e)) => Err(e),
+    match result {
+        Some(GValue::Scalar(Primitive::Int64(_))) => Ok(false),
+        Some(GValue::Vertex(_)) => Ok(true),
+        Some(_) => unreachable!("unexpected gremlin result type"),
         None => unreachable!("unexpected gremlin result type"),
     }
 }
 
-/// Creates an edge from `src` to `dst` if it does not already exist, using `coalesce`.
-/// Returns Ok(true) if created, Ok(false) if it already existed.
-fn upsert_edge(graph: &mut dyn GraphCtx, src: i64, dst: i64, edge_type: u16) -> Result<bool, StoreError> {
+/// Upsert an edge from `src` → `dst`; returns `Ok(true)` if newly created.
+fn upsert_edge(tx: &mut TxSession, src: i64, dst: i64, edge_type: u16) -> Result<bool, StoreError> {
     let mut rng = rand::thread_rng();
-
-    // Using the fluent API to construct the query
-    let mut t = graphTraversalSource()
+    let result = tx
+        .g()
         .V([src])
         .coalesce([
             __().outE([edge_type]).r#where(__().otherV().hasId([dst])).values([LABEL]),
@@ -91,45 +78,40 @@ fn upsert_edge(graph: &mut dyn GraphCtx, src: i64, dst: i64, edge_type: u16) -> 
                 .from(src)
                 .to(dst)
                 .property("weight", rng.gen_range::<f64, _>(0.1..10.0))
-                .property("timestamp", rng.gen_range::<i64, _>(0..1000000)),
+                .property("timestamp", rng.gen_range::<i64, _>(0..1_000_000)),
         ])
-        .build(graph)
-        .unwrap();
+        .next()?;
 
-    match t.next() {
-        Some(Ok(GValue::Scalar(Primitive::Int32(_)))) => Ok(false),
-        Some(Ok(GValue::Edge(_))) => Ok(true),
-        Some(Ok(_)) => unreachable!("unexpected gremlin result type"),
-        Some(Err(e)) => Err(e),
+    match result {
+        Some(GValue::Scalar(Primitive::Int32(_))) => Ok(false),
+        Some(GValue::Edge(_)) => Ok(true),
+        Some(_) => unreachable!("unexpected gremlin result type"),
         None => unreachable!("unexpected gremlin result type"),
     }
 }
 
-/// Main function to run write benchmarks.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
-    let data_dir = if let Some(pos) = args.iter().position(|arg| arg == "--data-dir") {
-        args.get(pos + 1).map(PathBuf::from)
-    } else {
-        None
-    }
-    .expect("Please provide a --data-dir fold path for the benchmark");
+    let data_dir = args
+        .iter()
+        .position(|arg| arg == "--data-dir")
+        .and_then(|pos| args.get(pos + 1).map(PathBuf::from))
+        .expect("Please provide a --data-dir fold path for the benchmark");
 
-    let file_path = if let Some(pos) = args.iter().position(|arg| arg == "--file-path") {
-        args.get(pos + 1).map(PathBuf::from)
-    } else {
-        None
-    }
-    .expect("Please provide a --file-path input graph path for the benchmark");
+    let file_path = args
+        .iter()
+        .position(|arg| arg == "--file-path")
+        .and_then(|pos| args.get(pos + 1).map(PathBuf::from))
+        .expect("Please provide a --file-path input graph path for the benchmark");
 
     let parallelism = args
         .iter()
         .position(|arg| arg == "--parallelism")
         .and_then(|pos| args.get(pos + 1))
         .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(3); // Default parallelism
+        .unwrap_or(3);
 
-    let graph_store = traversal::open_rocks_store(Some(&data_dir))?;
+    let graph = Graph::open(&data_dir)?;
 
     let file = File::open(file_path)?;
     let reader = BufReader::new(file);
@@ -147,7 +129,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for i in 0..parallelism {
         let lines_chunk = Arc::clone(&lines);
         let mutation_counter = Arc::clone(&mutation_counter);
-        let store = Arc::clone(&graph_store);
+        let graph = graph.clone(); // cheap Arc clone
         let hist_tx = hist_tx.clone();
 
         let handle = std::thread::spawn(move || {
@@ -163,36 +145,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             for line in &lines_chunk[start_index..end_index] {
                 let parts: Vec<i64> =
                     line.split_whitespace().map(|s| s.parse::<i64>()).filter_map(Result::ok).collect();
-
                 if parts.len() != 2 {
                     continue;
                 }
-
                 let (src, dst) = (parts[0], parts[1]);
 
                 let op_start = Instant::now();
-                let mut lg = begin_graph::<RocksStorage>(store.begin());
                 let mut success = false;
                 let mut new_edge = false;
 
                 for attempt in 0..MAX_RETRIES {
-                    // Stage all three mutations onto the overlay in one pass.
-                    let staged = upsert_vertex(&mut lg, 1u16, src)
-                        .and_then(|_| upsert_vertex(&mut lg, 1u16, dst))
-                        .and_then(|_| upsert_edge(&mut lg, src, dst, EDGE_LABEL));
+                    // Each attempt uses a fresh transaction (correct for OCC retries).
+                    let mut tx = graph.begin();
+
+                    let staged = upsert_vertex(&mut tx, 1u16, src)
+                        .and_then(|_| upsert_vertex(&mut tx, 1u16, dst))
+                        .and_then(|_| upsert_edge(&mut tx, src, dst, EDGE_LABEL));
 
                     match staged {
                         Err(e) => {
                             println!("Failed to stage ({} -> {}): {}", src, dst, e);
                             break;
                         }
-                        Ok(is_new) => match lg.commit() {
+                        Ok(is_new) => match tx.commit() {
                             Ok(_) => {
                                 success = true;
                                 new_edge = is_new;
                                 break;
                             }
                             Err(StoreError::Conflict) if attempt < MAX_RETRIES - 1 => {
+                                // tx consumed by commit(); new one created next iteration.
                                 std::thread::sleep(Duration::from_millis(RETRY_DELAY_MS));
                             }
                             Err(e) => {
@@ -218,7 +200,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     drop(hist_tx);
-
     for handle in worker_handles {
         let _ = handle.join();
     }
@@ -248,7 +229,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     #[cfg(feature = "rocksdb-stats")]
-    if let Some(stats) = graph_store.statistics() {
+    if let Some(stats) = graph.statistics() {
         println!("\n--- RocksDB Statistics ---\n{}", stats);
     }
 

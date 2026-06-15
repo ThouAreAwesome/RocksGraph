@@ -17,43 +17,58 @@
 
 //! RocksGraph — a Gremlin-compatible graph database engine.
 //!
+//! ## Quick start
+//!
+//! ```ignore
+//! use rocksgraph::{Graph, TraversalBuilder, GValue, Primitive, StoreError, __};
+//!
+//! let graph = Graph::open("/path/to/db")?;
+//!
+//! // Read-only snapshot query
+//! let mut snap = graph.read();
+//! let count = snap.g().V([1]).out([KNOWS]).count().next()?.unwrap();
+//!
+//! // Read-write transaction
+//! let mut tx = graph.begin();
+//! tx.g().addV(PERSON).property("name", "alice").next()?;
+//! tx.g().addE(KNOWS).from(1).to(2).property("weight", 0.9f64).next()?;
+//! tx.commit()?;
+//! ```
+//!
 //! ## Architecture
 //!
 //! ```text
-//! gremlin API  ──►  planner  ──►  optimizer  ──►  engine/volcano
-//!                      │                                │
-//!                 logical IR                      LogicalGraph       ← query-scoped overlay (OCC)
-//!                                                      │
-//!                                            GraphStore / RocksDB
+//! Graph::open / graph.read() / graph.begin()          ← api (pub)
+//!   │  session.g() → ReadTraversal / WriteTraversal
+//!   ▼
+//! gremlin::traversal   fluent builder → LogicalPlan AST
+//!   ▼
+//! planner              AST → LogicalPlan IR + optimizer
+//!   ▼
+//! engine::volcano      pull-based Volcano iterator pipeline
+//!   ▼
+//! graph                query-scoped overlay (OCC dirty tracking)
+//!   ▼
+//! store / RocksDB      OptimisticTransactionDB
 //! ```
 //!
-//! | Module | Role |
-//! |--------|------|
-//! [`gremlin`]           | Fluent query builder; converts Gremlin API calls into a `LogicalPlan`. |
-//! [`planner`]           | Translates a Gremlin AST into engine-agnostic [`LogicalPlan`] IR. |
-//! [`planner::optimizer`]| Rewrites a `LogicalPlan` into a more efficient equivalent (fixpoint iteration). |
-//! [`engine`]            | Execution engine (`volcano`) and shared primitives (`GraphCtx`, `Traverser`). |
-//! [`graph`]             | Query-scoped in-memory overlay over a `GraphStore` transaction with OCC support. |
-//! [`store`]             | Pluggable storage backend abstraction; RocksDB implementation. |
-//! [`schema`]            | Label-ID ↔ label-string bidirectional mapping. |
-//! [`types`]             | Shared value types (`GValue`, `Primitive`, keys). |
-//!
-//! [`LogicalPlan`]: planner::logical_step::LogicalPlan
-#[doc(hidden)]
-pub mod engine;
+//! All modules below `api` are `pub(crate)` — users only interact through
+//! [`Graph`], [`ReadSession`], [`TxSession`], and the traversal types re-exported
+//! at the crate root.
+pub mod api;
+pub(crate) mod engine;
 pub(crate) mod graph;
-pub mod gremlin;
+pub(crate) mod gremlin;
 pub(crate) mod planner;
 pub mod schema;
-pub mod store;
+pub(crate) mod store;
 pub mod types;
 
 // ── User-facing re-exports ────────────────────────────────────────────────────
-pub use engine::GraphCtx;
-pub use gremlin::traversal::{graphTraversalSource, open_rocks_store, BuiltTraversal, GraphTraversal, __};
-pub use types::{GValue, Primitive, StoreError}; // now users write `rocksgraph::GraphCtx`
-
-/// Begin a new graph transaction, returning an opaque context that implements [`engine::GraphCtx`].
-pub fn begin_graph<S: store::traits::GraphStore>(txn: S::Txn) -> impl engine::GraphCtx {
-    graph::LogicalGraph::<S>::new(txn)
-}
+pub use api::{Graph, ReadSession, TxSession};
+// GraphTraversal is doc-hidden but must be pub so users can pass `__()` values
+// to where/coalesce/union without naming the type.
+#[doc(hidden)]
+pub use gremlin::traversal::GraphTraversal;
+pub use gremlin::traversal::{BuiltTraversal, ReadTraversal, TraversalBuilder, WriteTraversal, __};
+pub use types::{GValue, Primitive, StoreError};

@@ -16,14 +16,7 @@
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 use hdrhistogram::Histogram;
-use rocksgraph::{
-    begin_graph,
-    engine::GraphCtx,
-    gremlin::traversal::{self, graphTraversalSource, __},
-    store::{GraphStore, RocksStorage},
-    types::error::StoreError,
-    GValue, Primitive,
-};
+use rocksgraph::{GValue, Graph, Primitive, ReadSession, StoreError, TraversalBuilder, __};
 
 use std::{
     env,
@@ -33,9 +26,8 @@ use std::{
     time::Instant,
 };
 
-pub const EDGE_LABEL: u16 = 2;
+const EDGE_LABEL: u16 = 2;
 
-/// Main function to run read benchmarks.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     let data_dir = args
@@ -55,65 +47,62 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .position(|arg| arg == "--parallelism")
         .and_then(|pos| args.get(pos + 1))
         .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(3); // Default parallelism
+        .unwrap_or(3);
 
-    let graph_store = traversal::open_rocks_store(Some(&data_dir))?;
+    let graph = Graph::open(data_dir)?;
     let file = File::open(file_dir)?;
     let reader = BufReader::new(file);
     let lines: Arc<Vec<String>> = Arc::new(reader.lines().collect::<Result<_, _>>()?);
 
-    // --- Query 1 ---
     run_query_benchmark(
         "Q1: g.V().hasId(id).values('name', 'age').count()",
         &lines,
-        &graph_store,
+        &graph,
         parallelism,
-        |lg, src, _dst| {
-            let mut p = graphTraversalSource().V([]).hasId([src]).values(["name", "age"]).count().build(lg).unwrap();
-            let ct = p.next().unwrap()?;
+        |snap, src, _dst| {
+            let ct = snap.g().V([]).hasId([src]).values(["name", "age"]).count().next()?.unwrap();
             assert_eq!(ct, GValue::Scalar(Primitive::Int64(2)));
             Ok(())
         },
     )?;
 
-    // --- Query 2 ---
     run_query_benchmark(
         "Q2: g.V().hasId(id).outE(label).where(otherV().hasId(dst)).values('weight', 'timestamp').count()",
         &lines,
-        &graph_store,
+        &graph,
         parallelism,
-        |lg, src, dst| {
-            let mut p = graphTraversalSource()
+        |snap, src, dst| {
+            let ct = snap
+                .g()
                 .V([])
                 .hasId([src])
                 .outE([EDGE_LABEL])
                 .r#where(__().otherV().hasId([dst]))
                 .values(["weight", "timestamp"])
                 .count()
-                .build(lg)
+                .next()?
                 .unwrap();
-            let ct = p.next().unwrap()?;
             assert_eq!(ct, GValue::Scalar(Primitive::Int64(2)));
             Ok(())
         },
     )?;
 
-    // --- Query 3 ---
     run_query_benchmark(
         "Q3: g.V().hasId(id).bothE(label).values('weight', 'timestamp').count()",
         &lines,
-        &graph_store,
+        &graph,
         parallelism,
-        |lg, src, _dst| {
-            let mut t = graphTraversalSource()
+        |snap, src, _dst| {
+            let GValue::Scalar(Primitive::Int64(ct)) = snap
+                .g()
                 .V([])
                 .hasId([src])
                 .bothE([EDGE_LABEL])
                 .values(["weight", "timestamp"])
                 .count()
-                .build(lg)
-                .unwrap();
-            let GValue::Scalar(Primitive::Int64(ct)) = t.next().unwrap()? else {
+                .next()?
+                .unwrap()
+            else {
                 unreachable!("unexpected gremlin result type")
             };
             assert!(ct >= 2);
@@ -121,22 +110,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     )?;
 
-    // --- Query 4 ---
     run_query_benchmark(
         "Q4: g.V().hasId(id).both(label).values('name', 'age').count()",
         &lines,
-        &graph_store,
+        &graph,
         parallelism,
-        |lg, src, _dst| {
-            let mut t = graphTraversalSource()
-                .V([])
-                .hasId([src])
-                .both([EDGE_LABEL])
-                .values(["name", "age"])
-                .count()
-                .build(lg)
-                .unwrap();
-            let GValue::Scalar(Primitive::Int64(ct)) = t.next().unwrap()? else {
+        |snap, src, _dst| {
+            let GValue::Scalar(Primitive::Int64(ct)) =
+                snap.g().V([]).hasId([src]).both([EDGE_LABEL]).values(["name", "age"]).count().next()?.unwrap()
+            else {
                 unreachable!("unexpected gremlin result type")
             };
             assert!(ct >= 2);
@@ -144,15 +126,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     )?;
 
-    // --- Query 5 ---
     run_query_benchmark(
         "Q5: g.V(id).out(label).both(label).count()",
         &lines,
-        &graph_store,
+        &graph,
         parallelism,
-        |lg, src, _dst| {
-            let mut t = graphTraversalSource().V([src]).out([EDGE_LABEL]).both([EDGE_LABEL]).count().build(lg).unwrap();
-            let GValue::Scalar(Primitive::Int64(ct)) = t.next().unwrap()? else {
+        |snap, src, _dst| {
+            let GValue::Scalar(Primitive::Int64(ct)) =
+                snap.g().V([src]).out([EDGE_LABEL]).both([EDGE_LABEL]).count().next()?.unwrap()
+            else {
                 unreachable!("unexpected gremlin result type")
             };
             assert!(ct >= 1);
@@ -161,23 +143,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     #[cfg(feature = "rocksdb-stats")]
-    if let Some(stats) = graph_store.statistics() {
+    if let Some(stats) = graph.statistics() {
         println!("\n--- RocksDB Statistics ---\n{}", stats);
     }
 
     Ok(())
 }
 
-/// Runs a benchmark for a given query function.
 fn run_query_benchmark<F>(
     name: &str,
     lines: &Arc<Vec<String>>,
-    graph_store: &Arc<RocksStorage>,
+    graph: &Graph,
     parallelism: usize,
     query_fn: F,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
-    F: Fn(&mut dyn GraphCtx, i64, i64) -> Result<(), StoreError> + Send + Sync + 'static,
+    F: Fn(&mut ReadSession, i64, i64) -> Result<(), StoreError> + Send + Sync + 'static,
 {
     println!("\n--- Running Benchmark for: {} ---", name);
     let start = Instant::now();
@@ -190,11 +171,13 @@ where
     let mut worker_handles = vec![];
     for i in 0..parallelism {
         let lines_chunk = Arc::clone(lines);
-        let store = Arc::clone(graph_store);
+        let graph = graph.clone(); // cheap Arc clone
         let h_tx = hist_tx.clone();
         let query_fn = Arc::clone(&query_fn);
 
         let handle = std::thread::spawn(move || {
+            // One snapshot per thread — reused across all queries in this chunk.
+            let mut snap = graph.read();
             let mut local_hist = Histogram::<u64>::new(3).unwrap();
             let start_index = i * chunk_size;
             let end_index = (start_index + chunk_size).min(line_count);
@@ -206,9 +189,8 @@ where
                 }
                 let (src, dst) = (parts[0], parts[1]);
 
-                let mut lg = begin_graph::<RocksStorage>(store.begin());
                 let op_start = Instant::now();
-                if let Err(e) = query_fn(&mut lg, src, dst) {
+                if let Err(e) = query_fn(&mut snap, src, dst) {
                     eprintln!("Query failed: {}", e);
                 }
                 local_hist.record(op_start.elapsed().as_nanos() as u64).unwrap();
@@ -230,7 +212,6 @@ where
 
     let elapsed_secs = start.elapsed().as_secs_f64();
     let ops = line_count as f64 / elapsed_secs;
-
     println!("Ops: {:.2}/s ({} queries in {:.2}s)", ops, line_count, elapsed_secs);
     println!(
         "Latency (μs) — p50: {}, p90: {}, p95: {}, p99: {}, max: {}",

@@ -17,6 +17,7 @@
 
 pub(super) mod admin;
 mod encoding;
+mod snapshot;
 mod store;
 mod transaction;
 
