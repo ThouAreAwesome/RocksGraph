@@ -109,7 +109,15 @@ impl ReadSession {
     /// Call traversal step methods (`V`, `out`, `has`, …) on the returned
     /// [`ReadTraversal`] to build and execute a query.
     pub fn g(&mut self) -> ReadTraversal<'_> {
+        self.ctx.clear_caches();
         ReadTraversal::new(&mut self.ctx as &mut dyn GraphCtx)
+    }
+
+    // Clear per-traversal caches so they don't accumulate across g() calls.
+    // The underlying RocksDB snapshot is unaffected — all traversals on this
+    // session still see the same consistent point-in-time view.
+    pub fn clear_caches(&mut self) {
+        self.ctx.clear_caches();
     }
 }
 

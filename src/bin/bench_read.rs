@@ -189,6 +189,7 @@ where
                 }
                 let (src, dst) = (parts[0], parts[1]);
 
+                snap.clear_caches();
                 let op_start = Instant::now();
                 if let Err(e) = query_fn(&mut snap, src, dst) {
                     eprintln!("Query failed: {}", e);

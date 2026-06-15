@@ -748,6 +748,17 @@ impl<S: GraphStore> LogicalSnapshot<S> {
         Self { store: snapshot, vertices: HashMap::new(), edges: HashMap::new() }
     }
 
+    /// Reset the in-memory vertex and edge caches.
+    ///
+    /// Called by `ReadSession::g()` before each traversal so that caches stay
+    /// scoped to a single traversal rather than growing across all `g()` calls
+    /// on the same session. The underlying RocksDB snapshot is not affected —
+    /// all traversals on the same session still see the same consistent view.
+    pub(crate) fn clear_caches(&mut self) {
+        self.vertices.clear();
+        self.edges.clear();
+    }
+
     pub(crate) fn get_vertex(&mut self, key: VertexKey) -> Result<Option<VertexKey>, StoreError> {
         if !self.vertices.contains_key(&key) {
             match self.store.get_vertex(key)? {
