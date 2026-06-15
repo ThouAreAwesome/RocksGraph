@@ -28,14 +28,19 @@ use crate::{
     types::{error::StoreError, GValue},
 };
 
-/// A physical step that collects all upstream traversers into a single list.
+/// A physical step that collects all upstream traversers into a single `GValue::List`.
+///
+/// This implements the Gremlin `fold()` step: it drains the upstream pipeline
+/// completely, wraps every value into a `Vec<GValue>`, and emits it as one
+/// `GValue::List` traverser downstream.  It emits exactly once and then signals
+/// exhaustion.
 #[derive(Debug, Default)]
-pub struct ToListStep {
+pub struct FoldStep {
     upstream: Option<StepRef>,
     emitted: bool,
 }
 
-impl CoreStep for ToListStep {
+impl CoreStep for FoldStep {
     fn add_upper(&mut self, upstream: StepRef) {
         self.upstream = Some(upstream);
     }

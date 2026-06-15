@@ -369,8 +369,8 @@ impl PhysicalPlanBuilder {
             LogicalStep::Dedup(_) => {
                 wire_required!(BufferedStep::new(steps::dedup::DedupStep::default()), upstream, "DedupStep")
             }
-            LogicalStep::ToList(_) => {
-                wire_required!(BufferedStep::new(steps::to_list::ToListStep::default()), upstream, "ToListStep")
+            LogicalStep::Fold(_) => {
+                wire_required!(BufferedStep::new(steps::fold::FoldStep::default()), upstream, "FoldStep")
             }
             _ => unreachable!("unreachable"),
         }

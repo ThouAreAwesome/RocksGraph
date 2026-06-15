@@ -24,9 +24,11 @@
 //!
 //! let graph = Graph::open("/path/to/db")?;
 //!
-//! // Read-only snapshot query
+//! // Read-only snapshot query — three ways to consume results
 //! let mut snap = graph.read();
-//! let count = snap.g().V([1]).out([KNOWS]).count().next()?.unwrap();
+//! let count = snap.g().V([1]).out([KNOWS]).count().next()?.unwrap(); // first result
+//! let names = snap.g().V([1]).out([KNOWS]).values(["name"]).to_list()?; // Vec<GValue>
+//! for v in snap.g().V([]).out([KNOWS]).iter()? { println!("{:?}", v?); } // lazy
 //!
 //! // Read-write transaction
 //! let mut tx = graph.begin();
@@ -40,6 +42,8 @@
 //! ```text
 //! Graph::open / graph.read() / graph.begin()          ← api (pub)
 //!   │  session.g() → ReadTraversal / WriteTraversal
+//!   │               step methods: self → Self (move semantics)
+//!   │               terminals: .next()? / .to_list()? / .iter()?
 //!   ▼
 //! gremlin::traversal   fluent builder → LogicalPlan AST
 //!   ▼

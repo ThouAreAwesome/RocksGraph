@@ -93,7 +93,7 @@ pub enum LogicalStep {
     Drop(DropStep),
     Path(PathStep),
     Dedup(DedupStep),
-    ToList(ToListStep),
+    Fold(FoldStep),
 }
 
 /// Represents a logical `drop` step in a query plan.
@@ -114,11 +114,11 @@ pub struct DedupStep {}
 
 impl Optimizer for DedupStep {}
 
-/// Represents a logical `toList` step in a query plan.
+/// Collects all traversers into a single `GValue::List` (Gremlin `fold()` step).
 #[derive(Clone, Debug)]
-pub struct ToListStep {}
+pub struct FoldStep {}
 
-impl Optimizer for ToListStep {}
+impl Optimizer for FoldStep {}
 /// Implements the `Optimizer` trait for `LogicalStep`, allowing optimization rules to be applied to individual steps.
 impl Optimizer for LogicalStep {
     fn optimize(&mut self, optimizer_rule: &OptimizerRule) -> Result<bool, StoreError> {

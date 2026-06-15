@@ -15,6 +15,26 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
+//! [`GValue`] — the universal value type — and its scalar variant [`Primitive`].
+//!
+//! Every value that flows through a traversal pipeline is represented as a `GValue`.
+//! The enum covers the full range from atomic scalars up to structured containers
+//! (lists, maps, paths).
+//!
+//! # `Primitive` vs `GValue::Scalar`
+//!
+//! [`Primitive`] is the leaf scalar type.  It appears as:
+//!
+//! - `GValue::Scalar(Primitive)` when a bare scalar is in the pipeline (e.g. the
+//!   result of `values("age")`).
+//! - `Property::value` when attached to a [`Property`](crate::types::Property).
+//!
+//! # Path representation
+//!
+//! `GValue::Path` stores a `Vec<(GValue, Option<SmallVec<[SmolStr; 2]>>)>`.  The
+//! second element of each pair is the set of step labels (from `as("x")`) that
+//! named this position, or `None` when the position is unnamed.
+
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},
@@ -138,9 +158,16 @@ pub enum GValue {
     Edge(EdgeKey),
     /// A property travelling through the pipeline as a standalone element.
     Property(Property),
+    /// A bare scalar value (e.g. result of `values("age")`).
     Scalar(Primitive),
+    /// An ordered list of values (e.g. result of `fold()`).
     List(Vec<GValue>),
+    /// A key-value map (e.g. result of `valueMap()`).
     Map(HashMap<GValue, GValue>),
+    /// A sequence of traversal positions with optional step labels.
+    ///
+    /// Each entry is `(value, labels)` where `labels` is the set of `as("x")`
+    /// names that tagged that position, or `None` when the position is unnamed.
     Path(Vec<(GValue, Option<SmallVec<[SmolStr; 2]>>)>),
 }
 

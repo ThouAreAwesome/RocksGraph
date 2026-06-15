@@ -15,6 +15,20 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
+//! [`StoreError`] — the unified error type for storage and runtime failures.
+//!
+//! All fallible operations in the store and traversal engine return
+//! `Result<_, StoreError>`.  The variants cover both expected, recoverable
+//! conditions (e.g. [`Conflict`](StoreError::Conflict) — retry the transaction)
+//! and hard failures (e.g. [`RocksDb`](StoreError::RocksDb) — underlying I/O error).
+//!
+//! # Retryable errors
+//!
+//! [`StoreError::Conflict`] is the only variant that callers are expected to retry:
+//! it means an OCC (optimistic concurrency control) check failed because another
+//! transaction modified a key in this transaction's read-set before the commit.
+//! All other errors are terminal for the current transaction.
+
 use std::fmt;
 
 use crate::types::{CanonicalEdgeKey, VertexKey};
@@ -50,9 +64,13 @@ pub enum StoreError {
     /// An error returned directly by the RocksDB storage engine.
     RocksDb(rocksdb::Error),
     Io(std::io::Error),
+    /// A traversal step or feature that is not yet implemented.
     UnsupportedOperation(String),
+    /// A value in the pipeline had a type that the current step cannot handle.
     UnexpectedDataType(String),
+    /// A generic runtime error from the traversal engine.
     RuntimeError(String),
+    /// Catch-all for errors that don't fit any other variant.
     Other(String),
 }
 

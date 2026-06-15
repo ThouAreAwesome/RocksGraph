@@ -60,7 +60,7 @@ Each session exposes a single method `g()` that returns a blank traversal. All G
 ```rust
 // Read path
 let mut snap = graph.read();
-let names = snap.g().V([1]).out([KNOWS]).values(["name"]).exec()?.collect::<Result<Vec<_>, _>>()?;
+let names = snap.g().V([1]).out([KNOWS]).values(["name"]).next()?.unwrap();
 
 // Write path
 let mut tx = graph.begin();
@@ -155,10 +155,8 @@ Labels and edge labels are represented as `u16` integer IDs. String-to-ID mappin
 | Operation | ReadTraversal | WriteTraversal | Returns |
 |-----------|:-------------:|:--------------:|---------|
 | `next()` | ✓ | ✓ | `Result<Option<GValue>, StoreError>` |
-| `to_list()` | — | ✓ | `Result<Vec<GValue>, StoreError>` |
-| `exec()` | ✓ | ✓ | `Result<BuiltTraversal<'_>, StoreError>` (lazy iterator) |
+| `toList()` | ✓ | ✓ | `Result<Option<GValue>, StoreError>` |
 
-`exec()` returns a `BuiltTraversal` that implements `Iterator<Item = Result<GValue, StoreError>>`, useful when you want to stream results or pass them to iterator adaptors.
 
 ## Usage
 
@@ -192,8 +190,7 @@ let count = snap.g().V([1]).out([KNOWS]).count().next()?.unwrap();
 let values = snap.g()
     .V([]).hasId([1, 2, 3])
     .values(["name", "age"])
-    .exec()?
-    .collect::<Result<Vec<_>, _>>()?;
+    .next()?.unwrap();
 
 // Sub-traversal filter: outgoing KNOWS edges whose other endpoint is vertex 2
 let ct = snap.g()
@@ -347,7 +344,6 @@ just build-release
 - **Integer label IDs:** labels are `u16` integers; string-to-ID mapping via the `schema` module is not yet fully implemented.
 - **No full TinkerPop compliance:** lambdas, side effects, multi-path tracking, and many aggregate steps are not supported.
 - **No distributed backend:** placeholder exists but is not implemented.
-- **`to_list()` on `ReadTraversal`:** not yet available; use `.exec()?.collect()` instead.
 
 ## Roadmap
 

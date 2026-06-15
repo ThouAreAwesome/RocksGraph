@@ -20,16 +20,33 @@
 //! ```text
 //! Graph::open("./db")
 //!   ├── .read()  → ReadSession   (snapshot, read-only)
-//!   │               └── .g() → ReadTraversal   .V([]).out([]).to_list()?
+//!   │               └── .g() → ReadTraversal
+//!   │                           .V([1]).out([KNOWS]).next()?       // Option<GValue>
+//!   │                           .V([]).values(["name"]).to_list()? // Vec<GValue>
+//!   │                           .V([]).out([]).iter()?             // BuiltTraversal (Iterator)
 //!   └── .begin() → TxSession     (OCC transaction, read-write)
-//!                   ├── .g() → WriteTraversal  .V([]).out([]).to_list()?
-//!                   │                          .addV(label).property(…).exec()?
+//!                   ├── .g() → WriteTraversal
+//!                   │           .addV(label).property(…).next()?
+//!                   │           .V([]).out([]).to_list()?
 //!                   ├── .commit()
 //!                   └── .rollback()
 //! ```
 //!
 //! Sessions manage lifecycle only; traversal steps live on the traversal
 //! returned by `.g()`, mirroring Gremlin's `GraphTraversalSource` pattern.
+//!
+//! # Execution model
+//!
+//! Every step method on [`ReadTraversal`] and [`WriteTraversal`] takes `self` by
+//! value and returns `Self` (move semantics, no hidden `&mut` aliasing).  Building
+//! the physical plan and executing the pipeline happens only when a **terminal**
+//! method is called:
+//!
+//! | Method | Returns | TinkerPop equivalent |
+//! |---|---|---|
+//! | `next()` | `Result<Option<GValue>>` | `tryNext()` |
+//! | `to_list()` | `Result<Vec<GValue>>` | `toList()` |
+//! | `iter()` | `Result<BuiltTraversal>` | iterate `Traversal` |
 
 use std::{path::Path, sync::Arc};
 
@@ -51,7 +68,8 @@ use crate::{
 /// ```ignore
 /// let graph = Graph::open("./my_graph")?;
 /// let mut snap = graph.read();
-/// let person = snap.g().V([1]).out([KNOWS]).next()?;
+/// let person  = snap.g().V([1]).out([KNOWS]).next()?;            // Option<GValue>
+/// let names   = snap.g().V([1]).out([KNOWS]).values(["name"]).to_list()?; // Vec<GValue>
 /// ```
 pub struct Graph {
     store: Arc<RocksStorage>,
@@ -97,7 +115,12 @@ impl Graph {
 /// # Example
 /// ```ignore
 /// let mut snap = graph.read();
-/// let names = snap.g().V([1]).out([KNOWS]).values(["name"]).to_list()?;
+/// let names = snap.g().V([1]).out([KNOWS]).values(["name"]).to_list()?;  // Vec<GValue>
+///
+/// // Lazy iteration
+/// for item in snap.g().V([]).out([KNOWS]).iter()? {
+///     println!("{:?}", item?);
+/// }
 /// ```
 pub struct ReadSession {
     ctx: LogicalSnapshot<RocksStorage>,
@@ -130,8 +153,8 @@ impl ReadSession {
 /// # Example
 /// ```ignore
 /// let mut tx = graph.begin();
-/// tx.g().addV(PERSON).property("name", "Alice").exec()?;
-/// tx.g().V([1]).out([KNOWS]).values(["name"]).to_list()?;
+/// tx.g().addV(PERSON).property("id", 1i64).property("name", "Alice").next()?;
+/// let names = tx.g().V([1]).out([KNOWS]).values(["name"]).to_list()?;
 /// tx.commit()?;
 /// ```
 pub struct TxSession {

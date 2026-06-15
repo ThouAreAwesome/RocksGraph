@@ -15,6 +15,31 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
+//! Graph element records: [`Vertex`], [`Edge`], and [`Property`].
+//!
+//! These structs represent the **fully-materialized** in-memory state of a graph
+//! element — i.e. what the store returns after decoding the raw bytes from RocksDB.
+//! They cross the store ↔ context boundary and live inside `LogicalGraph`'s overlay.
+//!
+//! # Relationship to keys
+//!
+//! The traversal pipeline usually carries lightweight *keys* ([`VertexKey`],
+//! [`EdgeKey`]) inside [`GValue`](crate::types::GValue), and only calls
+//! `ctx.get_vertex` / `ctx.get_edges` to obtain the full element record when
+//! property data is actually required.  This keeps hot traversal paths allocation-free.
+//!
+//! # Property access
+//!
+//! Both [`Vertex`] and [`Edge`] expose two accessors:
+//!
+//! - `get_property` — returns a [`Property`] wrapper (needed when the property
+//!   itself must flow downstream as a `GValue::Property`).
+//! - `get_value` — returns the bare [`Primitive`] scalar (cheaper when only the
+//!   value is needed, e.g. in `values()` steps).
+//!
+//! The reserved keys `"id"` and `"label"` are synthesized on-the-fly rather than
+//! stored in `props`, so they are always available.
+
 use crate::types::{
     gvalue::Primitive,
     keys::{CanonicalEdgeKey, CanonicalKey, LabelId, Rank, VertexKey},
@@ -40,6 +65,9 @@ pub struct Vertex {
 }
 
 impl Vertex {
+    /// Returns a [`Property`] wrapper for `key`, or `None` if not present.
+    ///
+    /// The reserved keys `"id"` and `"label"` are synthesized without a `props` scan.
     #[inline]
     pub fn get_property(&self, key: &PropKey) -> Option<Property> {
         if ID == *key {
@@ -54,6 +82,10 @@ impl Vertex {
         }
         self.props.iter().find(|p| p.key == *key).cloned()
     }
+    /// Returns the bare [`Primitive`] scalar for `key`, or `None` if not present.
+    ///
+    /// Cheaper than [`get_property`](Vertex::get_property) when the `Property`
+    /// wrapper is not needed downstream.
     #[inline]
     pub fn get_value(&self, key: &PropKey) -> Option<Primitive> {
         if ID == *key {
@@ -108,6 +140,9 @@ impl Edge {
         }
     }
 
+    /// Returns a [`Property`] wrapper for `key`, or `None` if not present.
+    ///
+    /// The reserved key `"label"` is synthesized without a `props` scan.
     #[inline]
     pub fn get_property(&self, key: &PropKey) -> Option<Property> {
         if LABEL == *key {
@@ -119,6 +154,10 @@ impl Edge {
         }
         self.props.iter().find(|p| p.key == *key).cloned()
     }
+    /// Returns the bare [`Primitive`] scalar for `key`, or `None` if not present.
+    ///
+    /// Cheaper than [`get_property`](Edge::get_property) when the `Property`
+    /// wrapper is not needed downstream.
     #[inline]
     pub fn get_value(&self, key: &PropKey) -> Option<Primitive> {
         if LABEL == *key {

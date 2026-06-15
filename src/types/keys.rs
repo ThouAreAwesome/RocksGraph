@@ -15,6 +15,31 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
+//! Key and identifier types for graph elements.
+//!
+//! RocksGraph uses a small family of types to address vertices and edges at
+//! different levels of abstraction:
+//!
+//! | Type | What it identifies | Copy? | Size |
+//! |---|---|---|---|
+//! | [`VertexKey`] | A single vertex | yes | 8 B |
+//! | [`CanonicalEdgeKey`] | An edge, direction-free | yes | 20 B |
+//! | [`EdgeKey`] | An edge **with** traversal direction | yes | 22 B |
+//! | [`CanonicalKey`] | Either kind of element (or nothing) | yes | 24 B |
+//!
+//! # Canonical vs directed edges
+//!
+//! RocksDB stores each edge exactly once in `edges_out` CF using [`CanonicalEdgeKey`]
+//! (always in Out orientation: `src → dst`).  An `edges_in` CF stores the symmetric
+//! reverse index.
+//!
+//! Inside the traversal pipeline, [`EdgeKey`] records which direction the traverser
+//! arrived from.  This is required so that `path()` and `select()` can distinguish
+//! "the same edge traversed outward" from "the same edge traversed inward".
+//!
+//! Use [`EdgeKey::canonical_edge_key`] to strip the direction and obtain the key
+//! suitable for storage lookups.
+
 use std::fmt::Display;
 
 /// Unique identifier for a vertex.
@@ -32,7 +57,9 @@ pub type Rank = u16;
 /// The traversal direction of an edge reference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Direction {
+    /// Outgoing: the traverser moves from `src` to `dst`.
     OUT,
+    /// Incoming: the traverser moves from `dst` to `src`.
     IN,
 }
 
@@ -145,7 +172,9 @@ impl EdgeKey {
 /// Used in `Property.owner` and the transaction dirty set.  All variants are `Copy`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CanonicalKey {
-    Empty, // Used for properties that haven't been assigned an owner yet (e.g. in AddVStep)
+    /// Placeholder for properties that have not yet been assigned to an element
+    /// (e.g. properties accumulated inside `AddVStep` before the vertex is committed).
+    Empty,
     Vertex(VertexKey),
     Edge(CanonicalEdgeKey),
 }

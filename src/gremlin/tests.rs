@@ -285,19 +285,14 @@ mod integration_test {
         let graph = setup_modern_graph();
         let mut tx = graph.begin();
 
-        let GValue::List(results) = tx
+        let results = tx
             .g()
             .V([1])
             .bothE([KNOWS_LABEL_ID, CREATED_LABEL_ID, FRIENDS_LABEL_ID])
             .otherV()
             .path()
-            .toList()
-            .next()
-            .unwrap()
-            .unwrap()
-        else {
-            panic!("Expected path list");
-        };
+            .to_list()
+            .unwrap();
 
         assert_eq!(results.len(), 3);
         for res in results.iter() {
@@ -315,18 +310,8 @@ mod integration_test {
         let graph = setup_modern_graph();
         let mut tx = graph.begin();
 
-        let GValue::List(name_list) = tx
-            .g()
-            .V([1])
-            .out([KNOWS_LABEL_ID, CREATED_LABEL_ID, FRIENDS_LABEL_ID])
-            .values(["name"])
-            .toList()
-            .next()
-            .unwrap()
-            .unwrap()
-        else {
-            panic!("unexpected gremlin result type")
-        };
+        let name_list =
+            tx.g().V([1]).out([KNOWS_LABEL_ID, CREATED_LABEL_ID, FRIENDS_LABEL_ID]).values(["name"]).to_list().unwrap();
 
         let mut names = Vec::new();
         for v in name_list.iter() {
