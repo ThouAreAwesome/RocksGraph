@@ -18,6 +18,7 @@
 use std::rc::Rc;
 
 use smallvec::SmallVec;
+use smol_str::SmolStr;
 
 use crate::{
     engine::{
@@ -55,8 +56,8 @@ impl CoreStep for PathStep {
 
         let mut paths = SmallVec::new();
         while let Some(t) = upstream.next(ctx)? {
-            let path_gvalues: Vec<GValue> = t.collect_path().into_iter().map(|(gv, _)| gv).collect();
-            paths.push(Traverser::new_rc(GValue::List(Rc::new(path_gvalues))));
+            let path_gvalues: Vec<(GValue, Option<SmallVec<[SmolStr; 2]>>)> = t.collect_path();
+            paths.push(Traverser::new_rc(GValue::Path(path_gvalues)));
         }
 
         self.emitted = true;

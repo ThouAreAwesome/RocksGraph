@@ -68,7 +68,7 @@ pub fn __() -> GraphTraversal {
 
 #[allow(non_snake_case)]
 impl GraphTraversal {
-    pub fn build<'g>(&self, graph: &'g mut dyn GraphCtx) -> Result<BuiltTraversal<'g>, StoreError> {
+    fn build<'g>(&self, graph: &'g mut dyn GraphCtx) -> Result<BuiltTraversal<'g>, StoreError> {
         let mut logical = self.build_logical();
         apply_rules(&mut logical)?; // Apply optimization rules to the logical plan.
         let plan = PhysicalPlanBuilder {}.build(&logical)?; // Construct PhysicalPlanBuilder directly.
@@ -261,7 +261,7 @@ impl GraphTraversal {
 /// Shared read step methods for both [`ReadTraversal`] and [`WriteTraversal`].
 ///
 /// Each method appends one [`LogicalStep`] to the AST and returns `&mut Self`
-/// for fluent chaining. Terminal operations (`next`, `to_list`, `exec`) are
+/// for fluent chaining. Terminal operations (`next`) are
 /// inherent methods on each concrete type.
 pub trait TraversalBuilder {
     #[doc(hidden)]
@@ -381,13 +381,18 @@ pub trait TraversalBuilder {
         self.ast_mut().steps.push(LogicalStep::Dedup(DedupStep {}));
         self
     }
+    #[allow(non_snake_case)]
+    fn toList(&mut self) -> &mut Self {
+        self.ast_mut().steps.push(LogicalStep::ToList(ToListStep {}));
+        self
+    }
     /// Filter traversers using an anonymous sub-traversal.
     ///
     /// The sub-traversal is built with [`__`] and carries no execution context
     /// — it is compiled to a logical plan and evaluated at query execution time.
     ///
     /// ```ignore
-    /// snap.g().V([]).outE([EDGE]).r#where(__().otherV().hasId([dst])).to_list()?
+    /// snap.g().V([]).outE([EDGE]).r#where(__().otherV().hasId([dst])).next()?
     /// ```
     fn r#where(&mut self, sub: &mut GraphTraversal) -> &mut Self {
         self.ast_mut().steps.push(LogicalStep::Where(WhereStep { plan: sub.build_logical() }));
@@ -399,7 +404,7 @@ pub trait TraversalBuilder {
     /// ```ignore
     /// tx.g().V([id]).coalesce([
     ///     __().values(["name"]),
-    ///     __().addV(LABEL).property("name", "default"),
+    ///     __().addV(LABEL).property("id", id).property("name", name)
     /// ]).next()?
     /// ```
     fn coalesce<'a>(&mut self, subs: impl IntoIterator<Item = &'a mut GraphTraversal>) -> &mut Self {
@@ -441,11 +446,6 @@ impl<'s> ReadTraversal<'s> {
     pub fn next(&mut self) -> Result<Option<GValue>, StoreError> {
         let gt = GraphTraversal { ast: self.ast.clone() };
         gt.build(self.ctx)?.next().transpose()
-    }
-
-    pub fn exec(&mut self) -> Result<BuiltTraversal<'_>, StoreError> {
-        let gt = GraphTraversal { ast: self.ast.clone() };
-        gt.build(self.ctx)
     }
 }
 
@@ -515,16 +515,6 @@ impl<'s> WriteTraversal<'s> {
     pub fn next(&mut self) -> Result<Option<GValue>, StoreError> {
         let gt = GraphTraversal { ast: self.ast.clone() };
         gt.build(self.ctx)?.next().transpose()
-    }
-
-    pub fn to_list(&mut self) -> Result<Vec<GValue>, StoreError> {
-        let gt = GraphTraversal { ast: self.ast.clone() };
-        gt.build(self.ctx)?.collect::<Result<Vec<_>, _>>()
-    }
-
-    pub fn exec(&mut self) -> Result<BuiltTraversal<'_>, StoreError> {
-        let gt = GraphTraversal { ast: self.ast.clone() };
-        gt.build(self.ctx)
     }
 }
 

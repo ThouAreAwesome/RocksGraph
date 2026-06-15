@@ -103,10 +103,6 @@ pub trait GraphCtx {
     fn drop_vertex(&mut self, vertex: VertexKey) -> Result<(), StoreError>;
     /// Drops an edge from the graph.
     fn drop_edge(&mut self, edge: &EdgeKey) -> Result<(), StoreError>;
-    /// Flush all pending mutations to the store and commit atomically.
-    fn commit(&mut self) -> Result<(), StoreError>;
-    /// Discard all pending mutations.
-    fn abort(&mut self);
 }
 
 /// Zero-cost context used in unit tests where no real graph is needed.
@@ -164,10 +160,6 @@ impl GraphCtx for NoopCtx {
     fn drop_edge(&mut self, _ek: &EdgeKey) -> Result<(), StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support drop_edge".to_string()))
     }
-    fn commit(&mut self) -> Result<(), StoreError> {
-        Err(StoreError::UnsupportedOperation("NoopCtx does not support commit".to_string()))
-    }
-    fn abort(&mut self) {}
 }
 
 impl<S: GraphStore> GraphCtx for LogicalGraph<S> {
@@ -221,12 +213,6 @@ impl<S: GraphStore> GraphCtx for LogicalGraph<S> {
     }
     fn drop_edge(&mut self, edge: &EdgeKey) -> Result<(), StoreError> {
         self.drop_element(&CanonicalKey::Edge(edge.canonical_edge_key()))
-    }
-    fn commit(&mut self) -> Result<(), StoreError> {
-        self.commit()
-    }
-    fn abort(&mut self) {
-        self.abort()
     }
 }
 
@@ -282,8 +268,4 @@ impl<S: GraphStore> GraphCtx for LogicalSnapshot<S> {
     fn drop_edge(&mut self, _edge: &EdgeKey) -> Result<(), StoreError> {
         Err(StoreError::ReadOnly)
     }
-    fn commit(&mut self) -> Result<(), StoreError> {
-        Err(StoreError::ReadOnly)
-    }
-    fn abort(&mut self) {}
 }

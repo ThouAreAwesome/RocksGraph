@@ -52,7 +52,7 @@ impl CoreStep for ToListStep {
         }
 
         self.emitted = true;
-        Ok(Some(smallvec![Traverser::new_rc(GValue::List(Rc::new(list)))]))
+        Ok(Some(smallvec![Traverser::new_rc(GValue::List(list))]))
     }
 
     fn reset(&mut self) {

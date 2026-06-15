@@ -61,12 +61,12 @@ impl Traverser {
     /// Collect the full traversal history as `(value, labels)` pairs,
     /// oldest entry first (including the current traverser).
     #[allow(dead_code)]
-    pub fn collect_path(&self) -> Vec<(GValue, Option<&SmallVec<[SmolStr; 2]>>)> {
-        let mut entries: Vec<(GValue, Option<&SmallVec<[SmolStr; 2]>>)> =
-            vec![(self.value.clone(), self.labels.as_ref())];
+    pub fn collect_path(&self) -> Vec<(GValue, Option<SmallVec<[SmolStr; 2]>>)> {
+        let mut entries: Vec<(GValue, Option<SmallVec<[SmolStr; 2]>>)> =
+            vec![(self.value.clone(), self.labels.clone())];
         let mut cur = self.parent.as_deref();
         while let Some(ancestor) = cur {
-            entries.push((ancestor.value.clone(), ancestor.labels.as_ref()));
+            entries.push((ancestor.value.clone(), ancestor.labels.clone()));
             cur = ancestor.parent.as_deref();
         }
         entries.reverse();

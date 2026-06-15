@@ -285,20 +285,25 @@ mod integration_test {
         let graph = setup_modern_graph();
         let mut tx = graph.begin();
 
-        let results = tx
+        let GValue::List(results) = tx
             .g()
             .V([1])
             .bothE([KNOWS_LABEL_ID, CREATED_LABEL_ID, FRIENDS_LABEL_ID])
             .otherV()
             .path()
-            .to_list()
-            .unwrap();
+            .toList()
+            .next()
+            .unwrap()
+            .unwrap()
+        else {
+            panic!("Expected path list");
+        };
 
         assert_eq!(results.len(), 3);
-        for res in results {
-            if let GValue::List(p) = res {
+        for res in results.iter() {
+            if let GValue::Path(p) = res {
                 assert_eq!(p.len(), 3);
-                assert_eq!(p[0], GValue::Vertex(1));
+                assert_eq!(p[0].0, GValue::Vertex(1));
             } else {
                 panic!("Expected path list, got {:?}", res);
             }
@@ -310,19 +315,26 @@ mod integration_test {
         let graph = setup_modern_graph();
         let mut tx = graph.begin();
 
-        let mut names: Vec<String> = tx
+        let GValue::List(name_list) = tx
             .g()
             .V([1])
             .out([KNOWS_LABEL_ID, CREATED_LABEL_ID, FRIENDS_LABEL_ID])
             .values(["name"])
-            .to_list()
+            .toList()
+            .next()
             .unwrap()
-            .into_iter()
-            .map(|v| match v {
-                GValue::Scalar(Primitive::String(s)) => s.to_string(),
+            .unwrap()
+        else {
+            panic!("unexpected gremlin result type")
+        };
+
+        let mut names = Vec::new();
+        for v in name_list.iter() {
+            match v {
+                GValue::Scalar(Primitive::String(s)) => names.push(s.to_string()),
                 _ => panic!("Expected string scalar, got {:?}", v),
-            })
-            .collect();
+            };
+        }
         names.sort();
         assert_eq!(names.len(), 3);
         assert_eq!(names, vec!["josh", "lop", "vadas"]);

@@ -18,9 +18,9 @@
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},
-    rc::Rc,
 };
 
+use smallvec::SmallVec;
 use smol_str::SmolStr;
 
 use crate::types::{
@@ -139,9 +139,9 @@ pub enum GValue {
     /// A property travelling through the pipeline as a standalone element.
     Property(Property),
     Scalar(Primitive),
-    List(Rc<Vec<GValue>>),
-    Map(Rc<HashMap<GValue, GValue>>),
-    Path(Rc<Vec<GValue>>),
+    List(Vec<GValue>),
+    Map(HashMap<GValue, GValue>),
+    Path(Vec<(GValue, Option<SmallVec<[SmolStr; 2]>>)>),
 }
 
 impl PartialEq for GValue {
