@@ -1,6 +1,9 @@
 # RocksGraph
 
-A Gremlin-compatible property graph query engine written in Rust, backed by RocksDB.
+A Gremlin-inspired property graph query engine written in Rust, backed by RocksDB.
+RocksGraph takes the traversal model from TinkerPop but makes deliberate departures
+where the standard's design choices create unnecessary complexity or overhead.
+See [docs/design_principles.md](docs/design_principles.md) for the full rationale.
 
 > **Status:** Early-stage (v0.1.0). Not yet production-ready or published to crates.io.
 
@@ -17,10 +20,10 @@ User code
 api                  User-facing session layer (Graph, ReadSession, TxSession)
     │  session.g() → ReadTraversal / WriteTraversal
     ▼
-gremlin::traversal   Fluent step builder; accumulates LogicalSteps into an AST
+gremlin              Rust DSL; accumulates LogicalSteps into a LogicalPlan
     │
     ▼
-planner              Gremlin AST → LogicalPlan (engine-agnostic IR) + optimizer
+planner              LogicalPlan optimizer (index-seek folding, filter reordering, …)
     │
     ▼
 engine::volcano      Pull-based Volcano iterator pipeline
@@ -34,14 +37,52 @@ store / RocksDB      OptimisticTransactionDB persistence
 
 | Module | Visibility | Role |
 |--------|-----------|------|
-| `api` | `pub` | `Graph`, `ReadSession`, `TxSession` — the only types users import |
-| `gremlin` | `pub(crate)` | Fluent step builder; converts method chains into `LogicalPlan` AST |
-| `planner` | `pub(crate)` | Gremlin AST → engine-agnostic `LogicalPlan` IR + optimizer |
-| `engine::volcano` | `pub(crate)` | Pull-based Volcano iterator execution engine |
-| `graph` | `pub(crate)` | Query-scoped in-memory overlay over a `GraphStore` transaction |
-| `store` | `pub(crate)` | Pluggable storage backend abstraction; RocksDB implementation |
-| `schema` | `pub` | Label-ID ↔ label-string bidirectional mapping (planned) |
-| `types` | `pub` | Shared value types: `GValue`, `Primitive`, keys |
+| `api` | `pub` | `Graph`, `ReadSession`, `TxSession` — the only types users import directly |
+| `gremlin` | internal | Fluent step builders; converts method chains into a `LogicalPlan` |
+| `planner` | internal | Engine-agnostic `LogicalPlan` IR + optimizer rules |
+| `engine::volcano` | internal | Pull-based Volcano iterator execution engine |
+| `graph` | internal | Query-scoped in-memory overlay over a `GraphStore` transaction |
+| `store` | internal | Pluggable storage backend abstraction; RocksDB implementation |
+| `schema` | `pub` | Label-ID ↔ label-string bidirectional mapping |
+
+## Value Types
+
+All user-facing query inputs and outputs use types from `gremlin::value`, re-exported at the crate root:
+
+| Type | Description |
+|------|-------------|
+| `Value` | Scalar or composite result: `Null`, `Bool`, `Int32`, `Int64`, `Float32`, `Float64`, `String`, `Uuid`, `Vertex`, `Edge`, `Property`, `List`, `Map`, `Path` |
+| `Key` | Property key selector: `Key::Id` (vertex/edge id), `Key::Label` (label id), `Key::Property(String)` (user property). String literals convert to `Key::Property` via `From<&str>`. |
+| `Predicate` | Filter condition: `Predicate::Eq`, `Within`, `Without`, `Gt`, `Gte`, `Lt`, `Lte`, `Between`, `Ne` |
+| `Vertex` | Materialized vertex: `id`, `label_id`, `properties` |
+| `Edge` | Materialized edge: `out_v`, `in_v`, `label_id`, `rank`, `properties` |
+| `Property` | Key-value property element returned by `.properties()` |
+| `Map` | Ordered key-value map returned by `.group()` etc. |
+| `Path` | Sequence of values with per-step labels returned by `.path()` |
+
+Predicate constructors are free functions: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `between`, `within`, `without`.
+
+### Key routing
+
+`Key` controls how steps like `.has()` and `.values()` are dispatched:
+
+```rust
+// Key::Id  → HasIdStep (vertex id index lookup)
+.has(Key::Id, 1i64)
+.hasId([1, 2, 3])          // shorthand for the same
+.values([Key::Id])         // returns the vertex id as Value::Int64
+
+// Key::Label → HasLabelStep (label filter)
+.has(Key::Label, PERSON as i64)
+.hasLabel([PERSON])        // shorthand
+.values([Key::Label])      // returns the label id as Value::Int32
+
+// Key::Property("name") → property-bag lookup
+.has("name", "marko")      // string literals convert to Key::Property automatically
+.values(["name"])
+```
+
+Note: `.has("id", N)` routes through `Key::Property("id")` — a different code path from `.has(Key::Id, N)` / `.hasId(N)`, but the optimizer folds `V([]).has("id", N)` into a vertex id index seek, so the end result is the same.
 
 ## Session Model
 
@@ -60,11 +101,11 @@ Each session exposes a single method `g()` that returns a blank traversal. All G
 ```rust
 // Read path
 let mut snap = graph.read();
-let names = snap.g().V([1]).out([KNOWS]).values(["name"]).next()?.unwrap();
+let name = snap.g().V([1]).out([KNOWS]).values(["name"]).next()?.unwrap();
 
 // Write path
 let mut tx = graph.begin();
-tx.g().addV(PERSON).property("name", "alice").next()?;
+tx.g().addV(PERSON).property("id", 1i64).property("name", "alice").next()?;
 tx.g().V([1]).out([KNOWS]).count().next()?; // read-your-writes within the same tx
 tx.commit()?;
 ```
@@ -95,7 +136,7 @@ loop {
 
 ## Supported Gremlin Steps
 
-Labels and edge labels are represented as `u16` integer IDs. String-to-ID mapping is provided by the `schema` module (in progress).
+Labels and edge labels are represented as `u16` integer IDs. String-to-ID mapping is provided by the `schema` module.
 
 ### Traversal
 
@@ -116,21 +157,23 @@ Labels and edge labels are represented as `u16` integer IDs. String-to-ID mappin
 
 | Step | Method |
 |------|--------|
-| `has(key, value)` | `.has(key, value)` |
+| `has(key, value)` | `.has(key, pred)` — `key` is `Key::Id`, `Key::Label`, or a `&str` |
 | `hasLabel(labels)` | `.hasLabel([label_id, ...])` |
 | `hasId(ids)` | `.hasId([id, ...])` |
-| `where(traversal)` | `.r#where(&mut __().xxx())` |
+| `is(pred)` | `.is(pred)` — filter the current scalar value |
+| `where(traversal)` | `.r#where(__().xxx())` |
 | `limit(n)` | `.limit(n)` |
-
-### Aggregation & Extraction
-
-| Step | Method |
-|------|--------|
-| `count()` | `.count()` |
-| `values(keys)` | `.values(["key", ...])` |
-| `properties(keys)` | `.properties(["key", ...])` |
 | `dedup()` | `.dedup()` |
-| `path()` | `.path()` |
+
+### Extraction & Aggregation
+
+| Step | Method | Notes |
+|------|--------|-------|
+| `values(keys)` | `.values([key, ...])` | `key` may be `Key::Id`, `Key::Label`, or `&str` |
+| `properties(keys)` | `.properties(["key", ...])` | returns `Property` elements; id/label excluded |
+| `count()` | `.count()` | |
+| `fold()` | `.fold()` | collects all results into a single `Value::List` |
+| `path()` | `.path()` | returns `Value::Path` with per-step labels |
 
 ### Mutation (WriteTraversal only)
 
@@ -140,7 +183,7 @@ Labels and edge labels are represented as `u16` integer IDs. String-to-ID mappin
 | `addE(label)` | `.addE(label_id)` |
 | `from(vertex_id)` | `.from(vertex_id)` |
 | `to(vertex_id)` | `.to(vertex_id)` |
-| `property(key, value)` | `.property(key, value)` |
+| `property(key, value)` | `.property(key, value)` — `"id"` sets the vertex/edge id |
 | `drop()` | `.drop()` |
 
 ### Composition
@@ -154,9 +197,9 @@ Labels and edge labels are represented as `u16` integer IDs. String-to-ID mappin
 
 | Operation | ReadTraversal | WriteTraversal | Returns |
 |-----------|:-------------:|:--------------:|---------|
-| `next()` | ✓ | ✓ | `Result<Option<GValue>, StoreError>` |
-| `toList()` | ✓ | ✓ | `Result<Option<GValue>, StoreError>` |
-
+| `next()` | ✓ | ✓ | `Result<Option<Value>, StoreError>` |
+| `to_list()` | ✓ | ✓ | `Result<Vec<Value>, StoreError>` |
+| `iter()` | ✓ | ✓ | `Result<BuiltTraversal, StoreError>` — lazy `Iterator<Item = Result<Value, StoreError>>` |
 
 ## Usage
 
@@ -176,7 +219,7 @@ let graph = Graph::open(tempfile::tempdir()?.path())?;
 ### Read queries
 
 ```rust
-use rocksgraph::{Graph, TraversalBuilder, GValue, Primitive, __};
+use rocksgraph::{Graph, Key, TraversalBuilder, Value, __};
 
 const KNOWS: u16 = 3;
 
@@ -185,12 +228,17 @@ let mut snap = graph.read();
 
 // Count neighbors of vertex 1 via KNOWS edges
 let count = snap.g().V([1]).out([KNOWS]).count().next()?.unwrap();
+assert_eq!(count, Value::Int64(3));
 
-// Fetch property values for multiple vertices
-let values = snap.g()
-    .V([]).hasId([1, 2, 3])
-    .values(["name", "age"])
-    .next()?.unwrap();
+// Fetch property values
+let name = snap.g().V([1]).values(["name"]).next()?.unwrap();
+assert_eq!(name, Value::String("marko".into()));
+
+// Fetch vertex id and label alongside a property
+let results = snap.g()
+    .V([1])
+    .values([Key::Id, Key::Label, "name".into()])
+    .to_list()?;
 
 // Sub-traversal filter: outgoing KNOWS edges whose other endpoint is vertex 2
 let ct = snap.g()
@@ -199,9 +247,51 @@ let ct = snap.g()
     .r#where(__().otherV().hasId([2]))
     .count()
     .next()?.unwrap();
+
+// Lazy iteration
+for result in snap.g().V([]).out([KNOWS]).iter()? {
+    let value = result?;
+    // process each Value::Vertex(...)
+}
 ```
 
 ### Write transactions
+
+```rust
+use rocksgraph::{Graph, TraversalBuilder, StoreError};
+
+const PERSON: u16 = 1;
+const KNOWS: u16  = 3;
+
+let graph = Graph::open("./path/to/db")?;
+let mut tx = graph.begin();
+
+// Add vertices — "id" is the reserved property key for the vertex id
+tx.g().addV(PERSON).property("id", 1i64).property("name", "alice").property("age", 30i32).next()?;
+tx.g().addV(PERSON).property("id", 2i64).property("name", "bob").property("age", 25i32).next()?;
+
+// Add an edge
+tx.g().addE(KNOWS).from(1).to(2).property("weight", 0.9f64).next()?;
+
+tx.commit()?;
+```
+
+### Predicate filtering
+
+```rust
+use rocksgraph::{gt, within, TraversalBuilder, Value};
+
+// Scalar filter after values()
+let older = snap.g().V([]).values(["age"]).is(gt(30i32)).to_list()?;
+
+// has() with explicit predicates
+let result = snap.g().V([]).has("age", gt(25i32)).values(["name"]).to_list()?;
+
+// within() for multi-value membership
+let result = snap.g().V([]).has("name", within(["alice", "bob"])).count().next()?.unwrap();
+```
+
+### Idempotent upserts with coalesce
 
 ```rust
 use rocksgraph::{Graph, TraversalBuilder, StoreError, __};
@@ -212,44 +302,21 @@ const KNOWS: u16  = 3;
 let graph = Graph::open("./path/to/db")?;
 let mut tx = graph.begin();
 
-// Add vertices
-tx.g().addV(PERSON).property("id", 1i64).property("name", "alice").property("age", 30i64).next()?;
-tx.g().addV(PERSON).property("id", 2i64).property("name", "bob").property("age", 25i64).next()?;
-
-// Add an edge
-tx.g().addE(KNOWS).from(1).to(2).property("weight", 0.9f64).next()?;
-
-tx.commit()?;
-```
-
-### Idempotent upserts with coalesce
-
-```rust
-use rocksgraph::{Graph, TraversalBuilder, GValue, Primitive, StoreError, __};
-
-const PERSON: u16 = 1;
-const KNOWS: u16  = 3;
-
-let graph = Graph::open("./path/to/db")?;
-
-// Upsert vertex: read existing or create new
-let mut tx = graph.begin();
+// Upsert vertex: return existing id or create new
 tx.g()
-    .V([98])
     .coalesce([
-        __().V([42]).values(["id"]),          // branch 1: vertex exists → emit id
-        __().addV(PERSON)                        // branch 2: create it
-            .property("id", 98i64)
-            .property("name", "charlie")
-            .property("age", 40i64),
+        __().V([42]).values(["name"]),              // branch 1: vertex exists → emit name
+        __().addV(PERSON)                           // branch 2: create it
+            .property("id", 42i64)
+            .property("name", "charlie"),
     ])
     .next()?;
 
 // Upsert edge: check for existing or create
 tx.g()
-    .V([98])
+    .V([42])
     .coalesce([
-        __().outE([KNOWS]).r#where(__().otherV().hasId([99])).values(["weight"]),
+        __().outE([KNOWS]).r#where(__().otherV().hasId([99])),
         __().addE(KNOWS).from(42).to(99).property("weight", 0.5f64),
     ])
     .next()?;
@@ -259,7 +326,7 @@ tx.commit()?;
 
 ### Anonymous sub-traversals with `__()`
 
-`__()` creates a context-free traversal used as an argument to `where`, `coalesce`, and `union`. The type (`GraphTraversal`) is doc-hidden; you never need to name it:
+`__()` creates a context-free traversal used as an argument to `where`, `coalesce`, and `union`. The type is `#[doc(hidden)]`; you never need to name it:
 
 ```rust
 // where: filter edges whose other endpoint matches a condition
@@ -269,7 +336,7 @@ snap.g().V([1]).outE([EDGE]).r#where(__().otherV().hasLabel([LABEL])).count().ne
 snap.g().V([1]).union([__().outE([A]), __().outE([B])]).count().next()?;
 
 // coalesce: first non-empty branch
-tx.g().V([id]).coalesce([__().values(["name"]), __().addV(PERSON).property("name", "x")]).next()?;
+tx.g().coalesce([__().V([id]).values(["name"]), __().addV(PERSON).property("name", "x")]).next()?;
 ```
 
 ### Multiple queries per session
@@ -341,23 +408,24 @@ just build-release
 
 - **Embedded only:** no server/client mode; queries are executed in-process.
 - **Single-threaded per query:** each volcano pipeline runs single-threaded; multiple sessions can run concurrently against a shared `Graph`.
-- **Integer label IDs:** labels are `u16` integers; string-to-ID mapping via the `schema` module is not yet fully implemented.
-- **No full TinkerPop compliance:** lambdas, side effects, multi-path tracking, and many aggregate steps are not supported.
+- **Integer label IDs:** labels are `u16` integers; string-to-ID mapping is provided by the `schema` module but callers are responsible for managing the mapping.
+- **Not TinkerPop-compatible:** RocksGraph is Gremlin-inspired but intentionally departs from the standard. See [docs/design_principles.md](docs/design_principles.md).
 - **No distributed backend:** placeholder exists but is not implemented.
 
 ## Roadmap
 
 ### Engine & Query
 
-- [ ] Improve TinkerPop Gremlin step coverage (lambdas, side-effects, path tracking, additional aggregation steps)
+- [ ] Improve TinkerPop Gremlin step coverage (lambdas, side-effects, additional aggregation steps)
 - [ ] Support bulk-load mode: offline SST file generation + direct RocksDB SST ingestion for high-throughput initial loads
 - [x] `ReadSession` / `ReadTraversal` — read-only snapshot path with no OCC overhead
+- [x] `next(), to_list(), iter()` on `ReadTraversal` and `WriteTraversal`
 - [ ] Support strict schema mode
-- [ ] `to_list()` on `ReadTraversal`
+- [ ] Range predicates in `HasPropertyStep` (`Gt`, `Lt`, `Between`, etc.)
 
 ### Storage & Distribution
 
-- [ ] Support at least one distributed key-value backend (e.g., TiKV, FoundationDB)
+- [ ] Support distributed key-value backend (e.g. FoundationDB)
 - [ ] Server-client mode (gRPC or WebSocket)
 
 ### Developer Experience

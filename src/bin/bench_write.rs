@@ -16,10 +16,7 @@
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 use hdrhistogram::Histogram;
-use rocksgraph::{
-    types::prop_key::{ID, LABEL},
-    GValue, Graph, Primitive, StoreError, TraversalBuilder, TxSession, __,
-};
+use rocksgraph::{Graph, Key, StoreError, TraversalBuilder, TxSession, Value, __};
 
 use rand::Rng;
 use std::{
@@ -50,17 +47,17 @@ fn upsert_vertex(tx: &mut TxSession, label: u16, vertex_id: i64) -> Result<bool,
         .V([vertex_id])
         .count()
         .coalesce([
-            __().V([vertex_id]).values([ID]),
+            __().V([vertex_id]).values([Key::Id]),
             __().addV(label)
-                .property(ID, vertex_id)
+                .property("id", vertex_id)
                 .property("name", generate_random_string(10))
                 .property("age", rng.gen_range::<i64, _>(18..100)),
         ])
         .next()?;
 
     match result {
-        Some(GValue::Scalar(Primitive::Int64(_))) => Ok(false),
-        Some(GValue::Vertex(_)) => Ok(true),
+        Some(Value::Int64(_)) => Ok(false),
+        Some(Value::Vertex(_)) => Ok(true),
         Some(_) => unreachable!("unexpected gremlin result type"),
         None => unreachable!("unexpected gremlin result type"),
     }
@@ -73,7 +70,7 @@ fn upsert_edge(tx: &mut TxSession, src: i64, dst: i64, edge_type: u16) -> Result
         .g()
         .V([src])
         .coalesce([
-            __().outE([edge_type]).r#where(__().otherV().hasId([dst])).values([LABEL]),
+            __().outE([edge_type]).r#where(__().otherV().hasId([dst])).values([Key::Label]),
             __().addE(edge_type)
                 .from(src)
                 .to(dst)
@@ -83,8 +80,8 @@ fn upsert_edge(tx: &mut TxSession, src: i64, dst: i64, edge_type: u16) -> Result
         .next()?;
 
     match result {
-        Some(GValue::Scalar(Primitive::Int32(_))) => Ok(false),
-        Some(GValue::Edge(_)) => Ok(true),
+        Some(Value::Int32(_)) => Ok(false),
+        Some(Value::Edge(_)) => Ok(true),
         Some(_) => unreachable!("unexpected gremlin result type"),
         None => unreachable!("unexpected gremlin result type"),
     }

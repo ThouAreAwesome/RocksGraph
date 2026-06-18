@@ -221,18 +221,18 @@ mod tests {
 
     fn make_vertex(id: i64, label_id: u16, props: Vec<(SmolStr, Primitive)>) -> Vertex {
         let owner = CanonicalKey::Vertex(id);
-        Vertex { id, label_id, props: props.into_iter().map(|(k, v)| Property { owner, key: k, value: v }).collect() }
+        Vertex::with_props(id, label_id, props.into_iter().map(|(k, v)| Property { owner, key: k, value: v }).collect())
     }
 
     fn make_edge(cek: CanonicalEdgeKey, props: Vec<(SmolStr, Primitive)>) -> Edge {
         let owner = CanonicalKey::Edge(cek);
-        Edge {
-            src_id: cek.src_id,
-            label_id: cek.label_id,
-            rank: cek.rank,
-            dst_id: cek.dst_id,
-            props: props.into_iter().map(|(k, v)| Property { owner, key: k, value: v }).collect(),
-        }
+        Edge::with_props(
+            cek.src_id,
+            cek.label_id,
+            cek.dst_id,
+            cek.rank,
+            props.into_iter().map(|(k, v)| Property { owner, key: k, value: v }).collect(),
+        )
     }
 
     fn cek(src: i64, label: u16, dst: i64) -> CanonicalEdgeKey {

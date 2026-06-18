@@ -25,8 +25,7 @@
 //!
 //! [`Primitive`] is the leaf scalar type.  It appears as:
 //!
-//! - `GValue::Scalar(Primitive)` when a bare scalar is in the pipeline (e.g. the
-//!   result of `values("age")`).
+//! - `GValue::Scalar(Primitive)` when a bare scalar is in the pipeline (e.g. the result of `values("age")`).
 //! - `Property::value` when attached to a [`Property`](crate::types::Property).
 //!
 //! # Path representation
@@ -64,6 +63,7 @@ pub enum Primitive {
 }
 
 impl PartialEq for Primitive {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Bool(a), Self::Bool(b)) => a == b,
@@ -82,6 +82,7 @@ impl PartialEq for Primitive {
 impl Eq for Primitive {}
 
 impl Hash for Primitive {
+    #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
         std::mem::discriminant(self).hash(state);
         match self {
@@ -163,6 +164,7 @@ pub enum GValue {
     /// An ordered list of values (e.g. result of `fold()`).
     List(Vec<GValue>),
     /// A key-value map (e.g. result of `valueMap()`).
+    #[allow(dead_code)]
     Map(HashMap<GValue, GValue>),
     /// A sequence of traversal positions with optional step labels.
     ///
@@ -172,6 +174,7 @@ pub enum GValue {
 }
 
 impl PartialEq for GValue {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Vertex(a), Self::Vertex(b)) => a == b,
@@ -189,6 +192,7 @@ impl PartialEq for GValue {
 impl Eq for GValue {}
 
 impl Hash for GValue {
+    #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
         std::mem::discriminant(self).hash(state);
         match self {

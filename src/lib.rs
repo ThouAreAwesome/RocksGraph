@@ -66,7 +66,7 @@ pub(crate) mod gremlin;
 pub(crate) mod planner;
 pub mod schema;
 pub(crate) mod store;
-pub mod types;
+pub(crate) mod types;
 
 // ── User-facing re-exports ────────────────────────────────────────────────────
 pub use api::{Graph, ReadSession, TxSession};
@@ -75,4 +75,7 @@ pub use api::{Graph, ReadSession, TxSession};
 #[doc(hidden)]
 pub use gremlin::traversal::GraphTraversal;
 pub use gremlin::traversal::{BuiltTraversal, ReadTraversal, TraversalBuilder, WriteTraversal, __};
-pub use types::{GValue, Primitive, StoreError};
+pub use gremlin::value::{
+    between, eq, gt, gte, lt, lte, ne, within, without, Edge, Key, Map, Path, Predicate, Property, Value, Vertex,
+};
+pub use types::StoreError;

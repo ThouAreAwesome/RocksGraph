@@ -20,14 +20,11 @@ mod integration_test {
 
     use crate::{
         api::{Graph, TxSession},
-        gremlin::traversal::{TraversalBuilder, __},
-        types::{
-            gvalue::Primitive,
-            keys::LabelId,
-            prop_key::{ID, LABEL},
-            StoreError,
+        gremlin::{
+            traversal::{TraversalBuilder, __},
+            value::{Key, Value},
         },
-        GValue,
+        types::{keys::LabelId, StoreError},
     };
 
     const PERSON_LABEL_ID: LabelId = 1;
@@ -80,7 +77,7 @@ mod integration_test {
         let mut tx = graph.begin();
 
         let count = tx.g().V([1, 2, 3, 4, 5, 6]).count().next().unwrap().unwrap();
-        assert_eq!(count, GValue::Scalar(Primitive::Int64(6)));
+        assert_eq!(count, Value::Int64(6));
 
         let ct = tx
             .g()
@@ -90,7 +87,7 @@ mod integration_test {
             .next()
             .unwrap()
             .unwrap();
-        assert_eq!(ct, GValue::Scalar(Primitive::Int64(6)));
+        assert_eq!(ct, Value::Int64(6));
 
         let ct = tx
             .g()
@@ -100,7 +97,7 @@ mod integration_test {
             .next()
             .unwrap()
             .unwrap();
-        assert_eq!(ct, GValue::Scalar(Primitive::Int64(6)));
+        assert_eq!(ct, Value::Int64(6));
 
         let ct = tx
             .g()
@@ -110,7 +107,7 @@ mod integration_test {
             .next()
             .unwrap()
             .unwrap();
-        assert_eq!(ct, GValue::Scalar(Primitive::Int64(12)));
+        assert_eq!(ct, Value::Int64(12));
 
         let ct = tx
             .g()
@@ -123,7 +120,7 @@ mod integration_test {
             .next()
             .unwrap()
             .unwrap();
-        assert_eq!(ct, GValue::Scalar(Primitive::Int64(4)));
+        assert_eq!(ct, Value::Int64(4));
 
         let ct = tx
             .g()
@@ -137,7 +134,7 @@ mod integration_test {
             .next()
             .unwrap()
             .unwrap();
-        assert_eq!(ct, GValue::Scalar(Primitive::Int64(4)));
+        assert_eq!(ct, Value::Int64(4));
 
         let ct = tx
             .g()
@@ -152,7 +149,7 @@ mod integration_test {
             .next()
             .unwrap()
             .unwrap();
-        assert_eq!(ct, GValue::Scalar(Primitive::Int64(3)));
+        assert_eq!(ct, Value::Int64(3));
 
         let ct = tx
             .g()
@@ -166,7 +163,7 @@ mod integration_test {
             .next()
             .unwrap()
             .unwrap();
-        assert_eq!(ct, GValue::Scalar(Primitive::Int64(2)));
+        assert_eq!(ct, Value::Int64(2));
 
         let ct = tx
             .g()
@@ -179,7 +176,7 @@ mod integration_test {
             .next()
             .unwrap()
             .unwrap();
-        assert_eq!(ct, GValue::Scalar(Primitive::Int64(2)));
+        assert_eq!(ct, Value::Int64(2));
     }
 
     #[test]
@@ -189,7 +186,7 @@ mod integration_test {
 
         let ct =
             tx.g().V([]).hasId([1, 2, 3, 4, 5, 6]).values(["age", "name", "lang"]).count().next().unwrap().unwrap();
-        assert_eq!(ct, GValue::Scalar(Primitive::Int64(12)));
+        assert_eq!(ct, Value::Int64(12));
     }
 
     #[test]
@@ -198,10 +195,10 @@ mod integration_test {
         let mut tx = graph.begin();
 
         let ct = tx.g().V([]).hasId([1, 2, 3, 4, 5, 6]).hasLabel([PERSON_LABEL_ID]).count().next().unwrap().unwrap();
-        assert_eq!(ct, GValue::Scalar(Primitive::Int64(4)));
+        assert_eq!(ct, Value::Int64(4));
 
         let ct = tx.g().V([]).hasId([1, 2, 3, 4, 5, 6]).hasLabel([SOFTWARE_LABEL_ID]).count().next().unwrap().unwrap();
-        assert_eq!(ct, GValue::Scalar(Primitive::Int64(2)));
+        assert_eq!(ct, Value::Int64(2));
 
         let ct = tx
             .g()
@@ -214,7 +211,7 @@ mod integration_test {
             .next()
             .unwrap()
             .unwrap();
-        assert_eq!(ct, GValue::Scalar(Primitive::Int64(8)));
+        assert_eq!(ct, Value::Int64(8));
     }
 
     #[test]
@@ -232,7 +229,7 @@ mod integration_test {
             .next()
             .unwrap()
             .unwrap();
-        assert_eq!(ct, GValue::Scalar(Primitive::Int64(4)));
+        assert_eq!(ct, Value::Int64(4));
 
         let ct = tx
             .g()
@@ -245,7 +242,7 @@ mod integration_test {
             .next()
             .unwrap()
             .unwrap();
-        assert_eq!(ct, GValue::Scalar(Primitive::Int64(2)));
+        assert_eq!(ct, Value::Int64(2));
 
         let ct = tx
             .g()
@@ -259,7 +256,7 @@ mod integration_test {
             .next()
             .unwrap()
             .unwrap();
-        assert_eq!(ct, GValue::Scalar(Primitive::Int64(4)));
+        assert_eq!(ct, Value::Int64(4));
     }
 
     #[test]
@@ -277,7 +274,7 @@ mod integration_test {
             .next()
             .unwrap()
             .unwrap();
-        assert_eq!(ct, GValue::Scalar(Primitive::Int64(6)));
+        assert_eq!(ct, Value::Int64(6));
     }
 
     #[test]
@@ -296,11 +293,15 @@ mod integration_test {
 
         assert_eq!(results.len(), 3);
         for res in results.iter() {
-            if let GValue::Path(p) = res {
+            if let Value::Path(p) = res {
                 assert_eq!(p.len(), 3);
-                assert_eq!(p[0].0, GValue::Vertex(1));
+                if let Value::Vertex(v) = &p.objects[0] {
+                    assert_eq!(v.id, 1);
+                } else {
+                    panic!("Expected vertex at path[0], got {:?}", &p.objects[0]);
+                }
             } else {
-                panic!("Expected path list, got {:?}", res);
+                panic!("Expected path, got {:?}", res);
             }
         }
     }
@@ -316,13 +317,56 @@ mod integration_test {
         let mut names = Vec::new();
         for v in name_list.iter() {
             match v {
-                GValue::Scalar(Primitive::String(s)) => names.push(s.to_string()),
+                Value::String(s) => names.push(s.clone()),
                 _ => panic!("Expected string scalar, got {:?}", v),
             };
         }
         names.sort();
         assert_eq!(names.len(), 3);
         assert_eq!(names, vec!["josh", "lop", "vadas"]);
+    }
+
+    #[test]
+    fn test_values_id_label_property_distinction() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+
+        // Key::Id → returns the vertex id as Int64
+        let id_val = tx.g().V([1]).values([Key::Id]).next().unwrap().unwrap();
+        assert_eq!(id_val, Value::Int64(1));
+
+        // Key::Label → returns label_id as Int32
+        let label_val = tx.g().V([1]).values([Key::Label]).next().unwrap().unwrap();
+        assert_eq!(label_val, Value::Int32(PERSON_LABEL_ID as i32));
+
+        // plain property key → returns the stored scalar
+        let name_val = tx.g().V([1]).values(["name"]).next().unwrap().unwrap();
+        assert_eq!(name_val, Value::String("marko".to_string()));
+
+        // mixing id, label, and a property — count must be 3
+        let ct = tx.g().V([1]).values([Key::Id, Key::Label, "name".into()]).count().next().unwrap().unwrap();
+        assert_eq!(ct, Value::Int64(3));
+
+        // .properties() returns Property elements for user-defined keys only
+        let prop_val = tx.g().V([1]).properties(["name"]).next().unwrap().unwrap();
+        if let Value::Property(p) = prop_val {
+            assert_eq!(p.key, "name");
+            assert_eq!(*p.value, Value::String("marko".to_string()));
+        } else {
+            panic!("expected Value::Property, got {:?}", prop_val);
+        }
+
+        // .has(Key::Id, n) filters by vertex id (routes through HasIdStep)
+        let ct = tx.g().V([]).hasId([1, 2, 3]).has(Key::Id, 1i64).count().next().unwrap().unwrap();
+        assert_eq!(ct, Value::Int64(1));
+
+        // .has("age", n) filters by property value
+        let ct = tx.g().V([]).hasId([1, 2, 3, 4, 5, 6]).has("age", 29i32).count().next().unwrap().unwrap();
+        assert_eq!(ct, Value::Int64(1));
+
+        // Key::Id and Key::Label are NOT yielded by .properties() — only user props are
+        let ct = tx.g().V([1]).properties(["name", "age"]).count().next().unwrap().unwrap();
+        assert_eq!(ct, Value::Int64(2));
     }
 
     #[test]
@@ -338,7 +382,7 @@ mod integration_test {
             .next()
             .unwrap()
             .unwrap();
-        assert_eq!(ct, GValue::Scalar(Primitive::Int64(1)));
+        assert_eq!(ct, Value::Int64(1));
     }
 
     #[test]
@@ -348,7 +392,7 @@ mod integration_test {
         // Vertex 1 already exists → coalesce takes the values([...]) branch → 2 values
         {
             let mut tx = graph.begin();
-            let GValue::Scalar(Primitive::Int64(ct)) = tx
+            let Value::Int64(ct) = tx
                 .g()
                 .V([1])
                 .coalesce([
@@ -360,20 +404,20 @@ mod integration_test {
                 .unwrap()
                 .unwrap()
             else {
-                panic!("unexpected gremlin result type")
+                panic!("unexpected result type")
             };
             assert_eq!(ct, 2);
             tx.commit().unwrap();
         }
 
-        // Same check via LABEL/ID properties
+        // Same check via Key::Label / Key::Id
         {
             let mut tx = graph.begin();
-            let GValue::Scalar(Primitive::Int64(ct)) = tx
+            let Value::Int64(ct) = tx
                 .g()
                 .V([1])
                 .coalesce([
-                    __().V([1]).values([LABEL, ID]),
+                    __().V([1]).values([Key::Label, Key::Id]),
                     __().addV(PERSON_LABEL_ID).property("id", 1i64).property("name", "marko").property("age", 29i32),
                 ])
                 .count()
@@ -381,7 +425,7 @@ mod integration_test {
                 .unwrap()
                 .unwrap()
             else {
-                panic!("unexpected gremlin result type")
+                panic!("unexpected result type")
             };
             assert_eq!(ct, 2);
             tx.commit().unwrap();
@@ -390,7 +434,7 @@ mod integration_test {
         // Vertex 10 does not exist → coalesce takes the addV branch → 1 new vertex
         {
             let mut tx = graph.begin();
-            let GValue::Scalar(Primitive::Int64(ct)) = tx
+            let Value::Int64(ct) = tx
                 .g()
                 .V([10])
                 .count()
@@ -403,7 +447,7 @@ mod integration_test {
                 .unwrap()
                 .unwrap()
             else {
-                panic!("unexpected gremlin result type")
+                panic!("unexpected result type")
             };
             assert_eq!(ct, 1);
             tx.commit().unwrap();
@@ -412,7 +456,7 @@ mod integration_test {
         // Vertex 10 now exists → coalesce takes the values([...]) branch → 2 values
         {
             let mut tx = graph.begin();
-            let GValue::Scalar(Primitive::Int64(ct)) = tx
+            let Value::Int64(ct) = tx
                 .g()
                 .V([10])
                 .count()
@@ -425,7 +469,7 @@ mod integration_test {
                 .unwrap()
                 .unwrap()
             else {
-                panic!("unexpected gremlin result type")
+                panic!("unexpected result type")
             };
             assert_eq!(ct, 2);
             tx.commit().unwrap();
