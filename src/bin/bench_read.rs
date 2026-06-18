@@ -16,7 +16,7 @@
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 use hdrhistogram::Histogram;
-use rocksgraph::{GValue, Graph, Primitive, ReadSession, StoreError, TraversalBuilder, __};
+use rocksgraph::{Graph, ReadSession, StoreError, TraversalBuilder, Value, __};
 
 use std::{
     env,
@@ -61,7 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         parallelism,
         |snap, src, _dst| {
             let ct = snap.g().V([]).hasId([src]).values(["name", "age"]).count().next()?.unwrap();
-            assert_eq!(ct, GValue::Scalar(Primitive::Int64(2)));
+            assert_eq!(ct, Value::Int64(2));
             Ok(())
         },
     )?;
@@ -82,7 +82,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .count()
                 .next()?
                 .unwrap();
-            assert_eq!(ct, GValue::Scalar(Primitive::Int64(2)));
+            assert_eq!(ct, Value::Int64(2));
             Ok(())
         },
     )?;
@@ -93,7 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &graph,
         parallelism,
         |snap, src, _dst| {
-            let GValue::Scalar(Primitive::Int64(ct)) = snap
+            let Value::Int64(ct) = snap
                 .g()
                 .V([])
                 .hasId([src])
@@ -116,7 +116,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &graph,
         parallelism,
         |snap, src, _dst| {
-            let GValue::Scalar(Primitive::Int64(ct)) =
+            let Value::Int64(ct) =
                 snap.g().V([]).hasId([src]).both([EDGE_LABEL]).values(["name", "age"]).count().next()?.unwrap()
             else {
                 unreachable!("unexpected gremlin result type")
@@ -132,8 +132,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &graph,
         parallelism,
         |snap, src, _dst| {
-            let GValue::Scalar(Primitive::Int64(ct)) =
-                snap.g().V([src]).out([EDGE_LABEL]).both([EDGE_LABEL]).count().next()?.unwrap()
+            let Value::Int64(ct) = snap.g().V([src]).out([EDGE_LABEL]).both([EDGE_LABEL]).count().next()?.unwrap()
             else {
                 unreachable!("unexpected gremlin result type")
             };

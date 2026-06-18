@@ -55,6 +55,7 @@ pub type Rank = u16;
 // ── Direction ─────────────────────────────────────────────────────────────────
 
 /// The traversal direction of an edge reference.
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Direction {
     /// Outgoing: the traverser moves from `src` to `dst`.

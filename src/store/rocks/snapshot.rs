@@ -39,7 +39,7 @@ use rocksdb::{Direction as ScanDir, IteratorMode, OptimisticTransactionDB, ReadO
 use crate::{
     store::{
         rocks::encoding::{
-            build_full_edge, build_full_vertex, decode_edge_key, edge_scan_prefix, encode_edge_key, encode_vertex_key,
+            build_lazy_edge, build_lazy_vertex, decode_edge_key, edge_scan_prefix, encode_edge_key, encode_vertex_key,
             prefix_upper_bound, EdgeValue, VertexValue, CF_EDGES_IN, CF_EDGES_OUT, CF_VERTICES,
         },
         traits::GraphSnapshot,
@@ -102,7 +102,7 @@ impl GraphSnapshot for Snapshot {
             None => Ok(None),
             Some(bytes) => {
                 let vv = VertexValue::decode(&bytes).ok_or(StoreError::CorruptData("vertex value"))?;
-                Ok(Some(build_full_vertex(key, &vv)?))
+                Ok(Some(build_lazy_vertex(key, &vv)))
             }
         }
     }
@@ -116,7 +116,7 @@ impl GraphSnapshot for Snapshot {
         let raw = self.db.get_cf_opt(&cf, encode_edge_key(key), &self.read_opts()).map_err(StoreError::RocksDb)?;
         match raw {
             None => Ok(None),
-            Some(bytes) => Ok(Some(build_full_edge(key, &EdgeValue::decode(&bytes))?)),
+            Some(bytes) => Ok(Some(build_lazy_edge(key, &EdgeValue::decode(&bytes)))),
         }
     }
 
@@ -151,7 +151,7 @@ impl GraphSnapshot for Snapshot {
                     continue;
                 }
             }
-            result.push(build_full_edge(&ek, &EdgeValue::decode(&val_bytes))?);
+            result.push(build_lazy_edge(&ek, &EdgeValue::decode(&val_bytes)));
             if let Some(max) = limit {
                 if result.len() >= max as usize {
                     break;

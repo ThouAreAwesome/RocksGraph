@@ -103,6 +103,16 @@ pub trait GraphCtx {
     fn drop_vertex(&mut self, vertex: VertexKey) -> Result<(), StoreError>;
     /// Drops an edge from the graph.
     fn drop_edge(&mut self, edge: &EdgeKey) -> Result<(), StoreError>;
+
+    /// Returns the `label_id` and all stored properties of a vertex or edge as owned scalars.
+    ///
+    /// For vertices, loads from the store on a cache miss.  For edges, the edge must already
+    /// be in the overlay (populated via a prior `get_edge` / `get_adjacent_edges` call).
+    /// Returns `None` if the element is absent.  Used by the materialization layer to build
+    /// the user-facing [`crate::gremlin::value::Vertex`] / [`crate::gremlin::value::Edge`].
+    #[allow(clippy::type_complexity)]
+    fn get_all_props(&mut self, key: &CanonicalKey)
+        -> Result<Option<(LabelId, Vec<(PropKey, Primitive)>)>, StoreError>;
 }
 
 /// Zero-cost context used in unit tests where no real graph is needed.
@@ -160,6 +170,13 @@ impl GraphCtx for NoopCtx {
     fn drop_edge(&mut self, _ek: &EdgeKey) -> Result<(), StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support drop_edge".to_string()))
     }
+    #[allow(clippy::type_complexity)]
+    fn get_all_props(
+        &mut self,
+        _key: &CanonicalKey,
+    ) -> Result<Option<(LabelId, Vec<(PropKey, Primitive)>)>, StoreError> {
+        Err(StoreError::UnsupportedOperation("NoopCtx does not support get_all_props".to_string()))
+    }
 }
 
 impl<S: GraphStore> GraphCtx for LogicalGraph<S> {
@@ -214,6 +231,13 @@ impl<S: GraphStore> GraphCtx for LogicalGraph<S> {
     fn drop_edge(&mut self, edge: &EdgeKey) -> Result<(), StoreError> {
         self.drop_element(&CanonicalKey::Edge(edge.canonical_edge_key()))
     }
+    #[allow(clippy::type_complexity)]
+    fn get_all_props(
+        &mut self,
+        key: &CanonicalKey,
+    ) -> Result<Option<(LabelId, Vec<(PropKey, Primitive)>)>, StoreError> {
+        self.get_all_props(key)
+    }
 }
 
 impl<S: GraphStore> GraphCtx for LogicalSnapshot<S> {
@@ -267,5 +291,12 @@ impl<S: GraphStore> GraphCtx for LogicalSnapshot<S> {
     }
     fn drop_edge(&mut self, _edge: &EdgeKey) -> Result<(), StoreError> {
         Err(StoreError::ReadOnly)
+    }
+    #[allow(clippy::type_complexity)]
+    fn get_all_props(
+        &mut self,
+        key: &CanonicalKey,
+    ) -> Result<Option<(LabelId, Vec<(PropKey, Primitive)>)>, StoreError> {
+        self.get_all_props(key)
     }
 }

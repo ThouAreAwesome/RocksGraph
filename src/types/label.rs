@@ -29,9 +29,11 @@ use smol_str::SmolStr;
 
 /// Human-readable label for a vertex or edge (e.g. `"person"`, `"knows"`).
 /// Stack-allocated for strings up to 22 bytes.
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Label(pub SmolStr);
 
+#[allow(dead_code)]
 impl Label {
     pub fn new(s: impl Into<SmolStr>) -> Self {
         Self(s.into())

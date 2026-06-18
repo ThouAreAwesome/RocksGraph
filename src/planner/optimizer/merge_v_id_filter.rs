@@ -21,15 +21,19 @@ use crate::{
 };
 use smallvec::smallvec;
 
-/// Folds `V().has("id", N)` into `V(N)`, removing the redundant property scan.
+/// Folds `V([]).hasId(N)` or `V([]).has("id", N)` into `V(N)`.
 ///
-/// "id" is a structural key stored in the index, not in property storage. A bare
-/// `HasPropertyStep` would never match it, so we must convert the filter into an
-/// explicit seed ID on `VStep` where the storage layer can resolve it directly.
+/// Two sources produce an id filter immediately after an empty `V`:
+/// - `HasIdStep` — from `.hasId(N)` or `.has(Key::Id, N)`.
+/// - `HasPropertyStep { key: "id" }` — from `.has("id", N)` where the string
+///   `"id"` converts to `Key::Property("id")` rather than `Key::Id`.
+///
+/// Both cases are handled here so that `V([]).has("id", 42)` gets the same
+/// index-seek optimisation as `V([]).hasId(42)`.
 pub fn merge_v_id_filter(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
     let mut plan_changed = false;
-    let mut i = 0; // current index of the last non-merged step
-    let mut j = 1; // next step to consider for merging
+    let mut i = 0;
+    let mut j = 1;
 
     while j < plan.steps.len() {
         let v_ids = match (&plan.steps[i], &plan.steps[j]) {
@@ -47,11 +51,10 @@ pub fn merge_v_id_filter(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
             let LogicalStep::V(v) = &mut plan.steps[i] else {
                 unreachable!("should never reach here since we have checked the pattern already")
             };
-            // merge the id filter into the V step
             v.ids.clear();
             v.ids.extend_from_slice(&ids);
             plan_changed = true;
-            j += 1; // skip the merged HasProperty step. no need to remove the steps[j]
+            j += 1;
         } else {
             i += 1;
             if i != j {
@@ -83,128 +86,109 @@ mod tests {
         LogicalStep::V(VStep { ids: ids.into_iter().collect() })
     }
 
-    fn has(key: &str, value: Primitive) -> LogicalStep {
+    fn has_id(ids: Vec<VertexKey>) -> LogicalStep {
+        LogicalStep::HasId(HasIdStep { ids: ids.into_iter().collect() })
+    }
+
+    fn has_id_prop(value: Primitive) -> LogicalStep {
+        LogicalStep::HasProperty(HasPropertyStep { key: SmolStr::new("id"), value })
+    }
+
+    fn has_prop(key: &str, value: Primitive) -> LogicalStep {
         LogicalStep::HasProperty(HasPropertyStep { key: SmolStr::new(key), value })
     }
 
-    fn has_id(ids: Vec<VertexKey>) -> LogicalStep {
-        LogicalStep::HasId(crate::planner::logical_step::HasIdStep { ids: ids.into_iter().collect() })
-    }
+    // HasId path
 
     #[test]
-    fn test_ids_filter_folded_into_v_step() {
+    fn test_hasid_folded_into_v_step() {
         let steps = vec![v_all(), has_id(vec![7])];
         let mut plan = LogicalPlan { steps };
         let opt = merge_v_id_filter(&mut plan).unwrap();
-        assert!(opt, "plan should be changed");
+        assert!(opt);
         assert_eq!(plan.steps.len(), 1);
-        if let LogicalStep::V(v) = &plan.steps[0] {
-            assert_eq!(&v.ids[..], &[7]);
-        } else {
-            panic!("expected VStep");
-        }
+        let LogicalStep::V(v) = &plan.steps[0] else { panic!("expected VStep") };
+        assert_eq!(&v.ids[..], &[7]);
     }
 
     #[test]
-    fn test_id_filter_folded_into_v_step() {
-        let steps = vec![v_all(), has("id", Primitive::Int32(7))];
-        let mut plan = LogicalPlan { steps };
-        let opt = merge_v_id_filter(&mut plan).unwrap();
-        assert!(opt, "plan should be changed");
-        assert_eq!(plan.steps.len(), 1);
-        if let LogicalStep::V(v) = &plan.steps[0] {
-            assert_eq!(&v.ids[..], &[7]);
-        } else {
-            panic!("expected VStep");
-        }
-    }
-
-    #[test]
-    fn test_non_id_has_not_folded() {
-        let steps = vec![v_all(), has("name", Primitive::String(SmolStr::new("marko")))];
-        let mut plan = LogicalPlan { steps };
-        let opt = merge_v_id_filter(&mut plan).unwrap();
-        assert!(!opt, "plan should not be changed");
-        assert_eq!(plan.steps.len(), 2);
-        assert!(matches!(plan.steps[0], LogicalStep::V(_)));
-        assert!(matches!(plan.steps[1], LogicalStep::HasProperty(_)));
-    }
-
-    #[test]
-    fn test_v_with_explicit_ids_should_be_optimized() {
-        let steps = vec![v_ids(vec![2]), has("id", Primitive::Int32(3))];
-        let mut plan = LogicalPlan { steps };
-        let opt = merge_v_id_filter(&mut plan).unwrap();
-        assert!(!opt, "plan should not be changed");
-        assert_eq!(plan.steps.len(), 2);
-        assert!(matches!(plan.steps[0], LogicalStep::V(_)));
-        if let LogicalStep::V(v) = &plan.steps[0] {
-            assert_eq!(&v.ids[..], &[2]);
-        } else {
-            panic!("expected VStep");
-        }
-        if let LogicalStep::HasProperty(hp) = &plan.steps[1] {
-            assert_eq!(hp.value, Primitive::Int32(3));
-        } else {
-            panic!("expected VStep");
-        }
-    }
-
-    #[test]
-    fn test_id_filter_with_non_int_value_cause_error() {
-        let steps = vec![v_all(), has("id", Primitive::String(SmolStr::new("abc")))];
-        let mut plan = LogicalPlan { steps };
-        let opt = merge_v_id_filter(&mut plan);
-        assert!(opt.is_err(), "non-integer id type should return error");
-    }
-
-    #[test]
-    fn test_trailing_steps_preserved() {
-        let steps = vec![v_all(), has("id", Primitive::Int32(3)), has("name", Primitive::String(SmolStr::new("lop")))];
-        let mut plan = LogicalPlan { steps };
-        let opt = merge_v_id_filter(&mut plan).unwrap();
-        assert!(opt, "plan should be changed");
-        assert_eq!(plan.steps.len(), 2);
-        if let LogicalStep::V(v) = &plan.steps[0] {
-            assert_eq!(&v.ids[..], &[3]);
-        } else {
-            panic!("expected VStep");
-        }
-        assert!(matches!(plan.steps[1], LogicalStep::HasProperty(_)));
-    }
-
-    #[test]
-    fn test_id_filter_int64_folded_into_v_step() {
-        let steps = vec![v_all(), has("id", Primitive::Int64(42))];
-        let mut plan = LogicalPlan { steps };
-        let opt = merge_v_id_filter(&mut plan).unwrap();
-        assert!(opt, "plan should be changed");
-        assert_eq!(plan.steps.len(), 1);
-        if let LogicalStep::V(v) = &plan.steps[0] {
-            assert_eq!(&v.ids[..], &[42i64]);
-        } else {
-            panic!("expected VStep");
-        }
-    }
-
-    #[test]
-    fn test_two_consecutive_has_id_merge_first() {
-        // V().hasId(1).hasId(2): the HasId arm has no is_empty guard, so both fold in
-        // sequence — the second value overwrites the first. Final plan: V(2), 1 step.
+    fn test_two_consecutive_hasid_only_first_folds() {
+        // V([]).hasId(1).hasId(2): is_empty guard prevents the second fold.
+        // Result: V([1]) + HasId([2]).
         let steps = vec![v_all(), has_id(vec![1]), has_id(vec![2])];
         let mut plan = LogicalPlan { steps };
         let opt = merge_v_id_filter(&mut plan).unwrap();
-        assert!(opt, "plan should be changed");
+        assert!(opt);
         assert_eq!(plan.steps.len(), 2);
-        if let LogicalStep::V(v) = &plan.steps[0] {
-            assert_eq!(&v.ids[..], &[1i64], "second hasId overwrites the first");
-        } else {
-            panic!("expected VStep");
-        }
-        if let LogicalStep::HasId(HasIdStep { ids }) = &plan.steps[1] {
-            assert_eq!(&ids[..], &[2]);
-        } else {
-            panic!("expected HasIdStep");
-        }
+        let LogicalStep::V(v) = &plan.steps[0] else { panic!("expected VStep") };
+        assert_eq!(&v.ids[..], &[1i64]);
+        let LogicalStep::HasId(HasIdStep { ids }) = &plan.steps[1] else { panic!("expected HasIdStep") };
+        assert_eq!(&ids[..], &[2]);
+    }
+
+    // HasProperty("id", …) path — produced by .has("id", N) where "id" is a &str
+
+    #[test]
+    fn test_id_prop_i32_folded_into_v_step() {
+        let steps = vec![v_all(), has_id_prop(Primitive::Int32(7))];
+        let mut plan = LogicalPlan { steps };
+        let opt = merge_v_id_filter(&mut plan).unwrap();
+        assert!(opt);
+        assert_eq!(plan.steps.len(), 1);
+        let LogicalStep::V(v) = &plan.steps[0] else { panic!("expected VStep") };
+        assert_eq!(&v.ids[..], &[7]);
+    }
+
+    #[test]
+    fn test_id_prop_i64_folded_into_v_step() {
+        let steps = vec![v_all(), has_id_prop(Primitive::Int64(42))];
+        let mut plan = LogicalPlan { steps };
+        let opt = merge_v_id_filter(&mut plan).unwrap();
+        assert!(opt);
+        assert_eq!(plan.steps.len(), 1);
+        let LogicalStep::V(v) = &plan.steps[0] else { panic!("expected VStep") };
+        assert_eq!(&v.ids[..], &[42i64]);
+    }
+
+    #[test]
+    fn test_id_prop_not_folded_when_v_already_seeded() {
+        let steps = vec![v_ids(vec![2]), has_id_prop(Primitive::Int32(3))];
+        let mut plan = LogicalPlan { steps };
+        let opt = merge_v_id_filter(&mut plan).unwrap();
+        assert!(!opt);
+        assert_eq!(plan.steps.len(), 2);
+    }
+
+    #[test]
+    fn test_id_prop_non_int_returns_error() {
+        let steps = vec![v_all(), has_id_prop(Primitive::String(SmolStr::new("abc")))];
+        let mut plan = LogicalPlan { steps };
+        assert!(merge_v_id_filter(&mut plan).is_err());
+    }
+
+    #[test]
+    fn test_id_prop_trailing_steps_preserved() {
+        let steps =
+            vec![v_all(), has_id_prop(Primitive::Int32(3)), has_prop("name", Primitive::String(SmolStr::new("lop")))];
+        let mut plan = LogicalPlan { steps };
+        let opt = merge_v_id_filter(&mut plan).unwrap();
+        assert!(opt);
+        assert_eq!(plan.steps.len(), 2);
+        let LogicalStep::V(v) = &plan.steps[0] else { panic!("expected VStep") };
+        assert_eq!(&v.ids[..], &[3]);
+        assert!(matches!(plan.steps[1], LogicalStep::HasProperty(_)));
+    }
+
+    // Non-id properties are never folded
+
+    #[test]
+    fn test_non_id_has_not_folded() {
+        let steps = vec![v_all(), has_prop("name", Primitive::String(SmolStr::new("marko")))];
+        let mut plan = LogicalPlan { steps };
+        let opt = merge_v_id_filter(&mut plan).unwrap();
+        assert!(!opt);
+        assert_eq!(plan.steps.len(), 2);
+        assert!(matches!(plan.steps[0], LogicalStep::V(_)));
+        assert!(matches!(plan.steps[1], LogicalStep::HasProperty(_)));
     }
 }

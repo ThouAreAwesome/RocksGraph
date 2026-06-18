@@ -57,7 +57,7 @@ use rocksdb::{Direction as ScanDir, IteratorMode, OptimisticTransactionDB, ReadO
 use crate::{
     store::{
         rocks::encoding::{
-            build_full_edge, build_full_vertex, decode_edge_key, edge_scan_prefix, encode_edge_key, encode_props,
+            build_lazy_edge, build_lazy_vertex, decode_edge_key, edge_scan_prefix, encode_edge_key, encode_props,
             encode_vertex_key, prefix_upper_bound, EdgeValue, VertexDegree, VertexValue, CF_EDGES_IN, CF_EDGES_OUT,
             CF_VERTEX_DEGREE, CF_VERTICES,
         },
@@ -128,7 +128,7 @@ impl GraphTransaction for Transaction {
         match vv_raw {
             Some(vv_bytes) => {
                 let vv = VertexValue::decode(&vv_bytes).ok_or(StoreError::CorruptData("vertex value"))?;
-                Ok(Some(build_full_vertex(key, &vv)?))
+                Ok(Some(build_lazy_vertex(key, &vv)))
             }
             _ => Ok(None),
         }
@@ -169,7 +169,7 @@ impl GraphTransaction for Transaction {
 
         match raw_opt {
             None => Ok(None),
-            Some(raw) => Ok(Some(build_full_edge(key, &EdgeValue::decode(&raw))?)),
+            Some(raw) => Ok(Some(build_lazy_edge(key, &EdgeValue::decode(&raw)))),
         }
     }
 
@@ -210,7 +210,7 @@ impl GraphTransaction for Transaction {
                     continue;
                 }
             }
-            result.push(build_full_edge(&ek, &EdgeValue::decode(&val_bytes))?);
+            result.push(build_lazy_edge(&ek, &EdgeValue::decode(&val_bytes)));
             if let Some(max) = limit {
                 if result.len() >= max as usize {
                     break;
@@ -409,12 +409,12 @@ mod tests {
 
     // Helper to create a simple vertex
     fn create_test_vertex(id: i64, label_id: u16) -> Vertex {
-        Vertex { id, label_id, props: vec![] }
+        Vertex::with_props(id, label_id, vec![])
     }
 
     // Helper to create a simple edge
     fn create_test_edge(src: i64, label: u16, dst: i64, _dir: Direction) -> Edge {
-        Edge { src_id: src, label_id: label, dst_id: dst, rank: 0, props: vec![] }
+        Edge::with_props(src, label, dst, 0, vec![])
     }
 
     #[test]
@@ -621,13 +621,14 @@ mod tests {
         ];
 
         txn.put_vertex(v1_id, v1_label, &props).unwrap();
-        let fetched_v = txn.get_vertex(v1_id).unwrap().unwrap();
+        let mut fetched_v = txn.get_vertex(v1_id).unwrap().unwrap();
 
         assert_eq!(fetched_v.id, v1_id);
         assert_eq!(fetched_v.label_id, v1_label);
-        assert_eq!(fetched_v.props.len(), 2);
-        assert!(fetched_v.props.contains(&props[0]));
-        assert!(fetched_v.props.contains(&props[1]));
+        let fetched_props = fetched_v.all_props();
+        assert_eq!(fetched_props.len(), 2);
+        assert!(fetched_props.contains(&props[0]));
+        assert!(fetched_props.contains(&props[1]));
     }
 
     // ── Gap coverage ─────────────────────────────────────────────────────────
@@ -707,8 +708,8 @@ mod tests {
 
         let ek = EdgeKey::out_e(1, 10, 2, 0);
         txn.put_edge(&ek, &[]).unwrap();
-        let first = txn.get_edge(&ek).unwrap().unwrap();
-        assert_eq!(first.props.len(), 0);
+        let mut first = txn.get_edge(&ek).unwrap().unwrap();
+        assert_eq!(first.all_props().len(), 0);
 
         let props = vec![Property {
             owner: crate::types::CanonicalKey::Edge(ek.canonical_edge_key()),
@@ -716,9 +717,10 @@ mod tests {
             value: Primitive::Int32(7),
         }];
         txn.put_edge(&ek, &props).unwrap();
-        let second = txn.get_edge(&ek).unwrap().unwrap();
-        assert_eq!(second.props.len(), 1);
-        assert_eq!(second.props[0].value, Primitive::Int32(7));
+        let mut second = txn.get_edge(&ek).unwrap().unwrap();
+        let second_props = second.all_props();
+        assert_eq!(second_props.len(), 1);
+        assert_eq!(second_props[0].value, Primitive::Int32(7));
     }
 
     #[test]
@@ -766,13 +768,14 @@ mod tests {
         ];
 
         txn.put_edge(&ek, &props).unwrap();
-        let fetched_e = txn.get_edge(&ek).unwrap().unwrap();
+        let mut fetched_e = txn.get_edge(&ek).unwrap().unwrap();
 
         assert_eq!(fetched_e.src_id, ek.primary_id);
         assert_eq!(fetched_e.dst_id, ek.secondary_id);
         assert_eq!(fetched_e.label_id, ek.label_id);
-        assert_eq!(fetched_e.props.len(), 2);
-        assert!(fetched_e.props.contains(&props[0]));
-        assert!(fetched_e.props.contains(&props[1]));
+        let fetched_props = fetched_e.all_props();
+        assert_eq!(fetched_props.len(), 2);
+        assert!(fetched_props.contains(&props[0]));
+        assert!(fetched_props.contains(&props[1]));
     }
 }
