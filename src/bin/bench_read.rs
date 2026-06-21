@@ -141,6 +141,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     )?;
 
+    // We run the full DB scan benchmarks with 5 sequential runs to measure stable database scan latencies.
+    run_query_benchmark(
+        "Q6: g.V().count() (Scan total vertices in DB)",
+        &Arc::new(vec!["0 0".to_string(); 5]),
+        &graph,
+        1,
+        |snap, _src, _dst| {
+            let Value::Int64(ct) = snap.g().V([]).count().next()?.unwrap() else {
+                unreachable!("unexpected gremlin result type")
+            };
+            println!("   [Scan Result] Total vertices: {}", ct);
+            Ok(())
+        },
+    )?;
+
+    run_query_benchmark(
+        "Q7: g.E().count() (Scan total edges in DB)",
+        &Arc::new(vec!["0 0".to_string(); 5]),
+        &graph,
+        1,
+        |snap, _src, _dst| {
+            let Value::Int64(ct) = snap.g().E([]).count().next()?.unwrap() else {
+                unreachable!("unexpected gremlin result type")
+            };
+            println!("   [Scan Result] Total edges: {}", ct);
+            Ok(())
+        },
+    )?;
+
     #[cfg(feature = "rocksdb-stats")]
     if let Some(stats) = graph.statistics() {
         println!("\n--- RocksDB Statistics ---\n{}", stats);

@@ -64,13 +64,46 @@ pub enum Direction {
     IN,
 }
 
+/// Suffix cursor for paginating edges adjacent to a specific vertex.
+/// Represents the physical key of the last returned edge (specifically, the suffix parts).
+/// Ordered exactly as the database sorting keys: (label_id, secondary_id, rank).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AdjacentEdgeCursor {
+    pub label_id: LabelId,
+    pub secondary_id: VertexKey,
+    pub rank: Rank,
+}
+
+impl AdjacentEdgeCursor {
+    /// Create a cursor from an existing Edge.
+    pub fn from_edge(edge: &super::element::Edge, direction: Direction) -> Self {
+        AdjacentEdgeCursor {
+            label_id: edge.label_id,
+            secondary_id: match direction {
+                Direction::OUT => edge.dst_id,
+                Direction::IN => edge.src_id,
+            },
+            rank: edge.rank,
+        }
+    }
+}
+
+/// Optional filters and pagination parameters for querying adjacent edges.
+#[derive(Debug, Clone, Copy)]
+pub struct AdjacentEdgesOptions<'a> {
+    pub label: Option<LabelId>,
+    pub dst: Option<&'a [VertexKey]>,
+    pub rank: Option<Rank>,
+    pub start_from: Option<AdjacentEdgeCursor>,
+}
+
 // ── CanonicalEdgeKey ──────────────────────────────────────────────────────────
 
 /// A direction-free edge identity in canonical `Out` orientation.
 ///
 /// Used as the key type in the transaction's edge index and the dirty set.
 /// Maps 1-to-1 with the `edges_out` CF key on disk.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct CanonicalEdgeKey {
     pub src_id: VertexKey,
     pub label_id: LabelId,

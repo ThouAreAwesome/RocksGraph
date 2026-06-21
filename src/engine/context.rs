@@ -21,7 +21,7 @@ use crate::{
     types::{
         element::Property,
         gvalue::Primitive,
-        keys::{CanonicalKey, LabelId, VertexKey},
+        keys::{AdjacentEdgeCursor, AdjacentEdgesOptions, CanonicalEdgeKey, CanonicalKey, LabelId, VertexKey},
         prop_key::PropKey,
         Direction, EdgeKey, StoreError,
     },
@@ -60,9 +60,15 @@ use crate::{
 /// | `drop_property` (edge)   | —                       | ✗ overlay-only        | none           | ⚠ **edge must be pre-loaded** |
 pub trait GraphCtx {
     /// Retrieves a vertex by its key.
+    #[allow(dead_code)]
     fn get_vertex(&mut self, key: VertexKey) -> Result<Option<VertexKey>, StoreError>;
+    /// Retrieves multiple vertices in batch, caching them in overlay.
+    fn get_vertices(&mut self, keys: &[VertexKey]) -> Result<Vec<VertexKey>, StoreError>;
     /// Retrieves an edge by its key.
     fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<EdgeKey>, StoreError>;
+    /// Retrieves multiple edges in batch, caching them in overlay.
+    fn get_edges(&mut self, keys: &[EdgeKey]) -> Result<Vec<EdgeKey>, StoreError>;
+
     fn get_adjacent_vertices(
         &mut self,
         vertex_key: VertexKey,
@@ -71,30 +77,41 @@ pub trait GraphCtx {
         end_vertex_ids: Option<&[VertexKey]>,
         limit: Option<u32>,
     ) -> Result<Vec<VertexKey>, StoreError>;
+
+    /// Retrieves adjacent edges for a given vertex, filtered by label, direction, and optional destination
+    /// vertices with support for pagination.
     fn get_adjacent_edges(
-        // Retrieves adjacent edges for a given vertex, filtered by label, direction, and optional destination
-        // vertices.
         &mut self,
         vertex_key: VertexKey,
-        label: Option<LabelId>,
         direction: Direction,
-        end_vertex_ids: Option<&[VertexKey]>,
+        opts: AdjacentEdgesOptions<'_>,
         limit: Option<u32>,
-    ) -> Result<Vec<EdgeKey>, StoreError>;
+    ) -> Result<(Vec<EdgeKey>, Option<AdjacentEdgeCursor>), StoreError>;
+
+    /// Scan all vertices in the database in batch mode.
+    fn scan_vertices(
+        &mut self,
+        label: Option<LabelId>,
+        start_from: Option<VertexKey>,
+        limit: u32,
+    ) -> Result<(Vec<VertexKey>, Option<VertexKey>), StoreError>;
+
+    /// Scan all unique canonical edges in the database in batch mode.
+    fn scan_edges(
+        &mut self,
+        label: Option<LabelId>,
+        start_from: Option<CanonicalEdgeKey>,
+        limit: u32,
+    ) -> Result<(Vec<EdgeKey>, Option<CanonicalEdgeKey>), StoreError>;
+
     /// Retrieves a property for a given canonical key (vertex or edge) and property key.
     fn get_property(&mut self, key: &CanonicalKey, prop: &PropKey) -> Result<Option<Property>, StoreError>;
     /// Retrieves the primitive value of a property for a given canonical key and property key.
     fn get_value(&mut self, key: &CanonicalKey, prop: &PropKey) -> Result<Option<Primitive>, StoreError>;
-    /// Insert a vertex.  See `LogicalGraph::add_vertex` for existence-check and
-    /// locking details.
+    /// Insert a vertex.
     fn add_vertex(&mut self, id: VertexKey, label_id: LabelId) -> Result<VertexKey, StoreError>;
-    /// Insert an edge.  Both endpoint vertices must already exist (overlay or
-    /// store).  See `LogicalGraph::add_edge` for existence-check and locking
-    /// details.
+    /// Insert an edge.
     fn add_edge(&mut self, cek: &EdgeKey) -> Result<EdgeKey, StoreError>;
-    /// Upsert a property.  For vertices the element is auto-loaded from the store
-    /// if absent from the overlay (no precondition).  For edges the edge must
-    /// already be in the overlay — call `get_edge` first.
     /// Sets a property on a vertex or an edge.
     fn set_property(&mut self, prop: &Property) -> Result<(), StoreError>;
     /// Drops a property from a vertex or an edge.
@@ -105,11 +122,6 @@ pub trait GraphCtx {
     fn drop_edge(&mut self, edge: &EdgeKey) -> Result<(), StoreError>;
 
     /// Returns the `label_id` and all stored properties of a vertex or edge as owned scalars.
-    ///
-    /// For vertices, loads from the store on a cache miss.  For edges, the edge must already
-    /// be in the overlay (populated via a prior `get_edge` / `get_adjacent_edges` call).
-    /// Returns `None` if the element is absent.  Used by the materialization layer to build
-    /// the user-facing [`crate::gremlin::value::Vertex`] / [`crate::gremlin::value::Edge`].
     #[allow(clippy::type_complexity)]
     fn get_all_props(&mut self, key: &CanonicalKey)
         -> Result<Option<(LabelId, Vec<(PropKey, Primitive)>)>, StoreError>;
@@ -123,8 +135,14 @@ impl GraphCtx for NoopCtx {
     fn get_vertex(&mut self, _key: VertexKey) -> Result<Option<VertexKey>, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support get_vertex".to_string()))
     }
+    fn get_vertices(&mut self, _keys: &[VertexKey]) -> Result<Vec<VertexKey>, StoreError> {
+        Err(StoreError::UnsupportedOperation("NoopCtx does not support get_vertices".to_string()))
+    }
     fn get_edge(&mut self, _key: &EdgeKey) -> Result<Option<EdgeKey>, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support get_edge".to_string()))
+    }
+    fn get_edges(&mut self, _keys: &[EdgeKey]) -> Result<Vec<EdgeKey>, StoreError> {
+        Err(StoreError::UnsupportedOperation("NoopCtx does not support get_edges".to_string()))
     }
     fn get_adjacent_vertices(
         &mut self,
@@ -139,12 +157,27 @@ impl GraphCtx for NoopCtx {
     fn get_adjacent_edges(
         &mut self,
         _vertex_key: VertexKey,
-        _label: Option<LabelId>,
         _direction: Direction,
-        _end_vertex_ids: Option<&[VertexKey]>,
+        _opts: AdjacentEdgesOptions<'_>,
         _limit: Option<u32>,
-    ) -> Result<Vec<EdgeKey>, StoreError> {
+    ) -> Result<(Vec<EdgeKey>, Option<AdjacentEdgeCursor>), StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support get_adjacent_edges".to_string()))
+    }
+    fn scan_vertices(
+        &mut self,
+        _label: Option<LabelId>,
+        _start_from: Option<VertexKey>,
+        _limit: u32,
+    ) -> Result<(Vec<VertexKey>, Option<VertexKey>), StoreError> {
+        Err(StoreError::UnsupportedOperation("NoopCtx does not support scan_vertices".to_string()))
+    }
+    fn scan_edges(
+        &mut self,
+        _label: Option<LabelId>,
+        _start_from: Option<CanonicalEdgeKey>,
+        _limit: u32,
+    ) -> Result<(Vec<EdgeKey>, Option<CanonicalEdgeKey>), StoreError> {
+        Err(StoreError::UnsupportedOperation("NoopCtx does not support scan_edges".to_string()))
     }
     fn get_property(&mut self, _key: &CanonicalKey, _prop: &PropKey) -> Result<Option<Property>, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support get_property".to_string()))
@@ -183,8 +216,14 @@ impl<S: GraphStore> GraphCtx for LogicalGraph<S> {
     fn get_vertex(&mut self, key: VertexKey) -> Result<Option<VertexKey>, StoreError> {
         self.get_vertex(key)
     }
+    fn get_vertices(&mut self, keys: &[VertexKey]) -> Result<Vec<VertexKey>, StoreError> {
+        self.get_vertices(keys)
+    }
     fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<EdgeKey>, StoreError> {
         self.get_edge(key)
+    }
+    fn get_edges(&mut self, keys: &[EdgeKey]) -> Result<Vec<EdgeKey>, StoreError> {
+        self.get_edges(keys)
     }
     fn get_adjacent_vertices(
         &mut self,
@@ -194,18 +233,34 @@ impl<S: GraphStore> GraphCtx for LogicalGraph<S> {
         end_vertex_ids: Option<&[VertexKey]>,
         limit: Option<u32>,
     ) -> Result<Vec<VertexKey>, StoreError> {
-        let edges = self.get_edges(vertex_key, direction, label, end_vertex_ids, limit)?;
+        let opts = AdjacentEdgesOptions { label, dst: end_vertex_ids, rank: None, start_from: None };
+        let (edges, _) = self.get_adjacent_edges(vertex_key, direction, opts, limit)?;
         Ok(edges.into_iter().map(|ek| ek.secondary_id).collect())
     }
     fn get_adjacent_edges(
         &mut self,
         vertex_key: VertexKey,
-        label: Option<LabelId>,
         direction: Direction,
-        end_vertex_ids: Option<&[VertexKey]>,
+        opts: AdjacentEdgesOptions<'_>,
         limit: Option<u32>,
-    ) -> Result<Vec<EdgeKey>, StoreError> {
-        self.get_edges(vertex_key, direction, label, end_vertex_ids, limit)
+    ) -> Result<(Vec<EdgeKey>, Option<AdjacentEdgeCursor>), StoreError> {
+        self.get_adjacent_edges(vertex_key, direction, opts, limit)
+    }
+    fn scan_vertices(
+        &mut self,
+        label: Option<LabelId>,
+        start_from: Option<VertexKey>,
+        limit: u32,
+    ) -> Result<(Vec<VertexKey>, Option<VertexKey>), StoreError> {
+        self.scan_vertices(label, start_from, limit)
+    }
+    fn scan_edges(
+        &mut self,
+        label: Option<LabelId>,
+        start_from: Option<CanonicalEdgeKey>,
+        limit: u32,
+    ) -> Result<(Vec<EdgeKey>, Option<CanonicalEdgeKey>), StoreError> {
+        self.scan_edges(label, start_from, limit)
     }
     fn get_property(&mut self, key: &CanonicalKey, prop: &PropKey) -> Result<Option<Property>, StoreError> {
         self.get_property(key, prop)
@@ -244,8 +299,14 @@ impl<S: GraphStore> GraphCtx for LogicalSnapshot<S> {
     fn get_vertex(&mut self, key: VertexKey) -> Result<Option<VertexKey>, StoreError> {
         self.get_vertex(key)
     }
+    fn get_vertices(&mut self, keys: &[VertexKey]) -> Result<Vec<VertexKey>, StoreError> {
+        self.get_vertices(keys)
+    }
     fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<EdgeKey>, StoreError> {
         self.get_edge(key)
+    }
+    fn get_edges(&mut self, keys: &[EdgeKey]) -> Result<Vec<EdgeKey>, StoreError> {
+        self.get_edges(keys)
     }
     fn get_adjacent_vertices(
         &mut self,
@@ -255,18 +316,34 @@ impl<S: GraphStore> GraphCtx for LogicalSnapshot<S> {
         end_vertex_ids: Option<&[VertexKey]>,
         limit: Option<u32>,
     ) -> Result<Vec<VertexKey>, StoreError> {
-        let edges = self.get_edges(vertex_key, direction, label, end_vertex_ids, limit)?;
+        let opts = AdjacentEdgesOptions { label, dst: end_vertex_ids, rank: None, start_from: None };
+        let (edges, _) = self.get_adjacent_edges(vertex_key, direction, opts, limit)?;
         Ok(edges.into_iter().map(|ek| ek.secondary_id).collect())
     }
     fn get_adjacent_edges(
         &mut self,
         vertex_key: VertexKey,
-        label: Option<LabelId>,
         direction: Direction,
-        end_vertex_ids: Option<&[VertexKey]>,
+        opts: AdjacentEdgesOptions<'_>,
         limit: Option<u32>,
-    ) -> Result<Vec<EdgeKey>, StoreError> {
-        self.get_edges(vertex_key, direction, label, end_vertex_ids, limit)
+    ) -> Result<(Vec<EdgeKey>, Option<AdjacentEdgeCursor>), StoreError> {
+        self.get_adjacent_edges(vertex_key, direction, opts, limit)
+    }
+    fn scan_vertices(
+        &mut self,
+        label: Option<LabelId>,
+        start_from: Option<VertexKey>,
+        limit: u32,
+    ) -> Result<(Vec<VertexKey>, Option<VertexKey>), StoreError> {
+        self.scan_vertices(label, start_from, limit)
+    }
+    fn scan_edges(
+        &mut self,
+        label: Option<LabelId>,
+        start_from: Option<CanonicalEdgeKey>,
+        limit: u32,
+    ) -> Result<(Vec<EdgeKey>, Option<CanonicalEdgeKey>), StoreError> {
+        self.scan_edges(label, start_from, limit)
     }
     fn get_property(&mut self, key: &CanonicalKey, prop: &PropKey) -> Result<Option<Property>, StoreError> {
         self.get_property(key, prop)

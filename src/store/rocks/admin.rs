@@ -143,12 +143,12 @@ impl RocksStorage {
     // `OptimisticTransactionDB::write()` requires this type; using the plain
     // `WriteBatch` (TRANSACTION=false) is a compile-time type mismatch.
 
-    pub(crate) fn insert_vertices(&mut self, vertices: &[Vertex]) -> Result<(), StoreError> {
+    pub(crate) fn insert_vertices(&mut self, vertices: &mut [Vertex]) -> Result<(), StoreError> {
         let cf_vertices = self.db.cf_handle(CF_VERTICES).ok_or(StoreError::MissingColumnFamily("vertices"))?;
         let cf_degree = self.db.cf_handle(CF_VERTEX_DEGREE).ok_or(StoreError::MissingColumnFamily("vertex_degree"))?;
         let mut batch = WriteBatchWithTransaction::<true>::default();
         for vv in vertices {
-            let val = VertexValue { label_id: vv.label_id, property_blob: encode_props(&vv.props) };
+            let val = VertexValue { label_id: vv.label_id, property_blob: encode_props(vv.all_props()) };
             let degree = VertexDegree { out_e_cnt: 0, in_e_cnt: 0 };
             batch.put_cf(&cf_vertices, encode_vertex_key(vv.id), val.encode());
             batch.put_cf(&cf_degree, encode_vertex_key(vv.id), degree.encode());
@@ -156,7 +156,7 @@ impl RocksStorage {
         self.db.write(batch).map_err(StoreError::RocksDb)
     }
 
-    pub(crate) fn insert_edges(&mut self, edges: &[Edge], direction: Direction) -> Result<(), StoreError> {
+    pub(crate) fn insert_edges(&mut self, edges: &mut [Edge], direction: Direction) -> Result<(), StoreError> {
         let cf_name = match direction {
             Direction::OUT => CF_EDGES_OUT,
             Direction::IN => CF_EDGES_IN,
@@ -168,7 +168,7 @@ impl RocksStorage {
                 Direction::OUT => encode_edge_key(&ev.edge_key_out()),
                 Direction::IN => encode_edge_key(&ev.edge_key_in()),
             };
-            let bytes = EdgeValue { property_blob: encode_props(&ev.props) }.encode().to_vec();
+            let bytes = EdgeValue { property_blob: encode_props(ev.all_props()) }.encode().to_vec();
             batch.put_cf(&cf, key_bytes, &bytes);
         }
         self.db.write(batch).map_err(StoreError::RocksDb)
@@ -250,15 +250,15 @@ mod tests {
                 (SmolStr::new("age"), Primitive::Int32(30)),
             ],
         );
-        store.insert_vertices(&[v]).unwrap();
-        let fv = store.get_vertex(1).unwrap().unwrap();
+        store.insert_vertices(&mut [v]).unwrap();
+        let mut fv = store.get_vertex(1).unwrap().unwrap();
         assert_eq!(fv.id, 1);
         assert_eq!(fv.label_id, 3);
-        assert_eq!(fv.props.len(), 2);
-        assert_eq!(fv.props[0].key, SmolStr::new("name"));
-        assert_eq!(fv.props[0].value, Primitive::String(SmolStr::new("Alice")));
-        assert_eq!(fv.props[0].owner, CanonicalKey::Vertex(1));
-        assert_eq!(fv.props[1].value, Primitive::Int32(30));
+        assert_eq!(fv.all_props().len(), 2);
+        assert_eq!(fv.all_props()[0].key, SmolStr::new("name"));
+        assert_eq!(fv.all_props()[0].value, Primitive::String(SmolStr::new("Alice")));
+        assert_eq!(fv.all_props()[0].owner, CanonicalKey::Vertex(1));
+        assert_eq!(fv.all_props()[1].value, Primitive::Int32(30));
     }
 
     #[test]
@@ -270,27 +270,27 @@ mod tests {
     #[test]
     fn insert_vertex_with_no_props() {
         let (mut store, _dir) = open_temp_store();
-        store.insert_vertices(&[make_vertex(42, 1, vec![])]).unwrap();
-        let fv = store.get_vertex(42).unwrap().unwrap();
+        store.insert_vertices(&mut [make_vertex(42, 1, vec![])]).unwrap();
+        let mut fv = store.get_vertex(42).unwrap().unwrap();
         assert_eq!(fv.label_id, 1);
-        assert!(fv.props.is_empty());
+        assert!(fv.all_props().is_empty());
     }
 
     #[test]
     fn insert_vertex_overwrite_updates_value() {
         let (mut store, _dir) = open_temp_store();
-        store.insert_vertices(&[make_vertex(1, 1, vec![(SmolStr::new("age"), Primitive::Int32(20))])]).unwrap();
-        store.insert_vertices(&[make_vertex(1, 2, vec![(SmolStr::new("age"), Primitive::Int32(99))])]).unwrap();
-        let fv = store.get_vertex(1).unwrap().unwrap();
+        store.insert_vertices(&mut [make_vertex(1, 1, vec![(SmolStr::new("age"), Primitive::Int32(20))])]).unwrap();
+        store.insert_vertices(&mut [make_vertex(1, 2, vec![(SmolStr::new("age"), Primitive::Int32(99))])]).unwrap();
+        let mut fv = store.get_vertex(1).unwrap().unwrap();
         assert_eq!(fv.label_id, 2);
-        assert_eq!(fv.props[0].value, Primitive::Int32(99));
+        assert_eq!(fv.all_props()[0].value, Primitive::Int32(99));
     }
 
     #[test]
     fn get_vertices_returns_all_inserted() {
         let (mut store, _dir) = open_temp_store();
         store
-            .insert_vertices(&[make_vertex(1, 1, vec![]), make_vertex(2, 1, vec![]), make_vertex(3, 2, vec![])])
+            .insert_vertices(&mut [make_vertex(1, 1, vec![]), make_vertex(2, 1, vec![]), make_vertex(3, 2, vec![])])
             .unwrap();
         let results = store.get_vertices(&[1, 2, 3]).unwrap();
         assert_eq!(results.len(), 3);
@@ -302,7 +302,7 @@ mod tests {
     #[test]
     fn get_vertices_silently_omits_missing_keys() {
         let (mut store, _dir) = open_temp_store();
-        store.insert_vertices(&[make_vertex(10, 1, vec![])]).unwrap();
+        store.insert_vertices(&mut [make_vertex(10, 1, vec![])]).unwrap();
         let results = store.get_vertices(&[10, 20, 30]).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, 10);
@@ -319,22 +319,22 @@ mod tests {
         let (mut store, _dir) = open_temp_store();
         let k = cek(1, 5, 2);
         store
-            .insert_edges(&[make_edge(k, vec![(SmolStr::new("weight"), Primitive::Float64(1.5))])], Direction::OUT)
+            .insert_edges(&mut [make_edge(k, vec![(SmolStr::new("weight"), Primitive::Float64(1.5))])], Direction::OUT)
             .unwrap();
-        let edges = store.get_edges(1, Direction::OUT, None, None, None).unwrap();
+        let mut edges = store.get_edges(1, Direction::OUT, None, None, None).unwrap();
         assert_eq!(edges.len(), 1);
-        let fe = &edges[0];
+        let fe = &mut edges[0];
         assert_eq!(fe.src_id, 1);
         assert_eq!(fe.dst_id, 2);
         assert_eq!(fe.label_id, 5);
-        assert_eq!(fe.props[0].value, Primitive::Float64(1.5));
-        assert_eq!(fe.props[0].owner, CanonicalKey::Edge(k));
+        assert_eq!(fe.all_props()[0].value, Primitive::Float64(1.5));
+        assert_eq!(fe.all_props()[0].owner, CanonicalKey::Edge(k));
     }
 
     #[test]
     fn insert_edge_readable_in() {
         let (mut store, _dir) = open_temp_store();
-        store.insert_edges(&[make_edge(cek(1, 5, 2), vec![])], Direction::IN).unwrap();
+        store.insert_edges(&mut [make_edge(cek(1, 5, 2), vec![])], Direction::IN).unwrap();
         let edges = store.get_edges(2, Direction::IN, None, None, None).unwrap();
         assert_eq!(edges.len(), 1);
         let fe = &edges[0];
@@ -348,7 +348,11 @@ mod tests {
         let (mut store, _dir) = open_temp_store();
         store
             .insert_edges(
-                &[make_edge(cek(1, 1, 10), vec![]), make_edge(cek(1, 2, 20), vec![]), make_edge(cek(1, 1, 30), vec![])],
+                &mut [
+                    make_edge(cek(1, 1, 10), vec![]),
+                    make_edge(cek(1, 2, 20), vec![]),
+                    make_edge(cek(1, 1, 30), vec![]),
+                ],
                 Direction::OUT,
             )
             .unwrap();
@@ -365,7 +369,11 @@ mod tests {
         let (mut store, _dir) = open_temp_store();
         store
             .insert_edges(
-                &[make_edge(cek(1, 1, 10), vec![]), make_edge(cek(1, 1, 20), vec![]), make_edge(cek(1, 1, 30), vec![])],
+                &mut [
+                    make_edge(cek(1, 1, 10), vec![]),
+                    make_edge(cek(1, 1, 20), vec![]),
+                    make_edge(cek(1, 1, 30), vec![]),
+                ],
                 Direction::OUT,
             )
             .unwrap();
@@ -388,7 +396,7 @@ mod tests {
         let (mut store, _dir) = open_temp_store();
         store
             .insert_edges(
-                &[
+                &mut [
                     make_edge(cek(1, 1, 10), vec![]),
                     make_edge(cek(1, 1, 20), vec![]),
                     make_edge(cek(1, 1, 30), vec![]),
@@ -406,7 +414,7 @@ mod tests {
         let (mut store, _dir) = open_temp_store();
         store
             .insert_edges(
-                &[
+                &mut [
                     make_edge(cek(1, 1, 10), vec![]),
                     make_edge(cek(1, 1, 20), vec![]),
                     make_edge(cek(1, 1, 30), vec![]),

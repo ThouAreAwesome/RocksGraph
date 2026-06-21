@@ -25,7 +25,12 @@
 //!
 //! [`engine::volcano::builder`]: crate::engine::volcano::builder
 
-use crate::types::{gvalue::Primitive, keys::VertexKey, prop_key::PropKey, LabelId, StoreError};
+use crate::types::{
+    gvalue::Primitive,
+    keys::{EdgeKey, VertexKey},
+    prop_key::PropKey,
+    LabelId, StoreError,
+};
 use smallvec::SmallVec;
 use std::collections::HashMap;
 
@@ -86,6 +91,7 @@ pub enum LogicalStep {
     To(ToStep),
     Property(PropertyStep),
     V(VStep),
+    E(EStep),
     Limit(LimitStep),
     HasId(HasIdStep),
     Coalesce(CoalesceStep),
@@ -356,6 +362,13 @@ pub struct VStep {
 }
 
 impl Optimizer for VStep {}
+
+#[derive(Clone)]
+pub struct EStep {
+    pub keys: SmallVec<[EdgeKey; 4]>,
+}
+
+impl Optimizer for EStep {}
 
 /// Represents a logical `limit` step, restricting the number of traversers.
 #[derive(Clone)]

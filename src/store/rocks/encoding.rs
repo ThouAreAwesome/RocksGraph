@@ -41,8 +41,7 @@
 //! | `vertex_id \| label_id` | 10 | `outE(label)` / `inE(label)`    |
 
 use crate::types::{
-    element::decode_props, CanonicalKey, Direction, Edge, EdgeKey, LabelId, Primitive, Property, Rank, StoreError,
-    Vertex, VertexKey,
+    CanonicalKey, Direction, Edge, EdgeKey, LabelId, Primitive, PropKey, Property, Rank, StoreError, Vertex, VertexKey,
 };
 
 // ── Scan helpers ──────────────────────────────────────────────────────────────
@@ -290,10 +289,10 @@ pub(super) fn build_full_edge(ek: &EdgeKey, ev: &EdgeValue) -> Result<Edge, Stor
 /// Build a lazy `Vertex` from storage bytes — properties are not decoded yet.
 ///
 /// Used by `GraphTransaction::get_vertex` and `GraphSnapshot::get_vertex`.
-/// The [`LogicalGraph`](crate::graph::LogicalGraph) overlay calls
-/// [`Vertex::ensure_decoded`] before any property access.
+/// The [`LogicalGraph`](crate::graph::LogicalGraph) overlay automatically decodes
+/// properties via `all_props()` or `props_mut()` on access.
 pub(super) fn build_lazy_vertex(id: VertexKey, vv: &VertexValue) -> Vertex {
-    Vertex::from_raw(id, vv.label_id, vv.property_blob.clone().into_boxed_slice())
+    Vertex::from_raw(id, vv.label_id, vv.property_blob.clone().into_boxed_slice(), decode_props)
 }
 
 /// Build a lazy `Edge` from storage bytes — properties are not decoded yet.
@@ -301,7 +300,108 @@ pub(super) fn build_lazy_vertex(id: VertexKey, vv: &VertexValue) -> Vertex {
 /// Used by `GraphTransaction::get_edge` / `get_edges` and the snapshot equivalents.
 pub(super) fn build_lazy_edge(ek: &EdgeKey, ev: &EdgeValue) -> Edge {
     let cek = ek.canonical_edge_key();
-    Edge::from_raw(cek.src_id, cek.label_id, cek.dst_id, cek.rank, ev.property_blob.clone().into_boxed_slice())
+    Edge::from_raw(
+        cek.src_id,
+        cek.label_id,
+        cek.dst_id,
+        cek.rank,
+        ev.property_blob.clone().into_boxed_slice(),
+        decode_props,
+    )
+}
+
+/// Deserializes the binary property blob produced by `encode_props`.
+pub(crate) fn decode_props(blob: &[u8], owner: CanonicalKey) -> Option<Vec<Property>> {
+    if blob.len() < 2 {
+        return None;
+    }
+    let count = u16::from_be_bytes(blob[0..2].try_into().ok()?) as usize;
+    let mut pos = 2;
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        if pos + 2 > blob.len() {
+            return None;
+        }
+        let klen = u16::from_be_bytes(blob[pos..pos + 2].try_into().ok()?) as usize;
+        pos += 2;
+        if pos + klen > blob.len() {
+            return None;
+        }
+        let key: PropKey = smol_str::SmolStr::new(std::str::from_utf8(&blob[pos..pos + klen]).ok()?);
+        pos += klen;
+        if pos >= blob.len() {
+            return None;
+        }
+        let tag = blob[pos];
+        pos += 1;
+        let val = match tag {
+            0 => {
+                if pos >= blob.len() {
+                    return None;
+                }
+                let b = blob[pos] != 0;
+                pos += 1;
+                Primitive::Bool(b)
+            }
+            1 => {
+                if pos + 4 > blob.len() {
+                    return None;
+                }
+                let n = i32::from_be_bytes(blob[pos..pos + 4].try_into().ok()?);
+                pos += 4;
+                Primitive::Int32(n)
+            }
+            2 => {
+                if pos + 8 > blob.len() {
+                    return None;
+                }
+                let n = i64::from_be_bytes(blob[pos..pos + 8].try_into().ok()?);
+                pos += 8;
+                Primitive::Int64(n)
+            }
+            3 => {
+                if pos + 4 > blob.len() {
+                    return None;
+                }
+                let bits = u32::from_be_bytes(blob[pos..pos + 4].try_into().ok()?);
+                pos += 4;
+                Primitive::Float32(f32::from_bits(bits))
+            }
+            4 => {
+                if pos + 8 > blob.len() {
+                    return None;
+                }
+                let bits = u64::from_be_bytes(blob[pos..pos + 8].try_into().ok()?);
+                pos += 8;
+                Primitive::Float64(f64::from_bits(bits))
+            }
+            5 => {
+                if pos + 2 > blob.len() {
+                    return None;
+                }
+                let slen = u16::from_be_bytes(blob[pos..pos + 2].try_into().ok()?) as usize;
+                pos += 2;
+                if pos + slen > blob.len() {
+                    return None;
+                }
+                let s = std::str::from_utf8(&blob[pos..pos + slen]).ok()?;
+                pos += slen;
+                Primitive::String(smol_str::SmolStr::new(s))
+            }
+            6 => {
+                if pos + 16 > blob.len() {
+                    return None;
+                }
+                let u = u128::from_be_bytes(blob[pos..pos + 16].try_into().ok()?);
+                pos += 16;
+                Primitive::Uuid(u)
+            }
+            7 => Primitive::Null,
+            _ => return None,
+        };
+        out.push(Property { owner, key, value: val });
+    }
+    Some(out)
 }
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
@@ -574,12 +674,12 @@ mod tests {
         assert_eq!(id, 42);
         assert_eq!(vv.label_id, 1);
         let dec_props = decode_props(&vv.property_blob);
-        let fv = make_vertex(id, vv.label_id, &dec_props);
+        let mut fv = make_vertex(id, vv.label_id, &dec_props);
         assert_eq!(fv.id, 42);
         assert_eq!(fv.label_id, 1);
-        assert_eq!(fv.props.len(), 2);
-        assert_eq!(fv.props[0].key, SmolStr::new("name"));
-        assert_eq!(fv.props[0].owner, CanonicalKey::Vertex(42));
+        assert_eq!(fv.all_props().len(), 2);
+        assert_eq!(fv.all_props()[0].key, SmolStr::new("name"));
+        assert_eq!(fv.all_props()[0].owner, CanonicalKey::Vertex(42));
     }
 
     #[test]
@@ -595,12 +695,12 @@ mod tests {
         let ev = EdgeValue::decode(&val_bytes);
         assert_eq!(dec_cek, cek);
         let dec_props = decode_props(&ev.property_blob);
-        let fe = make_edge(dec_cek, &dec_props);
+        let mut fe = make_edge(dec_cek, &dec_props);
         assert_eq!(fe.src_id, 10);
         assert_eq!(fe.dst_id, 20);
         assert_eq!(fe.label_id, 7);
-        assert_eq!(fe.props[0].owner, CanonicalKey::Edge(cek));
-        assert_eq!(fe.props[1].value, Primitive::String(SmolStr::new("friend")));
+        assert_eq!(fe.all_props()[0].owner, CanonicalKey::Edge(cek));
+        assert_eq!(fe.all_props()[1].value, Primitive::String(SmolStr::new("friend")));
     }
 
     #[test]
@@ -627,10 +727,10 @@ mod tests {
     #[test]
     fn property_owner_is_canonical_key() {
         let cek = CanonicalEdgeKey { src_id: 5, label_id: 1, rank: 0, dst_id: 6 };
-        let fe = make_edge(cek, &[(SmolStr::new("w"), Primitive::Float32(0.5))]);
-        assert_eq!(fe.props[0].owner, CanonicalKey::Edge(cek));
+        let mut fe = make_edge(cek, &[(SmolStr::new("w"), Primitive::Float32(0.5))]);
+        assert_eq!(fe.all_props()[0].owner, CanonicalKey::Edge(cek));
 
-        let fv = make_vertex(99, 2, &[(SmolStr::new("x"), Primitive::Int32(7))]);
-        assert_eq!(fv.props[0].owner, CanonicalKey::Vertex(99));
+        let mut fv = make_vertex(99, 2, &[(SmolStr::new("x"), Primitive::Int32(7))]);
+        assert_eq!(fv.all_props()[0].owner, CanonicalKey::Vertex(99));
     }
 }

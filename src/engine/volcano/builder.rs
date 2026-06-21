@@ -148,14 +148,10 @@ impl PhysicalPlanBuilder {
                 )
             }
             LogicalStep::V(s) => {
-                if s.ids.is_empty() {
-                    return Err(StoreError::RuntimeError(
-                        "VStep cannot be built with empty IDs. A `g.V()` traversal must be followed by an optimizable \
-                         filter like `hasId()` or `has('id', ...)` that the optimizer can fold into the V-step."
-                            .to_string(),
-                    ));
-                }
                 wire!(BufferedStep::new(steps::v::VStep::new(s.ids.clone())), None::<StepRef>)
+            }
+            LogicalStep::E(s) => {
+                wire!(BufferedStep::new(steps::e::EStep::new(s.keys.clone())), None::<StepRef>)
             }
             LogicalStep::Count(_) => {
                 wire_required!(BufferedStep::new(steps::count::CountStep::default()), upstream, "CountStep")

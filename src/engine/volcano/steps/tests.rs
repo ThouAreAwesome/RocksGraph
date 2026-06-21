@@ -37,7 +37,7 @@ mod cases {
             element::Property,
             error::StoreError,
             gvalue::Primitive,
-            keys::{CanonicalEdgeKey, CanonicalKey, LabelId, VertexKey},
+            keys::{AdjacentEdgesOptions, CanonicalEdgeKey, CanonicalKey, LabelId, VertexKey},
             prop_key::LABEL,
             Direction, EdgeKey, GValue,
         },
@@ -67,6 +67,24 @@ mod cases {
         //let dir = tempfile::tempdir().unwrap();
         //let store = RocksStorage::open(dir.path()).unwrap();
         LogicalGraph::new(store.begin())
+    }
+
+    fn get_adjacent_edges_test(
+        c: &mut LogicalGraph<RocksStorage>,
+        vertex: VertexKey,
+        direction: Direction,
+        label: Option<LabelId>,
+        dst: Option<&[VertexKey]>,
+        limit: Option<u32>,
+    ) -> Vec<EdgeKey> {
+        c.get_adjacent_edges(
+            vertex,
+            direction,
+            AdjacentEdgesOptions { label, dst, rank: None, start_from: None },
+            limit,
+        )
+        .unwrap()
+        .0
     }
 
     // Helper to create a TinkerPop Modern Graph
@@ -401,13 +419,12 @@ mod cases {
         println!("\nEdges:");
         // Iterate through all vertices to get their outgoing edges
         for src_id in 1..=6 {
-            if let Ok(out_edges) = graph.get_edges(src_id, crate::types::Direction::OUT, None, None, None) {
-                for edge_key in out_edges {
-                    if let Ok(Some(ek)) = graph.get_edge(&edge_key) {
-                        let label_name = get_label_name(ek.label_id);
-                        print!("  ({:?}) --{}--> ({:?})", ek.primary_id, label_name, ek.secondary_id);
-                        println!();
-                    }
+            let out_edges = get_adjacent_edges_test(graph, src_id, crate::types::Direction::OUT, None, None, None);
+            for edge_key in out_edges {
+                if let Ok(Some(ek)) = graph.get_edge(&edge_key) {
+                    let label_name = get_label_name(ek.label_id);
+                    print!("  ({:?}) --{}--> ({:?})", ek.primary_id, label_name, ek.secondary_id);
+                    println!();
                 }
             }
         }
@@ -1151,7 +1168,7 @@ mod cases {
         assert!(verify.get_vertex(marko_id).unwrap().is_some());
         assert!(verify.get_vertex(vadas_id).unwrap().is_some());
         // Marko's remaining two outgoing edges are unaffected.
-        let remaining = verify.get_edges(marko_id, Direction::OUT, None, None, None).unwrap();
+        let remaining = get_adjacent_edges_test(&mut verify, marko_id, Direction::OUT, None, None, None);
         assert_eq!(remaining.len(), 2);
     }
 
@@ -1176,7 +1193,7 @@ mod cases {
         graph.commit().unwrap();
 
         let mut verify = create_logical_graph(&store);
-        assert!(verify.get_edges(josh_id, Direction::OUT, None, None, None).unwrap().is_empty());
+        assert!(get_adjacent_edges_test(&mut verify, josh_id, Direction::OUT, None, None, None).is_empty());
         // josh and the target vertices still exist.
         assert!(verify.get_vertex(josh_id).unwrap().is_some());
         assert!(verify.get_vertex(3).unwrap().is_some()); // lop

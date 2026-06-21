@@ -75,5 +75,8 @@ pub mod prop_key;
 pub use element::{Edge, Property, Vertex};
 pub use error::StoreError;
 pub use gvalue::{GValue, Primitive};
-pub use keys::{CanonicalEdgeKey, CanonicalKey, Direction, EdgeKey, LabelId, Rank, VertexKey};
+pub use keys::{
+    AdjacentEdgeCursor, AdjacentEdgesOptions, CanonicalEdgeKey, CanonicalKey, Direction, EdgeKey, LabelId, Rank,
+    VertexKey,
+};
 pub use prop_key::PropKey;

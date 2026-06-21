@@ -25,7 +25,11 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{error::StoreError, Direction, GValue, LabelId, VertexKey},
+    types::{
+        error::StoreError,
+        keys::{AdjacentEdgeCursor, AdjacentEdgesOptions},
+        Direction, GValue, LabelId, VertexKey,
+    },
 };
 
 /// A physical step that traverses either incoming or outgoing edges (or both) from a vertex, returning the adjacent
@@ -39,6 +43,7 @@ pub struct InOutStep {
     end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
     current_input: Option<Rc<Traverser>>,
     current_label_idx: usize,
+    cursor: Option<AdjacentEdgeCursor>,
 }
 
 impl InOutStep {
@@ -56,18 +61,17 @@ impl InOutStep {
             end_vertex_ids,
             current_input: None,
             current_label_idx: 0,
+            cursor: None,
         }
     }
 }
 
 impl CoreStep for InOutStep {
     fn add_upper(&mut self, upstream: StepRef) {
-        // Sets the upstream step for this traversal.
         self.upstream = Some(upstream);
     }
 
     fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
-        // Produces traversers representing adjacent vertices.
         loop {
             if self.current_input.is_none() {
                 let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
@@ -75,6 +79,7 @@ impl CoreStep for InOutStep {
                 if matches!(&t.value, GValue::Vertex(_)) {
                     self.current_input = Some(t);
                     self.current_label_idx = 0;
+                    self.cursor = None;
                 } else {
                     continue;
                 }
@@ -84,18 +89,27 @@ impl CoreStep for InOutStep {
             if let GValue::Vertex(vk) = &t.value {
                 let label = if self.label_ids.is_empty() { None } else { Some(self.label_ids[self.current_label_idx]) };
 
-                let edges =
-                    ctx.get_adjacent_edges(*vk, label, self.direction, self.end_vertex_ids.as_deref(), self.limit)?;
-                let results: SmallVec<[_; 4]> = edges
-                    .into_iter()
-                    .map(|e| Traverser::new_rc_with_parent(GValue::Vertex(e.secondary_id), Rc::clone(&t)))
-                    .collect();
+                let opts = AdjacentEdgesOptions {
+                    label,
+                    dst: self.end_vertex_ids.as_deref(),
+                    rank: None,
+                    start_from: self.cursor,
+                };
+                let (edges, next_cursor) = ctx.get_adjacent_edges(*vk, self.direction, opts, self.limit)?;
 
-                self.current_label_idx += 1;
-                if self.label_ids.is_empty() || self.current_label_idx >= self.label_ids.len() {
-                    self.current_input = None;
+                self.cursor = next_cursor;
+                if self.cursor.is_none() {
+                    self.current_label_idx += 1;
+                    if self.label_ids.is_empty() || self.current_label_idx >= self.label_ids.len() {
+                        self.current_input = None;
+                    }
                 }
-                if !results.is_empty() {
+
+                if !edges.is_empty() {
+                    let results: SmallVec<[_; 4]> = edges
+                        .into_iter()
+                        .map(|e| Traverser::new_rc_with_parent(GValue::Vertex(e.secondary_id), Rc::clone(&t)))
+                        .collect();
                     return Ok(Some(results));
                 }
             } else {
@@ -105,16 +119,15 @@ impl CoreStep for InOutStep {
     }
 
     fn reset(&mut self) {
-        // Resets the state of this step and its upstream.
         if let Some(up) = &self.upstream {
             up.reset();
         }
         self.current_input = None;
         self.current_label_idx = 0;
+        self.cursor = None;
     }
 
     fn upper(&self) -> Option<StepRef> {
-        // Returns a clone of the upstream step reference.
         self.upstream.clone()
     }
 }

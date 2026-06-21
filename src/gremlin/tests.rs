@@ -475,4 +475,18 @@ mod integration_test {
             tx.commit().unwrap();
         }
     }
+
+    #[test]
+    fn test_tinkerpop_modern_scan_v_and_scan_e() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+
+        // g.V() scan (V with empty IDs)
+        let v_count = tx.g().V([]).count().next().unwrap().unwrap();
+        assert_eq!(v_count, Value::Int64(6));
+
+        // g.E() scan (E with empty keys)
+        let e_count = tx.g().E([]).count().next().unwrap().unwrap();
+        assert_eq!(e_count, Value::Int64(6));
+    }
 }

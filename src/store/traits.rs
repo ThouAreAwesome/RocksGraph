@@ -41,7 +41,10 @@
 //! it only touches `LogicalGraph`. Backend details (RocksDB CFs, OCC, encoding)
 //! never cross the `GraphTransaction` boundary.
 
-use crate::types::{element::Property, Direction, Edge, EdgeKey, LabelId, StoreError, Vertex, VertexKey};
+use crate::types::{
+    element::Property, AdjacentEdgeCursor, AdjacentEdgesOptions, CanonicalEdgeKey, Direction, Edge, EdgeKey, LabelId,
+    StoreError, Vertex, VertexKey,
+};
 
 // ── GraphSnapshot ─────────────────────────────────────────────────────────────
 
@@ -52,15 +55,59 @@ use crate::types::{element::Property, Direction, Edge, EdgeKey, LabelId, StoreEr
 /// Independent of [`GraphTransaction`] — the two share no interface.
 pub trait GraphSnapshot {
     fn get_vertex(&mut self, key: VertexKey) -> Result<Option<Vertex>, StoreError>;
+
+    /// Fetch multiple vertices in batch, omitting any keys not found.
+    fn get_vertices(&mut self, keys: &[VertexKey]) -> Result<Vec<Vertex>, StoreError> {
+        let mut out = Vec::with_capacity(keys.len());
+        for &k in keys {
+            if let Some(v) = self.get_vertex(k)? {
+                out.push(v);
+            }
+        }
+        Ok(out)
+    }
+
     fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<Edge>, StoreError>;
-    fn get_edges(
+
+    /// Fetch multiple edges in batch, omitting any keys not found.
+    fn get_edges(&mut self, keys: &[EdgeKey]) -> Result<Vec<Edge>, StoreError> {
+        let mut out = Vec::with_capacity(keys.len());
+        for k in keys {
+            if let Some(e) = self.get_edge(k)? {
+                out.push(e);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Scan committed edges adjacent to `vertex` in `direction`.
+    fn get_adjacent_edges(
         &mut self,
         vertex: VertexKey,
         direction: Direction,
-        label: Option<LabelId>,
-        dst: Option<&[VertexKey]>,
+        opts: AdjacentEdgesOptions<'_>,
         limit: Option<u32>,
-    ) -> Result<Vec<Edge>, StoreError>;
+    ) -> Result<(Vec<Edge>, Option<AdjacentEdgeCursor>), StoreError>;
+
+    /// Scan all vertices in the database in batch mode.
+    fn scan_vertices(
+        &mut self,
+        _label: Option<LabelId>,
+        _start_from: Option<VertexKey>,
+        _limit: u32,
+    ) -> Result<(Vec<Vertex>, Option<VertexKey>), StoreError> {
+        Err(StoreError::UnsupportedOperation("scan_vertices is not supported".to_string()))
+    }
+
+    /// Scan all unique canonical edges in the database in batch mode.
+    fn scan_edges(
+        &mut self,
+        _label: Option<LabelId>,
+        _start_from: Option<CanonicalEdgeKey>,
+        _limit: u32,
+    ) -> Result<(Vec<Edge>, Option<CanonicalEdgeKey>), StoreError> {
+        Err(StoreError::UnsupportedOperation("scan_edges is not supported".to_string()))
+    }
 }
 
 // ── GraphTransaction ──────────────────────────────────────────────────────────
@@ -88,33 +135,65 @@ pub trait GraphTransaction {
     ///
     /// Implementations should register the key in an OCC read-set so that a
     /// concurrent write detected at commit time returns [`StoreError::Conflict`].
-    ///
-    /// **Note**: Consider adding a batch `get_vertices` method to optimize bulk property retrieval.
-    //      Currently, `get_vertex` is used both for property loading and existence checking.
-    //      A batch API would be great for data fetching, but returning a partial result set makes it
-    //      inconvenient for strict existence checks. Needs further design consideration.
     fn get_vertex(&mut self, key: VertexKey) -> Result<Option<Vertex>, StoreError>;
+
+    /// Fetch multiple vertices in batch, registering them in OCC read-set.
+    fn get_vertices(&mut self, keys: &[VertexKey]) -> Result<Vec<Vertex>, StoreError> {
+        let mut out = Vec::with_capacity(keys.len());
+        for &k in keys {
+            if let Some(v) = self.get_vertex(k)? {
+                out.push(v);
+            }
+        }
+        Ok(out)
+    }
 
     /// Fetch a committed vertex's out-degree and in-degree; `None` if absent.
     /// Implementations should register the key in an OCC read-set.
-    fn get_vertex_degree(&mut self, key: VertexKey) -> Result<Option<(u32, u32)>, StoreError>; // Retrieves the degree of a vertex.
+    fn get_vertex_degree(&mut self, key: VertexKey) -> Result<Option<(u32, u32)>, StoreError>;
 
     /// Fetch a single committed edge record; `None` if absent.
     fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<Edge>, StoreError>;
 
-    /// Scan committed edges incident to `vertex` in `direction`.
-    ///
-    /// - `label`: restrict to edges with this label id when `Some`.
-    /// - `dst`:   restrict to edges whose remote endpoint is in the slice when `Some`.
-    /// - `limit`: limit the number of returned edges when `Some`.
-    fn get_edges(
+    /// Fetch multiple edges in batch, registering them in OCC read-set.
+    fn get_edges(&mut self, keys: &[EdgeKey]) -> Result<Vec<Edge>, StoreError> {
+        let mut out = Vec::with_capacity(keys.len());
+        for k in keys {
+            if let Some(e) = self.get_edge(k)? {
+                out.push(e);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Scan committed edges adjacent to `vertex` in `direction`.
+    fn get_adjacent_edges(
         &mut self,
         vertex: VertexKey,
         direction: Direction,
-        label: Option<LabelId>,
-        dst: Option<&[VertexKey]>,
+        opts: AdjacentEdgesOptions<'_>,
         limit: Option<u32>,
-    ) -> Result<Vec<Edge>, StoreError>;
+    ) -> Result<(Vec<Edge>, Option<AdjacentEdgeCursor>), StoreError>;
+
+    /// Scan all vertices in the database in batch mode.
+    fn scan_vertices(
+        &mut self,
+        _label: Option<LabelId>,
+        _start_from: Option<VertexKey>,
+        _limit: u32,
+    ) -> Result<(Vec<Vertex>, Option<VertexKey>), StoreError> {
+        Err(StoreError::UnsupportedOperation("scan_vertices is not supported".to_string()))
+    }
+
+    /// Scan all unique canonical edges in the database in batch mode.
+    fn scan_edges(
+        &mut self,
+        _label: Option<LabelId>,
+        _start_from: Option<CanonicalEdgeKey>,
+        _limit: u32,
+    ) -> Result<(Vec<Edge>, Option<CanonicalEdgeKey>), StoreError> {
+        Err(StoreError::UnsupportedOperation("scan_edges is not supported".to_string()))
+    }
 
     // ── Writes ────────────────────────────────────────────────────────────────
 

@@ -25,7 +25,11 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{error::StoreError, Direction, GValue, LabelId, VertexKey},
+    types::{
+        error::StoreError,
+        keys::{AdjacentEdgeCursor, AdjacentEdgesOptions},
+        Direction, GValue, LabelId, VertexKey,
+    },
 };
 
 /// A physical step that traverses both incoming and outgoing edges from a vertex, returning the edges themselves.
@@ -38,6 +42,7 @@ pub struct BothEStep {
     current_input: Option<Rc<Traverser>>,
     current_label_idx: usize,
     current_direction: Direction, // 0 = out, 1 = in
+    cursor: Option<AdjacentEdgeCursor>,
 }
 
 impl BothEStep {
@@ -51,18 +56,17 @@ impl BothEStep {
             current_input: None,
             current_label_idx: 0,
             current_direction: Direction::OUT,
+            cursor: None,
         }
     }
 }
 
 impl CoreStep for BothEStep {
     fn add_upper(&mut self, upstream: StepRef) {
-        // Sets the upstream step for this traversal.
         self.upstream = Some(upstream);
     }
 
     fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
-        // Produces traversers representing incident edges from both outgoing and incoming directions.
         loop {
             if self.current_input.is_none() {
                 let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
@@ -71,6 +75,7 @@ impl CoreStep for BothEStep {
                     self.current_input = Some(t);
                     self.current_label_idx = 0;
                     self.current_direction = Direction::OUT;
+                    self.cursor = None;
                 } else {
                     continue;
                 }
@@ -82,37 +87,43 @@ impl CoreStep for BothEStep {
 
                 let mut results = SmallVec::new();
                 if self.current_direction == Direction::OUT {
-                    let edges = ctx.get_adjacent_edges(
-                        *vk,
+                    let opts = AdjacentEdgesOptions {
                         label,
-                        self.current_direction,
-                        self.end_vertex_ids.as_deref(),
-                        self.limit,
-                    )?;
+                        dst: self.end_vertex_ids.as_deref(),
+                        rank: None,
+                        start_from: self.cursor,
+                    };
+                    let (edges, next_cursor) = ctx.get_adjacent_edges(*vk, self.current_direction, opts, self.limit)?;
+                    self.cursor = next_cursor;
                     for edge in edges {
                         results.push(Traverser::new_rc_with_parent(GValue::Edge(edge), Rc::clone(&t)));
                     }
-                    self.current_direction = Direction::IN;
+                    if self.cursor.is_none() {
+                        self.current_direction = Direction::IN;
+                    }
                     if !results.is_empty() {
                         return Ok(Some(results));
                     }
                 }
 
                 if self.current_direction == Direction::IN {
-                    let edges = ctx.get_adjacent_edges(
-                        *vk,
+                    let opts = AdjacentEdgesOptions {
                         label,
-                        self.current_direction,
-                        self.end_vertex_ids.as_deref(),
-                        self.limit,
-                    )?;
+                        dst: self.end_vertex_ids.as_deref(),
+                        rank: None,
+                        start_from: self.cursor,
+                    };
+                    let (edges, next_cursor) = ctx.get_adjacent_edges(*vk, self.current_direction, opts, self.limit)?;
+                    self.cursor = next_cursor;
                     for edge in edges {
                         results.push(Traverser::new_rc_with_parent(GValue::Edge(edge), Rc::clone(&t)));
                     }
-                    self.current_direction = Direction::OUT;
-                    self.current_label_idx += 1;
-                    if self.label_ids.is_empty() || self.current_label_idx >= self.label_ids.len() {
-                        self.current_input = None;
+                    if self.cursor.is_none() {
+                        self.current_direction = Direction::OUT;
+                        self.current_label_idx += 1;
+                        if self.label_ids.is_empty() || self.current_label_idx >= self.label_ids.len() {
+                            self.current_input = None;
+                        }
                     }
                     if !results.is_empty() {
                         return Ok(Some(results));
@@ -125,17 +136,16 @@ impl CoreStep for BothEStep {
     }
 
     fn reset(&mut self) {
-        // Resets the state of this step, its upstream, and its internal direction/label counters.
         if let Some(up) = &self.upstream {
             up.reset();
         }
         self.current_input = None;
         self.current_label_idx = 0;
         self.current_direction = Direction::OUT;
+        self.cursor = None;
     }
 
     fn upper(&self) -> Option<StepRef> {
-        // Returns a clone of the upstream step reference.
         self.upstream.clone()
     }
 }

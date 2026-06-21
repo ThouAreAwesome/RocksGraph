@@ -78,7 +78,10 @@ use crate::{
     store::traits::{GraphSnapshot, GraphStore, GraphTransaction},
     types::{
         element::{Edge, Property, Vertex},
-        keys::{CanonicalEdgeKey, CanonicalKey, Direction, EdgeKey, LabelId, VertexKey},
+        keys::{
+            AdjacentEdgeCursor, AdjacentEdgesOptions, CanonicalEdgeKey, CanonicalKey, Direction, EdgeKey, LabelId,
+            VertexKey,
+        },
         prop_key::PropKey,
         Primitive, StoreError,
     },
@@ -238,46 +241,232 @@ impl<S: GraphStore> LogicalGraph<S> {
         Ok(Some(*key))
     }
 
-    /// Scan edges incident to `vertex` in `direction`, merging committed data
-    /// with the in-memory dirty overlay. Tombstoned edges are filtered out.
-    ///
-    /// Returns `EdgeKey` values in the requested direction.
-    pub(crate) fn get_edges(
+    pub(crate) fn get_vertices(&mut self, keys: &[VertexKey]) -> Result<Vec<VertexKey>, StoreError> {
+        let mut missing_keys = Vec::new();
+        for &k in keys {
+            if !self.vertices.contains_key(&k)
+                && self.dirty.get(&CanonicalKey::Vertex(k)) != Some(&Existence::Tombstone)
+            {
+                missing_keys.push(k);
+            }
+        }
+        if !missing_keys.is_empty() {
+            let fetched = self.store.get_vertices(&missing_keys)?;
+            for vt in fetched {
+                self.vertices.insert(vt.id, vt);
+            }
+        }
+        let mut result = Vec::new();
+        for &k in keys {
+            if self.vertices.contains_key(&k) && self.dirty.get(&CanonicalKey::Vertex(k)) != Some(&Existence::Tombstone)
+            {
+                result.push(k);
+            }
+        }
+        Ok(result)
+    }
+
+    pub(crate) fn get_edges(&mut self, keys: &[EdgeKey]) -> Result<Vec<EdgeKey>, StoreError> {
+        let mut missing_keys = Vec::new();
+        for k in keys {
+            let cek = k.canonical_edge_key();
+            if !self.edges.contains_key(&cek) && self.dirty.get(&CanonicalKey::Edge(cek)) != Some(&Existence::Tombstone)
+            {
+                missing_keys.push(*k);
+            }
+        }
+        if !missing_keys.is_empty() {
+            let fetched = self.store.get_edges(&missing_keys)?;
+            for eg in fetched {
+                self.edges.insert(eg.canonical_key(), eg);
+            }
+        }
+        let mut result = Vec::new();
+        for k in keys {
+            let cek = k.canonical_edge_key();
+            if self.edges.contains_key(&cek) && self.dirty.get(&CanonicalKey::Edge(cek)) != Some(&Existence::Tombstone)
+            {
+                result.push(*k);
+            }
+        }
+        Ok(result)
+    }
+
+    pub(crate) fn get_adjacent_edges(
         &mut self,
         vertex: VertexKey,
         direction: Direction,
-        label: Option<LabelId>,
-        dst: Option<&[VertexKey]>,
+        opts: AdjacentEdgesOptions<'_>,
         limit: Option<u32>,
-    ) -> Result<Vec<EdgeKey>, StoreError> {
-        // Phase 1: populate overlay from store (mutable).
-        let committed = self.store.get_edges(vertex, direction, label, dst, limit)?;
+    ) -> Result<(Vec<EdgeKey>, Option<AdjacentEdgeCursor>), StoreError> {
+        let (committed, cursor) = self.store.get_adjacent_edges(vertex, direction, opts, limit)?;
         for edge in committed {
             let cek = edge.canonical_key();
             self.edges.entry(cek).or_insert(edge);
         }
-        // Phase 2: collect from overlay (immutable, returns refs into self.edges).
+
+        let mut matching = Vec::new();
         let dirty = &self.dirty;
-        let mut result = Vec::new();
         for (&cek, edge) in &self.edges {
-            if let Some(l) = limit {
-                if result.len() >= l as usize {
-                    break;
-                }
-            }
             if dirty.get(&CanonicalKey::Edge(cek)) == Some(&Existence::Tombstone) {
                 continue;
             }
-            if !edge_matches(edge, vertex, direction, label, dst) {
+            if !edge_matches(edge, vertex, direction, opts.label, opts.dst) {
                 continue;
             }
+            if let Some(r) = opts.rank {
+                if edge.rank != r {
+                    continue;
+                }
+            }
+            if let Some(last_committed) = cursor {
+                let edge_cursor = AdjacentEdgeCursor::from_edge(edge, direction);
+                if edge_cursor > last_committed {
+                    continue;
+                }
+            }
+            matching.push(edge);
+        }
+
+        matching.sort_by(|a, b| {
+            let cursor_a = AdjacentEdgeCursor::from_edge(a, direction);
+            let cursor_b = AdjacentEdgeCursor::from_edge(b, direction);
+            cursor_a.cmp(&cursor_b)
+        });
+
+        let mut start_idx = 0;
+        if let Some(start_cursor) = opts.start_from {
+            if let Some(pos) = matching.iter().position(|e| AdjacentEdgeCursor::from_edge(e, direction) == start_cursor)
+            {
+                start_idx = pos + 1;
+            } else {
+                start_idx = matching
+                    .iter()
+                    .position(|e| AdjacentEdgeCursor::from_edge(e, direction) > start_cursor)
+                    .unwrap_or(matching.len());
+            }
+        }
+
+        let limit_val = limit.unwrap_or(u32::MAX) as usize;
+        let end_idx = std::cmp::min(start_idx + limit_val, matching.len());
+        let mut result = Vec::new();
+        for edge in &matching[start_idx..end_idx] {
+            let cek = edge.canonical_key();
             let physical_key = match direction {
                 Direction::OUT => cek.out_key(),
                 Direction::IN => cek.in_key(),
             };
             result.push(physical_key);
         }
-        Ok(result)
+
+        let next_cursor = if end_idx < matching.len() {
+            Some(AdjacentEdgeCursor::from_edge(matching[end_idx - 1], direction))
+        } else {
+            cursor
+        };
+
+        Ok((result, next_cursor))
+    }
+
+    pub(crate) fn scan_vertices(
+        &mut self,
+        label: Option<LabelId>,
+        start_from: Option<VertexKey>,
+        limit: u32,
+    ) -> Result<(Vec<VertexKey>, Option<VertexKey>), StoreError> {
+        let (committed, cursor) = self.store.scan_vertices(label, start_from, limit)?;
+        for vt in committed {
+            self.vertices.entry(vt.id).or_insert(vt);
+        }
+
+        let mut matching = Vec::new();
+        let dirty = &self.dirty;
+        for (&vk, vt) in &self.vertices {
+            if dirty.get(&CanonicalKey::Vertex(vk)) == Some(&Existence::Tombstone) {
+                continue;
+            }
+            if let Some(lbl) = label {
+                if vt.label_id != lbl {
+                    continue;
+                }
+            }
+            if let Some(last_committed) = cursor {
+                if vk > last_committed {
+                    continue;
+                }
+            }
+            matching.push(vk);
+        }
+
+        matching.sort();
+
+        let mut start_idx = 0;
+        if let Some(start_vk) = start_from {
+            if let Some(pos) = matching.iter().position(|&vk| vk == start_vk) {
+                start_idx = pos + 1;
+            } else {
+                start_idx = matching.iter().position(|&vk| vk > start_vk).unwrap_or(matching.len());
+            }
+        }
+
+        let limit_val = limit as usize;
+        let end_idx = std::cmp::min(start_idx + limit_val, matching.len());
+        let result = matching[start_idx..end_idx].to_vec();
+
+        let next_cursor = if end_idx < matching.len() { Some(matching[end_idx - 1]) } else { cursor };
+
+        Ok((result, next_cursor))
+    }
+
+    pub(crate) fn scan_edges(
+        &mut self,
+        label: Option<LabelId>,
+        start_from: Option<CanonicalEdgeKey>,
+        limit: u32,
+    ) -> Result<(Vec<EdgeKey>, Option<CanonicalEdgeKey>), StoreError> {
+        let (committed, cursor) = self.store.scan_edges(label, start_from, limit)?;
+        for edge in committed {
+            let cek = edge.canonical_key();
+            self.edges.entry(cek).or_insert(edge);
+        }
+
+        let mut matching = Vec::new();
+        let dirty = &self.dirty;
+        for (&cek, edge) in &self.edges {
+            if dirty.get(&CanonicalKey::Edge(cek)) == Some(&Existence::Tombstone) {
+                continue;
+            }
+            if let Some(lbl) = label {
+                if edge.label_id != lbl {
+                    continue;
+                }
+            }
+            if let Some(last_committed) = cursor {
+                if cek > last_committed {
+                    continue;
+                }
+            }
+            matching.push(cek);
+        }
+
+        matching.sort();
+
+        let mut start_idx = 0;
+        if let Some(start_cek) = start_from {
+            if let Some(pos) = matching.iter().position(|&cek| cek == start_cek) {
+                start_idx = pos + 1;
+            } else {
+                start_idx = matching.iter().position(|&cek| cek > start_cek).unwrap_or(matching.len());
+            }
+        }
+
+        let limit_val = limit as usize;
+        let end_idx = std::cmp::min(start_idx + limit_val, matching.len());
+        let result = matching[start_idx..end_idx].iter().map(|cek| cek.out_key()).collect();
+
+        let next_cursor = if end_idx < matching.len() { Some(matching[end_idx - 1]) } else { cursor };
+
+        Ok((result, next_cursor))
     }
 
     /// Read a single property from a vertex or edge.
@@ -692,22 +881,22 @@ impl<S: GraphStore> LogicalGraph<S> {
         for (key, existence) in dirty {
             match (key, existence) {
                 (CanonicalKey::Vertex(id), Existence::New) => {
-                    let v = self.vertices.get(&id).expect("dirty vertex key not in vertices");
-                    self.store.put_vertex(id, v.label_id, &v.props)?;
+                    let v = self.vertices.get_mut(&id).expect("dirty vertex key not in vertices");
+                    self.store.put_vertex(id, v.label_id, v.all_props())?;
                     let (out_e, in_e) = self.vertex_degree[&id];
                     self.store.put_vertex_degree(id, out_e, in_e)?;
                 }
                 (CanonicalKey::Vertex(id), Existence::Modified) => {
-                    let v = self.vertices.get(&id).expect("dirty vertex key not in vertices");
-                    self.store.put_vertex(id, v.label_id, &v.props)?;
+                    let v = self.vertices.get_mut(&id).expect("dirty vertex key not in vertices");
+                    self.store.put_vertex(id, v.label_id, v.all_props())?;
                 }
                 (CanonicalKey::Vertex(id), Existence::CounterOnly) => {
                     let (out_e, in_e) = self.vertex_degree[&id];
                     self.store.put_vertex_degree(id, out_e, in_e)?;
                 }
                 (CanonicalKey::Vertex(id), Existence::ModifiedWithCounter) => {
-                    let v = self.vertices.get(&id).expect("dirty vertex key not in vertices");
-                    self.store.put_vertex(id, v.label_id, &v.props)?;
+                    let v = self.vertices.get_mut(&id).expect("dirty vertex key not in vertices");
+                    self.store.put_vertex(id, v.label_id, v.all_props())?;
                     let (out_e, in_e) = self.vertex_degree[&id];
                     self.store.put_vertex_degree(id, out_e, in_e)?;
                 }
@@ -719,9 +908,9 @@ impl<S: GraphStore> LogicalGraph<S> {
                     CanonicalKey::Edge(ek),
                     Existence::New | Existence::Modified | Existence::CounterOnly | Existence::ModifiedWithCounter,
                 ) => {
-                    let e = self.edges.get(&ek).expect("dirty edge key not in edges");
-                    self.store.put_edge(&ek.out_key(), &e.props)?;
-                    self.store.put_edge(&ek.in_key(), &e.props)?;
+                    let e = self.edges.get_mut(&ek).expect("dirty edge key not in edges");
+                    self.store.put_edge(&ek.out_key(), e.all_props())?;
+                    self.store.put_edge(&ek.in_key(), e.all_props())?;
                 }
                 (CanonicalKey::Edge(cek), Existence::Tombstone) => {
                     self.store.delete_edge(&cek.out_key())?;
@@ -806,20 +995,60 @@ impl<S: GraphStore> LogicalSnapshot<S> {
         Ok(Some(*key))
     }
 
-    pub(crate) fn get_edges(
+    pub(crate) fn get_vertices(&mut self, keys: &[VertexKey]) -> Result<Vec<VertexKey>, StoreError> {
+        let mut missing_keys = Vec::new();
+        for &k in keys {
+            if !self.vertices.contains_key(&k) {
+                missing_keys.push(k);
+            }
+        }
+        if !missing_keys.is_empty() {
+            let fetched = self.store.get_vertices(&missing_keys)?;
+            for vt in fetched {
+                self.vertices.insert(vt.id, vt);
+            }
+        }
+        let mut result = Vec::new();
+        for &k in keys {
+            if self.vertices.contains_key(&k) {
+                result.push(k);
+            }
+        }
+        Ok(result)
+    }
+
+    pub(crate) fn get_edges(&mut self, keys: &[EdgeKey]) -> Result<Vec<EdgeKey>, StoreError> {
+        let mut missing_keys = Vec::new();
+        for k in keys {
+            let cek = k.canonical_edge_key();
+            if !self.edges.contains_key(&cek) {
+                missing_keys.push(*k);
+            }
+        }
+        if !missing_keys.is_empty() {
+            let fetched = self.store.get_edges(&missing_keys)?;
+            for eg in fetched {
+                self.edges.insert(eg.canonical_key(), eg);
+            }
+        }
+        let mut result = Vec::new();
+        for k in keys {
+            let cek = k.canonical_edge_key();
+            if self.edges.contains_key(&cek) {
+                result.push(*k);
+            }
+        }
+        Ok(result)
+    }
+
+    pub(crate) fn get_adjacent_edges(
         &mut self,
         vertex: VertexKey,
         direction: Direction,
-        label: Option<LabelId>,
-        dst: Option<&[VertexKey]>,
+        opts: AdjacentEdgesOptions<'_>,
         limit: Option<u32>,
-    ) -> Result<Vec<EdgeKey>, StoreError> {
-        // The store's RocksDB snapshot is the authoritative source — no dirty
-        // overlay exists on a read-only session. Return store results directly.
-        // We still populate the edge cache as a side effect so that subsequent
-        // ValuesStep / PropertiesStep calls can look up edge properties in O(1)
-        // by canonical key without issuing a second store read.
-        let committed = self.store.get_edges(vertex, direction, label, dst, limit)?;
+    ) -> Result<(Vec<EdgeKey>, Option<AdjacentEdgeCursor>), StoreError> {
+        let (committed, cursor) = self.store.get_adjacent_edges(vertex, direction, opts, limit)?;
         let mut result = Vec::with_capacity(committed.len());
         for edge in committed {
             let cek = edge.canonical_key();
@@ -829,7 +1058,38 @@ impl<S: GraphStore> LogicalSnapshot<S> {
             });
             self.edges.entry(cek).or_insert(edge);
         }
-        Ok(result)
+        Ok((result, cursor))
+    }
+
+    pub(crate) fn scan_vertices(
+        &mut self,
+        label: Option<LabelId>,
+        start_from: Option<VertexKey>,
+        limit: u32,
+    ) -> Result<(Vec<VertexKey>, Option<VertexKey>), StoreError> {
+        let (committed, cursor) = self.store.scan_vertices(label, start_from, limit)?;
+        let mut result = Vec::with_capacity(committed.len());
+        for vt in committed {
+            result.push(vt.id);
+            self.vertices.entry(vt.id).or_insert(vt);
+        }
+        Ok((result, cursor))
+    }
+
+    pub(crate) fn scan_edges(
+        &mut self,
+        label: Option<LabelId>,
+        start_from: Option<CanonicalEdgeKey>,
+        limit: u32,
+    ) -> Result<(Vec<EdgeKey>, Option<CanonicalEdgeKey>), StoreError> {
+        let (committed, cursor) = self.store.scan_edges(label, start_from, limit)?;
+        let mut result = Vec::with_capacity(committed.len());
+        for edge in committed {
+            let cek = edge.canonical_key();
+            result.push(cek.out_key());
+            self.edges.entry(cek).or_insert(edge);
+        }
+        Ok((result, cursor))
     }
 
     pub(crate) fn get_property(&mut self, key: &CanonicalKey, prop: &PropKey) -> Result<Option<Property>, StoreError> {
@@ -950,7 +1210,7 @@ mod tests {
         types::{
             element::Property,
             gvalue::Primitive,
-            keys::{CanonicalEdgeKey, CanonicalKey, Direction},
+            keys::{AdjacentEdgesOptions, CanonicalEdgeKey, CanonicalKey, Direction, EdgeKey, LabelId, VertexKey},
             StoreError,
         },
     };
@@ -967,6 +1227,24 @@ mod tests {
 
     fn cek(src: i64, label: u16, dst: i64) -> CanonicalEdgeKey {
         CanonicalEdgeKey { src_id: src, label_id: label, rank: 0, dst_id: dst }
+    }
+
+    fn get_adjacent_edges_test(
+        c: &mut LogicalGraph<RocksStorage>,
+        vertex: VertexKey,
+        direction: Direction,
+        label: Option<LabelId>,
+        dst: Option<&[VertexKey]>,
+        limit: Option<u32>,
+    ) -> Vec<EdgeKey> {
+        c.get_adjacent_edges(
+            vertex,
+            direction,
+            AdjacentEdgesOptions { label, dst, rank: None, start_from: None },
+            limit,
+        )
+        .unwrap()
+        .0
     }
 
     // ── add_vertex / get_vertex ───────────────────────────────────────────────
@@ -1536,10 +1814,10 @@ mod tests {
             key
         };
 
-        let fv = store.get_vertex(id).unwrap().unwrap();
+        let mut fv = store.get_vertex(id).unwrap().unwrap();
         assert_eq!(fv.label_id, 7);
-        assert_eq!(fv.props.len(), 1);
-        assert_eq!(fv.props[0].value, Primitive::String(SmolStr::new("Alice")));
+        assert_eq!(fv.all_props().len(), 1);
+        assert_eq!(fv.all_props()[0].value, Primitive::String(SmolStr::new("Alice")));
     }
 
     #[test]
@@ -1561,11 +1839,11 @@ mod tests {
             c.commit().unwrap();
         }
 
-        let edges = store.get_edges(v1, Direction::OUT, None, None, None).unwrap();
+        let mut edges = store.get_edges(v1, Direction::OUT, None, None, None).unwrap();
         assert_eq!(edges.len(), 1);
-        let e = &edges[0];
-        assert_eq!(e.props.len(), 1);
-        assert_eq!(e.props[0].value, Primitive::Int32(99));
+        let e = &mut edges[0];
+        assert_eq!(e.all_props().len(), 1);
+        assert_eq!(e.all_props()[0].value, Primitive::Int32(99));
     }
 
     #[test]
@@ -1625,7 +1903,7 @@ mod tests {
         c.add_edge(&cek(v1, 1, v10).out_key()).unwrap();
         c.add_edge(&cek(v1, 1, v20).out_key()).unwrap();
 
-        let edges = c.get_edges(v1, Direction::OUT, None, None, None).unwrap();
+        let edges = get_adjacent_edges_test(&mut c, v1, Direction::OUT, None, None, None);
         assert_eq!(edges.len(), 2);
     }
 
@@ -1640,7 +1918,7 @@ mod tests {
         c.add_edge(&cek(v1, 1, v20).out_key()).unwrap();
         c.drop_element(&CanonicalKey::Edge(cek(v1, 1, v10))).unwrap();
 
-        let edges = c.get_edges(v1, Direction::OUT, None, None, None).unwrap();
+        let edges = get_adjacent_edges_test(&mut c, v1, Direction::OUT, None, None, None);
         assert_eq!(edges.len(), 1);
     }
 
@@ -1652,13 +1930,13 @@ mod tests {
         let v2 = c.add_vertex(2, 1).unwrap();
         c.add_edge(&cek(v1, 1, v2).out_key()).unwrap();
 
-        let out = c.get_edges(v1, Direction::OUT, None, None, None).unwrap();
-        let in_ = c.get_edges(v2, Direction::IN, None, None, None).unwrap();
+        let out = get_adjacent_edges_test(&mut c, v1, Direction::OUT, None, None, None);
+        let in_ = get_adjacent_edges_test(&mut c, v2, Direction::IN, None, None, None);
         assert_eq!(out.len(), 1);
         assert_eq!(in_.len(), 1);
         // Vertex v1 has no incoming edges; vertex v2 has no outgoing.
-        assert!(c.get_edges(v1, Direction::IN, None, None, None).unwrap().is_empty());
-        assert!(c.get_edges(v2, Direction::OUT, None, None, None).unwrap().is_empty());
+        assert!(get_adjacent_edges_test(&mut c, v1, Direction::IN, None, None, None).is_empty());
+        assert!(get_adjacent_edges_test(&mut c, v2, Direction::OUT, None, None, None).is_empty());
     }
 
     #[test]
@@ -1673,11 +1951,11 @@ mod tests {
         c.add_edge(&cek(v1, 2, v20).out_key()).unwrap();
         c.add_edge(&cek(v1, 1, v30).out_key()).unwrap();
 
-        let label1 = c.get_edges(v1, Direction::OUT, Some(1), None, None).unwrap();
+        let label1 = get_adjacent_edges_test(&mut c, v1, Direction::OUT, Some(1), None, None);
         assert_eq!(label1.len(), 2);
         assert!(label1.iter().all(|ek| ek.label_id == 1));
 
-        let label2 = c.get_edges(v1, Direction::OUT, Some(2), None, None).unwrap();
+        let label2 = get_adjacent_edges_test(&mut c, v1, Direction::OUT, Some(2), None, None);
         assert_eq!(label2.len(), 1);
     }
 
@@ -1693,7 +1971,7 @@ mod tests {
         c.add_edge(&cek(v1, 1, v20).out_key()).unwrap();
         c.add_edge(&cek(v1, 1, v30).out_key()).unwrap();
 
-        let result = c.get_edges(v1, Direction::OUT, None, Some(&[v10, v30]), None).unwrap();
+        let result = get_adjacent_edges_test(&mut c, v1, Direction::OUT, None, Some(&[v10, v30]), None);
         assert_eq!(result.len(), 2);
         let mut secondaries: Vec<i64> = result.iter().map(|ek| ek.secondary_id).collect();
         secondaries.sort_unstable();
@@ -1714,7 +1992,7 @@ mod tests {
         c.add_edge(&cek(v1, 1, v20).out_key()).unwrap();
         c.add_edge(&cek(v1, 1, v30).out_key()).unwrap();
 
-        let result = c.get_edges(v1, Direction::OUT, None, None, Some(2)).unwrap();
+        let result = get_adjacent_edges_test(&mut c, v1, Direction::OUT, None, None, Some(2));
         assert_eq!(result.len(), 2);
     }
 
@@ -1741,7 +2019,7 @@ mod tests {
 
         let mut c = ctx(&store);
         c.add_edge(&cek(v1, 1, v20).out_key()).unwrap();
-        let edges = c.get_edges(v1, Direction::OUT, None, None, None).unwrap();
+        let edges = get_adjacent_edges_test(&mut c, v1, Direction::OUT, None, None, None);
         assert_eq!(edges.len(), 2);
     }
 
@@ -2544,7 +2822,7 @@ mod tests {
 
         // A final context must see all 4 outgoing edges from hub.
         let mut c = ctx(&store);
-        let out = c.get_edges(hub, Direction::OUT, Some(1), None, None).unwrap();
+        let out = get_adjacent_edges_test(&mut c, hub, Direction::OUT, Some(1), None, None);
         assert_eq!(out.len(), 4);
 
         // check vertex counter is correct after multiple contexts
@@ -2561,7 +2839,7 @@ mod tests {
 
         // Each spoke has exactly one incoming edge from hub.
         for &spoke in &spokes {
-            let in_edges = c.get_edges(spoke, Direction::IN, Some(1), None, None).unwrap();
+            let in_edges = get_adjacent_edges_test(&mut c, spoke, Direction::IN, Some(1), None, None);
             assert_eq!(in_edges.len(), 1);
             assert_eq!(in_edges[0].secondary_id, hub);
         }
@@ -2668,7 +2946,7 @@ mod tests {
         assert_eq!(london_in_e, 2);
 
         // Both outgoing "lives_in" edges from Alice land at London.
-        let alice_out = c.get_edges(alice, Direction::OUT, Some(2), None, None).unwrap();
+        let alice_out = get_adjacent_edges_test(&mut c, alice, Direction::OUT, Some(2), None, None);
         assert_eq!(alice_out.len(), 1);
         let e_ek = alice_out[0];
         assert_eq!(e_ek.secondary_id, london);
@@ -2676,7 +2954,7 @@ mod tests {
         assert_eq!(since_val, Some(Primitive::Int32(2015)));
 
         // London has two incoming edges: one from Alice, one from Bob.
-        let london_in = c.get_edges(london, Direction::IN, Some(2), None, None).unwrap();
+        let london_in = get_adjacent_edges_test(&mut c, london, Direction::IN, Some(2), None, None);
         assert_eq!(london_in.len(), 2);
         let mut src_ids: Vec<i64> = london_in.iter().map(|ek| ek.secondary_id).collect();
         src_ids.sort_unstable();
@@ -2684,7 +2962,8 @@ mod tests {
     }
 
     // Tests that operations depending on vertex counters (like adding an edge or dropping the vertex)
-    // fail gracefully when the vertex is deleted by a concurrent transaction.
+    // succeed during the transaction due to snapshot isolation but fail with a Conflict at commit time
+    // when the vertex is deleted concurrently by another transaction.
     #[test]
     fn concurrent_vertex_deletion_fails_dependent_operations() {
         let (store, _dir) = open();
@@ -2692,6 +2971,8 @@ mod tests {
         // step 1, insert a vertex and set properties, commit the transaction txn1
         let mut txn1 = ctx(&store);
         let v1 = txn1.add_vertex(1, 1).unwrap();
+        txn1.add_vertex(2, 1).unwrap();
+        let v3 = txn1.add_vertex(3, 1).unwrap();
         let name_prop = Property {
             owner: CanonicalKey::Vertex(v1),
             key: SmolStr::new("name"),
@@ -2703,22 +2984,237 @@ mod tests {
         // step 2, in a new Transaction txn2, get_vertex
         let mut txn2 = ctx(&store);
         assert!(txn2.get_vertex(v1).unwrap().is_some());
+        assert!(txn2.get_vertex(v3).unwrap().is_some());
 
-        // step 3, the vertex was deleted in another transaction, commit the deleting transaction which should succeed
+        // step 3, the vertices were deleted in another transaction, commit the deleting transaction which should succeed
         let mut txn3 = ctx(&store);
         txn3.drop_element(&CanonicalKey::Vertex(v1)).unwrap();
+        txn3.drop_element(&CanonicalKey::Vertex(v3)).unwrap();
         txn3.commit().unwrap();
 
-        // As a result, adding an edge in txn2 using the deleted vertex should gracefully error out
-        let err = txn2.add_edge(&cek(v1, 5, 2).out_key());
-        assert!(matches!(err, Err(StoreError::NotFound)));
+        // Under Repeatable Reads, adding an edge in txn2 using the vertex (which is still visible in txn2's snapshot) should succeed
+        assert!(txn2.add_edge(&cek(v1, 5, 2).out_key()).is_ok());
 
-        // As a result, dropping the deleted vertex in txn2 should gracefully error out
-        let err = txn2.drop_element(&CanonicalKey::Vertex(v1));
-        assert!(matches!(err, Err(StoreError::NotFound)));
+        // Similarly, dropping v3 in txn2 (still visible, degree 0) should succeed
+        assert!(txn2.drop_element(&CanonicalKey::Vertex(v3)).is_ok());
 
-        // step 4, check that get_vertex in txn2 now returns None for the deleted vertex
-        let counts = txn2.vertex_degree_for_test(v1).unwrap();
-        assert!(counts.is_none());
+        // But when txn2 tries to commit, it should fail with Conflict due to the concurrent deletion committed by txn3
+        let commit_err = txn2.commit();
+        assert!(matches!(commit_err, Err(StoreError::Conflict)));
+    }
+
+    #[test]
+    fn test_logical_scan_vertices_overlays() {
+        let (store, _dir) = open();
+
+        // 1. Add some committed vertices: 1, 2, 3
+        let mut txn = ctx(&store);
+        txn.add_vertex(1, 1).unwrap();
+        txn.add_vertex(2, 1).unwrap();
+        txn.add_vertex(3, 1).unwrap();
+        txn.commit().unwrap();
+
+        // 2. Start a new transaction. Add 4 (dirty new), delete 2 (tombstone)
+        let mut txn = ctx(&store);
+        txn.add_vertex(4, 1).unwrap();
+        txn.drop_element(&CanonicalKey::Vertex(2)).unwrap();
+
+        // 3. Scan vertices with limit 2
+        let (batch1, cursor1) = txn.scan_vertices(None, None, 2).unwrap();
+        assert_eq!(batch1, vec![1]);
+        assert_eq!(cursor1, Some(2));
+
+        // 4. Scan next batch using cursor1
+        let (batch2, cursor2) = txn.scan_vertices(None, cursor1, 2).unwrap();
+        assert_eq!(batch2, vec![3, 4]);
+        assert_eq!(cursor2, None);
+    }
+
+    #[test]
+    fn test_logical_scan_edges_overlays() {
+        let (store, _dir) = open();
+
+        // 1. Add some committed vertices and edges
+        let mut txn = ctx(&store);
+        txn.add_vertex(1, 1).unwrap();
+        txn.add_vertex(2, 1).unwrap();
+        txn.add_vertex(3, 1).unwrap();
+
+        let ek1 = cek(1, 10, 2).out_key();
+        let ek2 = cek(2, 10, 3).out_key();
+        let ek3 = cek(1, 10, 3).out_key();
+
+        txn.add_edge(&ek1).unwrap();
+        txn.add_edge(&ek2).unwrap();
+        txn.add_edge(&ek3).unwrap();
+        txn.commit().unwrap();
+
+        // 2. Start a new transaction. Add ek4 (dirty), delete ek2 (tombstone)
+        let mut txn = ctx(&store);
+        let ek4 = cek(2, 10, 1).out_key();
+        txn.add_edge(&ek4).unwrap();
+
+        // Edge must be loaded into memory before drop
+        txn.get_edge(&ek2).unwrap().unwrap();
+        txn.drop_element(&CanonicalKey::Edge(ek2.canonical_edge_key())).unwrap();
+
+        // 3. Scan edges with limit 2
+        let (batch1, cursor1) = txn.scan_edges(None, None, 2).unwrap();
+        assert_eq!(batch1.len(), 2);
+        assert_eq!(batch1[0], ek1);
+        assert_eq!(batch1[1], ek3);
+        assert_eq!(cursor1, Some(ek3.canonical_edge_key()));
+
+        // 4. Scan next batch using cursor1
+        let (batch2, cursor2) = txn.scan_edges(None, cursor1, 2).unwrap();
+        assert_eq!(batch2.len(), 1);
+        assert_eq!(batch2[0], ek4);
+        assert_eq!(cursor2, None);
+    }
+
+    #[test]
+    fn test_logical_get_adjacent_edges_overlays() {
+        let (store, _dir) = open();
+
+        // 1. Add some committed vertices and edges from vertex 1
+        let mut txn = ctx(&store);
+        txn.add_vertex(1, 1).unwrap();
+        txn.add_vertex(2, 1).unwrap();
+        txn.add_vertex(3, 1).unwrap();
+        txn.add_vertex(4, 1).unwrap();
+
+        let ek1 = cek(1, 10, 2).out_key();
+        let ek2 = cek(1, 10, 3).out_key();
+
+        txn.add_edge(&ek1).unwrap();
+        txn.add_edge(&ek2).unwrap();
+        txn.commit().unwrap();
+
+        // 2. Start a new transaction. Add ek3 (dirty), delete ek2 (tombstone)
+        let mut txn = ctx(&store);
+        let ek3 = cek(1, 10, 4).out_key();
+        txn.add_edge(&ek3).unwrap();
+
+        // Edge must be loaded into memory before drop
+        txn.get_edge(&ek2).unwrap().unwrap();
+        txn.drop_element(&CanonicalKey::Edge(ek2.canonical_edge_key())).unwrap();
+
+        // 3. Scan adjacent edges with limit 1
+        let opts = AdjacentEdgesOptions { label: None, dst: None, rank: None, start_from: None };
+        let (batch1, cursor1) = txn.get_adjacent_edges(1, Direction::OUT, opts, Some(1)).unwrap();
+        assert_eq!(batch1.len(), 1);
+        assert_eq!(batch1[0], ek1);
+        assert!(cursor1.is_some());
+
+        // 4. Scan next batch using cursor1
+        let opts2 = AdjacentEdgesOptions { label: None, dst: None, rank: None, start_from: cursor1 };
+        let (batch2, cursor2) = txn.get_adjacent_edges(1, Direction::OUT, opts2, Some(1)).unwrap();
+        // Since ek2 is tombstoned and the DB scan hit limit 1, ek3 is excluded as it is > ek2.
+        // So batch2 is empty, but cursor2 is Some(ek2).
+        assert_eq!(batch2.len(), 0);
+        assert!(cursor2.is_some());
+
+        // 5. Scan third batch using cursor2
+        let opts3 = AdjacentEdgesOptions { label: None, dst: None, rank: None, start_from: cursor2 };
+        let (batch3, cursor3) = txn.get_adjacent_edges(1, Direction::OUT, opts3, Some(1)).unwrap();
+        // Now database scan reaches the end (cursor is None), so ek3 is included and returned.
+        assert_eq!(batch3.len(), 1);
+        assert_eq!(batch3[0], ek3);
+        assert_eq!(cursor3, None);
+    }
+
+    #[test]
+    fn test_concurrent_scan_isolation() {
+        let (store, _dir) = open();
+
+        // 1. Add some initial committed vertices and edges
+        let mut txn = ctx(&store);
+        txn.add_vertex(1, 1).unwrap();
+        txn.add_vertex(2, 1).unwrap();
+        let ek1 = cek(1, 10, 2).out_key();
+        txn.add_edge(&ek1).unwrap();
+        txn.commit().unwrap();
+
+        // 2. Start Transaction 1. This captures a snapshot.
+        let mut txn1 = ctx(&store);
+
+        // Perform first paginated scans (limit 1)
+        let (v_batch1, v_cursor1) = txn1.scan_vertices(None, None, 1).unwrap();
+        assert_eq!(v_batch1, vec![1]);
+        assert!(v_cursor1.is_some());
+
+        let opts = AdjacentEdgesOptions { label: None, dst: None, rank: None, start_from: None };
+        let (e_batch1, e_cursor1) = txn1.get_adjacent_edges(1, Direction::OUT, opts, Some(1)).unwrap();
+        assert_eq!(e_batch1.len(), 1);
+        assert_eq!(e_batch1[0], ek1);
+
+        // 3. Start Transaction 2 concurrently. Add vertex 3 and edge 1 -> 10 -> 3, then commit it.
+        let mut txn2 = ctx(&store);
+        txn2.add_vertex(3, 1).unwrap();
+        let ek2 = cek(1, 10, 3).out_key();
+        txn2.add_edge(&ek2).unwrap();
+        txn2.commit().unwrap();
+
+        // 4. Continue pagination in Transaction 1.
+        // Under Snapshot Isolation, subsequent pagination requests do NOT see
+        // concurrently committed inserts that occurred after Transaction 1 started.
+        let (v_batch2, v_cursor2) = txn1.scan_vertices(None, v_cursor1, 1).unwrap();
+        assert_eq!(v_batch2, vec![2]);
+        assert_eq!(v_cursor2, Some(2));
+
+        // A third scan reaches the end of the snapshot (vertex 3 is isolated/invisible)
+        let (v_batch2_next, v_cursor2_next) = txn1.scan_vertices(None, v_cursor2, 1).unwrap();
+        assert_eq!(v_batch2_next.len(), 0);
+        assert_eq!(v_cursor2_next, None);
+
+        let opts2 = AdjacentEdgesOptions { label: None, dst: None, rank: None, start_from: e_cursor1 };
+        let (e_batch2, e_cursor2) = txn1.get_adjacent_edges(1, Direction::OUT, opts2, Some(1)).unwrap();
+        // The concurrently committed edge ek2 is not visible (isolated)
+        assert_eq!(e_batch2.len(), 0);
+        assert_eq!(e_cursor2, None);
+
+        // 5. Start a new Transaction 3. It should see vertex 3 and edge ek2.
+        let mut txn3 = ctx(&store);
+        let (v_batch3, _) = txn3.scan_vertices(None, None, 10).unwrap();
+        assert!(v_batch3.contains(&3));
+
+        let (e_batch3, _) = txn3.get_adjacent_edges(1, Direction::OUT, opts, Some(10)).unwrap();
+        assert!(e_batch3.contains(&ek2));
+    }
+
+    #[test]
+    fn test_snapshot_scan_isolation() {
+        let (store, _dir) = open();
+
+        // 1. Add some initial committed vertices
+        let mut txn = ctx(&store);
+        txn.add_vertex(1, 1).unwrap();
+        txn.add_vertex(2, 1).unwrap();
+        txn.commit().unwrap();
+
+        // 2. Open a read snapshot (LogicalSnapshot)
+        // S::Snapshot represents the snapshot type. For RocksStorage, it's Snapshot.
+        let mut snap = crate::graph::LogicalSnapshot::<RocksStorage>::new(store.snapshot());
+
+        // Perform first paginated scan (limit 1)
+        let (v_batch1, v_cursor1) = snap.scan_vertices(None, None, 1).unwrap();
+        assert_eq!(v_batch1, vec![1]);
+
+        // 3. Start a transaction concurrently to insert vertex 3 and commit it
+        let mut txn2 = ctx(&store);
+        txn2.add_vertex(3, 1).unwrap();
+        txn2.commit().unwrap();
+
+        // 4. Continue pagination in the snapshot
+        // Unlike LogicalGraph transactions, the LogicalSnapshot MUST isolate us from concurrent inserts.
+        // So it should NOT see vertex 3!
+        let (v_batch2, v_cursor2) = snap.scan_vertices(None, v_cursor1, 1).unwrap();
+        assert_eq!(v_batch2, vec![2]);
+        assert_eq!(v_cursor2, Some(2)); // Hit limit 1, so cursor is Some(2)
+
+        // A third scan reaches the end of the snapshot (vertex 3 is isolated)
+        let (v_batch3, v_cursor3) = snap.scan_vertices(None, v_cursor2, 1).unwrap();
+        assert_eq!(v_batch3.len(), 0);
+        assert_eq!(v_cursor3, None);
     }
 }

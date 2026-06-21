@@ -56,15 +56,15 @@ use crate::{
     planner::{
         apply_rules,
         logical_step::{
-            AddEStep, AddVStep, BothEStep, BothStep, CoalesceStep, CountStep, DedupStep, DropStep, FoldStep, FromStep,
-            HasIdStep, HasLabelStep, InEStep, InStep, InVStep, LimitStep, LogicalPlan, LogicalStep, OtherVStep,
-            OutEStep, OutStep, OutVStep, PathStep, PropertiesStep, PropertyStep, ScalarFilterStep, ToStep, UnionStep,
-            ValuesStep, WhereStep,
+            AddEStep, AddVStep, BothEStep, BothStep, CoalesceStep, CountStep, DedupStep, DropStep, EStep, FoldStep,
+            FromStep, HasIdStep, HasLabelStep, InEStep, InStep, InVStep, LimitStep, LogicalPlan, LogicalStep,
+            OtherVStep, OutEStep, OutStep, OutVStep, PathStep, PropertiesStep, PropertyStep, ScalarFilterStep, ToStep,
+            UnionStep, ValuesStep, WhereStep,
         },
     },
     types::{
         gvalue::GValue,
-        keys::{CanonicalKey, LabelId},
+        keys::{CanonicalKey, EdgeKey, LabelId},
         StoreError,
     },
 };
@@ -183,6 +183,11 @@ impl GraphTraversal {
 
     pub fn V(mut self, ids: impl IntoIterator<Item = i64>) -> Self {
         self.plan.steps.push(LogicalStep::V(crate::planner::logical_step::VStep { ids: ids.into_iter().collect() }));
+        self
+    }
+
+    pub fn E(mut self, keys: impl IntoIterator<Item = EdgeKey>) -> Self {
+        self.plan.steps.push(LogicalStep::E(EStep { keys: keys.into_iter().collect() }));
         self
     }
 
@@ -384,6 +389,12 @@ pub trait TraversalBuilder: Sized {
     fn V(mut self, ids: impl IntoIterator<Item = i64>) -> Self {
         use crate::planner::logical_step::VStep;
         self.plan_mut().steps.push(LogicalStep::V(VStep { ids: ids.into_iter().collect() }));
+        self
+    }
+
+    #[allow(non_snake_case)]
+    fn E(mut self, keys: impl IntoIterator<Item = EdgeKey>) -> Self {
+        self.plan_mut().steps.push(LogicalStep::E(EStep { keys: keys.into_iter().collect() }));
         self
     }
 

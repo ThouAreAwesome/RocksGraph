@@ -20,9 +20,9 @@
 //! These structs represent the in-memory state of a graph element as it flows
 //! through the engine.  Properties are decoded lazily: a vertex or edge loaded
 //! from the store carries the raw property blob in `raw_props` and only
-//! deserializes it on the first call to [`Vertex::ensure_decoded`] /
-//! [`Edge::ensure_decoded`].  For elements created in-memory (mutations), the
-//! decoded `props` vec is populated directly and `raw_props` is `None`.
+//! deserializes it on first access via one of the public property accessors.
+//! For elements created in-memory (mutations), the decoded `props` vec is
+//! populated directly and `raw_props` is `None`.
 //!
 //! # Relationship to keys
 //!
@@ -33,15 +33,17 @@
 //!
 //! # Property access
 //!
-//! Both [`Vertex`] and [`Edge`] expose two accessors:
+//! Both [`Vertex`] and [`Edge`] expose accessors:
 //!
 //! - `get_property` — returns a [`Property`] wrapper (needed when the property itself must flow downstream as a
 //!   `GValue::Property`).
 //! - `get_value` — returns the bare [`Primitive`] scalar (cheaper when only the value is needed, e.g. in `values()`
 //!   steps).
+//! - `all_props` — returns a shared view of all properties.
+//! - `props_mut` — returns a mutable view of all properties.
 //!
-//! Both accessors take `&mut self` and decode the property blob automatically on
-//! first call — no explicit `ensure_decoded` call is required.
+//! All accessors take `&mut self` and decode the property blob automatically on
+//! first call. No explicit decoding call is required from callers.
 //!
 //! The reserved keys `"id"` and `"label"` are synthesized on-the-fly rather than
 //! stored in `props`, so they are always available.
@@ -55,11 +57,13 @@ use crate::types::{
 
 use std::hash::{Hash, Hasher};
 
+pub type PropDecoder = fn(blob: &[u8], owner: CanonicalKey) -> Option<Vec<Property>>;
+
 // ── Vertex ────────────────────────────────────────────────────────────────
 
 /// The ground-truth vertex record crossing the store ↔ context boundary.
 ///
-/// Returned by `GraphTransaction::get_vertex` and stored inside `LogicalGraph`'s
+/// Returned by `GraphTransaction::get_vertex` and stored inside `LogicalGraph`s
 /// overlay.  Properties are decoded lazily on first access via `get_property`,
 /// `get_value`, `all_props`, or `props_mut`.
 #[derive(Debug)]
@@ -67,10 +71,10 @@ pub struct Vertex {
     pub id: VertexKey,
     pub label_id: LabelId,
     /// Raw property blob from the store. `Some` until first decode, then `None`.
-    raw_props: Option<Box<[u8]>>,
-    /// Decoded properties. Empty until `ensure_decoded()` is called (or `None`
+    raw_props: Option<(Box<[u8]>, PropDecoder)>,
+    /// Decoded properties. Empty until decoded on first property accessor call (or `None`
     /// raw_props means this was constructed with known props already).
-    pub props: Vec<Property>,
+    props: Vec<Property>,
 }
 
 impl Vertex {
@@ -82,18 +86,17 @@ impl Vertex {
 
     /// Construct a vertex from raw store bytes (lazy-decode path).
     ///
-    /// `props` starts empty; call [`ensure_decoded`](Self::ensure_decoded) before
-    /// accessing properties.
+    /// `props` starts empty and is decoded lazily on first property access.
     #[inline]
-    pub fn from_raw(id: VertexKey, label_id: LabelId, raw: Box<[u8]>) -> Self {
-        Vertex { id, label_id, raw_props: Some(raw), props: Vec::new() }
+    pub fn from_raw(id: VertexKey, label_id: LabelId, raw: Box<[u8]>, decoder: PropDecoder) -> Self {
+        Vertex { id, label_id, raw_props: Some((raw, decoder)), props: Vec::new() }
     }
 
     #[inline]
     fn ensure_decoded(&mut self) {
-        if let Some(raw) = self.raw_props.take() {
+        if let Some((raw, decoder)) = self.raw_props.take() {
             let owner = CanonicalKey::Vertex(self.id);
-            self.props = decode_props(&raw, owner).unwrap_or_default();
+            self.props = decoder(&raw, owner).unwrap_or_default();
         }
     }
 
@@ -160,9 +163,9 @@ pub struct Edge {
     pub label_id: LabelId,
     pub dst_id: VertexKey,
     /// Raw property blob from the store. `Some` until first decode, then `None`.
-    raw_props: Option<Box<[u8]>>,
-    /// Decoded properties. Empty until `ensure_decoded()` is called.
-    pub props: Vec<Property>,
+    raw_props: Option<(Box<[u8]>, PropDecoder)>,
+    /// Decoded properties. Empty until decoded on first property accessor call.
+    props: Vec<Property>,
     pub rank: Rank,
 }
 
@@ -180,18 +183,24 @@ impl Edge {
 
     /// Construct an edge from raw store bytes (lazy-decode path).
     ///
-    /// `props` starts empty; call [`ensure_decoded`](Self::ensure_decoded) before
-    /// accessing properties.
-    pub fn from_raw(src_id: VertexKey, label_id: LabelId, dst_id: VertexKey, rank: Rank, raw: Box<[u8]>) -> Self {
-        Edge { src_id, label_id, dst_id, raw_props: Some(raw), props: Vec::new(), rank }
+    /// `props` starts empty and is decoded lazily on first property access.
+    pub fn from_raw(
+        src_id: VertexKey,
+        label_id: LabelId,
+        dst_id: VertexKey,
+        rank: Rank,
+        raw: Box<[u8]>,
+        decoder: PropDecoder,
+    ) -> Self {
+        Edge { src_id, label_id, dst_id, raw_props: Some((raw, decoder)), props: Vec::new(), rank }
     }
 
     fn ensure_decoded(&mut self) {
-        if let Some(raw) = self.raw_props.take() {
+        if let Some((raw, decoder)) = self.raw_props.take() {
             let cek =
                 CanonicalEdgeKey { src_id: self.src_id, label_id: self.label_id, rank: self.rank, dst_id: self.dst_id };
             let owner = CanonicalKey::Edge(cek);
-            self.props = decode_props(&raw, owner).unwrap_or_default();
+            self.props = decoder(&raw, owner).unwrap_or_default();
         }
     }
 
@@ -274,7 +283,7 @@ impl PartialEq for Vertex {
             return false;
         }
         match (&self.raw_props, &other.raw_props) {
-            (Some(a), Some(b)) => a == b,
+            (Some((a, _)), Some((b, _))) => a == b,
             (None, None) => self.props == other.props,
             _ => false,
         }
@@ -293,7 +302,7 @@ impl PartialEq for Edge {
             return false;
         }
         match (&self.raw_props, &other.raw_props) {
-            (Some(a), Some(b)) => a == b,
+            (Some((a, _)), Some((b, _))) => a == b,
             (None, None) => self.props == other.props,
             _ => false,
         }
@@ -321,105 +330,4 @@ impl Hash for Property {
         self.key.hash(state);
         self.value.hash(state);
     }
-}
-
-// ── Property codec ────────────────────────────────────────────────────────────
-
-/// Deserializes the binary property blob produced by `encode_props`.
-///
-/// Returns `None` on any structural error, allowing callers to surface a
-/// `StoreError::CorruptData`.  Used by [`Vertex::ensure_decoded`] and
-/// [`Edge::ensure_decoded`], and by the eager-decode admin path in
-/// `store::rocks::encoding`.
-pub(crate) fn decode_props(blob: &[u8], owner: CanonicalKey) -> Option<Vec<Property>> {
-    if blob.len() < 2 {
-        return None;
-    }
-    let count = u16::from_be_bytes(blob[0..2].try_into().ok()?) as usize;
-    let mut pos = 2;
-    let mut out = Vec::with_capacity(count);
-    for _ in 0..count {
-        if pos + 2 > blob.len() {
-            return None;
-        }
-        let klen = u16::from_be_bytes(blob[pos..pos + 2].try_into().ok()?) as usize;
-        pos += 2;
-        if pos + klen > blob.len() {
-            return None;
-        }
-        let key: PropKey = smol_str::SmolStr::new(std::str::from_utf8(&blob[pos..pos + klen]).ok()?);
-        pos += klen;
-        if pos >= blob.len() {
-            return None;
-        }
-        let tag = blob[pos];
-        pos += 1;
-        let val = match tag {
-            0 => {
-                if pos >= blob.len() {
-                    return None;
-                }
-                let b = blob[pos] != 0;
-                pos += 1;
-                Primitive::Bool(b)
-            }
-            1 => {
-                if pos + 4 > blob.len() {
-                    return None;
-                }
-                let n = i32::from_be_bytes(blob[pos..pos + 4].try_into().ok()?);
-                pos += 4;
-                Primitive::Int32(n)
-            }
-            2 => {
-                if pos + 8 > blob.len() {
-                    return None;
-                }
-                let n = i64::from_be_bytes(blob[pos..pos + 8].try_into().ok()?);
-                pos += 8;
-                Primitive::Int64(n)
-            }
-            3 => {
-                if pos + 4 > blob.len() {
-                    return None;
-                }
-                let bits = u32::from_be_bytes(blob[pos..pos + 4].try_into().ok()?);
-                pos += 4;
-                Primitive::Float32(f32::from_bits(bits))
-            }
-            4 => {
-                if pos + 8 > blob.len() {
-                    return None;
-                }
-                let bits = u64::from_be_bytes(blob[pos..pos + 8].try_into().ok()?);
-                pos += 8;
-                Primitive::Float64(f64::from_bits(bits))
-            }
-            5 => {
-                if pos + 2 > blob.len() {
-                    return None;
-                }
-                let slen = u16::from_be_bytes(blob[pos..pos + 2].try_into().ok()?) as usize;
-                pos += 2;
-                if pos + slen > blob.len() {
-                    return None;
-                }
-                let s = std::str::from_utf8(&blob[pos..pos + slen]).ok()?;
-                pos += slen;
-                Primitive::String(smol_str::SmolStr::new(s))
-            }
-            6 => {
-                if pos + 16 > blob.len() {
-                    return None;
-                }
-                let u = u128::from_be_bytes(blob[pos..pos + 16].try_into().ok()?);
-                pos += 16;
-                Primitive::Uuid(u)
-            }
-            7 => Primitive::Null,
-            _ => return None,
-        };
-        out.push(Property { owner, key, value: val });
-    }
-    Some(out)
 }

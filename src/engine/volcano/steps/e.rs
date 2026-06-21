@@ -25,26 +25,30 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{error::StoreError, keys::VertexKey, GValue},
+    types::{
+        error::StoreError,
+        keys::{CanonicalEdgeKey, EdgeKey},
+        GValue,
+    },
 };
 
-/// A physical step that acts as a source, emitting traversers for specified vertex IDs or scanning all vertices.
+/// A physical step that acts as a source, emitting traversers for specified edge keys or scanning all edges.
 #[derive(Debug)]
-pub struct VStep {
-    vertex_ids: SmallVec<[VertexKey; 4]>,
+pub struct EStep {
+    keys: SmallVec<[EdgeKey; 4]>,
     current_idx: usize,
-    buffer: Vec<VertexKey>,
+    buffer: Vec<EdgeKey>,
     buffer_idx: usize,
-    cursor: Option<VertexKey>,
+    cursor: Option<CanonicalEdgeKey>,
     scan_started: bool,
     scan_finished: bool,
 }
 
-/// Creates a new `VStep` with a list of vertex IDs to emit or scan.
-impl VStep {
-    pub fn new(vertex_ids: SmallVec<[VertexKey; 4]>) -> Self {
+/// Creates a new `EStep` with a list of edge keys to emit or scan.
+impl EStep {
+    pub fn new(keys: SmallVec<[EdgeKey; 4]>) -> Self {
         Self {
-            vertex_ids,
+            keys,
             current_idx: 0,
             buffer: Vec::new(),
             buffer_idx: 0,
@@ -55,21 +59,21 @@ impl VStep {
     }
 }
 
-impl CoreStep for VStep {
+impl CoreStep for EStep {
     fn add_upper(&mut self, _upstream: StepRef) {
-        panic!("VStep is a source step, it does not have an upstream.");
+        panic!("EStep is a source step, it does not have an upstream.");
     }
 
     fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
-        if !self.vertex_ids.is_empty() {
+        if !self.keys.is_empty() {
             if self.buffer.is_empty() && self.current_idx == 0 {
-                let fetched = ctx.get_vertices(&self.vertex_ids)?;
+                let fetched = ctx.get_edges(&self.keys)?;
                 self.buffer = fetched;
             }
             if self.buffer_idx < self.buffer.len() {
-                let vk = self.buffer[self.buffer_idx];
+                let ek = self.buffer[self.buffer_idx];
                 self.buffer_idx += 1;
-                return Ok(Some(smallvec![Traverser::new_rc(GValue::Vertex(vk))]));
+                return Ok(Some(smallvec![Traverser::new_rc(GValue::Edge(ek))]));
             }
             Ok(None)
         } else {
@@ -83,22 +87,22 @@ impl CoreStep for VStep {
                 }
 
                 let limit = 1000;
-                let (vids, next_cursor) = ctx.scan_vertices(None, self.cursor, limit)?;
+                let (ekeys, next_cursor) = ctx.scan_edges(None, self.cursor, limit)?;
                 self.scan_started = true;
 
-                if vids.is_empty() {
+                if ekeys.is_empty() {
                     self.scan_finished = true;
                     return Ok(None);
                 }
 
-                self.buffer = vids;
+                self.buffer = ekeys;
                 self.buffer_idx = 0;
                 self.cursor = next_cursor;
             }
 
-            let vk = self.buffer[self.buffer_idx];
+            let ek = self.buffer[self.buffer_idx];
             self.buffer_idx += 1;
-            Ok(Some(smallvec![Traverser::new_rc(GValue::Vertex(vk))]))
+            Ok(Some(smallvec![Traverser::new_rc(GValue::Edge(ek))]))
         }
     }
 
