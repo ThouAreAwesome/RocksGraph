@@ -36,7 +36,11 @@ use crate::{
 /// exhaustion.
 #[derive(Debug, Default)]
 pub struct FoldStep {
+    // ── Upstream link ──
     upstream: Option<StepRef>,
+
+    // ── Dynamic/Runtime execution state ──
+    /// Whether the folded list has already been emitted.
     emitted: bool,
 }
 

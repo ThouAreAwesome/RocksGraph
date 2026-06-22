@@ -31,7 +31,12 @@ use crate::{
 /// A physical step that sets a property on the element carried by the incoming traverser.
 #[derive(Debug)]
 pub struct PropertyStep {
+    // ── Upstream link ──
     upstream: Option<StepRef>,
+
+    // ── Static/Fixed configuration ──
+    /// The template property containing the key and value to set.
+    /// The owner is updated dynamically to point to the current element.
     prop: Property,
 }
 

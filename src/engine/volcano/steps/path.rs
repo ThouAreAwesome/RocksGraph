@@ -32,7 +32,11 @@ use crate::{
 /// A physical step that collects the full path of traversers.
 #[derive(Debug)]
 pub struct PathStep {
+    // ── Upstream link ──
     upstream: Option<StepRef>,
+
+    // ── Dynamic/Runtime execution state ──
+    /// Whether the collected paths have already been emitted.
     emitted: bool,
 }
 

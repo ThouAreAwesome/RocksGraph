@@ -31,6 +31,7 @@ use crate::{
 /// A physical step that extracts the "other" vertex from an edge traverser.
 #[derive(Default, Debug)]
 pub struct OtherVStep {
+    // ── Upstream link ──
     upstream: Option<StepRef>,
 }
 

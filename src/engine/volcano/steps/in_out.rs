@@ -28,30 +28,45 @@ use crate::{
     types::{
         error::StoreError,
         keys::{AdjacentEdgeCursor, AdjacentEdgesOptions},
-        Direction, GValue, LabelId, VertexKey,
+        BatchScenario, Direction, GValue, LabelId, VertexKey,
     },
 };
 
-/// A physical step that traverses either incoming or outgoing edges (or both) from a vertex, returning the adjacent
-/// vertices.
+/// A physical step that traverses either incoming or outgoing edges (or both) from a vertex, returning adjacent
+/// vertices or edges.
 #[derive(Debug)]
 pub struct InOutStep {
+    // ── Upstream link ──
     upstream: Option<StepRef>,
+
+    // ── Static/Fixed configuration ──
+    /// The edge labels to filter by during traversal (empty means all labels).
     label_ids: SmallVec<[LabelId; 4]>,
+    /// The direction of the edge traversal (incoming or outgoing).
     direction: Direction,
+    /// Maximum number of results to produce per input vertex.
     limit: Option<u32>,
+    /// Optional target vertex IDs to filter the destination vertices of the traversed edges.
     end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
+    /// Whether to return the traversed edges themselves (true) or the adjacent vertices (false).
+    output_edges: bool,
+
+    // ── Dynamic/Runtime execution state ──
+    /// The parent traverser currently being expanded.
     current_input: Option<Rc<Traverser>>,
+    /// The index of the label in `label_ids` currently being processed for the active input.
     current_label_idx: usize,
+    /// Suffix cursor for paginating results of the current label/direction scan.
     cursor: Option<AdjacentEdgeCursor>,
 }
 
 impl InOutStep {
-    /// Creates a new `InOutStep` for traversing adjacent vertices.
+    /// Creates a new `InOutStep` for traversing adjacent vertices or edges.
     pub fn new(
         label_ids: SmallVec<[LabelId; 4]>,
         direction: Direction,
         end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
+        output_edges: bool,
     ) -> Self {
         Self {
             upstream: None,
@@ -62,6 +77,7 @@ impl InOutStep {
             current_input: None,
             current_label_idx: 0,
             cursor: None,
+            output_edges,
         }
     }
 }
@@ -95,7 +111,12 @@ impl CoreStep for InOutStep {
                     rank: None,
                     start_from: self.cursor,
                 };
-                let (edges, next_cursor) = ctx.get_adjacent_edges(*vk, self.direction, opts, self.limit)?;
+                let batch_size = ctx.batch_size(BatchScenario::GetAdjacentEdges);
+                let fetch_limit = match self.limit {
+                    Some(l) => std::cmp::min(l, batch_size),
+                    None => batch_size,
+                };
+                let (edges, next_cursor) = ctx.get_adjacent_edges(*vk, self.direction, opts, Some(fetch_limit))?;
 
                 self.cursor = next_cursor;
                 if self.cursor.is_none() {
@@ -108,7 +129,11 @@ impl CoreStep for InOutStep {
                 if !edges.is_empty() {
                     let results: SmallVec<[_; 4]> = edges
                         .into_iter()
-                        .map(|e| Traverser::new_rc_with_parent(GValue::Vertex(e.secondary_id), Rc::clone(&t)))
+                        .map(|e| {
+                            let value =
+                                if self.output_edges { GValue::Edge(e) } else { GValue::Vertex(e.secondary_id) };
+                            Traverser::new_rc_with_parent(value, Rc::clone(&t))
+                        })
                         .collect();
                     return Ok(Some(results));
                 }

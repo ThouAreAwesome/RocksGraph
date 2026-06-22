@@ -72,7 +72,7 @@
 //! acquire a write lock on the `RwLock` wrapping the element's properties and
 //! modify them in place.
 
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::{hash_map::Entry, HashMap, HashSet};
 
 use crate::{
     store::traits::{GraphSnapshot, GraphStore, GraphTransaction},
@@ -83,7 +83,7 @@ use crate::{
             VertexKey,
         },
         prop_key::PropKey,
-        Primitive, StoreError,
+        Primitive, Rank, StoreError,
     },
 };
 
@@ -141,6 +141,9 @@ pub(crate) struct LogicalGraph<S: GraphStore> {
     edges: HashMap<CanonicalEdgeKey, Edge>,
     vertex_degree: HashMap<VertexKey, (u32, u32)>,
     dirty: HashMap<CanonicalKey, Existence>,
+    pub(crate) scan_vertices_batch_size: u32,
+    pub(crate) scan_edges_batch_size: u32,
+    pub(crate) get_adjacent_edges_batch_size: u32,
 }
 
 impl<S: GraphStore> LogicalGraph<S> {
@@ -155,6 +158,9 @@ impl<S: GraphStore> LogicalGraph<S> {
             vertex_degree: HashMap::new(),
             // Tracks the mutation state of elements within this transaction.
             dirty: HashMap::new(),
+            scan_vertices_batch_size: 1000,
+            scan_edges_batch_size: 1000,
+            get_adjacent_edges_batch_size: 1000,
         }
     }
 
@@ -305,6 +311,7 @@ impl<S: GraphStore> LogicalGraph<S> {
             self.edges.entry(cek).or_insert(edge);
         }
 
+        let rank_set: Option<HashSet<Rank>> = opts.rank.map(|r| r.iter().copied().collect());
         let mut matching = Vec::new();
         let dirty = &self.dirty;
         for (&cek, edge) in &self.edges {
@@ -314,8 +321,8 @@ impl<S: GraphStore> LogicalGraph<S> {
             if !edge_matches(edge, vertex, direction, opts.label, opts.dst) {
                 continue;
             }
-            if let Some(r) = opts.rank {
-                if edge.rank != r {
+            if let Some(ref set) = rank_set {
+                if !set.contains(&edge.rank) {
                     continue;
                 }
             }
@@ -952,11 +959,21 @@ pub(crate) struct LogicalSnapshot<S: GraphStore> {
     store: S::Snapshot,
     vertices: HashMap<VertexKey, Vertex>,
     edges: HashMap<CanonicalEdgeKey, Edge>,
+    pub(crate) scan_vertices_batch_size: u32,
+    pub(crate) scan_edges_batch_size: u32,
+    pub(crate) get_adjacent_edges_batch_size: u32,
 }
 
 impl<S: GraphStore> LogicalSnapshot<S> {
     pub fn new(snapshot: S::Snapshot) -> Self {
-        Self { store: snapshot, vertices: HashMap::new(), edges: HashMap::new() }
+        Self {
+            store: snapshot,
+            vertices: HashMap::new(),
+            edges: HashMap::new(),
+            scan_vertices_batch_size: 1000,
+            scan_edges_batch_size: 1000,
+            get_adjacent_edges_batch_size: 100,
+        }
     }
 
     /// Reset the in-memory vertex and edge caches.
@@ -2986,13 +3003,15 @@ mod tests {
         assert!(txn2.get_vertex(v1).unwrap().is_some());
         assert!(txn2.get_vertex(v3).unwrap().is_some());
 
-        // step 3, the vertices were deleted in another transaction, commit the deleting transaction which should succeed
+        // step 3, the vertices were deleted in another transaction, commit the deleting transaction which should
+        // succeed
         let mut txn3 = ctx(&store);
         txn3.drop_element(&CanonicalKey::Vertex(v1)).unwrap();
         txn3.drop_element(&CanonicalKey::Vertex(v3)).unwrap();
         txn3.commit().unwrap();
 
-        // Under Repeatable Reads, adding an edge in txn2 using the vertex (which is still visible in txn2's snapshot) should succeed
+        // Under Repeatable Reads, adding an edge in txn2 using the vertex (which is still visible in txn2's snapshot)
+        // should succeed
         assert!(txn2.add_edge(&cek(v1, 5, 2).out_key()).is_ok());
 
         // Similarly, dropping v3 in txn2 (still visible, degree 0) should succeed

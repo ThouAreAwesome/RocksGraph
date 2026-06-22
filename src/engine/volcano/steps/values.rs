@@ -31,8 +31,13 @@ use crate::{
 /// A physical step that extracts property values from the elements carried by incoming traversers.
 #[derive(Debug)]
 pub struct ValuesStep {
+    // ── Upstream link ──
     upstream: Option<StepRef>,
+
+    // ── Static/Fixed configuration ──
+    /// Specific property keys to extract.
     property_keys: SmallVec<[PropKey; 4]>,
+    /// Whether to emit properties as `GValue::Property` (true) or their raw scalar values (false).
     emit_property: bool,
 }
 

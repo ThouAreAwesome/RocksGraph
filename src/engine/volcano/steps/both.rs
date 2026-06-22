@@ -25,24 +25,47 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{error::StoreError, Direction, GValue, LabelId, VertexKey},
+    types::{
+        error::StoreError,
+        keys::{AdjacentEdgeCursor, AdjacentEdgesOptions},
+        BatchScenario, Direction, GValue, LabelId, VertexKey,
+    },
 };
 
-/// A physical step that traverses both incoming and outgoing edges from a vertex, returning the adjacent vertices.
+/// A physical step that traverses both incoming and outgoing edges from a vertex, returning adjacent vertices or edges.
 #[derive(Debug)]
 pub struct BothStep {
+    // ── Upstream link ──
     upstream: Option<StepRef>,
+
+    // ── Static/Fixed configuration ──
+    /// The edge labels to filter by during traversal (empty means all labels).
     label_ids: SmallVec<[LabelId; 4]>,
+    /// Maximum number of results to produce per input vertex.
     limit: Option<u32>,
+    /// Optional target vertex IDs to filter the destination vertices of the traversed edges.
     end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
+    /// Whether to return the traversed edges themselves (true) or the adjacent vertices (false).
+    output_edges: bool,
+
+    // ── Dynamic/Runtime execution state ──
+    /// The parent traverser currently being expanded.
     current_input: Option<Rc<Traverser>>,
+    /// The index of the label in `label_ids` currently being processed for the active input.
     current_label_idx: usize,
-    current_direction: Direction, // 0 = out, 1 = in
+    /// The active direction of the edge traversal (incoming or outgoing).
+    current_direction: Direction,
+    /// Suffix cursor for paginating results of the current label/direction scan.
+    cursor: Option<AdjacentEdgeCursor>,
 }
 
 impl BothStep {
-    /// Creates a new `BothStep` for traversing adjacent vertices in both directions.
-    pub fn new(label_ids: SmallVec<[LabelId; 4]>, end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>) -> Self {
+    /// Creates a new `BothStep` for traversing incident vertices or edges in both directions.
+    pub fn new(
+        label_ids: SmallVec<[LabelId; 4]>,
+        end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
+        output_edges: bool,
+    ) -> Self {
         Self {
             upstream: None,
             label_ids,
@@ -51,18 +74,18 @@ impl BothStep {
             current_input: None,
             current_label_idx: 0,
             current_direction: Direction::OUT,
+            cursor: None,
+            output_edges,
         }
     }
 }
 
 impl CoreStep for BothStep {
     fn add_upper(&mut self, upstream: StepRef) {
-        // Sets the upstream step for this traversal.
         self.upstream = Some(upstream);
     }
 
     fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
-        // Produces traversers representing adjacent vertices from both outgoing and incoming edges.
         loop {
             if self.current_input.is_none() {
                 let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
@@ -71,6 +94,7 @@ impl CoreStep for BothStep {
                     self.current_input = Some(t);
                     self.current_label_idx = 0;
                     self.current_direction = Direction::OUT;
+                    self.cursor = None;
                 } else {
                     continue;
                 }
@@ -82,37 +106,59 @@ impl CoreStep for BothStep {
 
                 let mut results = SmallVec::new();
                 if self.current_direction == Direction::OUT {
-                    let vertices = ctx.get_adjacent_vertices(
-                        *vk,
+                    let opts = AdjacentEdgesOptions {
                         label,
-                        self.current_direction,
-                        self.end_vertex_ids.as_deref(),
-                        self.limit,
-                    )?;
-                    for vertex in vertices {
-                        results.push(Traverser::new_rc_with_parent(GValue::Vertex(vertex), Rc::clone(&t)));
+                        dst: self.end_vertex_ids.as_deref(),
+                        rank: None,
+                        start_from: self.cursor,
+                    };
+                    let batch_size = ctx.batch_size(BatchScenario::GetAdjacentEdges);
+                    let fetch_limit = match self.limit {
+                        Some(l) => std::cmp::min(l, batch_size),
+                        None => batch_size,
+                    };
+                    let (edges, next_cursor) =
+                        ctx.get_adjacent_edges(*vk, self.current_direction, opts, Some(fetch_limit))?;
+                    self.cursor = next_cursor;
+                    for edge in edges {
+                        let val =
+                            if self.output_edges { GValue::Edge(edge) } else { GValue::Vertex(edge.secondary_id) };
+                        results.push(Traverser::new_rc_with_parent(val, Rc::clone(&t)));
                     }
-                    self.current_direction = Direction::IN;
+                    if self.cursor.is_none() {
+                        self.current_direction = Direction::IN;
+                    }
                     if !results.is_empty() {
                         return Ok(Some(results));
                     }
                 }
 
                 if self.current_direction == Direction::IN {
-                    let vertices = ctx.get_adjacent_vertices(
-                        *vk,
+                    let opts = AdjacentEdgesOptions {
                         label,
-                        self.current_direction,
-                        self.end_vertex_ids.as_deref(),
-                        self.limit,
-                    )?;
-                    for vertex in vertices {
-                        results.push(Traverser::new_rc_with_parent(GValue::Vertex(vertex), Rc::clone(&t)));
+                        dst: self.end_vertex_ids.as_deref(),
+                        rank: None,
+                        start_from: self.cursor,
+                    };
+                    let batch_size = ctx.batch_size(BatchScenario::GetAdjacentEdges);
+                    let fetch_limit = match self.limit {
+                        Some(l) => std::cmp::min(l, batch_size),
+                        None => batch_size,
+                    };
+                    let (edges, next_cursor) =
+                        ctx.get_adjacent_edges(*vk, self.current_direction, opts, Some(fetch_limit))?;
+                    self.cursor = next_cursor;
+                    for edge in edges {
+                        let val =
+                            if self.output_edges { GValue::Edge(edge) } else { GValue::Vertex(edge.secondary_id) };
+                        results.push(Traverser::new_rc_with_parent(val, Rc::clone(&t)));
                     }
-                    self.current_direction = Direction::OUT;
-                    self.current_label_idx += 1;
-                    if self.label_ids.is_empty() || self.current_label_idx >= self.label_ids.len() {
-                        self.current_input = None;
+                    if self.cursor.is_none() {
+                        self.current_direction = Direction::OUT;
+                        self.current_label_idx += 1;
+                        if self.label_ids.is_empty() || self.current_label_idx >= self.label_ids.len() {
+                            self.current_input = None;
+                        }
                     }
                     if !results.is_empty() {
                         return Ok(Some(results));
@@ -125,17 +171,16 @@ impl CoreStep for BothStep {
     }
 
     fn reset(&mut self) {
-        // Resets the state of this step, its upstream, and its internal direction/label counters.
         if let Some(up) = &self.upstream {
             up.reset();
         }
         self.current_input = None;
         self.current_label_idx = 0;
         self.current_direction = Direction::OUT;
+        self.cursor = None;
     }
 
     fn upper(&self) -> Option<StepRef> {
-        // Returns a clone of the upstream step reference.
         self.upstream.clone()
     }
 }

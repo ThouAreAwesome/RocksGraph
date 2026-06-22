@@ -25,18 +25,28 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{error::StoreError, keys::VertexKey, GValue},
+    types::{error::StoreError, keys::VertexKey, BatchScenario, GValue},
 };
 
 /// A physical step that acts as a source, emitting traversers for specified vertex IDs or scanning all vertices.
 #[derive(Debug)]
 pub struct VStep {
+    // ── Static/Fixed configuration ──
+    /// Specific vertex keys to look up. If empty, scans all vertices in the database.
     vertex_ids: SmallVec<[VertexKey; 4]>,
+
+    // ── Dynamic/Runtime execution state ──
+    /// The index of the current key being processed in `vertex_ids` (only used when lookup IDs are specified).
     current_idx: usize,
+    /// Internal buffer caching the fetched vertex keys in a batch.
     buffer: Vec<VertexKey>,
+    /// Index of the next vertex key to yield from `buffer`.
     buffer_idx: usize,
+    /// Cursor for database scan pagination.
     cursor: Option<VertexKey>,
+    /// Tracks if database scan has started.
     scan_started: bool,
+    /// Tracks if database scan has finished (no more vertices to retrieve).
     scan_finished: bool,
 }
 
@@ -82,7 +92,7 @@ impl CoreStep for VStep {
                     return Ok(None);
                 }
 
-                let limit = 1000;
+                let limit = ctx.batch_size(BatchScenario::ScanVertices);
                 let (vids, next_cursor) = ctx.scan_vertices(None, self.cursor, limit)?;
                 self.scan_started = true;
 

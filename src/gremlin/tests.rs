@@ -24,7 +24,7 @@ mod integration_test {
             traversal::{TraversalBuilder, __},
             value::{Key, Value},
         },
-        types::{keys::LabelId, StoreError},
+        types::{keys::LabelId, BatchScenario, StoreError},
     };
 
     const PERSON_LABEL_ID: LabelId = 1;
@@ -488,5 +488,63 @@ mod integration_test {
         // g.E() scan (E with empty keys)
         let e_count = tx.g().E([]).count().next().unwrap().unwrap();
         assert_eq!(e_count, Value::Int64(6));
+    }
+
+    #[test]
+    fn test_custom_batch_sizes_correctness() {
+        let graph = setup_modern_graph();
+
+        // Test with ReadSession
+        {
+            let mut snap = graph.read();
+            snap.set_batch_size(BatchScenario::ScanVertices, 1);
+            snap.set_batch_size(BatchScenario::ScanEdges, 1);
+            snap.set_batch_size(BatchScenario::GetAdjacentEdges, 1);
+
+            // Vertices scan
+            let v_count = snap.g().V([]).count().next().unwrap().unwrap();
+            assert_eq!(v_count, Value::Int64(6));
+
+            // Edges scan
+            let e_count = snap.g().E([]).count().next().unwrap().unwrap();
+            assert_eq!(e_count, Value::Int64(6));
+
+            // Adjacent edge expansions (e.g., marko -> knows)
+            // marko is id 1. Outgoing knows edges count should be 2.
+            let knows_count = snap.g().V([1]).outE([KNOWS_LABEL_ID]).count().next().unwrap().unwrap();
+            assert_eq!(knows_count, Value::Int64(2));
+
+            // Walk to other vertices
+            let names = snap.g().V([1]).out([KNOWS_LABEL_ID]).values(["name"]).to_list().unwrap();
+            assert_eq!(names.len(), 2);
+            assert!(names.contains(&Value::String("vadas".into())));
+            assert!(names.contains(&Value::String("josh".into())));
+        }
+
+        // Test with TxSession
+        {
+            let mut tx = graph.begin();
+            tx.set_batch_size(BatchScenario::ScanVertices, 1);
+            tx.set_batch_size(BatchScenario::ScanEdges, 1);
+            tx.set_batch_size(BatchScenario::GetAdjacentEdges, 1);
+
+            // Vertices scan
+            let v_count = tx.g().V([]).count().next().unwrap().unwrap();
+            assert_eq!(v_count, Value::Int64(6));
+
+            // Edges scan
+            let e_count = tx.g().E([]).count().next().unwrap().unwrap();
+            assert_eq!(e_count, Value::Int64(6));
+
+            // Adjacent edge expansions (e.g., marko -> knows)
+            let knows_count = tx.g().V([1]).outE([KNOWS_LABEL_ID]).count().next().unwrap().unwrap();
+            assert_eq!(knows_count, Value::Int64(2));
+
+            // Walk to other vertices
+            let names = tx.g().V([1]).out([KNOWS_LABEL_ID]).values(["name"]).to_list().unwrap();
+            assert_eq!(names.len(), 2);
+            assert!(names.contains(&Value::String("vadas".into())));
+            assert!(names.contains(&Value::String("josh".into())));
+        }
     }
 }

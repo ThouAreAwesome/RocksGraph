@@ -135,14 +135,14 @@ impl PhysicalPlanBuilder {
         match step {
             LogicalStep::Both(s) => {
                 wire_required!(
-                    BufferedStep::new(steps::both::BothStep::new(s.label_ids.clone(), s.end_vertex_ids.clone())),
+                    BufferedStep::new(steps::both::BothStep::new(s.label_ids.clone(), s.end_vertex_ids.clone(), false)),
                     upstream,
                     "BothStep"
                 )
             }
             LogicalStep::BothE(s) => {
                 wire_required!(
-                    BufferedStep::new(steps::both_e::BothEStep::new(s.label_ids.clone(), s.end_vertex_ids.clone())),
+                    BufferedStep::new(steps::both::BothStep::new(s.label_ids.clone(), s.end_vertex_ids.clone(), true)),
                     upstream,
                     "BothEStep"
                 )
@@ -173,7 +173,8 @@ impl PhysicalPlanBuilder {
                     BufferedStep::new(steps::in_out::InOutStep::new(
                         s.label_ids.clone(),
                         Direction::IN,
-                        s.end_vertex_ids.clone()
+                        s.end_vertex_ids.clone(),
+                        false
                     )),
                     upstream,
                     "InStep"
@@ -194,10 +195,11 @@ impl PhysicalPlanBuilder {
                     }
                 }
                 wire_required!(
-                    BufferedStep::new(steps::in_e_out_e::InEOutEStep::new(
+                    BufferedStep::new(steps::in_out::InOutStep::new(
                         s.label_ids.clone(),
                         Direction::IN,
-                        s.end_vertex_ids.clone()
+                        s.end_vertex_ids.clone(),
+                        true
                     )),
                     upstream,
                     "InEStep"
@@ -208,7 +210,8 @@ impl PhysicalPlanBuilder {
                     BufferedStep::new(steps::in_out::InOutStep::new(
                         s.label_ids.clone(),
                         Direction::OUT,
-                        s.end_vertex_ids.clone()
+                        s.end_vertex_ids.clone(),
+                        false
                     )),
                     upstream,
                     "OutStep"
@@ -229,10 +232,11 @@ impl PhysicalPlanBuilder {
                     }
                 }
                 wire_required!(
-                    BufferedStep::new(steps::in_e_out_e::InEOutEStep::new(
+                    BufferedStep::new(steps::in_out::InOutStep::new(
                         s.label_ids.clone(),
                         Direction::OUT,
-                        s.end_vertex_ids.clone()
+                        s.end_vertex_ids.clone(),
+                        true
                     )),
                     upstream,
                     "OutEStep"
@@ -503,7 +507,7 @@ mod tests {
                 LogicalStep::OutE(OutEStep { label_ids: smallvec![], end_vertex_ids: None }),
                 LogicalStep::Count(CountStep {}),
             ];
-            assert_plan_contains_in_order(steps, &["VStep", "InEOutEStep", "CountStep"]);
+            assert_plan_contains_in_order(steps, &["VStep", "InOutStep", "CountStep"]);
         }
 
         #[test]
@@ -516,7 +520,7 @@ mod tests {
                 LogicalStep::OutE(OutEStep { label_ids: smallvec![], end_vertex_ids: None }),
                 LogicalStep::Where(WhereStep { plan: where_plan }),
             ];
-            assert_plan_contains_in_order(steps, &["VStep", "InEOutEStep"]);
+            assert_plan_contains_in_order(steps, &["VStep", "InOutStep"]);
         }
 
         #[test]
@@ -554,7 +558,7 @@ mod tests {
                 LogicalStep::OtherV(OtherVStep {}),
                 LogicalStep::HasId(HasIdStep { ids: smallvec![2] }),
             ];
-            assert_plan_contains_in_order(steps, &["VStep", "InEOutEStep", "OtherVStep", "HasIdStep"]);
+            assert_plan_contains_in_order(steps, &["VStep", "InOutStep", "OtherVStep", "HasIdStep"]);
         }
 
         #[test]

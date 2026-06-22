@@ -37,10 +37,18 @@ use crate::{
 /// A physical step that adds a new edge to the graph.
 #[derive(Debug)]
 pub struct AddEStep {
+    // ── Static/Fixed configuration ──
+    /// The label ID of the edge to be created.
     label_id: LabelId,
+    /// The source vertex key of the edge.
     out_v_id: VertexKey,
+    /// The destination vertex key of the edge.
     in_v_id: VertexKey,
+    /// The property list to initialize the new edge with.
     properties: SmallVec<[Property; 8]>,
+
+    // ── Dynamic/Runtime execution state ──
+    /// Whether the edge has been successfully created and emitted in this run.
     emitted: bool,
 }
 

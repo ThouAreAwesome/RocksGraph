@@ -31,7 +31,11 @@ use crate::{
 /// A physical step that filters traversers based on whether their scalar value matches an expected primitive.
 #[derive(Debug)]
 pub struct ScalarFilterStep {
+    // ── Upstream link ──
     upstream: Option<StepRef>,
+
+    // ── Static/Fixed configuration ──
+    /// The expected scalar primitive value.
     expected: Primitive,
 }
 

@@ -31,6 +31,8 @@ use crate::{
 /// A physical step that acts as a source, emitting a predefined vector of `Traverser` items.
 #[derive(Debug)]
 pub struct VecSourceStep {
+    // ── Dynamic/Runtime execution state ──
+    /// Predefined vector of traverser items to emit.
     items: SmallVec<[Rc<Traverser>; 4]>,
 }
 

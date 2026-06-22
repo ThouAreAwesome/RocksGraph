@@ -31,7 +31,11 @@ use crate::{
 /// A physical step that extracts either the incoming (`inV`) or outgoing (`outV`) vertex from an edge traverser.
 #[derive(Debug)]
 pub struct InVOutVStep {
+    // ── Upstream link ──
     upstream: Option<StepRef>,
+
+    // ── Static/Fixed configuration ──
+    /// The direction of the vertex to extract (incoming or outgoing).
     direction: Direction,
 }
 

@@ -28,19 +28,29 @@ use crate::{
     types::{
         error::StoreError,
         keys::{CanonicalEdgeKey, EdgeKey},
-        GValue,
+        BatchScenario, GValue,
     },
 };
 
 /// A physical step that acts as a source, emitting traversers for specified edge keys or scanning all edges.
 #[derive(Debug)]
 pub struct EStep {
+    // ── Static/Fixed configuration ──
+    /// Specific edge keys to look up. If empty, scans all edges in the database.
     keys: SmallVec<[EdgeKey; 4]>,
+
+    // ── Dynamic/Runtime execution state ──
+    /// The index of the current key being processed in `keys` (only used when lookup keys are specified).
     current_idx: usize,
+    /// Internal buffer caching the fetched edge keys in a batch.
     buffer: Vec<EdgeKey>,
+    /// Index of the next edge key to yield from `buffer`.
     buffer_idx: usize,
+    /// Cursor for database scan pagination.
     cursor: Option<CanonicalEdgeKey>,
+    /// Tracks if database scan has started.
     scan_started: bool,
+    /// Tracks if database scan has finished (no more edges to retrieve).
     scan_finished: bool,
 }
 
@@ -86,7 +96,7 @@ impl CoreStep for EStep {
                     return Ok(None);
                 }
 
-                let limit = 1000;
+                let limit = ctx.batch_size(BatchScenario::ScanEdges);
                 let (ekeys, next_cursor) = ctx.scan_edges(None, self.cursor, limit)?;
                 self.scan_started = true;
 

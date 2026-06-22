@@ -34,10 +34,19 @@ use crate::{
 /// A physical step that implements the `coalesce` logical step.
 #[derive(Debug)]
 pub struct CoalesceStep {
+    // ── Upstream link ──
     upstream: Option<StepRef>,
+
+    // ── Static/Fixed configuration ──
+    /// The physical plans/branches to evaluate in coalesce.
     physical_plans: SmallVec<[PhysicalPlan; 4]>,
+
+    // ── Dynamic/Runtime execution state ──
+    /// The parent traverser currently being evaluated.
     current_input: Option<Rc<Traverser>>,
+    /// The index of the current branch plan being evaluated for the active input.
     current_plan_idx: usize,
+    /// The index of the branch plan that successfully yielded results (if any).
     winning_plan_idx: Option<usize>,
 }
 

@@ -34,7 +34,11 @@ use crate::{
 /// A physical step that filters incoming traversers based on the results of a sub-plan.
 #[derive(Debug)]
 pub struct WhereStep {
+    // ── Upstream link ──
     upstream: Option<StepRef>,
+
+    // ── Static/Fixed configuration ──
+    /// The physical sub-plan representing the filter traversal condition.
     physical_plans: PhysicalPlan,
 }
 

@@ -31,7 +31,11 @@ use crate::{
 /// A physical step that filters traversers based on the label of the element they carry.
 #[derive(Debug)]
 pub struct HasLabelStep {
+    // ── Upstream link ──
     upstream: Option<StepRef>,
+
+    // ── Static/Fixed configuration ──
+    /// The list of target label IDs to match.
     label_ids: SmallVec<[LabelId; 4]>,
 }
 

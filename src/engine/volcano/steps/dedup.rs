@@ -31,7 +31,11 @@ use crate::{
 /// A physical step that removes duplicate traversers.
 #[derive(Debug, Default)]
 pub struct DedupStep {
+    // ── Upstream link ──
     upstream: Option<StepRef>,
+
+    // ── Dynamic/Runtime execution state ──
+    /// The set of unique values seen so far.
     seen: HashSet<GValue>,
 }
 

@@ -34,10 +34,17 @@ use crate::{
 /// A physical step that implements the `union` logical step.
 #[derive(Debug)]
 pub struct UnionStep {
+    // ── Upstream link ──
     upstream: Option<StepRef>,
+
+    // ── Static/Fixed configuration ──
+    /// The physical plans representing the branches of the union.
     physical_plans: SmallVec<[PhysicalPlan; 4]>,
 
+    // ── Dynamic/Runtime execution state ──
+    /// The index of the current branch plan being evaluated for the active input.
     current_plan_idx: usize,
+    /// The parent traverser currently being processed.
     current_input: Option<Rc<Traverser>>,
 }
 

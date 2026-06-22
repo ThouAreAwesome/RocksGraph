@@ -78,4 +78,4 @@ pub use gremlin::traversal::{BuiltTraversal, ReadTraversal, TraversalBuilder, Wr
 pub use gremlin::value::{
     between, eq, gt, gte, lt, lte, ne, within, without, Edge, Key, Map, Path, Predicate, Property, Value, Vertex,
 };
-pub use types::StoreError;
+pub use types::{BatchScenario, StoreError};

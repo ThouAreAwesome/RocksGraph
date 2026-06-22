@@ -45,8 +45,8 @@ use crate::{
         traits::GraphSnapshot,
     },
     types::{
-        AdjacentEdgeCursor, AdjacentEdgesOptions, CanonicalEdgeKey, Direction, Edge, EdgeKey, LabelId, StoreError,
-        Vertex, VertexKey,
+        AdjacentEdgeCursor, AdjacentEdgesOptions, CanonicalEdgeKey, Direction, Edge, EdgeKey, LabelId, Rank,
+        StoreError, Vertex, VertexKey,
     },
 };
 
@@ -81,6 +81,7 @@ impl Snapshot {
         Self { snap: Some(snap), db }
     }
 
+    #[inline]
     fn read_opts(&self) -> ReadOptions {
         let mut opts = ReadOptions::default();
         opts.set_snapshot(self.snap.as_ref().expect("snapshot still active"));
@@ -112,9 +113,8 @@ impl GraphSnapshot for Snapshot {
 
     fn get_vertices(&mut self, keys: &[VertexKey]) -> Result<Vec<Vertex>, StoreError> {
         let cf = self.db.cf_handle(CF_VERTICES).ok_or(StoreError::MissingColumnFamily("vertices"))?;
-        let read_opts = self.read_opts();
         let db_keys: Vec<_> = keys.iter().map(|&k| (&cf, encode_vertex_key(k))).collect();
-        let results = self.db.multi_get_cf_opt(db_keys, &read_opts);
+        let results = self.db.multi_get_cf_opt(db_keys, &self.read_opts());
 
         let mut out = Vec::with_capacity(keys.len());
         for (i, res) in results.into_iter().enumerate() {
@@ -143,7 +143,6 @@ impl GraphSnapshot for Snapshot {
     fn get_edges(&mut self, keys: &[EdgeKey]) -> Result<Vec<Edge>, StoreError> {
         let cf_out = self.db.cf_handle(CF_EDGES_OUT).ok_or(StoreError::MissingColumnFamily(CF_EDGES_OUT))?;
         let cf_in = self.db.cf_handle(CF_EDGES_IN).ok_or(StoreError::MissingColumnFamily(CF_EDGES_IN))?;
-        let read_opts = self.read_opts();
 
         let db_keys: Vec<_> = keys
             .iter()
@@ -156,7 +155,7 @@ impl GraphSnapshot for Snapshot {
             })
             .collect();
 
-        let results = self.db.multi_get_cf_opt(db_keys, &read_opts);
+        let results = self.db.multi_get_cf_opt(db_keys, &self.read_opts());
         let mut out = Vec::with_capacity(keys.len());
         for (i, res) in results.into_iter().enumerate() {
             let bytes = res.map_err(StoreError::RocksDb)?;
@@ -199,6 +198,7 @@ impl GraphSnapshot for Snapshot {
         };
 
         let dst_set: Option<HashSet<VertexKey>> = opts.dst.map(|k| k.iter().copied().collect());
+        let rank_set: Option<HashSet<Rank>> = opts.rank.map(|r| r.iter().copied().collect());
         let iter = self.db.iterator_cf_opt(&cf, read_opts, IteratorMode::From(&seek_key, ScanDir::Forward));
 
         let mut result = Vec::new();
@@ -228,8 +228,8 @@ impl GraphSnapshot for Snapshot {
                     continue;
                 }
             }
-            if let Some(r) = opts.rank {
-                if ek.rank != r {
+            if let Some(ref set) = rank_set {
+                if !set.contains(&ek.rank) {
                     continue;
                 }
             }

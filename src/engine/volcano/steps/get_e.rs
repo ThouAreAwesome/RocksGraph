@@ -31,12 +31,17 @@ use crate::{
 /// A physical step that retrieves specific edges based on labels, end vertices, and direction.
 #[derive(Debug)]
 pub struct GetEStep {
+    // ── Upstream link ──
     upstream: Option<StepRef>,
-    // label_ids should not be empty.
-    label_ids: SmallVec<[LabelId; 4]>,
-    // end_vertex_ids should not be empty.
-    end_vertex_ids: SmallVec<[VertexKey; 4]>,
+
+    // ── Static/Fixed configuration ──
+    /// The direction of the edge traversal.
     direction: Direction,
+
+    // ── Dynamic/Runtime execution state ──
+    /// Pre-allocated template EdgeKeys populated with 0 as placeholder for src.
+    /// Mutated in-place during execution to avoid allocations.
+    keys_buffer: Vec<EdgeKey>,
 }
 
 impl GetEStep {
@@ -46,7 +51,17 @@ impl GetEStep {
         end_vertex_ids: SmallVec<[VertexKey; 4]>,
         direction: Direction,
     ) -> Self {
-        Self { upstream: None, label_ids, end_vertex_ids, direction }
+        let mut keys_buffer = Vec::with_capacity(label_ids.len() * end_vertex_ids.len());
+        for label_id in &label_ids {
+            for dst in &end_vertex_ids {
+                let edge_key = match direction {
+                    Direction::OUT => EdgeKey::out_e(0, *label_id, *dst, 0),
+                    Direction::IN => EdgeKey::in_e(*dst, *label_id, 0, 0),
+                };
+                keys_buffer.push(edge_key);
+            }
+        }
+        Self { upstream: None, direction, keys_buffer }
     }
 }
 
@@ -69,17 +84,28 @@ impl CoreStep for GetEStep {
 
             let mut results: SmallVec<[_; 4]> = smallvec![];
 
-            for label_id in &self.label_ids {
-                for dst in &self.end_vertex_ids {
-                    let edge_key = match self.direction {
-                        Direction::OUT => EdgeKey::out_e(src, *label_id, *dst, 0),
-                        Direction::IN => EdgeKey::in_e(*dst, *label_id, src, 0),
-                    };
-                    if let Some(_e) = ctx.get_edge(&edge_key)? {
-                        results.push(Traverser::new_rc_with_parent(GValue::Edge(edge_key), Rc::clone(&t)));
+            if self.keys_buffer.len() == 1 {
+                let edge_key = &mut self.keys_buffer[0];
+                match self.direction {
+                    Direction::OUT => edge_key.primary_id = src,
+                    Direction::IN => edge_key.secondary_id = src,
+                }
+                if ctx.get_edge(edge_key)?.is_some() {
+                    results.push(Traverser::new_rc_with_parent(GValue::Edge(*edge_key), Rc::clone(&t)));
+                }
+            } else {
+                for edge_key in &mut self.keys_buffer {
+                    match self.direction {
+                        Direction::OUT => edge_key.primary_id = src,
+                        Direction::IN => edge_key.secondary_id = src,
                     }
                 }
+                let fetched = ctx.get_edges(&self.keys_buffer)?;
+                for edge_key in fetched {
+                    results.push(Traverser::new_rc_with_parent(GValue::Edge(edge_key), Rc::clone(&t)));
+                }
             }
+
             if !results.is_empty() {
                 return Ok(Some(results));
             }

@@ -76,6 +76,7 @@ pub struct AdjacentEdgeCursor {
 
 impl AdjacentEdgeCursor {
     /// Create a cursor from an existing Edge.
+    #[inline]
     pub fn from_edge(edge: &super::element::Edge, direction: Direction) -> Self {
         AdjacentEdgeCursor {
             label_id: edge.label_id,
@@ -93,8 +94,16 @@ impl AdjacentEdgeCursor {
 pub struct AdjacentEdgesOptions<'a> {
     pub label: Option<LabelId>,
     pub dst: Option<&'a [VertexKey]>,
-    pub rank: Option<Rank>,
+    pub rank: Option<&'a [Rank]>,
     pub start_from: Option<AdjacentEdgeCursor>,
+}
+
+/// Scenarios for configurable batch sizes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BatchScenario {
+    ScanVertices,
+    ScanEdges,
+    GetAdjacentEdges,
 }
 
 // ── CanonicalEdgeKey ──────────────────────────────────────────────────────────
@@ -161,16 +170,19 @@ pub struct EdgeKey {
 
 impl EdgeKey {
     /// Canonical `Out`-direction key for `(src → dst)`.
+    #[inline]
     pub fn out_e(src: VertexKey, label: LabelId, dst: VertexKey, rank: Rank) -> Self {
         Self { primary_id: src, direction: Direction::OUT, label_id: label, secondary_id: dst, rank }
     }
 
     /// `IN`-direction key viewed from the destination.
+    #[inline]
     pub fn in_e(src: VertexKey, label: LabelId, dst: VertexKey, rank: Rank) -> Self {
         Self { primary_id: dst, direction: Direction::IN, label_id: label, secondary_id: src, rank }
     }
 
     /// Flip to the opposite direction (swaps `primary_id` ↔ `secondary_id`).
+    #[inline]
     pub fn flip(&self) -> Self {
         Self {
             primary_id: self.secondary_id,
@@ -185,6 +197,7 @@ impl EdgeKey {
     }
 
     /// Return the canonical `Out`-direction form.
+    #[inline]
     pub fn canonical(self) -> Self {
         match self.direction {
             Direction::OUT => self,
@@ -193,6 +206,7 @@ impl EdgeKey {
     }
 
     /// Extract the direction-free `CanonicalEdgeKey`.
+    #[inline]
     pub fn canonical_edge_key(self) -> CanonicalEdgeKey {
         let out = self.canonical();
         CanonicalEdgeKey { src_id: out.primary_id, label_id: out.label_id, rank: out.rank, dst_id: out.secondary_id }

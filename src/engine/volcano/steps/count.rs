@@ -34,7 +34,11 @@ use crate::{
 /// A physical step that counts the number of traversers received from its upstream.
 #[derive(Default, Debug)]
 pub struct CountStep {
+    // ── Upstream link ──
     upstream: Option<StepRef>,
+
+    // ── Dynamic/Runtime execution state ──
+    /// Whether the count has already been produced.
     done: bool,
 }
 

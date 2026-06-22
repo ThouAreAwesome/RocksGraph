@@ -213,11 +213,20 @@ pub trait GraphTransaction {
     // ── Control ───────────────────────────────────────────────────────────────
 
     /// Flush all staged writes atomically.
-    /// Returns [`StoreError::Conflict`] on OCC conflict; the caller must retry
-    /// the entire traversal from scratch with a new `LogicalGraph`.
+    /// Returns [`StoreError::Conflict`] on OCC conflict.
+    ///
+    /// # Reuse
+    /// Calling `commit` automatically resets the transaction object, starting a
+    /// fresh underlying transaction. The `GraphTransaction` instance remains active
+    /// and reusable for subsequent operations.
     fn commit(&mut self) -> Result<(), StoreError>;
 
     /// Discard all staged writes and reset the transaction.
+    ///
+    /// # Reuse
+    /// Calling `abort` automatically resets the transaction object, starting a
+    /// fresh underlying transaction. The `GraphTransaction` instance remains active
+    /// and reusable for subsequent operations.
     fn abort(&mut self);
 }
 

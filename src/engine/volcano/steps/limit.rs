@@ -31,8 +31,15 @@ use crate::{
 /// A physical step that limits the number of traversers emitted by its upstream.
 #[derive(Debug)]
 pub struct LimitStep {
+    // ── Upstream link ──
     upstream: Option<StepRef>,
+
+    // ── Static/Fixed configuration ──
+    /// The maximum number of elements to yield.
     limit: u32,
+
+    // ── Dynamic/Runtime execution state ──
+    /// The number of elements yielded so far.
     current_idx: usize,
 }
 

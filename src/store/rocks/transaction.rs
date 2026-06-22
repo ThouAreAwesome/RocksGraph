@@ -65,7 +65,7 @@ use crate::{
     },
     types::{
         element::Property, AdjacentEdgeCursor, AdjacentEdgesOptions, CanonicalEdgeKey, Direction, Edge, EdgeKey,
-        LabelId, StoreError, Vertex, VertexKey,
+        LabelId, Rank, StoreError, Vertex, VertexKey,
     },
 };
 
@@ -137,12 +137,11 @@ impl GraphTransaction for Transaction {
     /// Retrieves a vertex by its key, enrolling it in the OCC read-set.
     fn get_vertex(&mut self, key: VertexKey) -> Result<Option<Vertex>, StoreError> {
         let cf_vertices = self.db.cf_handle(CF_VERTICES).ok_or(StoreError::MissingColumnFamily("vertices"))?;
-        let read_opts = self.read_opts();
         let vv_raw = self
             .db_txn
             .as_ref()
             .expect("no active transaction")
-            .get_for_update_cf_opt(&cf_vertices, encode_vertex_key(key), true, &read_opts)
+            .get_for_update_cf_opt(&cf_vertices, encode_vertex_key(key), true, &self.read_opts())
             .map_err(StoreError::RocksDb)?;
 
         match vv_raw {
@@ -157,12 +156,11 @@ impl GraphTransaction for Transaction {
     /// Retrieves the degree (in-edges, out-edges) of a vertex, enrolling it in the OCC read-set.
     fn get_vertex_degree(&mut self, key: VertexKey) -> Result<Option<(u32, u32)>, StoreError> {
         let cf_degree = self.db.cf_handle(CF_VERTEX_DEGREE).ok_or(StoreError::MissingColumnFamily("vertex_degree"))?;
-        let read_opts = self.read_opts();
         let vd_raw = self
             .db_txn
             .as_ref()
             .expect("no active transaction")
-            .get_for_update_cf_opt(&cf_degree, encode_vertex_key(key), true, &read_opts)
+            .get_for_update_cf_opt(&cf_degree, encode_vertex_key(key), true, &self.read_opts())
             .map_err(StoreError::RocksDb)?;
         match vd_raw {
             Some(vd_bytes) => {
@@ -181,12 +179,11 @@ impl GraphTransaction for Transaction {
         };
         let key_bytes = encode_edge_key(key);
         let cf = self.db.cf_handle(cf_name).ok_or(StoreError::MissingColumnFamily(cf_name))?;
-        let read_opts = self.read_opts();
         let raw_opt = self
             .db_txn
             .as_ref()
             .expect("no active transaction")
-            .get_for_update_cf_opt(&cf, key_bytes, false, &read_opts)
+            .get_for_update_cf_opt(&cf, key_bytes, false, &self.read_opts())
             .map_err(StoreError::RocksDb)?;
 
         match raw_opt {
@@ -198,11 +195,11 @@ impl GraphTransaction for Transaction {
     fn get_vertices(&mut self, keys: &[VertexKey]) -> Result<Vec<Vertex>, StoreError> {
         let cf = self.db.cf_handle(CF_VERTICES).ok_or(StoreError::MissingColumnFamily("vertices"))?;
         let txn = self.db_txn.as_ref().expect("no active transaction");
-        let read_opts = self.read_opts();
         let mut out = Vec::with_capacity(keys.len());
         for &k in keys {
-            let vv_raw =
-                txn.get_for_update_cf_opt(&cf, encode_vertex_key(k), true, &read_opts).map_err(StoreError::RocksDb)?;
+            let vv_raw = txn
+                .get_for_update_cf_opt(&cf, encode_vertex_key(k), true, &self.read_opts())
+                .map_err(StoreError::RocksDb)?;
             if let Some(bytes) = vv_raw {
                 let vv = VertexValue::decode(&bytes).ok_or(StoreError::CorruptData("vertex value"))?;
                 out.push(build_lazy_vertex(k, &vv));
@@ -215,15 +212,15 @@ impl GraphTransaction for Transaction {
         let cf_out = self.db.cf_handle(CF_EDGES_OUT).ok_or(StoreError::MissingColumnFamily(CF_EDGES_OUT))?;
         let cf_in = self.db.cf_handle(CF_EDGES_IN).ok_or(StoreError::MissingColumnFamily(CF_EDGES_IN))?;
         let txn = self.db_txn.as_ref().expect("no active transaction");
-        let read_opts = self.read_opts();
         let mut out = Vec::with_capacity(keys.len());
         for key in keys {
             let cf = match key.direction {
                 Direction::OUT => &cf_out,
                 Direction::IN => &cf_in,
             };
-            let raw =
-                txn.get_for_update_cf_opt(cf, encode_edge_key(key), false, &read_opts).map_err(StoreError::RocksDb)?;
+            let raw = txn
+                .get_for_update_cf_opt(cf, encode_edge_key(key), false, &self.read_opts())
+                .map_err(StoreError::RocksDb)?;
             if let Some(bytes) = raw {
                 out.push(build_lazy_edge(key, &EdgeValue::decode(&bytes)));
             }
@@ -243,10 +240,7 @@ impl GraphTransaction for Transaction {
             Direction::IN => CF_EDGES_IN,
         };
         let prefix = edge_scan_prefix(vertex, opts.label);
-        let mut read_opts = ReadOptions::default();
-        if let Some(ref snap) = self.db_txn_snap {
-            read_opts.set_snapshot(snap);
-        }
+        let mut read_opts = self.read_opts();
         read_opts.set_prefix_same_as_start(true);
         if let Some(upper) = prefix_upper_bound(&prefix) {
             read_opts.set_iterate_upper_bound(upper);
@@ -264,6 +258,7 @@ impl GraphTransaction for Transaction {
         };
 
         let dst_set: Option<HashSet<VertexKey>> = opts.dst.map(|k| k.iter().copied().collect());
+        let rank_set: Option<HashSet<Rank>> = opts.rank.map(|r| r.iter().copied().collect());
         let cf = self.db.cf_handle(cf_name).ok_or(StoreError::MissingColumnFamily(cf_name))?;
         let txn = self.db_txn.as_ref().expect("no active transaction");
         let iter = txn.iterator_cf_opt(&cf, read_opts, IteratorMode::From(&seek_key, ScanDir::Forward));
@@ -295,8 +290,8 @@ impl GraphTransaction for Transaction {
                     continue;
                 }
             }
-            if let Some(r) = opts.rank {
-                if ek.rank != r {
+            if let Some(ref set) = rank_set {
+                if !set.contains(&ek.rank) {
                     continue;
                 }
             }
@@ -329,11 +324,8 @@ impl GraphTransaction for Transaction {
         limit: u32,
     ) -> Result<(Vec<Vertex>, Option<VertexKey>), StoreError> {
         let cf = self.db.cf_handle(CF_VERTICES).ok_or(StoreError::MissingColumnFamily("vertices"))?;
-        let mut read_opts = ReadOptions::default();
-        if let Some(ref snap) = self.db_txn_snap {
-            read_opts.set_snapshot(snap);
-        }
         // Full-keyspace scan: must not be restricted to the seek key's prefix bucket.
+        let mut read_opts = self.read_opts();
         read_opts.set_total_order_seek(true);
 
         let seek_key = if let Some(vk) = start_from { encode_vertex_key(vk).to_vec() } else { Vec::new() };
@@ -382,14 +374,11 @@ impl GraphTransaction for Transaction {
         limit: u32,
     ) -> Result<(Vec<Edge>, Option<CanonicalEdgeKey>), StoreError> {
         let cf = self.db.cf_handle(CF_EDGES_OUT).ok_or(StoreError::MissingColumnFamily("edges_out"))?;
-        let mut read_opts = ReadOptions::default();
-        if let Some(ref snap) = self.db_txn_snap {
-            read_opts.set_snapshot(snap);
-        }
         // `edges_out` has an 8-byte fixed prefix extractor (src_id) for outE()/inE() scans.
         // A full scan must disable prefix-restricted seeking, or pagination silently
         // truncates once the seek key falls on a different prefix bucket than the rest
         // of the keyspace.
+        let mut read_opts = self.read_opts();
         read_opts.set_total_order_seek(true);
 
         let seek_key = if let Some(cek) = start_from { encode_edge_key(&cek.out_key()).to_vec() } else { Vec::new() };
@@ -486,6 +475,11 @@ impl GraphTransaction for Transaction {
     }
 
     /// Attempts to commit the transaction. Returns `StoreError::Conflict` on OCC failure.
+    ///
+    /// # Reuse
+    /// Calling `commit` automatically resets this transaction instance, spawning a fresh
+    /// RocksDB transaction and snapshot. This allows reusing the same `Transaction`
+    /// object for subsequent operations.
     #[allow(clippy::missing_transmute_annotations)]
     fn commit(&mut self) -> Result<(), StoreError> {
         self.db_txn_snap.take();
@@ -505,6 +499,11 @@ impl GraphTransaction for Transaction {
     }
 
     /// Rolls back the transaction, discarding all staged writes.
+    ///
+    /// # Reuse
+    /// Calling `abort` automatically resets this transaction instance, spawning a fresh
+    /// RocksDB transaction and snapshot. This allows reusing the same `Transaction`
+    /// object for subsequent operations.
     #[allow(clippy::missing_transmute_annotations)]
     fn abort(&mut self) {
         self.db_txn_snap.take();

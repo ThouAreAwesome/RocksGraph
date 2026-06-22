@@ -92,11 +92,12 @@ pub const EDGE_KEY_SIZE: usize = 20;
 
 /// Encodes a `VertexKey` (i64) into an 8-byte big-endian array.
 /// The `^ (1 << 63)` operation is used to ensure lexicographical ordering matches numerical order for signed integers.
+#[inline]
 pub fn encode_vertex_key(key: VertexKey) -> [u8; VERTEX_KEY_SIZE] {
     (key ^ (1 << 63)).to_be_bytes()
 }
 
-#[allow(dead_code)]
+#[inline]
 pub fn decode_vertex_key(bytes: &[u8]) -> Option<VertexKey> {
     Some(i64::from_be_bytes(bytes.try_into().ok()?) ^ (1 << 63))
 }
@@ -109,6 +110,7 @@ pub fn decode_vertex_key(bytes: &[u8]) -> Option<VertexKey> {
 // Both are encoded with the same physical byte format; only the semantic
 // meaning of the first and last i64 differs by CF.
 /// Encode a `EdgeKey`
+#[inline]
 pub fn encode_edge_key(k: &EdgeKey) -> [u8; EDGE_KEY_SIZE] {
     let mut buf = [0u8; EDGE_KEY_SIZE];
     buf[0..8].copy_from_slice(&(k.primary_id ^ (1 << 63)).to_be_bytes());
@@ -119,6 +121,7 @@ pub fn encode_edge_key(k: &EdgeKey) -> [u8; EDGE_KEY_SIZE] {
 }
 
 /// Decodes a byte slice into an `EdgeKey`.
+#[inline]
 pub fn decode_edge_key(bytes: &[u8], dir: Direction) -> Option<EdgeKey> {
     if bytes.len() < EDGE_KEY_SIZE {
         return None;

@@ -55,7 +55,7 @@ use crate::{
     graph::{LogicalGraph, LogicalSnapshot},
     gremlin::traversal::{ReadTraversal, WriteTraversal},
     store::{traits::GraphStore, RocksStorage},
-    types::StoreError,
+    types::{BatchScenario, StoreError},
 };
 
 // ── Graph ─────────────────────────────────────────────────────────────────────
@@ -142,6 +142,15 @@ impl ReadSession {
     pub fn clear_caches(&mut self) {
         self.ctx.clear_caches();
     }
+
+    /// Configure the batch size for a given scan or query scenario.
+    pub fn set_batch_size(&mut self, scenario: BatchScenario, size: u32) {
+        match scenario {
+            BatchScenario::ScanVertices => self.ctx.scan_vertices_batch_size = size,
+            BatchScenario::ScanEdges => self.ctx.scan_edges_batch_size = size,
+            BatchScenario::GetAdjacentEdges => self.ctx.get_adjacent_edges_batch_size = size,
+        }
+    }
 }
 
 // ── TxSession ─────────────────────────────────────────────────────────────────
@@ -184,6 +193,15 @@ impl TxSession {
     pub fn rollback(mut self) {
         self.committed = true;
         self.ctx.abort();
+    }
+
+    /// Configure the batch size for a given scan or query scenario.
+    pub fn set_batch_size(&mut self, scenario: BatchScenario, size: u32) {
+        match scenario {
+            BatchScenario::ScanVertices => self.ctx.scan_vertices_batch_size = size,
+            BatchScenario::ScanEdges => self.ctx.scan_edges_batch_size = size,
+            BatchScenario::GetAdjacentEdges => self.ctx.get_adjacent_edges_batch_size = size,
+        }
     }
 }
 

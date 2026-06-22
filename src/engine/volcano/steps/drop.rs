@@ -31,6 +31,7 @@ use crate::{
 /// A physical step that drops the element (vertex, edge, or property) carried by the incoming traverser.
 #[derive(Default, Debug)]
 pub struct DropStep {
+    // ── Upstream link ──
     upstream: Option<StepRef>,
 }
 

@@ -21,7 +21,9 @@ use crate::{
     types::{
         element::Property,
         gvalue::Primitive,
-        keys::{AdjacentEdgeCursor, AdjacentEdgesOptions, CanonicalEdgeKey, CanonicalKey, LabelId, VertexKey},
+        keys::{
+            AdjacentEdgeCursor, AdjacentEdgesOptions, BatchScenario, CanonicalEdgeKey, CanonicalKey, LabelId, VertexKey,
+        },
         prop_key::PropKey,
         Direction, EdgeKey, StoreError,
     },
@@ -68,15 +70,6 @@ pub trait GraphCtx {
     fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<EdgeKey>, StoreError>;
     /// Retrieves multiple edges in batch, caching them in overlay.
     fn get_edges(&mut self, keys: &[EdgeKey]) -> Result<Vec<EdgeKey>, StoreError>;
-
-    fn get_adjacent_vertices(
-        &mut self,
-        vertex_key: VertexKey,
-        label: Option<LabelId>,
-        direction: Direction,
-        end_vertex_ids: Option<&[VertexKey]>,
-        limit: Option<u32>,
-    ) -> Result<Vec<VertexKey>, StoreError>;
 
     /// Retrieves adjacent edges for a given vertex, filtered by label, direction, and optional destination
     /// vertices with support for pagination.
@@ -125,6 +118,9 @@ pub trait GraphCtx {
     #[allow(clippy::type_complexity)]
     fn get_all_props(&mut self, key: &CanonicalKey)
         -> Result<Option<(LabelId, Vec<(PropKey, Primitive)>)>, StoreError>;
+
+    /// Configured batch size for a given scan or query scenario.
+    fn batch_size(&self, scenario: BatchScenario) -> u32;
 }
 
 /// Zero-cost context used in unit tests where no real graph is needed.
@@ -144,16 +140,7 @@ impl GraphCtx for NoopCtx {
     fn get_edges(&mut self, _keys: &[EdgeKey]) -> Result<Vec<EdgeKey>, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support get_edges".to_string()))
     }
-    fn get_adjacent_vertices(
-        &mut self,
-        _vertex_key: VertexKey,
-        _label: Option<LabelId>,
-        _direction: Direction,
-        _end_vertex_ids: Option<&[VertexKey]>,
-        _limit: Option<u32>,
-    ) -> Result<Vec<VertexKey>, StoreError> {
-        Err(StoreError::UnsupportedOperation("NoopCtx does not support get_adjacent_vertices".to_string()))
-    }
+
     fn get_adjacent_edges(
         &mut self,
         _vertex_key: VertexKey,
@@ -210,6 +197,9 @@ impl GraphCtx for NoopCtx {
     ) -> Result<Option<(LabelId, Vec<(PropKey, Primitive)>)>, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support get_all_props".to_string()))
     }
+    fn batch_size(&self, _scenario: BatchScenario) -> u32 {
+        1000
+    }
 }
 
 impl<S: GraphStore> GraphCtx for LogicalGraph<S> {
@@ -225,18 +215,7 @@ impl<S: GraphStore> GraphCtx for LogicalGraph<S> {
     fn get_edges(&mut self, keys: &[EdgeKey]) -> Result<Vec<EdgeKey>, StoreError> {
         self.get_edges(keys)
     }
-    fn get_adjacent_vertices(
-        &mut self,
-        vertex_key: VertexKey,
-        label: Option<LabelId>,
-        direction: Direction,
-        end_vertex_ids: Option<&[VertexKey]>,
-        limit: Option<u32>,
-    ) -> Result<Vec<VertexKey>, StoreError> {
-        let opts = AdjacentEdgesOptions { label, dst: end_vertex_ids, rank: None, start_from: None };
-        let (edges, _) = self.get_adjacent_edges(vertex_key, direction, opts, limit)?;
-        Ok(edges.into_iter().map(|ek| ek.secondary_id).collect())
-    }
+
     fn get_adjacent_edges(
         &mut self,
         vertex_key: VertexKey,
@@ -293,6 +272,13 @@ impl<S: GraphStore> GraphCtx for LogicalGraph<S> {
     ) -> Result<Option<(LabelId, Vec<(PropKey, Primitive)>)>, StoreError> {
         self.get_all_props(key)
     }
+    fn batch_size(&self, scenario: BatchScenario) -> u32 {
+        match scenario {
+            BatchScenario::ScanVertices => self.scan_vertices_batch_size,
+            BatchScenario::ScanEdges => self.scan_edges_batch_size,
+            BatchScenario::GetAdjacentEdges => self.get_adjacent_edges_batch_size,
+        }
+    }
 }
 
 impl<S: GraphStore> GraphCtx for LogicalSnapshot<S> {
@@ -308,18 +294,7 @@ impl<S: GraphStore> GraphCtx for LogicalSnapshot<S> {
     fn get_edges(&mut self, keys: &[EdgeKey]) -> Result<Vec<EdgeKey>, StoreError> {
         self.get_edges(keys)
     }
-    fn get_adjacent_vertices(
-        &mut self,
-        vertex_key: VertexKey,
-        label: Option<LabelId>,
-        direction: Direction,
-        end_vertex_ids: Option<&[VertexKey]>,
-        limit: Option<u32>,
-    ) -> Result<Vec<VertexKey>, StoreError> {
-        let opts = AdjacentEdgesOptions { label, dst: end_vertex_ids, rank: None, start_from: None };
-        let (edges, _) = self.get_adjacent_edges(vertex_key, direction, opts, limit)?;
-        Ok(edges.into_iter().map(|ek| ek.secondary_id).collect())
-    }
+
     fn get_adjacent_edges(
         &mut self,
         vertex_key: VertexKey,
@@ -375,5 +350,12 @@ impl<S: GraphStore> GraphCtx for LogicalSnapshot<S> {
         key: &CanonicalKey,
     ) -> Result<Option<(LabelId, Vec<(PropKey, Primitive)>)>, StoreError> {
         self.get_all_props(key)
+    }
+    fn batch_size(&self, scenario: BatchScenario) -> u32 {
+        match scenario {
+            BatchScenario::ScanVertices => self.scan_vertices_batch_size,
+            BatchScenario::ScanEdges => self.scan_edges_batch_size,
+            BatchScenario::GetAdjacentEdges => self.get_adjacent_edges_batch_size,
+        }
     }
 }

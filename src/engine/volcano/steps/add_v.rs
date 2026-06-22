@@ -38,9 +38,16 @@ use crate::{
 /// A physical step that adds a new vertex to the graph.
 #[derive(Debug)]
 pub struct AddVStep {
+    // ── Static/Fixed configuration ──
+    /// The label ID of the vertex to be created.
     label_id: LabelId,
+    /// The designated vertex key.
     vertex_id: VertexKey,
+    /// The property list to initialize the new vertex with.
     properties: SmallVec<[Property; 8]>,
+
+    // ── Dynamic/Runtime execution state ──
+    /// Whether the vertex has been successfully created and emitted in this run.
     emitted: bool,
 }
 

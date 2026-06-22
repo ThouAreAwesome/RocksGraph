@@ -31,8 +31,13 @@ use crate::{
 /// A physical step that filters traversers based on a specific property key and its expected value.
 #[derive(Debug)]
 pub struct HasPropertyStep {
+    // ── Upstream link ──
     upstream: Option<StepRef>,
+
+    // ── Static/Fixed configuration ──
+    /// The property key to filter by.
     prop_key: PropKey,
+    /// The expected value of the property.
     expected_value: Primitive,
 }
 

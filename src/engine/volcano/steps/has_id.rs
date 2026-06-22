@@ -31,7 +31,11 @@ use crate::{
 /// A physical step that filters traversers based on their vertex ID.
 #[derive(Debug)]
 pub struct HasIdStep {
+    // ── Upstream link ──
     upstream: Option<StepRef>,
+
+    // ── Static/Fixed configuration ──
+    /// The list of target vertex keys to match.
     target_ids: SmallVec<[VertexKey; 4]>,
 }
 

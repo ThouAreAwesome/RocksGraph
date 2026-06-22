@@ -31,7 +31,11 @@ use crate::{
 /// A physical step that filters edges based on their secondary (end) vertex ID.
 #[derive(Default, Debug)]
 pub struct EndVertexFilter {
+    // ── Upstream link ──
     upstream: Option<StepRef>,
+
+    // ── Static/Fixed configuration ──
+    /// The list of target vertex keys to filter matching edges.
     ids: SmallVec<[VertexKey; 4]>,
 }
 
