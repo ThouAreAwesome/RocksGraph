@@ -66,7 +66,7 @@ mod cases {
     fn create_logical_graph(store: &RocksStorage) -> LogicalGraph<RocksStorage> {
         //let dir = tempfile::tempdir().unwrap();
         //let store = RocksStorage::open(dir.path()).unwrap();
-        LogicalGraph::new(store.begin())
+        LogicalGraph::new(store.begin(), std::sync::Arc::new(std::sync::RwLock::new(crate::schema::Schema::new())))
     }
 
     fn get_adjacent_edges_test(
@@ -466,7 +466,7 @@ mod cases {
         };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
         let Some(result) = physical_plan.next(&mut graph).unwrap() else { panic!("Expected a result") };
 
         if let GValue::Vertex(v_key) = &result.value {
@@ -509,11 +509,12 @@ mod cases {
                 out_v_id: Some(marko_id),
                 in_v_id: Some(vadas_id),
                 properties,
+                rank: None,
             })],
         };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
         let result = physical_plan.next(&mut graph).unwrap().unwrap();
         if let GValue::Edge(e_key) = &result.value {
             let added_edge = graph.get_edge(e_key).unwrap().unwrap(); // Fetch the actual edge
@@ -550,7 +551,7 @@ mod cases {
         };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
         let result = physical_plan.next(&mut graph).unwrap().unwrap();
 
         if let GValue::Vertex(v_key) = &result.value {
@@ -584,6 +585,7 @@ mod cases {
                 LogicalStep::OutE(LogicalOutEStep {
                     label_ids: smallvec![knows_edge_key.label_id],
                     end_vertex_ids: None,
+                    rank: None,
                 }),
                 LogicalStep::HasProperty(LogicalHasPropertyStep {
                     key: SmolStr::new("weight"),
@@ -596,7 +598,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
         let result = physical_plan.next(&mut graph).unwrap().unwrap();
 
         if let GValue::Edge(e_key) = &result.value {
@@ -637,7 +639,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
         let result = physical_plan.next(&mut graph).unwrap().unwrap();
         if let GValue::Vertex(v_key) = &result.value {
             assert_eq!(*v_key, marko_id);
@@ -664,7 +666,11 @@ mod cases {
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![marko_id, josh_id] }), // Start from Marko and Josh
-                LogicalStep::OutE(LogicalOutEStep { label_ids: smallvec![CREATED_LABEL_ID], end_vertex_ids: None }), /* Get all outgoing edges */
+                LogicalStep::OutE(LogicalOutEStep {
+                    label_ids: smallvec![CREATED_LABEL_ID],
+                    end_vertex_ids: None,
+                    rank: None,
+                }), /* Get all outgoing edges */
                 LogicalStep::HasProperty(LogicalHasPropertyStep {
                     key: SmolStr::new("weight"),
                     value: Primitive::Float64(1.0),
@@ -673,7 +679,7 @@ mod cases {
         };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
         let result = physical_plan.next(&mut graph).unwrap().unwrap();
 
         if let GValue::Edge(e_key) = &result.value {
@@ -688,8 +694,8 @@ mod cases {
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![marko_id, josh_id] }), // Start from Marko and Josh
-                LogicalStep::OutE(LogicalOutEStep { label_ids: smallvec![], end_vertex_ids: None }), /* Get all outgoing
-                                                                                     * edges */
+                LogicalStep::OutE(LogicalOutEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None }), /* Get all outgoing
+                                                                                                                  * edges */
                 LogicalStep::HasProperty(LogicalHasPropertyStep {
                     key: SmolStr::new("weight"),
                     value: Primitive::Float64(1.0),
@@ -703,7 +709,7 @@ mod cases {
         ];
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
         let result = physical_plan.next(&mut graph).unwrap().unwrap();
 
         if let GValue::Edge(e_key) = &result.value {
@@ -731,7 +737,7 @@ mod cases {
         // Sub-plan 1: outE().count()
         let out_e_count_sub_plan = LogicalPlan {
             steps: vec![
-                LogicalStep::OutE(LogicalOutEStep { label_ids: smallvec![], end_vertex_ids: None }),
+                LogicalStep::OutE(LogicalOutEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None }),
                 LogicalStep::Count(LogicalCountStep {}),
             ],
         };
@@ -739,7 +745,7 @@ mod cases {
         // Sub-plan 2: inE().count()
         let in_e_count_sub_plan = LogicalPlan {
             steps: vec![
-                LogicalStep::InE(LogicalInEStep { label_ids: smallvec![], end_vertex_ids: None }),
+                LogicalStep::InE(LogicalInEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None }),
                 LogicalStep::Count(LogicalCountStep {}),
             ],
         };
@@ -753,7 +759,7 @@ mod cases {
         };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
 
         let mut results = Vec::new();
         while let Ok(Some(traverser)) = physical_plan.next(&mut graph) {
@@ -779,7 +785,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -803,7 +809,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -824,12 +830,12 @@ mod cases {
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
-                LogicalStep::OutE(LogicalOutEStep { label_ids: smallvec![], end_vertex_ids: None }),
+                LogicalStep::OutE(LogicalOutEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None }),
                 LogicalStep::InV(LogicalInVStep {}),
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -843,12 +849,12 @@ mod cases {
         let logical_plan2 = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
-                LogicalStep::OutE(LogicalOutEStep { label_ids: smallvec![], end_vertex_ids: None }),
+                LogicalStep::OutE(LogicalOutEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None }),
                 LogicalStep::OutV(LogicalOutVStep {}),
             ],
         };
         let mut builder2: PhysicalPlanBuilder = Default::default();
-        let physical_plan2 = builder2.build(&logical_plan2).unwrap();
+        let physical_plan2 = builder2.build(&logical_plan2, &graph.schema.read().unwrap()).unwrap();
         let mut results2 = Vec::new();
         while let Ok(Some(t)) = physical_plan2.next(&mut graph) {
             results2.push(t.as_ref().value.clone());
@@ -870,7 +876,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -883,11 +889,11 @@ mod cases {
         let logical_plan_e = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![josh_id] }),
-                LogicalStep::BothE(LogicalBothEStep { label_ids: smallvec![], end_vertex_ids: None }),
+                LogicalStep::BothE(LogicalBothEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None }),
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan_e = builder.build(&logical_plan_e).unwrap();
+        let physical_plan_e = builder.build(&logical_plan_e, &graph.schema.read().unwrap()).unwrap();
         let mut results_e = Vec::new();
         while let Ok(Some(t)) = physical_plan_e.next(&mut graph) {
             results_e.push(t.as_ref().value.clone());
@@ -909,7 +915,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -927,12 +933,12 @@ mod cases {
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
-                LogicalStep::OutE(LogicalOutEStep { label_ids: smallvec![], end_vertex_ids: None }),
+                LogicalStep::OutE(LogicalOutEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None }),
                 LogicalStep::OtherV(LogicalOtherVStep {}),
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -958,7 +964,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -983,7 +989,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -1030,7 +1036,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -1057,7 +1063,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -1083,7 +1089,7 @@ mod cases {
         };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
         let result = physical_plan.next(&mut graph);
 
         assert!(matches!(result, Err(StoreError::DuplicateVertex(1))));
@@ -1101,11 +1107,12 @@ mod cases {
                 out_v_id: Some(1),
                 in_v_id: Some(2),
                 properties: HashMap::new(),
+                rank: None,
             })],
         };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
         let result = physical_plan.next(&mut graph);
 
         assert!(matches!(result, Err(StoreError::DuplicateEdge(_))));
@@ -1127,7 +1134,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -1152,12 +1159,13 @@ mod cases {
                 LogicalStep::OutE(LogicalOutEStep {
                     label_ids: smallvec![KNOWS_LABEL_ID],
                     end_vertex_ids: Some(smallvec![vadas_id]),
+                    rank: None,
                 }),
                 LogicalStep::Drop(LogicalDropStep {}),
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
         assert!(physical_plan.next(&mut graph).unwrap().is_none());
         graph.commit().unwrap();
 
@@ -1183,12 +1191,12 @@ mod cases {
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![josh_id] }),
-                LogicalStep::OutE(LogicalOutEStep { label_ids: smallvec![], end_vertex_ids: None }),
+                LogicalStep::OutE(LogicalOutEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None }),
                 LogicalStep::Drop(LogicalDropStep {}),
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
         assert!(physical_plan.next(&mut graph).unwrap().is_none());
         graph.commit().unwrap();
 
@@ -1217,7 +1225,7 @@ mod cases {
             steps: vec![LogicalStep::V(LogicalVStep { ids: smallvec![99] }), LogicalStep::Drop(LogicalDropStep {})],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
         assert!(physical_plan.next(&mut graph).unwrap().is_none());
         graph.commit().unwrap();
 
@@ -1235,7 +1243,7 @@ mod cases {
             steps: vec![LogicalStep::V(LogicalVStep { ids: smallvec![1] }), LogicalStep::Drop(LogicalDropStep {})],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
         assert!(matches!(physical_plan.next(&mut graph), Err(StoreError::IncidentEdges)));
     }
 
@@ -1255,7 +1263,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
         assert!(physical_plan.next(&mut graph).unwrap().is_none());
         graph.commit().unwrap();
 
@@ -1285,13 +1293,14 @@ mod cases {
                 LogicalStep::OutE(LogicalOutEStep {
                     label_ids: smallvec![KNOWS_LABEL_ID],
                     end_vertex_ids: Some(smallvec![josh_id]),
+                    rank: None,
                 }),
                 LogicalStep::Properties(LogicalPropertiesStep { property_keys: smallvec![SmolStr::new("weight")] }),
                 LogicalStep::Drop(LogicalDropStep {}),
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
         assert!(physical_plan.next(&mut graph).unwrap().is_none());
         graph.commit().unwrap();
 
@@ -1317,12 +1326,13 @@ mod cases {
                 LogicalStep::OutE(LogicalOutEStep {
                     label_ids: smallvec![KNOWS_LABEL_ID],
                     end_vertex_ids: Some(smallvec![vadas_id]),
+                    rank: None,
                 }),
                 LogicalStep::Drop(LogicalDropStep {}),
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&drop_edge_plan).unwrap();
+        let physical_plan = builder.build(&drop_edge_plan, &graph.schema.read().unwrap()).unwrap();
         assert!(physical_plan.next(&mut graph).unwrap().is_none());
         graph.commit().unwrap();
 
@@ -1335,7 +1345,7 @@ mod cases {
             ],
         };
         let mut builder2: PhysicalPlanBuilder = Default::default();
-        let physical_plan2 = builder2.build(&drop_v_plan).unwrap();
+        let physical_plan2 = builder2.build(&drop_v_plan, &graph2.schema.read().unwrap()).unwrap();
         assert!(physical_plan2.next(&mut graph2).unwrap().is_none());
         graph2.commit().unwrap();
 
@@ -1355,13 +1365,17 @@ mod cases {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![1] }),
                 LogicalStep::HasLabel(LogicalHasLabelStep { label_ids: smallvec![PERSON_LABEL_ID] }),
-                LogicalStep::OutE(LogicalOutEStep { label_ids: smallvec![KNOWS_LABEL_ID], end_vertex_ids: None }),
+                LogicalStep::OutE(LogicalOutEStep {
+                    label_ids: smallvec![KNOWS_LABEL_ID],
+                    end_vertex_ids: None,
+                    rank: None,
+                }),
                 LogicalStep::Limit(LogicalLimitStep { limit: 1 }),
             ],
         };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
 
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
@@ -1385,6 +1399,7 @@ mod cases {
             steps: vec![LogicalStep::OutE(LogicalOutEStep {
                 label_ids: smallvec![CREATED_LABEL_ID],
                 end_vertex_ids: None,
+                rank: None,
             })],
         };
 
@@ -1393,6 +1408,7 @@ mod cases {
             steps: vec![LogicalStep::OutE(LogicalOutEStep {
                 label_ids: smallvec![KNOWS_LABEL_ID],
                 end_vertex_ids: None,
+                rank: None,
             })],
         };
 
@@ -1404,7 +1420,7 @@ mod cases {
         };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
 
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
@@ -1438,7 +1454,7 @@ mod cases {
         };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
 
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
@@ -1469,7 +1485,11 @@ mod cases {
         let mut logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
-                LogicalStep::OutE(LogicalOutEStep { label_ids: smallvec![KNOWS_LABEL_ID], end_vertex_ids: None }),
+                LogicalStep::OutE(LogicalOutEStep {
+                    label_ids: smallvec![KNOWS_LABEL_ID],
+                    end_vertex_ids: None,
+                    rank: None,
+                }),
                 LogicalStep::Where(LogicalWhereStep { plan: where_plan }),
             ],
         };
@@ -1485,7 +1505,7 @@ mod cases {
         }
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
 
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
@@ -1500,5 +1520,282 @@ mod cases {
         } else {
             panic!("Expected an edge result");
         }
+    }
+
+    #[test]
+    fn test_get_e_step_in_e_direction_via_optimizer() {
+        // g.V(josh).inE("knows").where(otherV().hasId(marko)) — exercises GetEStep's IN-direction
+        // path: marko -knows-> josh is stored as an OUT edge from marko, found here by looking it
+        // up from josh's side via the symmetric IN-direction key.
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+        let marko_id = 1;
+        let josh_id = 4;
+
+        let where_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::OtherV(LogicalOtherVStep {}),
+                LogicalStep::HasId(LogicalHasIdStep { ids: smallvec![marko_id] }),
+            ],
+        };
+        let mut logical_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: smallvec![josh_id] }),
+                LogicalStep::InE(LogicalInEStep {
+                    label_ids: smallvec![KNOWS_LABEL_ID],
+                    end_vertex_ids: None,
+                    rank: None,
+                }),
+                LogicalStep::Where(LogicalWhereStep { plan: where_plan }),
+            ],
+        };
+        apply_rules(&mut logical_plan).unwrap();
+
+        let mut builder: PhysicalPlanBuilder = Default::default();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        assert!(format!("{:?}", physical_plan).contains("GetEStep"), "expected GetEStep to be chosen");
+
+        let mut results = Vec::new();
+        while let Ok(Some(t)) = physical_plan.next(&mut graph) {
+            results.push(t.as_ref().value.clone());
+        }
+
+        assert_eq!(results.len(), 1, "expected to find the marko->josh edge from josh's inE side");
+        if let GValue::Edge(edge) = &results[0] {
+            assert_eq!(edge.canonical_edge_key().src_id, marko_id);
+            assert_eq!(edge.canonical_edge_key().dst_id, josh_id);
+        } else {
+            panic!("Expected an edge result");
+        }
+    }
+
+    #[test]
+    fn test_get_e_step_both_e_direction_via_optimizer() {
+        // g.V(josh).bothE("knows").where(otherV().hasId(marko)) — josh has no outgoing "knows"
+        // edge to marko, only an incoming one from marko; bothE must check both directions.
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+        let marko_id = 1;
+        let josh_id = 4;
+
+        let where_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::OtherV(LogicalOtherVStep {}),
+                LogicalStep::HasId(LogicalHasIdStep { ids: smallvec![marko_id] }),
+            ],
+        };
+        let mut logical_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: smallvec![josh_id] }),
+                LogicalStep::BothE(LogicalBothEStep {
+                    label_ids: smallvec![KNOWS_LABEL_ID],
+                    end_vertex_ids: None,
+                    rank: None,
+                }),
+                LogicalStep::Where(LogicalWhereStep { plan: where_plan }),
+            ],
+        };
+        apply_rules(&mut logical_plan).unwrap();
+
+        let mut builder: PhysicalPlanBuilder = Default::default();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        assert!(format!("{:?}", physical_plan).contains("GetEStep"), "expected GetEStep to be chosen");
+
+        let mut results = Vec::new();
+        while let Ok(Some(t)) = physical_plan.next(&mut graph) {
+            results.push(t.as_ref().value.clone());
+        }
+        assert_eq!(results.len(), 1, "bothE should find the edge regardless of which side it was stored from");
+    }
+
+    #[test]
+    fn test_get_e_step_out_vertex_emission_via_optimizer() {
+        // g.V(marko).out("knows").hasId(josh) — vertex-emitting Out should also route through
+        // GetEStep (output_edges=false) and yield the adjacent Vertex, not an Edge.
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+        let marko_id = 1;
+        let josh_id = 4;
+
+        let mut logical_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
+                LogicalStep::Out(LogicalOutStep { label_ids: smallvec![KNOWS_LABEL_ID], end_vertex_ids: None }),
+                LogicalStep::HasId(LogicalHasIdStep { ids: smallvec![josh_id] }),
+            ],
+        };
+        apply_rules(&mut logical_plan).unwrap();
+
+        let mut builder: PhysicalPlanBuilder = Default::default();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        assert!(format!("{:?}", physical_plan).contains("GetEStep"), "expected GetEStep to be chosen");
+
+        let mut results = Vec::new();
+        while let Ok(Some(t)) = physical_plan.next(&mut graph) {
+            results.push(t.as_ref().value.clone());
+        }
+        assert_eq!(results, vec![GValue::Vertex(josh_id)]);
+    }
+
+    #[test]
+    fn test_get_e_step_exact_rank_point_lookup() {
+        // Multi-edge "knows" between marko and josh at rank 0 and rank 1.
+        // g.V(marko).outE("knows").where(otherV().hasId(josh)).has("rank", 1) should resolve to a
+        // single GetEStep point lookup keyed on the exact rank, not just label+dst.
+        let (store, _dir) = open_rocks_store();
+        let schema = std::sync::Arc::new(std::sync::RwLock::new(crate::schema::Schema::new()));
+        schema
+            .write()
+            .unwrap()
+            .edge_configs
+            .insert(KNOWS_LABEL_ID, crate::schema::definition::EdgeConfig { multi_edge: true });
+        let mut graph: LogicalGraph<RocksStorage> = LogicalGraph::new(store.begin(), schema);
+
+        let marko_id = graph.add_vertex(1, PERSON_LABEL_ID).unwrap();
+        let josh_id = graph.add_vertex(4, PERSON_LABEL_ID).unwrap();
+        graph
+            .add_edge(&EdgeKey {
+                primary_id: marko_id,
+                direction: crate::types::Direction::OUT,
+                label_id: KNOWS_LABEL_ID,
+                secondary_id: josh_id,
+                rank: 0,
+            })
+            .unwrap();
+        graph
+            .add_edge(&EdgeKey {
+                primary_id: marko_id,
+                direction: crate::types::Direction::OUT,
+                label_id: KNOWS_LABEL_ID,
+                secondary_id: josh_id,
+                rank: 1,
+            })
+            .unwrap();
+        graph.commit().unwrap();
+
+        let where_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::OtherV(LogicalOtherVStep {}),
+                LogicalStep::HasId(LogicalHasIdStep { ids: smallvec![josh_id] }),
+            ],
+        };
+        let mut logical_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
+                LogicalStep::OutE(LogicalOutEStep {
+                    label_ids: smallvec![KNOWS_LABEL_ID],
+                    end_vertex_ids: None,
+                    rank: None,
+                }),
+                LogicalStep::Where(LogicalWhereStep { plan: where_plan }),
+                LogicalStep::HasProperty(LogicalHasPropertyStep {
+                    key: SmolStr::new("rank"),
+                    value: Primitive::Int32(1),
+                }),
+            ],
+        };
+        apply_rules(&mut logical_plan).unwrap();
+
+        // Both the end-vertex id and the rank should have folded into the same OutE step.
+        if let LogicalStep::OutE(s) = &logical_plan.steps[1] {
+            assert_eq!(s.end_vertex_ids, Some(smallvec![josh_id]));
+            assert_eq!(s.rank, Some(1));
+        } else {
+            panic!("expected OutE with end_vertex_ids and rank merged");
+        }
+        assert_eq!(logical_plan.steps.len(), 2, "the where() and has(\"rank\",1) steps should both be folded away");
+
+        let mut builder: PhysicalPlanBuilder = Default::default();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        assert!(format!("{:?}", physical_plan).contains("GetEStep"), "expected GetEStep to be chosen");
+
+        let mut results = Vec::new();
+        while let Ok(Some(t)) = physical_plan.next(&mut graph) {
+            results.push(t.as_ref().value.clone());
+        }
+        assert_eq!(results.len(), 1, "should find exactly the rank=1 edge, not both");
+        if let GValue::Edge(edge) = &results[0] {
+            assert_eq!(edge.rank, 1);
+        } else {
+            panic!("Expected an edge result");
+        }
+    }
+
+    #[test]
+    fn test_multi_edge_label_without_rank_filter_falls_back_to_scan() {
+        // Same multi-edge "knows" setup as test_get_e_step_exact_rank_point_lookup, but this
+        // time there's no explicit `.has("rank", N)` filter — only the end-vertex id is known.
+        // build_step must NOT guess GetEStep's implied rank=0 here (that would silently miss
+        // the rank=1 edge); it must fall back to the scan, which correctly returns both edges
+        // regardless of rank.
+        let (store, _dir) = open_rocks_store();
+        let schema = std::sync::Arc::new(std::sync::RwLock::new(crate::schema::Schema::new()));
+        schema
+            .write()
+            .unwrap()
+            .edge_configs
+            .insert(KNOWS_LABEL_ID, crate::schema::definition::EdgeConfig { multi_edge: true });
+        let mut graph: LogicalGraph<RocksStorage> = LogicalGraph::new(store.begin(), schema);
+
+        let marko_id = graph.add_vertex(1, PERSON_LABEL_ID).unwrap();
+        let josh_id = graph.add_vertex(4, PERSON_LABEL_ID).unwrap();
+        graph
+            .add_edge(&EdgeKey {
+                primary_id: marko_id,
+                direction: crate::types::Direction::OUT,
+                label_id: KNOWS_LABEL_ID,
+                secondary_id: josh_id,
+                rank: 0,
+            })
+            .unwrap();
+        graph
+            .add_edge(&EdgeKey {
+                primary_id: marko_id,
+                direction: crate::types::Direction::OUT,
+                label_id: KNOWS_LABEL_ID,
+                secondary_id: josh_id,
+                rank: 1,
+            })
+            .unwrap();
+        graph.commit().unwrap();
+
+        let where_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::OtherV(LogicalOtherVStep {}),
+                LogicalStep::HasId(LogicalHasIdStep { ids: smallvec![josh_id] }),
+            ],
+        };
+        let mut logical_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
+                LogicalStep::OutE(LogicalOutEStep {
+                    label_ids: smallvec![KNOWS_LABEL_ID],
+                    end_vertex_ids: None,
+                    rank: None,
+                }),
+                LogicalStep::Where(LogicalWhereStep { plan: where_plan }),
+            ],
+        };
+        apply_rules(&mut logical_plan).unwrap();
+
+        if let LogicalStep::OutE(s) = &logical_plan.steps[1] {
+            assert_eq!(s.end_vertex_ids, Some(smallvec![josh_id]));
+            assert_eq!(s.rank, None, "no rank filter was given");
+        } else {
+            panic!("expected OutE with end_vertex_ids merged");
+        }
+
+        let mut builder: PhysicalPlanBuilder = Default::default();
+        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        assert!(
+            !format!("{:?}", physical_plan).contains("GetEStep"),
+            "must not use GetEStep when rank is unknown for a multi-edge label"
+        );
+
+        let mut results = Vec::new();
+        while let Ok(Some(t)) = physical_plan.next(&mut graph) {
+            results.push(t.as_ref().value.clone());
+        }
+        assert_eq!(results.len(), 2, "the scan must find both ranks, not just rank=0");
     }
 }

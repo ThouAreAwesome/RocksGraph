@@ -15,8 +15,11 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
+use std::sync::{Arc, RwLock};
+
 use crate::{
     graph::{LogicalGraph, LogicalSnapshot},
+    schema::Schema,
     store::traits::GraphStore,
     types::{
         element::Property,
@@ -121,6 +124,11 @@ pub trait GraphCtx {
 
     /// Configured batch size for a given scan or query scenario.
     fn batch_size(&self, scenario: BatchScenario) -> u32;
+
+    /// Handle to the shared schema registry — used by `PhysicalPlanBuilder` at build time
+    /// (e.g. to check a label's single-/multi-edge mode before choosing `GetEStep`), never
+    /// from inside a volcano step's `produce()`.
+    fn schema(&self) -> Arc<RwLock<Schema>>;
 }
 
 /// Zero-cost context used in unit tests where no real graph is needed.
@@ -199,6 +207,9 @@ impl GraphCtx for NoopCtx {
     }
     fn batch_size(&self, _scenario: BatchScenario) -> u32 {
         1000
+    }
+    fn schema(&self) -> Arc<RwLock<Schema>> {
+        Arc::new(RwLock::new(Schema::new()))
     }
 }
 
@@ -279,6 +290,9 @@ impl<S: GraphStore> GraphCtx for LogicalGraph<S> {
             BatchScenario::GetAdjacentEdges => self.get_adjacent_edges_batch_size,
         }
     }
+    fn schema(&self) -> Arc<RwLock<Schema>> {
+        Arc::clone(&self.schema)
+    }
 }
 
 impl<S: GraphStore> GraphCtx for LogicalSnapshot<S> {
@@ -357,5 +371,8 @@ impl<S: GraphStore> GraphCtx for LogicalSnapshot<S> {
             BatchScenario::ScanEdges => self.scan_edges_batch_size,
             BatchScenario::GetAdjacentEdges => self.get_adjacent_edges_batch_size,
         }
+    }
+    fn schema(&self) -> Arc<RwLock<Schema>> {
+        Arc::clone(&self.schema)
     }
 }

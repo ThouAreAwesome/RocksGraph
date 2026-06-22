@@ -80,7 +80,7 @@ use crate::{
         element::{Edge, Property, Vertex},
         keys::{
             AdjacentEdgeCursor, AdjacentEdgesOptions, CanonicalEdgeKey, CanonicalKey, Direction, EdgeKey, LabelId,
-            VertexKey,
+            VertexKey, DEFAULT_RANK,
         },
         prop_key::PropKey,
         Primitive, Rank, StoreError,
@@ -144,11 +144,12 @@ pub(crate) struct LogicalGraph<S: GraphStore> {
     pub(crate) scan_vertices_batch_size: u32,
     pub(crate) scan_edges_batch_size: u32,
     pub(crate) get_adjacent_edges_batch_size: u32,
+    pub(crate) schema: std::sync::Arc<std::sync::RwLock<crate::schema::Schema>>,
 }
 
 impl<S: GraphStore> LogicalGraph<S> {
     /// Create a new logical graph context wrapping the given transaction.
-    pub fn new(store: S::Txn) -> Self {
+    pub fn new(store: S::Txn, schema: std::sync::Arc<std::sync::RwLock<crate::schema::Schema>>) -> Self {
         // Creates a new `LogicalGraph` instance, initializing its in-memory caches
         // and associating it with a store transaction.
         Self {
@@ -158,9 +159,10 @@ impl<S: GraphStore> LogicalGraph<S> {
             vertex_degree: HashMap::new(),
             // Tracks the mutation state of elements within this transaction.
             dirty: HashMap::new(),
-            scan_vertices_batch_size: 1000,
-            scan_edges_batch_size: 1000,
-            get_adjacent_edges_batch_size: 1000,
+            scan_vertices_batch_size: 1024,
+            scan_edges_batch_size: 1024,
+            get_adjacent_edges_batch_size: 64,
+            schema,
         }
     }
 
@@ -667,6 +669,13 @@ impl<S: GraphStore> LogicalGraph<S> {
     /// # Locking
     /// No lock is acquired.  The new edge's `props` field starts empty.
     pub(crate) fn add_edge(&mut self, ek: &EdgeKey) -> Result<EdgeKey, StoreError> {
+        let config = self.schema.read().unwrap().edge_config(ek.label_id);
+        if !config.multi_edge && ek.rank != DEFAULT_RANK {
+            return Err(StoreError::UnsupportedOperation(format!(
+                "Non-zero rank {} is not allowed for single-edge relationship of label id {}",
+                ek.rank, ek.label_id
+            )));
+        }
         let cek = ek.canonical_edge_key();
         if self.edges.contains_key(&cek) {
             return Err(StoreError::DuplicateEdge(cek));
@@ -962,17 +971,19 @@ pub(crate) struct LogicalSnapshot<S: GraphStore> {
     pub(crate) scan_vertices_batch_size: u32,
     pub(crate) scan_edges_batch_size: u32,
     pub(crate) get_adjacent_edges_batch_size: u32,
+    pub(crate) schema: std::sync::Arc<std::sync::RwLock<crate::schema::Schema>>,
 }
 
 impl<S: GraphStore> LogicalSnapshot<S> {
-    pub fn new(snapshot: S::Snapshot) -> Self {
+    pub fn new(snapshot: S::Snapshot, schema: std::sync::Arc<std::sync::RwLock<crate::schema::Schema>>) -> Self {
         Self {
             store: snapshot,
             vertices: HashMap::new(),
             edges: HashMap::new(),
-            scan_vertices_batch_size: 1000,
-            scan_edges_batch_size: 1000,
-            get_adjacent_edges_batch_size: 100,
+            scan_vertices_batch_size: 1024,
+            scan_edges_batch_size: 1024,
+            get_adjacent_edges_batch_size: 64,
+            schema,
         }
     }
 
@@ -1171,6 +1182,7 @@ impl<S: GraphStore> LogicalSnapshot<S> {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /// Updates a property in-place if its key exists, otherwise appends it to the list.
+#[inline]
 fn upsert_prop(props: &mut Vec<Property>, prop: &Property) {
     if let Some(p) = props.iter_mut().find(|p| p.key == prop.key) {
         p.value = prop.value.clone();
@@ -1239,7 +1251,7 @@ mod tests {
     }
 
     fn ctx(store: &RocksStorage) -> LogicalGraph<RocksStorage> {
-        LogicalGraph::new(store.begin())
+        LogicalGraph::new(store.begin(), std::sync::Arc::new(std::sync::RwLock::new(crate::schema::Schema::new())))
     }
 
     fn cek(src: i64, label: u16, dst: i64) -> CanonicalEdgeKey {
@@ -3213,7 +3225,10 @@ mod tests {
 
         // 2. Open a read snapshot (LogicalSnapshot)
         // S::Snapshot represents the snapshot type. For RocksStorage, it's Snapshot.
-        let mut snap = crate::graph::LogicalSnapshot::<RocksStorage>::new(store.snapshot());
+        let mut snap = crate::graph::LogicalSnapshot::<RocksStorage>::new(
+            store.snapshot(),
+            std::sync::Arc::new(std::sync::RwLock::new(crate::schema::Schema::new())),
+        );
 
         // Perform first paginated scan (limit 1)
         let (v_batch1, v_cursor1) = snap.scan_vertices(None, None, 1).unwrap();

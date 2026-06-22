@@ -42,3 +42,4 @@ use smol_str::SmolStr;
 pub type PropKey = SmolStr;
 pub const ID: PropKey = SmolStr::new_static("id");
 pub const LABEL: PropKey = SmolStr::new_static("label");
+pub const RANK: PropKey = SmolStr::new_static("rank");

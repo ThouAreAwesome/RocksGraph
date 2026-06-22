@@ -51,7 +51,7 @@
 use crate::types::{
     gvalue::Primitive,
     keys::{CanonicalEdgeKey, CanonicalKey, LabelId, Rank, VertexKey},
-    prop_key::{PropKey, ID, LABEL},
+    prop_key::{PropKey, ID, LABEL, RANK},
     EdgeKey,
 };
 
@@ -162,11 +162,11 @@ pub struct Edge {
     pub src_id: VertexKey,
     pub label_id: LabelId,
     pub dst_id: VertexKey,
+    pub rank: Rank,
     /// Raw property blob from the store. `Some` until first decode, then `None`.
     raw_props: Option<(Box<[u8]>, PropDecoder)>,
     /// Decoded properties. Empty until decoded on first property accessor call.
     props: Vec<Property>,
-    pub rank: Rank,
 }
 
 impl Edge {
@@ -231,7 +231,7 @@ impl Edge {
             direction: super::Direction::OUT,
             label_id: self.label_id,
             secondary_id: self.dst_id,
-            rank: 0,
+            rank: self.rank,
         }
     }
 
@@ -242,7 +242,7 @@ impl Edge {
             direction: super::Direction::IN,
             label_id: self.label_id,
             secondary_id: self.src_id,
-            rank: 0,
+            rank: self.rank,
         }
     }
 
@@ -259,6 +259,13 @@ impl Edge {
                 value: Primitive::Int32(self.label_id as i32),
             });
         }
+        if RANK == *key {
+            return Some(Property {
+                owner: CanonicalKey::Edge(self.canonical_key()),
+                key: RANK,
+                value: Primitive::Int32(self.rank as i32),
+            });
+        }
         self.ensure_decoded();
         self.props.iter().find(|p| p.key == *key).cloned()
     }
@@ -271,6 +278,9 @@ impl Edge {
     pub fn get_value(&mut self, key: &PropKey) -> Option<Primitive> {
         if LABEL == *key {
             return Some(Primitive::Int32(self.label_id as i32));
+        }
+        if RANK == *key {
+            return Some(Primitive::Int32(self.rank as i32));
         }
         self.ensure_decoded();
         self.props.iter().find(|p| *key == p.key).map(|p| p.value.clone())

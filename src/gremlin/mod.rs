@@ -16,6 +16,7 @@
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 pub(crate) mod conversions;
+pub(crate) mod multi_edge_tests;
 pub(crate) mod tests;
 pub mod traversal;
 pub mod value;

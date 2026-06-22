@@ -52,6 +52,9 @@ pub type LabelId = u16;
 /// Disambiguates parallel edges sharing the same (src, label, dst) triple.
 pub type Rank = u16;
 
+/// Default rank for single-edge mode and default relationships.
+pub const DEFAULT_RANK: Rank = 0;
+
 // ── Direction ─────────────────────────────────────────────────────────────────
 
 /// The traversal direction of an edge reference.

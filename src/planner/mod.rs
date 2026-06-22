@@ -38,6 +38,8 @@ pub fn apply_rules(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
         merge_v_id_filter::merge_v_id_filter,
         merge_addv_id::merge_addv_id,
         merge_adde_ids::merge_adde_from,
+        merge_adde_ids::reorder_rank_forward,
+        merge_adde_ids::merge_adde_rank,
         extract_end_vertex_filter::extract_end_vertex_filter,
         merge_end_vertex_filter::merge_end_vertex_filter,
     ];
@@ -75,11 +77,11 @@ mod tests {
     }
 
     fn out_e() -> LogicalStep {
-        LogicalStep::OutE(OutEStep { label_ids: smallvec![], end_vertex_ids: None })
+        LogicalStep::OutE(OutEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None })
     }
 
     fn out_e_label() -> LogicalStep {
-        LogicalStep::OutE(OutEStep { label_ids: smallvec![1], end_vertex_ids: None })
+        LogicalStep::OutE(OutEStep { label_ids: smallvec![1], end_vertex_ids: None, rank: None })
     }
 
     fn other_v() -> LogicalStep {
@@ -91,7 +93,7 @@ mod tests {
     }
 
     fn both_e() -> LogicalStep {
-        LogicalStep::BothE(BothEStep { label_ids: smallvec![], end_vertex_ids: None })
+        LogicalStep::BothE(BothEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None })
     }
 
     fn whr(steps: Vec<LogicalStep>) -> LogicalStep {
@@ -313,7 +315,13 @@ mod tests {
     fn test_adde_from_merged() {
         use crate::planner::logical_step::{AddEStep, FromStep, ToStep};
         let steps = vec![
-            LogicalStep::AddE(AddEStep { label_id: 1, out_v_id: None, in_v_id: None, properties: HashMap::new() }),
+            LogicalStep::AddE(AddEStep {
+                label_id: 1,
+                out_v_id: None,
+                in_v_id: None,
+                properties: HashMap::new(),
+                rank: None,
+            }),
             LogicalStep::From(FromStep { vertex_id: 12 }),
             LogicalStep::To(ToStep { vertex_id: 13 }),
         ];

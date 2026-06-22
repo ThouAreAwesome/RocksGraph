@@ -28,7 +28,7 @@ use crate::{
     types::{
         error::StoreError,
         gvalue::Primitive,
-        keys::{CanonicalKey, Direction, EdgeKey, LabelId, VertexKey},
+        keys::{CanonicalKey, Direction, EdgeKey, LabelId, Rank, VertexKey, DEFAULT_RANK},
         prop_key::PropKey,
         CanonicalEdgeKey, GValue, Property,
     },
@@ -46,6 +46,8 @@ pub struct AddEStep {
     in_v_id: VertexKey,
     /// The property list to initialize the new edge with.
     properties: SmallVec<[Property; 8]>,
+    /// The rank of the edge to be created.
+    rank: Rank,
 
     // ── Dynamic/Runtime execution state ──
     /// Whether the edge has been successfully created and emitted in this run.
@@ -59,16 +61,23 @@ impl AddEStep {
         out_v_id: VertexKey,
         in_v_id: VertexKey,
         properties: HashMap<PropKey, Primitive>,
+        rank: Option<Rank>,
     ) -> Self {
+        let final_rank = rank.unwrap_or(DEFAULT_RANK);
         let properties = properties
             .into_iter()
             .map(|(key, value)| Property {
-                owner: CanonicalKey::Edge(CanonicalEdgeKey { src_id: out_v_id, label_id, dst_id: in_v_id, rank: 0 }),
+                owner: CanonicalKey::Edge(CanonicalEdgeKey {
+                    src_id: out_v_id,
+                    label_id,
+                    dst_id: in_v_id,
+                    rank: final_rank,
+                }),
                 key,
                 value,
             })
             .collect::<SmallVec<[Property; 8]>>();
-        Self { label_id, out_v_id, in_v_id, properties, emitted: false }
+        Self { label_id, out_v_id, in_v_id, properties, rank: final_rank, emitted: false }
     }
 }
 
@@ -87,7 +96,7 @@ impl CoreStep for AddEStep {
             direction: Direction::OUT,
             label_id: self.label_id,
             secondary_id: self.in_v_id,
-            rank: 0,
+            rank: self.rank,
         };
         let new_edge = ctx.add_edge(&edge_key)?;
         for property in &self.properties {

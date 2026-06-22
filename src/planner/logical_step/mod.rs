@@ -27,7 +27,7 @@
 
 use crate::types::{
     gvalue::Primitive,
-    keys::{EdgeKey, VertexKey},
+    keys::{EdgeKey, Rank, VertexKey},
     prop_key::PropKey,
     LabelId, StoreError,
 };
@@ -182,6 +182,9 @@ impl Optimizer for BothStep {}
 pub struct BothEStep {
     pub label_ids: SmallVec<[LabelId; 4]>,
     pub end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
+    /// The edge rank to filter by, folded in from a trailing `.has("rank", N)` (see
+    /// `merge_end_vertex_filter`). `None` means no rank constraint is known at plan time.
+    pub rank: Option<Rank>,
 }
 
 impl Optimizer for BothEStep {}
@@ -217,6 +220,9 @@ impl Optimizer for InStep {}
 pub struct InEStep {
     pub label_ids: SmallVec<[LabelId; 4]>,
     pub end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
+    /// The edge rank to filter by, folded in from a trailing `.has("rank", N)` (see
+    /// `merge_end_vertex_filter`). `None` means no rank constraint is known at plan time.
+    pub rank: Option<Rank>,
 }
 impl Optimizer for InEStep {}
 
@@ -234,6 +240,9 @@ impl Optimizer for OutStep {}
 pub struct OutEStep {
     pub label_ids: SmallVec<[LabelId; 4]>,
     pub end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
+    /// The edge rank to filter by, folded in from a trailing `.has("rank", N)` (see
+    /// `merge_end_vertex_filter`). `None` means no rank constraint is known at plan time.
+    pub rank: Option<Rank>,
 }
 
 /// Implements the `Optimizer` trait for `OutEStep`.
@@ -326,6 +335,7 @@ pub struct AddEStep {
     pub out_v_id: Option<VertexKey>,
     pub in_v_id: Option<VertexKey>,
     pub properties: HashMap<PropKey, Primitive>,
+    pub rank: Option<Rank>,
 }
 
 impl Optimizer for AddEStep {}

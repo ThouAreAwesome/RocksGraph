@@ -73,28 +73,37 @@ use crate::{
 /// ```
 pub struct Graph {
     store: Arc<RocksStorage>,
+    schema: Arc<std::sync::RwLock<crate::schema::Schema>>,
 }
 
 impl Graph {
     /// Open (or create) the graph database at `path`.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
-        Ok(Self { store: Arc::new(RocksStorage::open(path)?) })
+        Ok(Self {
+            store: Arc::new(RocksStorage::open(path)?),
+            schema: Arc::new(std::sync::RwLock::new(crate::schema::Schema::new())),
+        })
+    }
+
+    /// Access the thread-safe schema registry.
+    pub fn schema(&self) -> Arc<std::sync::RwLock<crate::schema::Schema>> {
+        Arc::clone(&self.schema)
     }
 
     /// Open a read-only snapshot session pinned to the current committed state.
     pub fn read(&self) -> ReadSession {
-        ReadSession { ctx: LogicalSnapshot::new(self.store.snapshot()) }
+        ReadSession { ctx: LogicalSnapshot::new(self.store.snapshot(), Arc::clone(&self.schema)) }
     }
 
     /// Begin a read-write OCC transaction session.
     pub fn begin(&self) -> TxSession {
-        TxSession { ctx: LogicalGraph::new(self.store.begin()), committed: false }
+        TxSession { ctx: LogicalGraph::new(self.store.begin(), Arc::clone(&self.schema)), committed: false }
     }
 }
 
 impl Clone for Graph {
     fn clone(&self) -> Self {
-        Self { store: Arc::clone(&self.store) }
+        Self { store: Arc::clone(&self.store), schema: Arc::clone(&self.schema) }
     }
 }
 

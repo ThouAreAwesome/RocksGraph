@@ -220,6 +220,18 @@ impl EdgeValue {
 
 // ── Property codec ────────────────────────────────────────────────────────────
 
+/// Wire-format type tags for `Primitive`, written as the byte preceding each
+/// property's value in `encode_props`/`decode_props`. Stable on disk — do not
+/// renumber existing tags; append new ones instead.
+const TAG_BOOL: u8 = 0;
+const TAG_INT32: u8 = 1;
+const TAG_INT64: u8 = 2;
+const TAG_FLOAT32: u8 = 3;
+const TAG_FLOAT64: u8 = 4;
+const TAG_STRING: u8 = 5;
+const TAG_UUID: u8 = 6;
+const TAG_NULL: u8 = 7;
+
 /// Serializes a property list to a binary format.
 pub(super) fn encode_props(props: &[Property]) -> Vec<u8> {
     let mut buf = Vec::new();
@@ -230,37 +242,37 @@ pub(super) fn encode_props(props: &[Property]) -> Vec<u8> {
         buf.extend_from_slice(kb);
         match &prop.value {
             Primitive::Bool(b) => {
-                buf.push(0);
+                buf.push(TAG_BOOL);
                 buf.push(*b as u8);
             }
             Primitive::Int32(n) => {
-                buf.push(1);
+                buf.push(TAG_INT32);
                 buf.extend_from_slice(&n.to_be_bytes());
             }
             Primitive::Int64(n) => {
-                buf.push(2);
+                buf.push(TAG_INT64);
                 buf.extend_from_slice(&n.to_be_bytes());
             }
             Primitive::Float32(f) => {
-                buf.push(3);
+                buf.push(TAG_FLOAT32);
                 buf.extend_from_slice(&f.to_bits().to_be_bytes());
             }
             Primitive::Float64(f) => {
-                buf.push(4);
+                buf.push(TAG_FLOAT64);
                 buf.extend_from_slice(&f.to_bits().to_be_bytes());
             }
             Primitive::String(s) => {
-                buf.push(5);
+                buf.push(TAG_STRING);
                 let sb = s.as_bytes();
                 buf.extend_from_slice(&(sb.len() as u16).to_be_bytes());
                 buf.extend_from_slice(sb);
             }
             Primitive::Uuid(u) => {
-                buf.push(6);
+                buf.push(TAG_UUID);
                 buf.extend_from_slice(&u.to_be_bytes());
             }
             Primitive::Null => {
-                buf.push(7);
+                buf.push(TAG_NULL);
             }
         }
     }
@@ -338,7 +350,7 @@ pub(crate) fn decode_props(blob: &[u8], owner: CanonicalKey) -> Option<Vec<Prope
         let tag = blob[pos];
         pos += 1;
         let val = match tag {
-            0 => {
+            TAG_BOOL => {
                 if pos >= blob.len() {
                     return None;
                 }
@@ -346,7 +358,7 @@ pub(crate) fn decode_props(blob: &[u8], owner: CanonicalKey) -> Option<Vec<Prope
                 pos += 1;
                 Primitive::Bool(b)
             }
-            1 => {
+            TAG_INT32 => {
                 if pos + 4 > blob.len() {
                     return None;
                 }
@@ -354,7 +366,7 @@ pub(crate) fn decode_props(blob: &[u8], owner: CanonicalKey) -> Option<Vec<Prope
                 pos += 4;
                 Primitive::Int32(n)
             }
-            2 => {
+            TAG_INT64 => {
                 if pos + 8 > blob.len() {
                     return None;
                 }
@@ -362,7 +374,7 @@ pub(crate) fn decode_props(blob: &[u8], owner: CanonicalKey) -> Option<Vec<Prope
                 pos += 8;
                 Primitive::Int64(n)
             }
-            3 => {
+            TAG_FLOAT32 => {
                 if pos + 4 > blob.len() {
                     return None;
                 }
@@ -370,7 +382,7 @@ pub(crate) fn decode_props(blob: &[u8], owner: CanonicalKey) -> Option<Vec<Prope
                 pos += 4;
                 Primitive::Float32(f32::from_bits(bits))
             }
-            4 => {
+            TAG_FLOAT64 => {
                 if pos + 8 > blob.len() {
                     return None;
                 }
@@ -378,7 +390,7 @@ pub(crate) fn decode_props(blob: &[u8], owner: CanonicalKey) -> Option<Vec<Prope
                 pos += 8;
                 Primitive::Float64(f64::from_bits(bits))
             }
-            5 => {
+            TAG_STRING => {
                 if pos + 2 > blob.len() {
                     return None;
                 }
@@ -391,7 +403,7 @@ pub(crate) fn decode_props(blob: &[u8], owner: CanonicalKey) -> Option<Vec<Prope
                 pos += slen;
                 Primitive::String(smol_str::SmolStr::new(s))
             }
-            6 => {
+            TAG_UUID => {
                 if pos + 16 > blob.len() {
                     return None;
                 }
@@ -399,7 +411,7 @@ pub(crate) fn decode_props(blob: &[u8], owner: CanonicalKey) -> Option<Vec<Prope
                 pos += 16;
                 Primitive::Uuid(u)
             }
-            7 => Primitive::Null,
+            TAG_NULL => Primitive::Null,
             _ => return None,
         };
         out.push(Property { owner, key, value: val });
@@ -421,6 +433,7 @@ mod tests {
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     fn encode_props(props: &[(PropKey, Primitive)]) -> Vec<u8> {
+        use super::{TAG_BOOL, TAG_FLOAT32, TAG_FLOAT64, TAG_INT32, TAG_INT64, TAG_NULL, TAG_STRING, TAG_UUID};
         let mut buf = Vec::new();
         buf.extend_from_slice(&(props.len() as u16).to_be_bytes());
         for (key, val) in props {
@@ -429,37 +442,37 @@ mod tests {
             buf.extend_from_slice(kb);
             match val {
                 Primitive::Bool(b) => {
-                    buf.push(0);
+                    buf.push(TAG_BOOL);
                     buf.push(*b as u8);
                 }
                 Primitive::Int32(n) => {
-                    buf.push(1);
+                    buf.push(TAG_INT32);
                     buf.extend_from_slice(&n.to_be_bytes());
                 }
                 Primitive::Int64(n) => {
-                    buf.push(2);
+                    buf.push(TAG_INT64);
                     buf.extend_from_slice(&n.to_be_bytes());
                 }
                 Primitive::Float32(f) => {
-                    buf.push(3);
+                    buf.push(TAG_FLOAT32);
                     buf.extend_from_slice(&f.to_bits().to_be_bytes());
                 }
                 Primitive::Float64(f) => {
-                    buf.push(4);
+                    buf.push(TAG_FLOAT64);
                     buf.extend_from_slice(&f.to_bits().to_be_bytes());
                 }
                 Primitive::String(s) => {
-                    buf.push(5);
+                    buf.push(TAG_STRING);
                     let sb = s.as_bytes();
                     buf.extend_from_slice(&(sb.len() as u16).to_be_bytes());
                     buf.extend_from_slice(sb);
                 }
                 Primitive::Uuid(u) => {
-                    buf.push(6);
+                    buf.push(TAG_UUID);
                     buf.extend_from_slice(&u.to_be_bytes());
                 }
                 Primitive::Null => {
-                    buf.push(7);
+                    buf.push(TAG_NULL);
                 }
             }
         }
@@ -468,6 +481,7 @@ mod tests {
 
     /// Decodes a property blob into a vector of (PropKey, Primitive) tuples.
     fn decode_props(blob: &[u8]) -> Vec<(PropKey, Primitive)> {
+        use super::{TAG_BOOL, TAG_FLOAT32, TAG_FLOAT64, TAG_INT32, TAG_INT64, TAG_NULL, TAG_STRING, TAG_UUID};
         let mut pos = 0;
         let count = u16::from_be_bytes(blob[pos..pos + 2].try_into().unwrap()) as usize;
         pos += 2;
@@ -480,44 +494,44 @@ mod tests {
             let tag = blob[pos];
             pos += 1;
             let val = match tag {
-                0 => {
+                TAG_BOOL => {
                     let b = blob[pos] != 0;
                     pos += 1;
                     Primitive::Bool(b)
                 }
-                1 => {
+                TAG_INT32 => {
                     let n = i32::from_be_bytes(blob[pos..pos + 4].try_into().unwrap());
                     pos += 4;
                     Primitive::Int32(n)
                 }
-                2 => {
+                TAG_INT64 => {
                     let n = i64::from_be_bytes(blob[pos..pos + 8].try_into().unwrap());
                     pos += 8;
                     Primitive::Int64(n)
                 }
-                3 => {
+                TAG_FLOAT32 => {
                     let bits = u32::from_be_bytes(blob[pos..pos + 4].try_into().unwrap());
                     pos += 4;
                     Primitive::Float32(f32::from_bits(bits))
                 }
-                4 => {
+                TAG_FLOAT64 => {
                     let bits = u64::from_be_bytes(blob[pos..pos + 8].try_into().unwrap());
                     pos += 8;
                     Primitive::Float64(f64::from_bits(bits))
                 }
-                5 => {
+                TAG_STRING => {
                     let slen = u16::from_be_bytes(blob[pos..pos + 2].try_into().unwrap()) as usize;
                     pos += 2;
                     let s = std::str::from_utf8(&blob[pos..pos + slen]).unwrap();
                     pos += slen;
                     Primitive::String(SmolStr::new(s))
                 }
-                6 => {
+                TAG_UUID => {
                     let u = u128::from_be_bytes(blob[pos..pos + 16].try_into().unwrap());
                     pos += 16;
                     Primitive::Uuid(u)
                 }
-                7 => Primitive::Null,
+                TAG_NULL => Primitive::Null,
                 t => panic!("unknown prop tag {t}"),
             };
             out.push((key, val));

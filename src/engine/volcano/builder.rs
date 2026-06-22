@@ -46,7 +46,8 @@ use crate::{
         },
     },
     planner::logical_step::{LogicalPlan, LogicalStep},
-    types::{error::StoreError, Direction},
+    schema::Schema,
+    types::{error::StoreError, keys::Rank, Direction},
 };
 
 #[derive(Clone)]
@@ -91,7 +92,7 @@ impl PhysicalPlan {
 pub struct PhysicalPlanBuilder;
 
 impl PhysicalPlanBuilder {
-    pub fn build(&mut self, plan: &LogicalPlan) -> Result<PhysicalPlan, StoreError> {
+    pub fn build(&mut self, plan: &LogicalPlan, schema: &Schema) -> Result<PhysicalPlan, StoreError> {
         let source = BufferedStep::new(VecSourceStep::empty());
 
         if plan.steps.is_empty() {
@@ -101,13 +102,18 @@ impl PhysicalPlanBuilder {
 
         let mut upstream: Option<StepRef> = Some(source.clone());
         for step in &plan.steps {
-            upstream = self.build_step(step, upstream)?;
+            upstream = self.build_step(step, upstream, schema)?;
         }
 
         Ok(PhysicalPlan { source, tail: upstream.expect("plan must have at least one step") })
     }
 
-    fn build_step(&mut self, step: &LogicalStep, upstream: Option<StepRef>) -> Result<Option<StepRef>, StoreError> {
+    fn build_step(
+        &mut self,
+        step: &LogicalStep,
+        upstream: Option<StepRef>,
+        schema: &Schema,
+    ) -> Result<Option<StepRef>, StoreError> {
         use crate::engine::volcano::steps;
 
         macro_rules! wire {
@@ -132,21 +138,54 @@ impl PhysicalPlanBuilder {
             }};
         }
 
+        // A label + end-vertex combination is specific enough to do a point lookup
+        // (`GetEStep`) instead of an adjacency scan (`InOutStep`/`BothStep`) — but only when
+        // the rank to look up is actually known. If it isn't, `GetEStep` would have to guess
+        // `DEFAULT_RANK`, which is only correct when every label involved is single-edge;
+        // for a multi-edge label, the real edge could sit at any rank, and guessing 0 would
+        // silently miss it. So an unknown rank is only safe when every label in `label_ids`
+        // is confirmed single-edge via `Schema`; otherwise fall back to the scan, which
+        // already returns every rank correctly regardless of edge mode.
+        macro_rules! get_e_or_scan {
+            ($s:expr, $direction:expr, $rank:expr, $output_edges:expr, $scan:expr, $name:literal) => {{
+                if let Some(end_ids) = &$s.end_vertex_ids {
+                    let rank_safe =
+                        $rank.is_some() || $s.label_ids.iter().all(|id| !schema.edge_config(*id).multi_edge);
+                    if !$s.label_ids.is_empty() && !end_ids.is_empty() && rank_safe {
+                        return wire_required!(
+                            BufferedStep::new(steps::get_e::GetEStep::new(
+                                $s.label_ids.clone(),
+                                end_ids.clone(),
+                                $direction,
+                                $rank,
+                                $output_edges
+                            )),
+                            upstream,
+                            $name
+                        );
+                    }
+                }
+                wire_required!(BufferedStep::new($scan), upstream, $name)
+            }};
+        }
+
         match step {
-            LogicalStep::Both(s) => {
-                wire_required!(
-                    BufferedStep::new(steps::both::BothStep::new(s.label_ids.clone(), s.end_vertex_ids.clone(), false)),
-                    upstream,
-                    "BothStep"
-                )
-            }
-            LogicalStep::BothE(s) => {
-                wire_required!(
-                    BufferedStep::new(steps::both::BothStep::new(s.label_ids.clone(), s.end_vertex_ids.clone(), true)),
-                    upstream,
-                    "BothEStep"
-                )
-            }
+            LogicalStep::Both(s) => get_e_or_scan!(
+                s,
+                None,
+                None::<Rank>,
+                false,
+                steps::both::BothStep::new(s.label_ids.clone(), s.end_vertex_ids.clone(), None::<Rank>, false),
+                "BothStep"
+            ),
+            LogicalStep::BothE(s) => get_e_or_scan!(
+                s,
+                None,
+                s.rank,
+                true,
+                steps::both::BothStep::new(s.label_ids.clone(), s.end_vertex_ids.clone(), s.rank, true),
+                "BothEStep"
+            ),
             LogicalStep::V(s) => {
                 wire!(BufferedStep::new(steps::v::VStep::new(s.ids.clone())), None::<StepRef>)
             }
@@ -168,80 +207,62 @@ impl PhysicalPlanBuilder {
                 upstream,
                 "HasPropertyStep"
             ),
-            LogicalStep::In(s) => {
-                wire_required!(
-                    BufferedStep::new(steps::in_out::InOutStep::new(
-                        s.label_ids.clone(),
-                        Direction::IN,
-                        s.end_vertex_ids.clone(),
-                        false
-                    )),
-                    upstream,
-                    "InStep"
-                )
-            }
-            LogicalStep::InE(s) => {
-                if let Some(end_ids) = &s.end_vertex_ids {
-                    if !s.label_ids.is_empty() && !end_ids.is_empty() {
-                        return wire_required!(
-                            BufferedStep::new(steps::get_e::GetEStep::new(
-                                s.label_ids.clone(),
-                                end_ids.clone(),
-                                Direction::IN
-                            )),
-                            upstream,
-                            "GetOutEStep"
-                        );
-                    }
-                }
-                wire_required!(
-                    BufferedStep::new(steps::in_out::InOutStep::new(
-                        s.label_ids.clone(),
-                        Direction::IN,
-                        s.end_vertex_ids.clone(),
-                        true
-                    )),
-                    upstream,
-                    "InEStep"
-                )
-            }
-            LogicalStep::Out(s) => {
-                wire_required!(
-                    BufferedStep::new(steps::in_out::InOutStep::new(
-                        s.label_ids.clone(),
-                        Direction::OUT,
-                        s.end_vertex_ids.clone(),
-                        false
-                    )),
-                    upstream,
-                    "OutStep"
-                )
-            }
-            LogicalStep::OutE(s) => {
-                if let Some(end_ids) = &s.end_vertex_ids {
-                    if !s.label_ids.is_empty() && !end_ids.is_empty() {
-                        return wire_required!(
-                            BufferedStep::new(steps::get_e::GetEStep::new(
-                                s.label_ids.clone(),
-                                end_ids.clone(),
-                                Direction::OUT
-                            )),
-                            upstream,
-                            "GetOutEStep"
-                        );
-                    }
-                }
-                wire_required!(
-                    BufferedStep::new(steps::in_out::InOutStep::new(
-                        s.label_ids.clone(),
-                        Direction::OUT,
-                        s.end_vertex_ids.clone(),
-                        true
-                    )),
-                    upstream,
-                    "OutEStep"
-                )
-            }
+            LogicalStep::In(s) => get_e_or_scan!(
+                s,
+                Some(Direction::IN),
+                None::<Rank>,
+                false,
+                steps::in_out::InOutStep::new(
+                    s.label_ids.clone(),
+                    Direction::IN,
+                    s.end_vertex_ids.clone(),
+                    None::<Rank>,
+                    false
+                ),
+                "InStep"
+            ),
+            LogicalStep::InE(s) => get_e_or_scan!(
+                s,
+                Some(Direction::IN),
+                s.rank,
+                true,
+                steps::in_out::InOutStep::new(
+                    s.label_ids.clone(),
+                    Direction::IN,
+                    s.end_vertex_ids.clone(),
+                    s.rank,
+                    true
+                ),
+                "InEStep"
+            ),
+            LogicalStep::Out(s) => get_e_or_scan!(
+                s,
+                Some(Direction::OUT),
+                None::<Rank>,
+                false,
+                steps::in_out::InOutStep::new(
+                    s.label_ids.clone(),
+                    Direction::OUT,
+                    s.end_vertex_ids.clone(),
+                    None::<Rank>,
+                    false
+                ),
+                "OutStep"
+            ),
+            LogicalStep::OutE(s) => get_e_or_scan!(
+                s,
+                Some(Direction::OUT),
+                s.rank,
+                true,
+                steps::in_out::InOutStep::new(
+                    s.label_ids.clone(),
+                    Direction::OUT,
+                    s.end_vertex_ids.clone(),
+                    s.rank,
+                    true
+                ),
+                "OutEStep"
+            ),
             LogicalStep::InV(_) => {
                 wire_required!(
                     BufferedStep::new(steps::in_v_out_v::InVOutVStep::new(Direction::IN)),
@@ -284,7 +305,7 @@ impl PhysicalPlanBuilder {
                 if s.plan.steps.is_empty() {
                     return Err(StoreError::RuntimeError("WhereStep must have a non-empty sub-plan.".to_string()));
                 }
-                let physical_plan = self.build(&s.plan)?;
+                let physical_plan = self.build(&s.plan, schema)?;
                 wire_required!(BufferedStep::new(steps::r#where::WhereStep::new(physical_plan)), upstream, "WhereStep")
             }
             LogicalStep::Union(s) => {
@@ -293,7 +314,7 @@ impl PhysicalPlanBuilder {
                         "UnionStep must have at least one child traversal.".to_string(),
                     ));
                 }
-                let physical_plans = s.plans.iter().map(|p| self.build(p)).collect::<Result<_, _>>()?;
+                let physical_plans = s.plans.iter().map(|p| self.build(p, schema)).collect::<Result<_, _>>()?;
                 wire_required!(BufferedStep::new(steps::union::UnionStep::new(physical_plans)), upstream, "UnionStep")
             }
             LogicalStep::AddV(s) => {
@@ -325,7 +346,13 @@ impl PhysicalPlanBuilder {
                     ));
                 };
                 wire!(
-                    BufferedStep::new(steps::add_e::AddEStep::new(s.label_id, out_v_id, in_v_id, s.properties.clone())),
+                    BufferedStep::new(steps::add_e::AddEStep::new(
+                        s.label_id,
+                        out_v_id,
+                        in_v_id,
+                        s.properties.clone(),
+                        s.rank,
+                    )),
                     None::<StepRef>
                 )
             }
@@ -346,7 +373,7 @@ impl PhysicalPlanBuilder {
                         "CoalesceStep must have at least one child traversal.".to_string(),
                     ));
                 }
-                let physical_plans = s.plans.iter().map(|p| self.build(p)).collect::<Result<_, _>>()?;
+                let physical_plans = s.plans.iter().map(|p| self.build(p, schema)).collect::<Result<_, _>>()?;
                 wire_required!(
                     BufferedStep::new(steps::coalesce::CoalesceStep::new(physical_plans)),
                     upstream,
@@ -403,7 +430,7 @@ mod tests {
             LogicalPlan { steps: vec![LogicalStep::ScalarFilter(ScalarFilterStep { value: Primitive::Int64(2) })] };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&plan).unwrap();
+        let physical_plan = builder.build(&plan, &crate::schema::Schema::default()).unwrap();
 
         physical_plan.inject(smallvec![traverser(1), traverser(2), traverser(3)]);
 
@@ -418,7 +445,7 @@ mod tests {
         let plan = LogicalPlan { steps: vec![LogicalStep::Count(CountStep {})] };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&plan).unwrap();
+        let physical_plan = builder.build(&plan, &crate::schema::Schema::default()).unwrap();
 
         physical_plan.inject(smallvec![traverser(1), traverser(2), traverser(3)]);
         let mut ctx = NoopCtx;
@@ -440,7 +467,7 @@ mod tests {
         let plan = LogicalPlan { steps: vec![LogicalStep::Where(WhereStep { plan: sub_plan })] };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&plan).unwrap();
+        let physical_plan = builder.build(&plan, &crate::schema::Schema::default()).unwrap();
 
         physical_plan.inject(smallvec![traverser(1), traverser(2), traverser(3)]);
 
@@ -468,7 +495,7 @@ mod tests {
             let mut plan = LogicalPlan { steps };
             apply_rules(&mut plan).expect("Optimizer rules failed");
             let mut builder: PhysicalPlanBuilder = Default::default();
-            let physical_plan = builder.build(&plan).unwrap();
+            let physical_plan = builder.build(&plan, &crate::schema::Schema::default()).unwrap();
             let debug_str = format!("{:?}", physical_plan);
 
             let mut last_pos = 0;
@@ -504,7 +531,7 @@ mod tests {
         fn test_print_v_hasid_oute_count() {
             let steps = vec![
                 LogicalStep::V(VStep { ids: smallvec![1] }),
-                LogicalStep::OutE(OutEStep { label_ids: smallvec![], end_vertex_ids: None }),
+                LogicalStep::OutE(OutEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None }),
                 LogicalStep::Count(CountStep {}),
             ];
             assert_plan_contains_in_order(steps, &["VStep", "InOutStep", "CountStep"]);
@@ -517,7 +544,7 @@ mod tests {
             };
             let steps = vec![
                 LogicalStep::V(VStep { ids: smallvec![1] }),
-                LogicalStep::OutE(OutEStep { label_ids: smallvec![], end_vertex_ids: None }),
+                LogicalStep::OutE(OutEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None }),
                 LogicalStep::Where(WhereStep { plan: where_plan }),
             ];
             assert_plan_contains_in_order(steps, &["VStep", "InOutStep"]);
@@ -530,7 +557,7 @@ mod tests {
             };
             let steps = vec![
                 LogicalStep::V(VStep { ids: smallvec![1] }),
-                LogicalStep::OutE(OutEStep { label_ids: smallvec![123], end_vertex_ids: None }),
+                LogicalStep::OutE(OutEStep { label_ids: smallvec![123], end_vertex_ids: None, rank: None }),
                 LogicalStep::Where(WhereStep { plan: where_plan }),
             ];
             assert_plan_contains_in_order(steps, &["VStep", "GetEStep"]);
@@ -543,7 +570,7 @@ mod tests {
             };
             let steps = vec![
                 LogicalStep::V(VStep { ids: smallvec![1] }),
-                LogicalStep::InE(InEStep { label_ids: smallvec![456], end_vertex_ids: None }),
+                LogicalStep::InE(InEStep { label_ids: smallvec![456], end_vertex_ids: None, rank: None }),
                 LogicalStep::Where(WhereStep { plan: where_plan }),
             ];
             assert_plan_contains_in_order(steps, &["VStep", "GetEStep"]);
@@ -554,7 +581,7 @@ mod tests {
             let steps = vec![
                 LogicalStep::V(VStep { ids: smallvec![] }),
                 LogicalStep::HasProperty(HasPropertyStep { key: ID, value: Primitive::Int64(1) }),
-                LogicalStep::InE(InEStep { label_ids: smallvec![], end_vertex_ids: None }),
+                LogicalStep::InE(InEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None }),
                 LogicalStep::OtherV(OtherVStep {}),
                 LogicalStep::HasId(HasIdStep { ids: smallvec![2] }),
             ];

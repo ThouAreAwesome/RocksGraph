@@ -547,4 +547,26 @@ mod integration_test {
             assert!(names.contains(&Value::String("josh".into())));
         }
     }
+
+    #[test]
+    fn test_single_edge_mode_constraints() {
+        let dir = tempfile::tempdir().unwrap();
+        let graph = Graph::open(dir.path()).unwrap();
+
+        let mut tx = graph.begin();
+        tx.g().addV(PERSON_LABEL_ID).property("id", 1i64).next().unwrap();
+        tx.g().addV(PERSON_LABEL_ID).property("id", 2i64).next().unwrap();
+
+        // Single-edge mode is active by default (multi_edge = false)
+        // 1. Add first edge (default rank 0)
+        tx.g().addE(KNOWS_LABEL_ID).from(1).to(2).property("weight", 0.5f64).next().unwrap();
+
+        // 2. Adding duplicate edge should fail with DuplicateEdge
+        let res2 = tx.g().addE(KNOWS_LABEL_ID).from(1).to(2).property("weight", 0.8f64).next();
+        assert!(matches!(res2, Err(StoreError::DuplicateEdge(_))));
+
+        // 3. Adding edge with non-zero rank should fail with UnsupportedOperation
+        let res3 = tx.g().addE(KNOWS_LABEL_ID).from(1).to(2).property("rank", 5i32).next();
+        assert!(matches!(res3, Err(StoreError::UnsupportedOperation(_))));
+    }
 }

@@ -21,3 +21,28 @@ pub mod merge_addv_id;
 pub mod merge_end_vertex_filter;
 pub mod merge_v_id_filter; // Renamed from merget_v_id_filter
 pub mod reorder_filter;
+
+use crate::types::{gvalue::Primitive, keys::Rank, StoreError};
+
+/// Converts a `Primitive` rank value (as written by `.property("rank", N)` or
+/// `.has("rank", N)`) into a `Rank`, range-checked against `u16`.
+///
+/// Shared by `merge_adde_ids` (folding `property("rank", N)` into `AddE`) and
+/// `merge_end_vertex_filter` (folding `has("rank", N)` into `OutE`/`InE`/`BothE`).
+pub(crate) fn primitive_to_rank(value: &Primitive) -> Result<Rank, StoreError> {
+    match value {
+        Primitive::Int32(r) => {
+            if *r < 0 || *r > u16::MAX as i32 {
+                return Err(StoreError::UnexpectedDataType("rank must be between 0 and 65535".into()));
+            }
+            Ok(*r as u16)
+        }
+        Primitive::Int64(r) => {
+            if *r < 0 || *r > u16::MAX as i64 {
+                return Err(StoreError::UnexpectedDataType("rank must be between 0 and 65535".into()));
+            }
+            Ok(*r as u16)
+        }
+        _ => Err(StoreError::UnexpectedDataType("only integers can be edge rank".into())),
+    }
+}

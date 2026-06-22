@@ -173,7 +173,8 @@ impl GraphTraversal {
     pub(crate) fn build(self, graph: &mut dyn GraphCtx) -> Result<BuiltTraversal<'_>, StoreError> {
         let mut logical = self.plan;
         apply_rules(&mut logical)?;
-        let plan = PhysicalPlanBuilder {}.build(&logical)?;
+        let schema = graph.schema();
+        let plan = PhysicalPlanBuilder {}.build(&logical, &schema.read().unwrap())?;
         Ok(BuiltTraversal { graph, plan })
     }
 
@@ -202,6 +203,7 @@ impl GraphTraversal {
             out_v_id: None,
             in_v_id: None,
             properties: HashMap::new(),
+            rank: None,
         }));
         self
     }
@@ -228,6 +230,7 @@ impl GraphTraversal {
         self.plan.steps.push(LogicalStep::OutE(OutEStep {
             label_ids: labels.into_iter().map(Into::into).collect(),
             end_vertex_ids: None,
+            rank: None,
         }));
         self
     }
@@ -244,6 +247,7 @@ impl GraphTraversal {
         self.plan.steps.push(LogicalStep::InE(InEStep {
             label_ids: labels.into_iter().map(Into::into).collect(),
             end_vertex_ids: None,
+            rank: None,
         }));
         self
     }
@@ -260,6 +264,7 @@ impl GraphTraversal {
         self.plan.steps.push(LogicalStep::BothE(BothEStep {
             label_ids: labels.into_iter().map(Into::into).collect(),
             end_vertex_ids: None,
+            rank: None,
         }));
         self
     }
@@ -427,6 +432,7 @@ pub trait TraversalBuilder: Sized {
         self.plan_mut().steps.push(LogicalStep::OutE(OutEStep {
             label_ids: labels.into_iter().map(Into::into).collect(),
             end_vertex_ids: None,
+            rank: None,
         }));
         self
     }
@@ -436,6 +442,7 @@ pub trait TraversalBuilder: Sized {
         self.plan_mut().steps.push(LogicalStep::InE(InEStep {
             label_ids: labels.into_iter().map(Into::into).collect(),
             end_vertex_ids: None,
+            rank: None,
         }));
         self
     }
@@ -445,6 +452,7 @@ pub trait TraversalBuilder: Sized {
         self.plan_mut().steps.push(LogicalStep::BothE(BothEStep {
             label_ids: labels.into_iter().map(Into::into).collect(),
             end_vertex_ids: None,
+            rank: None,
         }));
         self
     }
@@ -627,6 +635,7 @@ impl<'s> WriteTraversal<'s> {
             out_v_id: None,
             in_v_id: None,
             properties: HashMap::new(),
+            rank: None,
         }));
         self
     }

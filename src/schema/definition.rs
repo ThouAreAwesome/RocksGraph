@@ -17,8 +17,17 @@
 
 use bimap::BiHashMap;
 use smol_str::SmolStr;
+use std::collections::HashMap;
 
 use crate::types::{LabelId, PropKey};
+
+/// Configuration for an edge label.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct EdgeConfig {
+    /// If true, multiple edges of this label are allowed between a vertex pair (Multigraph).
+    /// If false, at most one edge of this label can exist between a vertex pair (Simple Graph).
+    pub multi_edge: bool,
+}
 
 /// Maximum number of distinct vertex or edge labels (12-bit label_id space).
 pub const MAX_LABELS: usize = 4096;
@@ -43,6 +52,9 @@ pub struct Schema {
     /// Maps between a compact `u16` id and the property key name.
     /// Interning is in-memory only; the on-disk format stores the raw string.
     pub prop_keys: BiHashMap<u16, PropKey>,
+
+    /// Maps between `LabelId` and the edge label's configuration.
+    pub edge_configs: HashMap<LabelId, EdgeConfig>,
 }
 
 impl Schema {
@@ -92,16 +104,29 @@ impl Schema {
 
     /// Register a new edge label, returning its id.
     pub fn register_edge_label(&mut self, name: impl Into<SmolStr>) -> Option<LabelId> {
+        self.register_edge_label_with_config(name, EdgeConfig::default())
+    }
+
+    /// Register a new edge label with a specific configuration, returning its id.
+    pub fn register_edge_label_with_config(&mut self, name: impl Into<SmolStr>, config: EdgeConfig) -> Option<LabelId> {
         let s = name.into();
-        if let Some(&id) = self.edge_labels.get_by_right(&s) {
-            return Some(id);
-        }
-        let id = self.edge_labels.len() as u16;
-        if self.edge_labels.len() >= MAX_LABELS {
-            return None;
-        }
-        self.edge_labels.insert(id, s);
+        let id = if let Some(&id) = self.edge_labels.get_by_right(&s) {
+            id
+        } else {
+            let id = self.edge_labels.len() as u16;
+            if self.edge_labels.len() >= MAX_LABELS {
+                return None;
+            }
+            self.edge_labels.insert(id, s);
+            id
+        };
+        self.edge_configs.insert(id, config);
         Some(id)
+    }
+
+    /// Retrieve the configuration of a registered edge label.
+    pub fn edge_config(&self, id: LabelId) -> EdgeConfig {
+        self.edge_configs.get(&id).copied().unwrap_or_default()
     }
 
     // ── Property keys ─────────────────────────────────────────────────────────

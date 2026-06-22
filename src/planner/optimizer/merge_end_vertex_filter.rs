@@ -16,62 +16,76 @@
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::{
-    planner::logical_step::{HasPropertyStep, LogicalPlan, LogicalStep},
-    types::{prop_key::ID, Primitive, StoreError},
+    planner::{
+        logical_step::{HasPropertyStep, LogicalPlan, LogicalStep},
+        optimizer::primitive_to_rank,
+    },
+    types::{
+        keys::{Rank, VertexKey},
+        prop_key::{ID, RANK},
+        Primitive, StoreError,
+    },
 };
-use smallvec::smallvec;
+use smallvec::{smallvec, SmallVec};
 
-/// An optimizer rule that merges an `EndVertexFilter` or `HasId` / `HasProperty("id", …)`
-/// step into a preceding edge traversal step (`OutE`, `InE`, `BothE`, `Out`, `In`, `Both`).
+/// What a single end-vertex/rank filter contributed, applied to the anchor step in one shot.
+enum Merge {
+    EndVertexIds(SmallVec<[VertexKey; 4]>),
+    Rank(Rank),
+}
+
+/// An optimizer rule that merges an `EndVertexFilter` / `HasId` / `HasProperty("id", …)` step,
+/// or a `HasProperty("rank", …)` step, into a preceding edge traversal step
+/// (`OutE`, `InE`, `BothE`, `Out`, `In`, `Both`).
 ///
-/// This allows the edge traversal step to directly filter by the end vertex ID, pushing down predicates
-/// and potentially reducing the number of edges processed.
+/// This allows the edge traversal step to directly filter by the end vertex ID and/or edge
+/// rank, pushing down predicates and potentially reducing the number of edges processed (or,
+/// once both are known, turning the traversal into a single point lookup — see `GetEStep`).
+/// Rank only applies to the edge-emitting steps (`OutE`/`InE`/`BothE`) since `Out`/`In`/`Both`
+/// discard the edge before a caller could ever filter on its rank.
 pub fn merge_end_vertex_filter(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
     let mut plan_changed = false;
     let mut i = 0;
     let mut j = 1;
     while j < plan.steps.len() {
-        let ids = match (&plan.steps[i], &plan.steps[j]) {
+        let merge = match (&plan.steps[i], &plan.steps[j]) {
             (LogicalStep::OutE(_), LogicalStep::EndVertexFilter(ef))
             | (LogicalStep::InE(_), LogicalStep::EndVertexFilter(ef))
-            | (LogicalStep::BothE(_), LogicalStep::EndVertexFilter(ef)) => Some(ef.ids.clone()),
+            | (LogicalStep::BothE(_), LogicalStep::EndVertexFilter(ef)) => Some(Merge::EndVertexIds(ef.ids.clone())),
             (LogicalStep::Out(_), LogicalStep::HasId(ef))
             | (LogicalStep::In(_), LogicalStep::HasId(ef))
-            | (LogicalStep::Both(_), LogicalStep::HasId(ef)) => Some(ef.ids.clone()),
+            | (LogicalStep::Both(_), LogicalStep::HasId(ef)) => Some(Merge::EndVertexIds(ef.ids.clone())),
             (LogicalStep::Out(_), LogicalStep::HasProperty(HasPropertyStep { key, value }))
             | (LogicalStep::In(_), LogicalStep::HasProperty(HasPropertyStep { key, value }))
             | (LogicalStep::Both(_), LogicalStep::HasProperty(HasPropertyStep { key, value }))
                 if ID == *key =>
             {
                 match value {
-                    Primitive::Int32(id) => Some(smallvec![*id as i64]),
-                    Primitive::Int64(id) => Some(smallvec![*id]),
+                    Primitive::Int32(id) => Some(Merge::EndVertexIds(smallvec![*id as i64])),
+                    Primitive::Int64(id) => Some(Merge::EndVertexIds(smallvec![*id])),
                     _ => return Err(StoreError::UnexpectedDataType("only i32 and i64 can be vertex id".into())),
                 }
             }
+            (LogicalStep::OutE(_), LogicalStep::HasProperty(HasPropertyStep { key, value }))
+            | (LogicalStep::InE(_), LogicalStep::HasProperty(HasPropertyStep { key, value }))
+            | (LogicalStep::BothE(_), LogicalStep::HasProperty(HasPropertyStep { key, value }))
+                if RANK == *key =>
+            {
+                Some(Merge::Rank(primitive_to_rank(value)?))
+            }
             _ => None,
         };
-        if let Some(idv) = ids {
-            match &mut plan.steps[i] {
-                LogicalStep::OutE(oute) => {
-                    oute.end_vertex_ids = Some(idv);
-                }
-                LogicalStep::InE(ine) => {
-                    ine.end_vertex_ids = Some(idv);
-                }
-                LogicalStep::BothE(bothe) => {
-                    bothe.end_vertex_ids = Some(idv);
-                }
-                LogicalStep::Out(out) => {
-                    out.end_vertex_ids = Some(idv);
-                }
-                LogicalStep::In(in_) => {
-                    in_.end_vertex_ids = Some(idv);
-                }
-                LogicalStep::Both(both) => {
-                    both.end_vertex_ids = Some(idv);
-                }
-
+        if let Some(merge) = merge {
+            match (&mut plan.steps[i], merge) {
+                (LogicalStep::OutE(oute), Merge::EndVertexIds(idv)) => oute.end_vertex_ids = Some(idv),
+                (LogicalStep::InE(ine), Merge::EndVertexIds(idv)) => ine.end_vertex_ids = Some(idv),
+                (LogicalStep::BothE(bothe), Merge::EndVertexIds(idv)) => bothe.end_vertex_ids = Some(idv),
+                (LogicalStep::Out(out), Merge::EndVertexIds(idv)) => out.end_vertex_ids = Some(idv),
+                (LogicalStep::In(in_), Merge::EndVertexIds(idv)) => in_.end_vertex_ids = Some(idv),
+                (LogicalStep::Both(both), Merge::EndVertexIds(idv)) => both.end_vertex_ids = Some(idv),
+                (LogicalStep::OutE(oute), Merge::Rank(r)) => oute.rank = Some(r),
+                (LogicalStep::InE(ine), Merge::Rank(r)) => ine.rank = Some(r),
+                (LogicalStep::BothE(bothe), Merge::Rank(r)) => bothe.rank = Some(r),
                 _ => unreachable!("should never reach here since we have checked the pattern already"),
             }
             plan_changed = true;
@@ -98,7 +112,7 @@ mod tests {
     use smallvec::smallvec;
 
     fn out_e() -> LogicalStep {
-        LogicalStep::OutE(OutEStep { label_ids: smallvec![], end_vertex_ids: None })
+        LogicalStep::OutE(OutEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None })
     }
 
     fn evf(ids: Vec<VertexKey>) -> LogicalStep {
@@ -190,12 +204,12 @@ mod tests {
 
     fn in_e() -> LogicalStep {
         use crate::planner::logical_step::InEStep;
-        LogicalStep::InE(InEStep { label_ids: smallvec![], end_vertex_ids: None })
+        LogicalStep::InE(InEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None })
     }
 
     fn both_e() -> LogicalStep {
         use crate::planner::logical_step::BothEStep;
-        LogicalStep::BothE(BothEStep { label_ids: smallvec![], end_vertex_ids: None })
+        LogicalStep::BothE(BothEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None })
     }
 
     fn out_step() -> LogicalStep {
@@ -339,5 +353,95 @@ mod tests {
         let mut plan = LogicalPlan { steps: vec![out_step(), bad_prop] };
         let res = merge_end_vertex_filter(&mut plan);
         assert!(res.is_err(), "non-integer id type should return error");
+    }
+
+    fn has_rank(value: crate::types::Primitive) -> LogicalStep {
+        use smol_str::SmolStr;
+        LogicalStep::HasProperty(HasPropertyStep { key: SmolStr::new("rank"), value })
+    }
+
+    #[test]
+    fn test_out_e_rank_merged() {
+        let mut plan = LogicalPlan { steps: vec![out_e(), has_rank(crate::types::Primitive::Int32(5))] };
+        let changed = merge_end_vertex_filter(&mut plan).unwrap();
+        assert!(changed);
+        assert_eq!(plan.steps.len(), 1);
+        if let LogicalStep::OutE(oute) = &plan.steps[0] {
+            assert_eq!(oute.rank, Some(5));
+        } else {
+            panic!("expected OutE");
+        }
+    }
+
+    #[test]
+    fn test_in_e_rank_merged() {
+        let mut plan = LogicalPlan { steps: vec![in_e(), has_rank(crate::types::Primitive::Int64(9))] };
+        let changed = merge_end_vertex_filter(&mut plan).unwrap();
+        assert!(changed);
+        if let LogicalStep::InE(ine) = &plan.steps[0] {
+            assert_eq!(ine.rank, Some(9));
+        } else {
+            panic!("expected InE");
+        }
+    }
+
+    #[test]
+    fn test_both_e_rank_merged() {
+        let mut plan = LogicalPlan { steps: vec![both_e(), has_rank(crate::types::Primitive::Int32(3))] };
+        let changed = merge_end_vertex_filter(&mut plan).unwrap();
+        assert!(changed);
+        if let LogicalStep::BothE(be) = &plan.steps[0] {
+            assert_eq!(be.rank, Some(3));
+        } else {
+            panic!("expected BothE");
+        }
+    }
+
+    // OutE().EVF([1]).has("rank",5) -> OutE(end_vertex_ids=[1], rank=5) — both filters fold into the same step.
+    #[test]
+    fn test_out_e_evf_and_rank_both_merged() {
+        let mut plan = LogicalPlan { steps: vec![out_e(), evf(vec![1]), has_rank(crate::types::Primitive::Int32(5))] };
+        let changed = merge_end_vertex_filter(&mut plan).unwrap();
+        assert!(changed);
+        assert_eq!(plan.steps.len(), 1);
+        if let LogicalStep::OutE(oute) = &plan.steps[0] {
+            assert_eq!(oute.end_vertex_ids.as_deref(), Some(&[1][..]));
+            assert_eq!(oute.rank, Some(5));
+        } else {
+            panic!("expected OutE");
+        }
+    }
+
+    // Order shouldn't matter: OutE().has("rank",5).EVF([1]) merges the same way.
+    #[test]
+    fn test_out_e_rank_and_evf_both_merged_reversed_order() {
+        let mut plan = LogicalPlan { steps: vec![out_e(), has_rank(crate::types::Primitive::Int32(5)), evf(vec![1])] };
+        let changed = merge_end_vertex_filter(&mut plan).unwrap();
+        assert!(changed);
+        assert_eq!(plan.steps.len(), 1);
+        if let LogicalStep::OutE(oute) = &plan.steps[0] {
+            assert_eq!(oute.end_vertex_ids.as_deref(), Some(&[1][..]));
+            assert_eq!(oute.rank, Some(5));
+        } else {
+            panic!("expected OutE");
+        }
+    }
+
+    #[test]
+    fn test_out_rank_not_merged() {
+        // Out (vertex-emitting) has no rank field — has("rank", N) after it is left alone.
+        let mut plan = LogicalPlan { steps: vec![out_step(), has_rank(crate::types::Primitive::Int32(5))] };
+        let changed = merge_end_vertex_filter(&mut plan).unwrap();
+        assert!(!changed);
+        assert_eq!(plan.steps.len(), 2);
+    }
+
+    #[test]
+    fn test_out_e_rank_bad_type_errors() {
+        use smol_str::SmolStr;
+        let mut plan =
+            LogicalPlan { steps: vec![out_e(), has_rank(crate::types::Primitive::String(SmolStr::new("oops")))] };
+        let res = merge_end_vertex_filter(&mut plan);
+        assert!(res.is_err(), "non-integer rank type should return error");
     }
 }

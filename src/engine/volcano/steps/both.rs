@@ -27,7 +27,7 @@ use crate::{
     },
     types::{
         error::StoreError,
-        keys::{AdjacentEdgeCursor, AdjacentEdgesOptions},
+        keys::{AdjacentEdgeCursor, AdjacentEdgesOptions, Rank},
         BatchScenario, Direction, GValue, LabelId, VertexKey,
     },
 };
@@ -45,6 +45,8 @@ pub struct BothStep {
     limit: Option<u32>,
     /// Optional target vertex IDs to filter the destination vertices of the traversed edges.
     end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
+    /// Optional edge rank to filter by, folded in from a `.has("rank", N)` filter.
+    rank: Option<Rank>,
     /// Whether to return the traversed edges themselves (true) or the adjacent vertices (false).
     output_edges: bool,
 
@@ -64,6 +66,7 @@ impl BothStep {
     pub fn new(
         label_ids: SmallVec<[LabelId; 4]>,
         end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
+        rank: Option<Rank>,
         output_edges: bool,
     ) -> Self {
         Self {
@@ -71,6 +74,7 @@ impl BothStep {
             label_ids,
             limit: None,
             end_vertex_ids,
+            rank,
             current_input: None,
             current_label_idx: 0,
             current_direction: Direction::OUT,
@@ -109,7 +113,7 @@ impl CoreStep for BothStep {
                     let opts = AdjacentEdgesOptions {
                         label,
                         dst: self.end_vertex_ids.as_deref(),
-                        rank: None,
+                        rank: self.rank.as_ref().map(std::slice::from_ref),
                         start_from: self.cursor,
                     };
                     let batch_size = ctx.batch_size(BatchScenario::GetAdjacentEdges);
@@ -137,7 +141,7 @@ impl CoreStep for BothStep {
                     let opts = AdjacentEdgesOptions {
                         label,
                         dst: self.end_vertex_ids.as_deref(),
-                        rank: None,
+                        rank: self.rank.as_ref().map(std::slice::from_ref),
                         start_from: self.cursor,
                     };
                     let batch_size = ctx.batch_size(BatchScenario::GetAdjacentEdges);
