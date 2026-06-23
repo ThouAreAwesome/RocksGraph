@@ -29,9 +29,10 @@ use crate::types::{
     gvalue::Primitive,
     keys::{EdgeKey, Rank, VertexKey},
     prop_key::PropKey,
-    LabelId, StoreError,
+    StoreError,
 };
 use smallvec::SmallVec;
+use smol_str::SmolStr;
 use std::collections::HashMap;
 
 // Reuse the same rewrite/optimize rule for both LogicalPlan and LogicalStep.
@@ -171,7 +172,7 @@ impl Optimizer for CountStep {}
 #[derive(Clone)]
 /// Represents a logical `both` step, traversing both incoming and outgoing edges.
 pub struct BothStep {
-    pub label_ids: SmallVec<[LabelId; 4]>,
+    pub labels: SmallVec<[SmolStr; 4]>,
     pub end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
 }
 
@@ -180,7 +181,7 @@ impl Optimizer for BothStep {}
 /// Represents a logical `bothE` step, traversing both incoming and outgoing edges and returning the edges themselves.
 #[derive(Clone)]
 pub struct BothEStep {
-    pub label_ids: SmallVec<[LabelId; 4]>,
+    pub labels: SmallVec<[SmolStr; 4]>,
     pub end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
     /// The edge rank to filter by, folded in from a trailing `.has("rank", N)` (see
     /// `merge_end_vertex_filter`). `None` means no rank constraint is known at plan time.
@@ -192,7 +193,7 @@ impl Optimizer for BothEStep {}
 /// Represents a logical `hasLabel` step, filtering elements by their label IDs.
 #[derive(Clone)]
 pub struct HasLabelStep {
-    pub label_ids: SmallVec<[LabelId; 4]>,
+    pub labels: SmallVec<[SmolStr; 4]>,
 }
 
 /// Implements the `Optimizer` trait for `HasLabelStep`.
@@ -209,7 +210,7 @@ impl Optimizer for HasPropertyStep {}
 /// Represents a logical `in` step, traversing incoming edges and returning the source vertices.
 #[derive(Clone)]
 pub struct InStep {
-    pub label_ids: SmallVec<[LabelId; 4]>,
+    pub labels: SmallVec<[SmolStr; 4]>,
     pub end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
 }
 
@@ -218,7 +219,7 @@ impl Optimizer for InStep {}
 
 #[derive(Clone)]
 pub struct InEStep {
-    pub label_ids: SmallVec<[LabelId; 4]>,
+    pub labels: SmallVec<[SmolStr; 4]>,
     pub end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
     /// The edge rank to filter by, folded in from a trailing `.has("rank", N)` (see
     /// `merge_end_vertex_filter`). `None` means no rank constraint is known at plan time.
@@ -229,7 +230,7 @@ impl Optimizer for InEStep {}
 /// Represents a logical `out` step, traversing outgoing edges and returning the destination vertices.
 #[derive(Clone)]
 pub struct OutStep {
-    pub label_ids: SmallVec<[LabelId; 4]>,
+    pub labels: SmallVec<[SmolStr; 4]>,
     pub end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
 }
 
@@ -238,7 +239,7 @@ impl Optimizer for OutStep {}
 
 #[derive(Clone)]
 pub struct OutEStep {
-    pub label_ids: SmallVec<[LabelId; 4]>,
+    pub labels: SmallVec<[SmolStr; 4]>,
     pub end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
     /// The edge rank to filter by, folded in from a trailing `.has("rank", N)` (see
     /// `merge_end_vertex_filter`). `None` means no rank constraint is known at plan time.
@@ -321,7 +322,7 @@ impl Optimizer for UnionStep {
 #[derive(Clone)]
 /// Represents a logical `addV` step, adding a new vertex to the graph.
 pub struct AddVStep {
-    pub label_id: LabelId,
+    pub label: SmolStr,
     pub vertex_id: Option<VertexKey>,
     pub properties: HashMap<PropKey, Primitive>,
 }
@@ -331,7 +332,7 @@ impl Optimizer for AddVStep {}
 /// Represents a logical `addE` step, adding a new edge to the graph.
 #[derive(Clone)]
 pub struct AddEStep {
-    pub label_id: LabelId,
+    pub label: SmolStr,
     pub out_v_id: Option<VertexKey>,
     pub in_v_id: Option<VertexKey>,
     pub properties: HashMap<PropKey, Primitive>,

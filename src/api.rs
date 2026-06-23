@@ -54,6 +54,7 @@ use crate::{
     engine::GraphCtx,
     graph::{LogicalGraph, LogicalSnapshot},
     gremlin::traversal::{ReadTraversal, WriteTraversal},
+    schema::{Schema, SchemaManagement},
     store::{traits::GraphStore, RocksStorage},
     types::{BatchScenario, StoreError},
 };
@@ -68,8 +69,8 @@ use crate::{
 /// ```ignore
 /// let graph = Graph::open("./my_graph")?;
 /// let mut snap = graph.read();
-/// let person  = snap.g().V([1]).out([KNOWS]).next()?;            // Option<GValue>
-/// let names   = snap.g().V([1]).out([KNOWS]).values(["name"]).to_list()?; // Vec<GValue>
+/// let person  = snap.g().V([1]).out(["knows"]).next()?;            // Option<GValue>
+/// let names   = snap.g().V([1]).out(["knows"]).values(["name"]).to_list()?; // Vec<GValue>
 /// ```
 pub struct Graph {
     store: Arc<RocksStorage>,
@@ -77,16 +78,45 @@ pub struct Graph {
 }
 
 impl Graph {
-    /// Open (or create) the graph database at `path`.
+    /// Open (or create) the graph database at `path`, in [`SchemaMode::Auto`] with
+    /// [`EdgeMode::Single`] — see [`open_with_options`](Self::open_with_options) to choose
+    /// strict, explicit schema declaration instead.
+    ///
+    /// [`SchemaMode::Auto`]: crate::schema::SchemaMode::Auto
+    /// [`EdgeMode::Single`]: crate::schema::EdgeMode::Single
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
-        Ok(Self {
-            store: Arc::new(RocksStorage::open(path)?),
-            schema: Arc::new(std::sync::RwLock::new(crate::schema::Schema::new())),
-        })
+        Self::open_with_options(path, crate::schema::GraphOptions::default())
+    }
+
+    /// Open (or create) the graph database at `path` with custom options.
+    ///
+    /// `options.mode` controls how vertex labels, edge labels, and property keys used by
+    /// traversals are registered:
+    /// - [`SchemaMode::Auto`] (the default) — registered implicitly on first use.
+    /// - [`SchemaMode::Strict`] — must be declared first via [`open_management`](Self::open_management);
+    ///   see [`SchemaManagement`] for a worked example.
+    ///
+    /// Options are only applied the first time a database is created; reopening an existing
+    /// database always uses its persisted settings, ignoring `options`.
+    ///
+    /// [`SchemaMode::Auto`]: crate::schema::SchemaMode::Auto
+    /// [`SchemaMode::Strict`]: crate::schema::SchemaMode::Strict
+    pub fn open_with_options(path: impl AsRef<Path>, options: crate::schema::GraphOptions) -> Result<Self, StoreError> {
+        let store = Arc::new(RocksStorage::open(path)?);
+        let schema = store.load_schema(options)?;
+        Ok(Self { store, schema: Arc::new(std::sync::RwLock::new(schema)) })
+    }
+
+    /// Open a schema management session for explicit, [`SchemaMode::Strict`]-style schema
+    /// declaration. See [`SchemaManagement`] for a worked example.
+    ///
+    /// [`SchemaMode::Strict`]: crate::schema::SchemaMode::Strict
+    pub fn open_management(&self) -> SchemaManagement {
+        SchemaManagement::new(Arc::clone(&self.store), Arc::clone(&self.schema))
     }
 
     /// Access the thread-safe schema registry.
-    pub fn schema(&self) -> Arc<std::sync::RwLock<crate::schema::Schema>> {
+    pub fn schema(&self) -> Arc<std::sync::RwLock<Schema>> {
         Arc::clone(&self.schema)
     }
 
@@ -155,9 +185,9 @@ impl ReadSession {
     /// Configure the batch size for a given scan or query scenario.
     pub fn set_batch_size(&mut self, scenario: BatchScenario, size: u32) {
         match scenario {
-            BatchScenario::ScanVertices => self.ctx.scan_vertices_batch_size = size,
-            BatchScenario::ScanEdges => self.ctx.scan_edges_batch_size = size,
-            BatchScenario::GetAdjacentEdges => self.ctx.get_adjacent_edges_batch_size = size,
+            BatchScenario::ScanVertices => self.ctx.scan_config.scan_vertices_batch_size = size,
+            BatchScenario::ScanEdges => self.ctx.scan_config.scan_edges_batch_size = size,
+            BatchScenario::GetAdjacentEdges => self.ctx.scan_config.get_adjacent_edges_batch_size = size,
         }
     }
 }
@@ -207,9 +237,9 @@ impl TxSession {
     /// Configure the batch size for a given scan or query scenario.
     pub fn set_batch_size(&mut self, scenario: BatchScenario, size: u32) {
         match scenario {
-            BatchScenario::ScanVertices => self.ctx.scan_vertices_batch_size = size,
-            BatchScenario::ScanEdges => self.ctx.scan_edges_batch_size = size,
-            BatchScenario::GetAdjacentEdges => self.ctx.get_adjacent_edges_batch_size = size,
+            BatchScenario::ScanVertices => self.ctx.scan_config.scan_vertices_batch_size = size,
+            BatchScenario::ScanEdges => self.ctx.scan_config.scan_edges_batch_size = size,
+            BatchScenario::GetAdjacentEdges => self.ctx.scan_config.get_adjacent_edges_batch_size = size,
         }
     }
 }

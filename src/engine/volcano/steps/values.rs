@@ -25,8 +25,9 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{error::StoreError, keys::CanonicalKey, prop_key::PropKey, GValue},
+    types::{error::StoreError, keys::CanonicalKey, prop_key::LABEL_KEY_ID, GValue},
 };
+use smol_str::SmolStr;
 
 /// A physical step that extracts property values from the elements carried by incoming traversers.
 #[derive(Debug)]
@@ -35,15 +36,15 @@ pub struct ValuesStep {
     upstream: Option<StepRef>,
 
     // ── Static/Fixed configuration ──
-    /// Specific property keys to extract.
-    property_keys: SmallVec<[PropKey; 4]>,
+    /// Specific property keys to extract as (name, key_id) pairs.
+    property_keys: SmallVec<[(SmolStr, u16); 4]>,
     /// Whether to emit properties as `GValue::Property` (true) or their raw scalar values (false).
     emit_property: bool,
 }
 
 /// Creates a new `ValuesStep` to extract specified property values.
 impl ValuesStep {
-    pub fn new(property_keys: SmallVec<[PropKey; 4]>, emit_property: bool) -> Self {
+    pub fn new(property_keys: SmallVec<[(SmolStr, u16); 4]>, emit_property: bool) -> Self {
         Self { upstream: None, property_keys, emit_property }
     }
 }
@@ -73,14 +74,22 @@ impl CoreStep for ValuesStep {
 
             let mut results = smallvec![];
             if self.emit_property {
-                for key in &self.property_keys {
-                    if let Some(value) = ctx.get_property(&canonical_key, key)? {
+                for (_, key_id) in &self.property_keys {
+                    if let Some(mut value) = ctx.get_property(&canonical_key, *key_id)? {
+                        if *key_id == LABEL_KEY_ID {
+                            let schema_guard = ctx.schema();
+                            value.value = schema_guard.read().unwrap().decode_label_value(&canonical_key, value.value);
+                        }
                         results.push(Traverser::new_rc_with_parent(GValue::Property(value), t.clone()));
                     }
                 }
             } else {
-                for key in &self.property_keys {
-                    if let Some(value) = ctx.get_value(&canonical_key, key)? {
+                for (_, key_id) in &self.property_keys {
+                    if let Some(mut value) = ctx.get_value(&canonical_key, *key_id)? {
+                        if *key_id == LABEL_KEY_ID {
+                            let schema_guard = ctx.schema();
+                            value = schema_guard.read().unwrap().decode_label_value(&canonical_key, value);
+                        }
                         results.push(Traverser::new_rc_with_parent(GValue::Scalar(value), t.clone()));
                     }
                 }

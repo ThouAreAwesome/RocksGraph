@@ -29,7 +29,6 @@ use crate::{
     planner::logical_step::{HasIdStep, HasLabelStep, HasPropertyStep, LogicalStep},
     types::{
         gvalue::Primitive,
-        keys::LabelId,
         prop_key::{PropKey, ID, LABEL},
     },
 };
@@ -84,7 +83,8 @@ pub(crate) fn key_to_prop_key(k: Key) -> PropKey {
 ///
 /// Routing:
 /// - `Key::Id`  + `Predicate::Eq(Int64)` or `Within([Int64…])` → `HasIdStep`
-/// - `Key::Label` + `Predicate::Eq(Int32|Int64)` or `Within` → `HasLabelStep`
+/// - `Key::Label` + `Predicate::Eq(String|Int32|Int64)` or `Within` → `HasLabelStep`
+///   (the usual case is a string label name, e.g. `.has(Key::Label, "person")`)
 /// - `Key::Property(s)` + `Predicate::Eq(scalar)` → `HasPropertyStep`
 /// - Other combos → no-op (use dedicated step methods instead)
 pub(crate) fn push_has_step(steps: &mut Vec<LogicalStep>, key: Key, pred: Predicate) {
@@ -100,20 +100,22 @@ pub(crate) fn push_has_step(steps: &mut Vec<LogicalStep>, key: Key, pred: Predic
             steps.push(LogicalStep::HasId(HasIdStep { ids }));
         }
         Key::Label => {
-            let label_ids: SmallVec<[LabelId; 4]> = match pred {
-                Predicate::Eq(Value::Int32(n)) => smallvec![n as LabelId],
-                Predicate::Eq(Value::Int64(n)) => smallvec![n as LabelId],
+            let labels: SmallVec<[SmolStr; 4]> = match pred {
+                Predicate::Eq(Value::String(s)) => smallvec![SmolStr::from(s)],
+                Predicate::Eq(Value::Int32(n)) => smallvec![SmolStr::from(n.to_string())],
+                Predicate::Eq(Value::Int64(n)) => smallvec![SmolStr::from(n.to_string())],
                 Predicate::Within(vs) => vs
                     .into_iter()
                     .filter_map(|v| match v {
-                        Value::Int32(n) => Some(n as LabelId),
-                        Value::Int64(n) => Some(n as LabelId),
+                        Value::String(s) => Some(SmolStr::from(s)),
+                        Value::Int32(n) => Some(SmolStr::from(n.to_string())),
+                        Value::Int64(n) => Some(SmolStr::from(n.to_string())),
                         _ => None,
                     })
                     .collect(),
                 _ => return,
             };
-            steps.push(LogicalStep::HasLabel(HasLabelStep { label_ids }));
+            steps.push(LogicalStep::HasLabel(HasLabelStep { labels }));
         }
         Key::Property(s) => {
             if let Predicate::Eq(v) = pred {

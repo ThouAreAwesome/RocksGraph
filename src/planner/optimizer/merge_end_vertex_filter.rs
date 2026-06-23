@@ -112,7 +112,7 @@ mod tests {
     use smallvec::smallvec;
 
     fn out_e() -> LogicalStep {
-        LogicalStep::OutE(OutEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None })
+        LogicalStep::OutE(OutEStep { labels: smallvec![], end_vertex_ids: None, rank: None })
     }
 
     fn evf(ids: Vec<VertexKey>) -> LogicalStep {
@@ -204,27 +204,27 @@ mod tests {
 
     fn in_e() -> LogicalStep {
         use crate::planner::logical_step::InEStep;
-        LogicalStep::InE(InEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None })
+        LogicalStep::InE(InEStep { labels: smallvec![], end_vertex_ids: None, rank: None })
     }
 
     fn both_e() -> LogicalStep {
         use crate::planner::logical_step::BothEStep;
-        LogicalStep::BothE(BothEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None })
+        LogicalStep::BothE(BothEStep { labels: smallvec![], end_vertex_ids: None, rank: None })
     }
 
     fn out_step() -> LogicalStep {
         use crate::planner::logical_step::OutStep;
-        LogicalStep::Out(OutStep { label_ids: smallvec![], end_vertex_ids: None })
+        LogicalStep::Out(OutStep { labels: smallvec![], end_vertex_ids: None })
     }
 
     fn in_step() -> LogicalStep {
         use crate::planner::logical_step::InStep;
-        LogicalStep::In(InStep { label_ids: smallvec![], end_vertex_ids: None })
+        LogicalStep::In(InStep { labels: smallvec![], end_vertex_ids: None })
     }
 
     fn both_step() -> LogicalStep {
         use crate::planner::logical_step::BothStep;
-        LogicalStep::Both(BothStep { label_ids: smallvec![], end_vertex_ids: None })
+        LogicalStep::Both(BothStep { labels: smallvec![], end_vertex_ids: None })
     }
 
     fn has_id(ids: Vec<VertexKey>) -> LogicalStep {

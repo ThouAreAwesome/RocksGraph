@@ -96,8 +96,8 @@ mod tests {
         LogicalStep::HasId(HasIdStep { ids: ids.into_iter().collect() })
     }
 
-    fn has_label(labels: Vec<u16>) -> LogicalStep {
-        LogicalStep::HasLabel(HasLabelStep { label_ids: labels.into_iter().collect() })
+    fn has_label(labels: Vec<&str>) -> LogicalStep {
+        LogicalStep::HasLabel(HasLabelStep { labels: labels.into_iter().map(SmolStr::new).collect() })
     }
 
     fn whr(sub_steps: Vec<LogicalStep>) -> LogicalStep {
@@ -119,7 +119,7 @@ mod tests {
 
     #[test]
     fn test_has_label_then_has_id_swapped() {
-        let mut plan = LogicalPlan { steps: vec![v_all(), has_label(vec![10]), has_id(vec![1])] };
+        let mut plan = LogicalPlan { steps: vec![v_all(), has_label(vec!["10"]), has_id(vec![1])] };
         let changed = reorder_filters(&mut plan).unwrap();
         assert!(changed);
         assert_eq!(plan.steps.len(), 3);
@@ -130,7 +130,7 @@ mod tests {
 
     #[test]
     fn test_has_label_then_has_prop_id_swapped() {
-        let mut plan = LogicalPlan { steps: vec![v_all(), has_label(vec![10]), has_prop("id", Primitive::Int32(1))] };
+        let mut plan = LogicalPlan { steps: vec![v_all(), has_label(vec!["10"]), has_prop("id", Primitive::Int32(1))] };
         let changed = reorder_filters(&mut plan).unwrap();
         assert!(changed);
         assert_eq!(plan.steps.len(), 3);
@@ -172,7 +172,7 @@ mod tests {
 
     #[test]
     fn test_where_then_has_label_swapped() {
-        let mut plan = LogicalPlan { steps: vec![v_all(), whr(vec![has_id(vec![10])]), has_label(vec![1])] };
+        let mut plan = LogicalPlan { steps: vec![v_all(), whr(vec![has_id(vec![10])]), has_label(vec!["1"])] };
         let changed = reorder_filters(&mut plan).unwrap();
         assert!(changed);
         assert_eq!(plan.steps.len(), 3);
@@ -202,7 +202,7 @@ mod tests {
             steps: vec![
                 v_all(),
                 has_prop("name", Primitive::String(SmolStr::new("marko"))),
-                has_label(vec![10]),
+                has_label(vec!["10"]),
                 has_id(vec![1]),
             ],
         };

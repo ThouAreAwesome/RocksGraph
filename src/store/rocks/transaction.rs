@@ -58,8 +58,8 @@ use crate::{
     store::{
         rocks::encoding::{
             build_lazy_edge, build_lazy_vertex, decode_edge_key, decode_vertex_key, edge_scan_prefix, encode_edge_key,
-            encode_props, encode_vertex_key, prefix_upper_bound, EdgeValue, VertexDegree, VertexValue, CF_EDGES_IN,
-            CF_EDGES_OUT, CF_VERTEX_DEGREE, CF_VERTICES,
+            encode_props, encode_schema_key, encode_vertex_key, prefix_upper_bound, EdgeValue, VertexDegree,
+            VertexValue, CF_EDGES_IN, CF_EDGES_OUT, CF_SCHEMA, CF_VERTEX_DEGREE, CF_VERTICES,
         },
         traits::GraphTransaction,
     },
@@ -448,6 +448,14 @@ impl GraphTransaction for Transaction {
         txn.put_cf(&cf, key_bytes, &ev_bytes).map_err(StoreError::RocksDb)
     }
 
+    /// Stage a schema key-value entry for persistence.
+    fn put_schema_entry(&mut self, kind: u8, name: &str, value: &[u8]) -> Result<(), StoreError> {
+        let txn = self.db_txn.as_ref().expect("no active transaction");
+        let cf_schema = self.db.cf_handle(CF_SCHEMA).ok_or(StoreError::MissingColumnFamily(CF_SCHEMA))?;
+        let key = encode_schema_key(kind, name);
+        txn.put_cf(&cf_schema, key, value).map_err(StoreError::RocksDb)
+    }
+
     /// Deletes a vertex record.
     fn delete_vertex(&mut self, key: VertexKey) -> Result<(), StoreError> {
         let cf_vertices = self.db.cf_handle(CF_VERTICES).ok_or(StoreError::MissingColumnFamily("vertices"))?;
@@ -538,6 +546,7 @@ impl GraphTransaction for Transaction {
 // |   IN: no filter       |   - no filter                                            |
 // |   IN: all filters     | test_get_edges_in_direction_filters                      |
 // |                       |   - label, limit, src, combined label+src                |
+// | put_schema_entry      | test_put_schema_entry                                    |
 // | delete_vertex         | test_delete_vertex (positive and negative IDs)           |
 // | delete_vertex_degree  | test_delete_vertex                                       |
 // | delete_edge           | test_delete_edge (positive and negative IDs)             |
@@ -699,6 +708,24 @@ mod tests {
     }
 
     #[test]
+    fn test_put_schema_entry() {
+        use crate::store::rocks::encoding::{encode_schema_key, CF_SCHEMA, SCHEMA_KIND_VERTEX_LABEL};
+
+        let (store, _dir) = open_temp_store();
+        let mut txn = ctx(&store);
+        txn.put_schema_entry(SCHEMA_KIND_VERTEX_LABEL, "person", &7u16.to_be_bytes()).unwrap();
+        txn.commit().unwrap();
+
+        // No `get_schema_entry` on the trait -- the schema CF is read in bulk by
+        // `RocksStorage::load_schema`, not per-transaction -- so verify the write
+        // landed by reading the column family directly.
+        let cf = store.db.cf_handle(CF_SCHEMA).unwrap();
+        let key = encode_schema_key(SCHEMA_KIND_VERTEX_LABEL, "person");
+        let value = store.db.get_cf(&cf, key).unwrap().unwrap();
+        assert_eq!(value, 7u16.to_be_bytes());
+    }
+
+    #[test]
     fn test_put_and_get_edge() {
         let (store, _dir) = open_temp_store();
         let mut txn = ctx(&store);
@@ -851,12 +878,8 @@ mod tests {
         let v1_id = 1;
         let v1_label = 10;
         let props = vec![
-            Property {
-                owner: CanonicalKey::Vertex(v1_id),
-                key: SmolStr::new("name"),
-                value: Primitive::String(SmolStr::new("Alice")),
-            },
-            Property { owner: CanonicalKey::Vertex(v1_id), key: SmolStr::new("age"), value: Primitive::Int32(30) },
+            Property { owner: CanonicalKey::Vertex(v1_id), key: 1, value: Primitive::String(SmolStr::new("Alice")) },
+            Property { owner: CanonicalKey::Vertex(v1_id), key: 2, value: Primitive::Int32(30) },
         ];
 
         txn.put_vertex(v1_id, v1_label, &props).unwrap();
@@ -952,7 +975,7 @@ mod tests {
 
         let props = vec![Property {
             owner: crate::types::CanonicalKey::Edge(ek.canonical_edge_key()),
-            key: smol_str::SmolStr::new("w"),
+            key: 1,
             value: Primitive::Int32(7),
         }];
         txn.put_edge(&ek, &props).unwrap();
@@ -994,16 +1017,8 @@ mod tests {
 
         let ek = EdgeKey::out_e(1, 100, 2, 0);
         let props = vec![
-            Property {
-                owner: CanonicalKey::Edge(ek.canonical_edge_key()),
-                key: SmolStr::new("weight"),
-                value: Primitive::Float64(0.5),
-            },
-            Property {
-                owner: CanonicalKey::Edge(ek.canonical_edge_key()),
-                key: SmolStr::new("timestamp"),
-                value: Primitive::Int64(12345),
-            },
+            Property { owner: CanonicalKey::Edge(ek.canonical_edge_key()), key: 1, value: Primitive::Float64(0.5) },
+            Property { owner: CanonicalKey::Edge(ek.canonical_edge_key()), key: 2, value: Primitive::Int64(12345) },
         ];
 
         txn.put_edge(&ek, &props).unwrap();

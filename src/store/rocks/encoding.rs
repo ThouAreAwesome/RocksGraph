@@ -28,10 +28,23 @@
 //! | `vertex_degree` | `[ VertexId:i64 ]`                       | `[ out_e_cnt:u32 \| in_e_cnt:u32 ]` |
 //! | `edges_out`     | `[ SrcId:i64 \| LabelId:u16 \| DstId:i64 \| Rank:u16 ]` | `[ props ]` |
 //! | `edges_in`      | `[ DstId:i64 \| LabelId:u16 \| SrcId:i64 \| Rank:u16 ]` | `[ props ]` |
+//! | `schema`        | `[ kind:u8 \| name ]` (or the 1-byte meta key) | kind-dependent, see below      |
 //!
 //! Edge properties are duplicated across `edges_out` and `edges_in`.
 //! The direction byte present in previous versions has been removed; each CF
 //! encodes direction implicitly via its key layout.
+//!
+//! ## `schema` CF entries
+//!
+//! Keyed by a `kind` discriminant byte ([`SCHEMA_KIND_VERTEX_LABEL`], [`SCHEMA_KIND_EDGE_LABEL`],
+//! [`SCHEMA_KIND_PROP_KEY`]) followed by the label/key name, or by the single-byte
+//! [`SCHEMA_META_KEY`] ([`SCHEMA_KIND_META`]) for the one graph-wide metadata entry:
+//!
+//! | Kind                  | Value layout                                  |
+//! |------------------------|------------------------------------------------|
+//! | vertex/edge label      | `[ id:u16 ]`                                   |
+//! | property key            | `[ id:u16 \| data_type:u8 \| cardinality:u8 ]` |
+//! | meta (singleton)        | `[ version:u64 \| edge_mode:u8 \| schema_mode:u8 ]` |
 //!
 //! # Prefix scan lengths
 //!
@@ -41,7 +54,7 @@
 //! | `vertex_id \| label_id` | 10 | `outE(label)` / `inE(label)`    |
 
 use crate::types::{
-    CanonicalKey, Direction, Edge, EdgeKey, LabelId, Primitive, PropKey, Property, Rank, StoreError, Vertex, VertexKey,
+    CanonicalKey, Direction, Edge, EdgeKey, LabelId, Primitive, Property, Rank, StoreError, Vertex, VertexKey,
 };
 
 // ── Scan helpers ──────────────────────────────────────────────────────────────
@@ -80,6 +93,74 @@ pub const CF_VERTICES: &str = "vertices";
 pub const CF_VERTEX_DEGREE: &str = "vertex_degree";
 pub const CF_EDGES_OUT: &str = "edges_out";
 pub const CF_EDGES_IN: &str = "edges_in";
+pub const CF_SCHEMA: &str = "schema";
+
+// ── Schema kind discriminants & encoders ──────────────────────────────────────
+
+pub const SCHEMA_KIND_VERTEX_LABEL: u8 = 0;
+pub const SCHEMA_KIND_EDGE_LABEL: u8 = 1;
+pub const SCHEMA_KIND_PROP_KEY: u8 = 2;
+pub const SCHEMA_KIND_META: u8 = 3;
+pub const SCHEMA_META_KEY: [u8; 1] = [SCHEMA_KIND_META];
+pub const SCHEMA_META_NAME: &str = "";
+
+#[inline]
+pub fn encode_schema_key(kind: u8, name: &str) -> Vec<u8> {
+    let mut key = Vec::with_capacity(1 + name.len());
+    key.push(kind);
+    key.extend_from_slice(name.as_bytes());
+    key
+}
+
+#[inline]
+pub fn encode_schema_meta(version: u64, edge_mode: u8, schema_mode: u8) -> [u8; 10] {
+    let mut bytes = [0u8; 10];
+    bytes[0..8].copy_from_slice(&version.to_be_bytes());
+    bytes[8] = edge_mode;
+    bytes[9] = schema_mode;
+    bytes
+}
+
+#[inline]
+pub fn decode_schema_meta(bytes: &[u8]) -> Option<(u64, u8, u8)> {
+    if bytes.len() < 10 {
+        return None;
+    }
+    let version = u64::from_be_bytes(bytes[0..8].try_into().ok()?);
+    let edge_mode = bytes[8];
+    let schema_mode = bytes[9];
+    Some((version, edge_mode, schema_mode))
+}
+
+#[inline]
+pub fn encode_schema_label_value(id: u16) -> [u8; 2] {
+    id.to_be_bytes()
+}
+
+#[inline]
+pub fn decode_schema_label_value(bytes: &[u8]) -> Option<u16> {
+    Some(u16::from_be_bytes(bytes.try_into().ok()?))
+}
+
+#[inline]
+pub fn encode_schema_prop_value(id: u16, data_type: u8, cardinality: u8) -> [u8; 4] {
+    let mut bytes = [0u8; 4];
+    bytes[0..2].copy_from_slice(&id.to_be_bytes());
+    bytes[2] = data_type;
+    bytes[3] = cardinality;
+    bytes
+}
+
+#[inline]
+pub fn decode_schema_prop_value(bytes: &[u8]) -> Option<(u16, u8, u8)> {
+    if bytes.len() < 4 {
+        return None;
+    }
+    let id = u16::from_be_bytes(bytes[0..2].try_into().ok()?);
+    let data_type = bytes[2];
+    let cardinality = bytes[3];
+    Some((id, data_type, cardinality))
+}
 
 // ── Size constants ────────────────────────────────────────────────────────────
 
@@ -237,9 +318,7 @@ pub(super) fn encode_props(props: &[Property]) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.extend_from_slice(&(props.len() as u16).to_be_bytes());
     for prop in props {
-        let kb = prop.key.as_bytes();
-        buf.extend_from_slice(&(kb.len() as u16).to_be_bytes());
-        buf.extend_from_slice(kb);
+        buf.extend_from_slice(&prop.key.to_be_bytes());
         match &prop.value {
             Primitive::Bool(b) => {
                 buf.push(TAG_BOOL);
@@ -325,7 +404,6 @@ pub(super) fn build_lazy_edge(ek: &EdgeKey, ev: &EdgeValue) -> Edge {
     )
 }
 
-/// Deserializes the binary property blob produced by `encode_props`.
 pub(crate) fn decode_props(blob: &[u8], owner: CanonicalKey) -> Option<Vec<Property>> {
     if blob.len() < 2 {
         return None;
@@ -337,13 +415,8 @@ pub(crate) fn decode_props(blob: &[u8], owner: CanonicalKey) -> Option<Vec<Prope
         if pos + 2 > blob.len() {
             return None;
         }
-        let klen = u16::from_be_bytes(blob[pos..pos + 2].try_into().ok()?) as usize;
+        let key = u16::from_be_bytes(blob[pos..pos + 2].try_into().ok()?);
         pos += 2;
-        if pos + klen > blob.len() {
-            return None;
-        }
-        let key: PropKey = smol_str::SmolStr::new(std::str::from_utf8(&blob[pos..pos + klen]).ok()?);
-        pos += klen;
         if pos >= blob.len() {
             return None;
         }
@@ -427,19 +500,17 @@ mod tests {
     use super::{decode_vertex_key, encode_vertex_key, EdgeValue, VertexDegree, VertexValue};
     use crate::types::{
         element::{Edge, Vertex},
-        CanonicalEdgeKey, CanonicalKey, Primitive, PropKey, Property,
+        CanonicalEdgeKey, CanonicalKey, Primitive, Property,
     };
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    fn encode_props(props: &[(PropKey, Primitive)]) -> Vec<u8> {
+    fn encode_props(props: &[(u16, Primitive)]) -> Vec<u8> {
         use super::{TAG_BOOL, TAG_FLOAT32, TAG_FLOAT64, TAG_INT32, TAG_INT64, TAG_NULL, TAG_STRING, TAG_UUID};
         let mut buf = Vec::new();
         buf.extend_from_slice(&(props.len() as u16).to_be_bytes());
         for (key, val) in props {
-            let kb = key.as_bytes();
-            buf.extend_from_slice(&(kb.len() as u16).to_be_bytes());
-            buf.extend_from_slice(kb);
+            buf.extend_from_slice(&key.to_be_bytes());
             match val {
                 Primitive::Bool(b) => {
                     buf.push(TAG_BOOL);
@@ -479,18 +550,16 @@ mod tests {
         buf
     }
 
-    /// Decodes a property blob into a vector of (PropKey, Primitive) tuples.
-    fn decode_props(blob: &[u8]) -> Vec<(PropKey, Primitive)> {
+    /// Decodes a property blob into a vector of (u16, Primitive) tuples.
+    fn decode_props(blob: &[u8]) -> Vec<(u16, Primitive)> {
         use super::{TAG_BOOL, TAG_FLOAT32, TAG_FLOAT64, TAG_INT32, TAG_INT64, TAG_NULL, TAG_STRING, TAG_UUID};
         let mut pos = 0;
         let count = u16::from_be_bytes(blob[pos..pos + 2].try_into().unwrap()) as usize;
         pos += 2;
         let mut out = Vec::with_capacity(count);
         for _ in 0..count {
-            let klen = u16::from_be_bytes(blob[pos..pos + 2].try_into().unwrap()) as usize;
+            let key = u16::from_be_bytes(blob[pos..pos + 2].try_into().unwrap());
             pos += 2;
-            let key: PropKey = SmolStr::new(std::str::from_utf8(&blob[pos..pos + klen]).unwrap());
-            pos += klen;
             let tag = blob[pos];
             pos += 1;
             let val = match tag {
@@ -540,16 +609,16 @@ mod tests {
     }
 
     /// Helper to create a `Vertex` for testing.
-    fn make_vertex(id: i64, label_id: u16, raw: &[(PropKey, Primitive)]) -> Vertex {
+    fn make_vertex(id: i64, label_id: u16, raw: &[(u16, Primitive)]) -> Vertex {
         let owner = CanonicalKey::Vertex(id);
-        let props = raw.iter().map(|(k, v)| Property { owner, key: k.clone(), value: v.clone() }).collect();
+        let props = raw.iter().map(|(k, v)| Property { owner, key: *k, value: v.clone() }).collect();
         Vertex::with_props(id, label_id, props)
     }
 
     /// Helper to create an `Edge` for testing.
-    fn make_edge(cek: CanonicalEdgeKey, raw: &[(PropKey, Primitive)]) -> Edge {
+    fn make_edge(cek: CanonicalEdgeKey, raw: &[(u16, Primitive)]) -> Edge {
         let owner = CanonicalKey::Edge(cek);
-        let props = raw.iter().map(|(k, v)| Property { owner, key: k.clone(), value: v.clone() }).collect();
+        let props = raw.iter().map(|(k, v)| Property { owner, key: *k, value: v.clone() }).collect();
         Edge::with_props(cek.src_id, cek.label_id, cek.dst_id, cek.rank, props)
     }
 
@@ -637,17 +706,14 @@ mod tests {
 
     #[test]
     fn vertex_value_encode_decode() {
-        let raw = vec![
-            (SmolStr::new("name"), Primitive::String(SmolStr::new("Alice"))),
-            (SmolStr::new("age"), Primitive::Int32(30)),
-        ];
+        let raw = vec![(1u16, Primitive::String(SmolStr::new("Alice"))), (2u16, Primitive::Int32(30))];
         let vv = VertexValue { label_id: 7, property_blob: encode_props(&raw) };
         let bytes = vv.encode();
         let dec = VertexValue::decode(&bytes).unwrap();
         assert_eq!(dec.label_id, 7);
         let props = decode_props(&dec.property_blob);
         assert_eq!(props.len(), 2);
-        assert_eq!(props[0].0, SmolStr::new("name"));
+        assert_eq!(props[0].0, 1u16);
         assert_eq!(props[0].1, Primitive::String(SmolStr::new("Alice")));
         assert_eq!(props[1].1, Primitive::Int32(30));
     }
@@ -680,10 +746,7 @@ mod tests {
 
     #[test]
     fn full_vertex_roundtrip() {
-        let raw = vec![
-            (SmolStr::new("name"), Primitive::String(SmolStr::new("Bob"))),
-            (SmolStr::new("score"), Primitive::Float64(9.9)),
-        ];
+        let raw = vec![(1u16, Primitive::String(SmolStr::new("Bob"))), (2u16, Primitive::Float64(9.9))];
         let key_bytes = encode_vertex_key(42);
         let val_bytes = VertexValue { label_id: 1, property_blob: encode_props(&raw) }.encode();
         let id = decode_vertex_key(&key_bytes).unwrap();
@@ -695,17 +758,15 @@ mod tests {
         assert_eq!(fv.id, 42);
         assert_eq!(fv.label_id, 1);
         assert_eq!(fv.all_props().len(), 2);
-        assert_eq!(fv.all_props()[0].key, SmolStr::new("name"));
+        assert_eq!(fv.all_props()[0].key, 1u16);
         assert_eq!(fv.all_props()[0].owner, CanonicalKey::Vertex(42));
     }
 
     #[test]
     fn full_edge_roundtrip() {
         let cek = CanonicalEdgeKey { src_id: 10, label_id: 7, rank: 0, dst_id: 20 };
-        let raw = vec![
-            (SmolStr::new("weight"), Primitive::Float64(std::f64::consts::PI)),
-            (SmolStr::new("tag"), Primitive::String(SmolStr::new("friend"))),
-        ];
+        let raw =
+            vec![(1u16, Primitive::Float64(std::f64::consts::PI)), (2u16, Primitive::String(SmolStr::new("friend")))];
         let key_bytes = encode_edge_key_out(cek);
         let val_bytes = EdgeValue { property_blob: encode_props(&raw) }.encode().to_vec();
         let dec_cek = decode_edge_key_out(&key_bytes).unwrap();
@@ -722,15 +783,15 @@ mod tests {
 
     #[test]
     fn all_primitive_types_roundtrip() {
-        let raw: Vec<(PropKey, Primitive)> = vec![
-            (SmolStr::new("bool"), Primitive::Bool(true)),
-            (SmolStr::new("i32"), Primitive::Int32(-100)),
-            (SmolStr::new("i64"), Primitive::Int64(i64::MAX)),
-            (SmolStr::new("f32"), Primitive::Float32(f32::MIN_POSITIVE)),
-            (SmolStr::new("f64"), Primitive::Float64(f64::MIN_POSITIVE)),
-            (SmolStr::new("str"), Primitive::String(SmolStr::new("hello"))),
-            (SmolStr::new("uuid"), Primitive::Uuid(u128::MAX)),
-            (SmolStr::new("null"), Primitive::Null),
+        let raw: Vec<(u16, Primitive)> = vec![
+            (1, Primitive::Bool(true)),
+            (2, Primitive::Int32(-100)),
+            (3, Primitive::Int64(i64::MAX)),
+            (4, Primitive::Float32(f32::MIN_POSITIVE)),
+            (5, Primitive::Float64(f64::MIN_POSITIVE)),
+            (6, Primitive::String(SmolStr::new("hello"))),
+            (7, Primitive::Uuid(u128::MAX)),
+            (8, Primitive::Null),
         ];
         let blob = encode_props(&raw);
         let dec = decode_props(&blob);
@@ -744,10 +805,10 @@ mod tests {
     #[test]
     fn property_owner_is_canonical_key() {
         let cek = CanonicalEdgeKey { src_id: 5, label_id: 1, rank: 0, dst_id: 6 };
-        let mut fe = make_edge(cek, &[(SmolStr::new("w"), Primitive::Float32(0.5))]);
+        let mut fe = make_edge(cek, &[(1u16, Primitive::Float32(0.5))]);
         assert_eq!(fe.all_props()[0].owner, CanonicalKey::Edge(cek));
 
-        let mut fv = make_vertex(99, 2, &[(SmolStr::new("x"), Primitive::Int32(7))]);
+        let mut fv = make_vertex(99, 2, &[(2u16, Primitive::Int32(7))]);
         assert_eq!(fv.all_props()[0].owner, CanonicalKey::Vertex(99));
     }
 }

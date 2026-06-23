@@ -20,17 +20,20 @@ mod cases {
     use crate::{
         engine::volcano::builder::PhysicalPlanBuilder,
         graph::LogicalGraph,
-        planner::apply_rules,
-        planner::logical_step::{
-            AddEStep as LogicalAddEStep, AddVStep as LogicalAddVStep, BothEStep as LogicalBothEStep,
-            BothStep as LogicalBothStep, CoalesceStep as LogicalCoalesceStep, CountStep as LogicalCountStep,
-            DropStep as LogicalDropStep, HasIdStep as LogicalHasIdStep, HasLabelStep as LogicalHasLabelStep,
-            HasPropertyStep as LogicalHasPropertyStep, InEStep as LogicalInEStep, InStep as LogicalInStep,
-            InVStep as LogicalInVStep, LimitStep as LogicalLimitStep, LogicalPlan, LogicalStep,
-            OtherVStep as LogicalOtherVStep, OutEStep as LogicalOutEStep, OutStep as LogicalOutStep,
-            OutVStep as LogicalOutVStep, PropertiesStep as LogicalPropertiesStep, PropertyStep as LogicalPropertyStep,
-            ScalarFilterStep as LogicalScalarFilterStep, UnionStep as LogicalUnionStep, VStep as LogicalVStep,
-            ValuesStep as LogicalValuesStep, WhereStep as LogicalWhereStep,
+        planner::{
+            apply_rules,
+            logical_step::{
+                AddEStep as LogicalAddEStep, AddVStep as LogicalAddVStep, BothEStep as LogicalBothEStep,
+                BothStep as LogicalBothStep, CoalesceStep as LogicalCoalesceStep, CountStep as LogicalCountStep,
+                DropStep as LogicalDropStep, HasIdStep as LogicalHasIdStep, HasLabelStep as LogicalHasLabelStep,
+                HasPropertyStep as LogicalHasPropertyStep, InEStep as LogicalInEStep, InStep as LogicalInStep,
+                InVStep as LogicalInVStep, LimitStep as LogicalLimitStep, LogicalPlan, LogicalStep,
+                OtherVStep as LogicalOtherVStep, OutEStep as LogicalOutEStep, OutStep as LogicalOutStep,
+                OutVStep as LogicalOutVStep, PropertiesStep as LogicalPropertiesStep,
+                PropertyStep as LogicalPropertyStep, ScalarFilterStep as LogicalScalarFilterStep,
+                UnionStep as LogicalUnionStep, VStep as LogicalVStep, ValuesStep as LogicalValuesStep,
+                WhereStep as LogicalWhereStep,
+            },
         },
         store::{traits::GraphStore, RocksStorage},
         types::{
@@ -64,9 +67,8 @@ mod cases {
 
     /// Creates a new `LogicalGraph` instance from the given `RocksStorage`.
     fn create_logical_graph(store: &RocksStorage) -> LogicalGraph<RocksStorage> {
-        //let dir = tempfile::tempdir().unwrap();
-        //let store = RocksStorage::open(dir.path()).unwrap();
-        LogicalGraph::new(store.begin(), std::sync::Arc::new(std::sync::RwLock::new(crate::schema::Schema::new())))
+        let schema = store.load_schema(crate::schema::GraphOptions::default()).unwrap();
+        LogicalGraph::new(store.begin(), std::sync::Arc::new(std::sync::RwLock::new(schema)))
     }
 
     fn get_adjacent_edges_test(
@@ -95,41 +97,73 @@ mod cases {
     fn create_tinkerpop_modern_graph(store: &RocksStorage) -> LogicalGraph<RocksStorage> {
         let mut graph = create_logical_graph(store);
 
+        let (name_key, age_key, lang_key, weight_key) = {
+            let mut schema = graph.schema.write().unwrap();
+            schema.register_vertex_label("dummy").unwrap(); // ID 0
+            schema.register_vertex_label("person").unwrap(); // ID 1 (PERSON_LABEL_ID)
+            schema.register_vertex_label("software").unwrap(); // ID 2 (SOFTWARE_LABEL_ID)
+
+            schema.register_edge_label("dummy").unwrap(); // ID 0
+            schema.register_edge_label("dummy2").unwrap(); // ID 1
+            schema.register_edge_label("dummy3").unwrap(); // ID 2
+            schema.register_edge_label("knows").unwrap(); // ID 3 (KNOWS_LABEL_ID)
+            schema.register_edge_label("created").unwrap(); // ID 4 (CREATED_LABEL_ID)
+            schema.register_edge_label("friends").unwrap(); // ID 5 (FRIENDS_LABEL_ID)
+
+            let name_key = schema.resolve_prop_key("name", crate::schema::DataType::String).unwrap();
+            let age_key = schema.resolve_prop_key("age", crate::schema::DataType::Int32).unwrap();
+            let lang_key = schema.resolve_prop_key("lang", crate::schema::DataType::String).unwrap();
+            let weight_key = schema.resolve_prop_key("weight", crate::schema::DataType::Float64).unwrap();
+            (name_key, age_key, lang_key, weight_key)
+        };
+
+        graph.staged_schema.staged_vertex_labels.insert(0);
+        graph.staged_schema.staged_vertex_labels.insert(1);
+        graph.staged_schema.staged_vertex_labels.insert(2);
+        graph.staged_schema.staged_edge_labels.insert(0);
+        graph.staged_schema.staged_edge_labels.insert(1);
+        graph.staged_schema.staged_edge_labels.insert(2);
+        graph.staged_schema.staged_edge_labels.insert(3);
+        graph.staged_schema.staged_edge_labels.insert(4);
+        graph.staged_schema.staged_edge_labels.insert(5);
+        graph.staged_schema.staged_prop_keys.insert(name_key);
+        graph.staged_schema.staged_prop_keys.insert(age_key);
+        graph.staged_schema.staged_prop_keys.insert(lang_key);
+        graph.staged_schema.staged_prop_keys.insert(weight_key);
+
         // Define LabelIds for common labels
         // Add Vertices
         let v_marko = graph.add_vertex(1, PERSON_LABEL_ID).unwrap();
         let name = Property {
             owner: CanonicalKey::Vertex(v_marko),
-            key: SmolStr::new("name"),
+            key: name_key,
             value: Primitive::String(SmolStr::new("marko")),
         };
         graph.set_property(&name).unwrap();
 
-        let age =
-            Property { owner: CanonicalKey::Vertex(v_marko), key: SmolStr::new("age"), value: Primitive::Int32(29) };
+        let age = Property { owner: CanonicalKey::Vertex(v_marko), key: age_key, value: Primitive::Int32(29) };
         graph.set_property(&age).unwrap();
 
         let v_vadas = graph.add_vertex(2, PERSON_LABEL_ID).unwrap();
         let vadas_name = Property {
             owner: CanonicalKey::Vertex(v_vadas),
-            key: SmolStr::new("name"),
+            key: name_key,
             value: Primitive::String(SmolStr::new("vadas")),
         };
         graph.set_property(&vadas_name).unwrap();
-        let vadas_age =
-            Property { owner: CanonicalKey::Vertex(v_vadas), key: SmolStr::new("age"), value: Primitive::Int32(27) };
+        let vadas_age = Property { owner: CanonicalKey::Vertex(v_vadas), key: age_key, value: Primitive::Int32(27) };
         graph.set_property(&vadas_age).unwrap();
 
         let v_lop = graph.add_vertex(3, SOFTWARE_LABEL_ID).unwrap();
         let lop_name = Property {
             owner: CanonicalKey::Vertex(v_lop),
-            key: SmolStr::new("name"),
+            key: name_key,
             value: Primitive::String(SmolStr::new("lop")),
         };
         graph.set_property(&lop_name).unwrap();
         let lop_lang = Property {
             owner: CanonicalKey::Vertex(v_lop),
-            key: SmolStr::new("lang"),
+            key: lang_key,
             value: Primitive::String(SmolStr::new("java")),
         };
         graph.set_property(&lop_lang).unwrap();
@@ -137,24 +171,23 @@ mod cases {
         let v_josh = graph.add_vertex(4, PERSON_LABEL_ID).unwrap();
         let josh_name = Property {
             owner: CanonicalKey::Vertex(v_josh),
-            key: SmolStr::new("name"),
+            key: name_key,
             value: Primitive::String(SmolStr::new("josh")),
         };
         graph.set_property(&josh_name).unwrap();
-        let josh_age =
-            Property { owner: CanonicalKey::Vertex(v_josh), key: SmolStr::new("age"), value: Primitive::Int32(32) };
+        let josh_age = Property { owner: CanonicalKey::Vertex(v_josh), key: age_key, value: Primitive::Int32(32) };
         graph.set_property(&josh_age).unwrap();
 
         let v_ripple = graph.add_vertex(5, SOFTWARE_LABEL_ID).unwrap();
         let ripple_name = Property {
             owner: CanonicalKey::Vertex(v_ripple),
-            key: SmolStr::new("name"),
+            key: name_key,
             value: Primitive::String(SmolStr::new("ripple")),
         };
         graph.set_property(&ripple_name).unwrap();
         let ripple_lang = Property {
             owner: CanonicalKey::Vertex(v_ripple),
-            key: SmolStr::new("lang"),
+            key: lang_key,
             value: Primitive::String(SmolStr::new("java")),
         };
         graph.set_property(&ripple_lang).unwrap();
@@ -162,12 +195,11 @@ mod cases {
         let v_peter = graph.add_vertex(6, PERSON_LABEL_ID).unwrap();
         let peter_name = Property {
             owner: CanonicalKey::Vertex(v_peter),
-            key: SmolStr::new("name"),
+            key: name_key,
             value: Primitive::String(SmolStr::new("peter")),
         };
         graph.set_property(&peter_name).unwrap();
-        let peter_age =
-            Property { owner: CanonicalKey::Vertex(v_peter), key: SmolStr::new("age"), value: Primitive::Int32(35) };
+        let peter_age = Property { owner: CanonicalKey::Vertex(v_peter), key: age_key, value: Primitive::Int32(35) };
         graph.set_property(&peter_age).unwrap();
         // Add Edges
         let e1 = graph
@@ -181,7 +213,7 @@ mod cases {
             .unwrap();
         let e1_weight = Property {
             owner: CanonicalKey::Edge(e1.canonical_edge_key()),
-            key: SmolStr::new("weight"),
+            key: weight_key,
             value: Primitive::Float64(0.5),
         };
         graph.set_property(&e1_weight).unwrap();
@@ -197,7 +229,7 @@ mod cases {
             .unwrap();
         let e2_weight = Property {
             owner: CanonicalKey::Edge(e2.canonical_edge_key()),
-            key: SmolStr::new("weight"),
+            key: weight_key,
             value: Primitive::Float64(1.0),
         };
         graph.set_property(&e2_weight).unwrap();
@@ -209,7 +241,7 @@ mod cases {
             .unwrap();
         let e3_weight = Property {
             owner: CanonicalKey::Edge(e3.canonical_edge_key()),
-            key: SmolStr::new("weight"),
+            key: weight_key,
             value: Primitive::Float64(0.4),
         };
         graph.set_property(&e3_weight).unwrap();
@@ -221,7 +253,7 @@ mod cases {
             .unwrap();
         let e4_weight = Property {
             owner: CanonicalKey::Edge(e4.canonical_edge_key()),
-            key: SmolStr::new("weight"),
+            key: weight_key,
             value: Primitive::Float64(1.0),
         };
         graph.set_property(&e4_weight).unwrap();
@@ -233,7 +265,7 @@ mod cases {
             .unwrap();
         let e5_weight = Property {
             owner: CanonicalKey::Edge(e5.canonical_edge_key()),
-            key: SmolStr::new("weight"),
+            key: weight_key,
             value: Primitive::Float64(0.4),
         };
         graph.set_property(&e5_weight).unwrap();
@@ -245,7 +277,7 @@ mod cases {
             .unwrap();
         let e6_weight = Property {
             owner: CanonicalKey::Edge(e6.canonical_edge_key()),
-            key: SmolStr::new("weight"),
+            key: weight_key,
             value: Primitive::Float64(0.2),
         };
         graph.set_property(&e6_weight).unwrap();
@@ -256,63 +288,68 @@ mod cases {
         let mut verification_graph = create_logical_graph(store);
 
         // Verify Vertices
+        let name_key = verification_graph.schema.read().unwrap().prop_key_id("name").unwrap();
+        let age_key = verification_graph.schema.read().unwrap().prop_key_id("age").unwrap();
+        let lang_key = verification_graph.schema.read().unwrap().prop_key_id("lang").unwrap();
+        let weight_key = verification_graph.schema.read().unwrap().prop_key_id("weight").unwrap();
+
         let _marko_v = verification_graph.get_vertex(v_marko).unwrap().unwrap();
         assert_eq!(
-            verification_graph.get_value(&CanonicalKey::Vertex(v_marko), &SmolStr::new("name")).unwrap().unwrap(),
+            verification_graph.get_value(&CanonicalKey::Vertex(v_marko), name_key).unwrap().unwrap(),
             Primitive::String(SmolStr::new("marko"))
         );
         assert_eq!(
-            verification_graph.get_value(&CanonicalKey::Vertex(v_marko), &SmolStr::new("age")).unwrap().unwrap(),
+            verification_graph.get_value(&CanonicalKey::Vertex(v_marko), age_key).unwrap().unwrap(),
             Primitive::Int32(29)
         );
 
         let _vadas_v = verification_graph.get_vertex(v_vadas).unwrap().unwrap();
         assert_eq!(
-            verification_graph.get_value(&CanonicalKey::Vertex(v_vadas), &SmolStr::new("name")).unwrap().unwrap(),
+            verification_graph.get_value(&CanonicalKey::Vertex(v_vadas), name_key).unwrap().unwrap(),
             Primitive::String(SmolStr::new("vadas"))
         );
         assert_eq!(
-            verification_graph.get_value(&CanonicalKey::Vertex(v_vadas), &SmolStr::new("age")).unwrap().unwrap(),
+            verification_graph.get_value(&CanonicalKey::Vertex(v_vadas), age_key).unwrap().unwrap(),
             Primitive::Int32(27)
         );
 
         let _lop_v = verification_graph.get_vertex(v_lop).unwrap().unwrap();
         assert_eq!(
-            verification_graph.get_value(&CanonicalKey::Vertex(v_lop), &SmolStr::new("name")).unwrap().unwrap(),
+            verification_graph.get_value(&CanonicalKey::Vertex(v_lop), name_key).unwrap().unwrap(),
             Primitive::String(SmolStr::new("lop"))
         );
         assert_eq!(
-            verification_graph.get_value(&CanonicalKey::Vertex(v_lop), &SmolStr::new("lang")).unwrap().unwrap(),
+            verification_graph.get_value(&CanonicalKey::Vertex(v_lop), lang_key).unwrap().unwrap(),
             Primitive::String(SmolStr::new("java"))
         );
 
         let _josh_v = verification_graph.get_vertex(v_josh).unwrap().unwrap();
         assert_eq!(
-            verification_graph.get_value(&CanonicalKey::Vertex(v_josh), &SmolStr::new("name")).unwrap().unwrap(),
+            verification_graph.get_value(&CanonicalKey::Vertex(v_josh), name_key).unwrap().unwrap(),
             Primitive::String(SmolStr::new("josh"))
         );
         assert_eq!(
-            verification_graph.get_value(&CanonicalKey::Vertex(v_josh), &SmolStr::new("age")).unwrap().unwrap(),
+            verification_graph.get_value(&CanonicalKey::Vertex(v_josh), age_key).unwrap().unwrap(),
             Primitive::Int32(32)
         );
 
         let _ripple_v = verification_graph.get_vertex(v_ripple).unwrap().unwrap();
         assert_eq!(
-            verification_graph.get_value(&CanonicalKey::Vertex(v_ripple), &SmolStr::new("name")).unwrap().unwrap(),
+            verification_graph.get_value(&CanonicalKey::Vertex(v_ripple), name_key).unwrap().unwrap(),
             Primitive::String(SmolStr::new("ripple"))
         );
         assert_eq!(
-            verification_graph.get_value(&CanonicalKey::Vertex(v_ripple), &SmolStr::new("lang")).unwrap().unwrap(),
+            verification_graph.get_value(&CanonicalKey::Vertex(v_ripple), lang_key).unwrap().unwrap(),
             Primitive::String(SmolStr::new("java"))
         );
 
         let _peter_v = verification_graph.get_vertex(v_peter).unwrap().unwrap();
         assert_eq!(
-            verification_graph.get_value(&CanonicalKey::Vertex(v_peter), &SmolStr::new("name")).unwrap().unwrap(),
+            verification_graph.get_value(&CanonicalKey::Vertex(v_peter), name_key).unwrap().unwrap(),
             Primitive::String(SmolStr::new("peter"))
         );
         assert_eq!(
-            verification_graph.get_value(&CanonicalKey::Vertex(v_peter), &SmolStr::new("age")).unwrap().unwrap(),
+            verification_graph.get_value(&CanonicalKey::Vertex(v_peter), age_key).unwrap().unwrap(),
             Primitive::Int32(35)
         );
 
@@ -321,10 +358,7 @@ mod cases {
         assert_eq!(_e1_edge.primary_id, v_marko);
         assert_eq!(_e1_edge.secondary_id, v_vadas);
         assert_eq!(
-            verification_graph
-                .get_value(&CanonicalKey::Edge(e1.canonical_edge_key()), &SmolStr::new("weight"))
-                .unwrap()
-                .unwrap(),
+            verification_graph.get_value(&CanonicalKey::Edge(e1.canonical_edge_key()), weight_key).unwrap().unwrap(),
             Primitive::Float64(0.5)
         );
 
@@ -333,10 +367,7 @@ mod cases {
         assert_eq!(_e2_edge.primary_id, v_marko);
         assert_eq!(_e2_edge.secondary_id, v_josh);
         assert_eq!(
-            verification_graph
-                .get_value(&CanonicalKey::Edge(e2.canonical_edge_key()), &SmolStr::new("weight"))
-                .unwrap()
-                .unwrap(),
+            verification_graph.get_value(&CanonicalKey::Edge(e2.canonical_edge_key()), weight_key).unwrap().unwrap(),
             Primitive::Float64(1.0)
         );
 
@@ -345,10 +376,7 @@ mod cases {
         assert_eq!(_e3_edge.primary_id, v_marko);
         assert_eq!(_e3_edge.secondary_id, v_lop);
         assert_eq!(
-            verification_graph
-                .get_value(&CanonicalKey::Edge(e3.canonical_edge_key()), &SmolStr::new("weight"))
-                .unwrap()
-                .unwrap(),
+            verification_graph.get_value(&CanonicalKey::Edge(e3.canonical_edge_key()), weight_key).unwrap().unwrap(),
             Primitive::Float64(0.4)
         );
 
@@ -357,10 +385,7 @@ mod cases {
         assert_eq!(_e4_edge.primary_id, v_josh);
         assert_eq!(_e4_edge.secondary_id, v_ripple);
         assert_eq!(
-            verification_graph
-                .get_value(&CanonicalKey::Edge(e4.canonical_edge_key()), &SmolStr::new("weight"))
-                .unwrap()
-                .unwrap(),
+            verification_graph.get_value(&CanonicalKey::Edge(e4.canonical_edge_key()), weight_key).unwrap().unwrap(),
             Primitive::Float64(1.0)
         );
 
@@ -369,10 +394,7 @@ mod cases {
         assert_eq!(_e5_edge.primary_id, v_josh);
         assert_eq!(_e5_edge.secondary_id, v_lop);
         assert_eq!(
-            verification_graph
-                .get_value(&CanonicalKey::Edge(e5.canonical_edge_key()), &SmolStr::new("weight"))
-                .unwrap()
-                .unwrap(),
+            verification_graph.get_value(&CanonicalKey::Edge(e5.canonical_edge_key()), weight_key).unwrap().unwrap(),
             Primitive::Float64(0.4)
         );
 
@@ -381,10 +403,7 @@ mod cases {
         assert_eq!(_e6_edge.primary_id, v_peter);
         assert_eq!(_e6_edge.secondary_id, v_lop);
         assert_eq!(
-            verification_graph
-                .get_value(&CanonicalKey::Edge(e6.canonical_edge_key()), &SmolStr::new("weight"))
-                .unwrap()
-                .unwrap(),
+            verification_graph.get_value(&CanonicalKey::Edge(e6.canonical_edge_key()), weight_key).unwrap().unwrap(),
             Primitive::Float64(0.2)
         );
         // --- End Verification ---
@@ -459,29 +478,28 @@ mod cases {
         properties.insert(SmolStr::new("age"), Primitive::Int32(29));
         let logical_plan = LogicalPlan {
             steps: vec![LogicalStep::AddV(LogicalAddVStep {
-                label_id: PERSON_LABEL_ID,
+                label: "person".into(),
                 vertex_id: Some(test_vertex_id),
                 properties,
             })],
         };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         let Some(result) = physical_plan.next(&mut graph).unwrap() else { panic!("Expected a result") };
 
         if let GValue::Vertex(v_key) = &result.value {
             assert_eq!(*v_key, test_vertex_id); // Check the returned VertexKey
             let _ = graph.get_vertex(*v_key).unwrap().unwrap(); // Fetch the actual vertex (populates overlay)
+            let name_id = graph.schema.read().unwrap().prop_key_id("name").unwrap();
+            let age_id = graph.schema.read().unwrap().prop_key_id("age").unwrap();
             assert_eq!(
-                graph.get_value(&CanonicalKey::Vertex(*v_key), &SmolStr::new("name")).unwrap().unwrap(),
+                graph.get_value(&CanonicalKey::Vertex(*v_key), name_id).unwrap().unwrap(),
                 Primitive::String(SmolStr::new("marko"))
             );
+            assert_eq!(graph.get_value(&CanonicalKey::Vertex(*v_key), age_id).unwrap().unwrap(), Primitive::Int32(29));
             assert_eq!(
-                graph.get_value(&CanonicalKey::Vertex(*v_key), &SmolStr::new("age")).unwrap().unwrap(),
-                Primitive::Int32(29)
-            );
-            assert_eq!(
-                graph.get_value(&CanonicalKey::Vertex(*v_key), &SmolStr::new("name")).unwrap().unwrap(),
+                graph.get_value(&CanonicalKey::Vertex(*v_key), name_id).unwrap().unwrap(),
                 Primitive::String(SmolStr::new("marko"))
             );
         } else {
@@ -505,7 +523,7 @@ mod cases {
 
         let logical_plan = LogicalPlan {
             steps: vec![LogicalStep::AddE(LogicalAddEStep {
-                label_id: FRIENDS_LABEL_ID,
+                label: "friends".into(),
                 out_v_id: Some(marko_id),
                 in_v_id: Some(vadas_id),
                 properties,
@@ -514,18 +532,16 @@ mod cases {
         };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         let result = physical_plan.next(&mut graph).unwrap().unwrap();
         if let GValue::Edge(e_key) = &result.value {
             let added_edge = graph.get_edge(e_key).unwrap().unwrap(); // Fetch the actual edge
             assert_eq!(added_edge.label_id, FRIENDS_LABEL_ID);
             assert_eq!(added_edge.primary_id, marko_id);
             assert_eq!(added_edge.secondary_id, vadas_id);
+            let since_id = graph.schema.read().unwrap().prop_key_id("since").unwrap();
             assert_eq!(
-                graph
-                    .get_value(&CanonicalKey::Edge(e_key.canonical_edge_key()), &SmolStr::new("since"))
-                    .unwrap()
-                    .unwrap(),
+                graph.get_value(&CanonicalKey::Edge(e_key.canonical_edge_key()), since_id).unwrap().unwrap(),
                 Primitive::Int32(2020)
             );
         } else {
@@ -551,20 +567,20 @@ mod cases {
         };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         let result = physical_plan.next(&mut graph).unwrap().unwrap();
 
         if let GValue::Vertex(v_key) = &result.value {
             let updated_vertex = graph.get_vertex(*v_key).unwrap().unwrap();
             assert_eq!(updated_vertex, marko_id);
+            let name_id = graph.schema.read().unwrap().prop_key_id("name").unwrap();
+            let age_id = graph.schema.read().unwrap().prop_key_id("age").unwrap();
             assert_eq!(
-                graph.get_value(&CanonicalKey::Vertex(*v_key), &SmolStr::new("name")).unwrap().unwrap(),
+                graph.get_value(&CanonicalKey::Vertex(*v_key), name_id).unwrap().unwrap(),
                 Primitive::String(SmolStr::new("marko"))
             );
-            assert_eq!(
-                graph.get_value(&CanonicalKey::Vertex(*v_key), &SmolStr::new("age")).unwrap().unwrap(),
-                Primitive::Int32(30)
-            ); // Updated
+            assert_eq!(graph.get_value(&CanonicalKey::Vertex(*v_key), age_id).unwrap().unwrap(), Primitive::Int32(30));
+        // Updated
         } else {
             panic!("Expected a Vertex GValue");
         }
@@ -583,7 +599,7 @@ mod cases {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
                 LogicalStep::OutE(LogicalOutEStep {
-                    label_ids: smallvec![knows_edge_key.label_id],
+                    labels: smallvec!["knows".into()],
                     end_vertex_ids: None,
                     rank: None,
                 }),
@@ -598,24 +614,23 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         let result = physical_plan.next(&mut graph).unwrap().unwrap();
 
         if let GValue::Edge(e_key) = &result.value {
             let updated_edge = graph.get_edge(e_key).unwrap().unwrap();
             assert_eq!(updated_edge.canonical_edge_key(), knows_edge_key);
+            let duration_id = graph.schema.read().unwrap().prop_key_id("duration").unwrap();
             assert_eq!(
-                graph
-                    .get_value(&CanonicalKey::Edge(e_key.canonical_edge_key()), &SmolStr::new("duration"))
-                    .unwrap()
-                    .unwrap(),
+                graph.get_value(&CanonicalKey::Edge(e_key.canonical_edge_key()), duration_id).unwrap().unwrap(),
                 Primitive::Int32(12)
             ); // New property
         } else {
             panic!("Expected an Edge GValue");
         }
+        let duration_id = graph.schema.read().unwrap().prop_key_id("duration").unwrap();
         assert_eq!(
-            graph.get_value(&CanonicalKey::Edge(knows_edge_key), &SmolStr::new("duration")).unwrap().unwrap(),
+            graph.get_value(&CanonicalKey::Edge(knows_edge_key), duration_id).unwrap().unwrap(),
             Primitive::Int32(12)
         );
     }
@@ -639,7 +654,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         let result = physical_plan.next(&mut graph).unwrap().unwrap();
         if let GValue::Vertex(v_key) = &result.value {
             assert_eq!(*v_key, marko_id);
@@ -667,7 +682,7 @@ mod cases {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![marko_id, josh_id] }), // Start from Marko and Josh
                 LogicalStep::OutE(LogicalOutEStep {
-                    label_ids: smallvec![CREATED_LABEL_ID],
+                    labels: smallvec!["created".into()],
                     end_vertex_ids: None,
                     rank: None,
                 }), /* Get all outgoing edges */
@@ -679,7 +694,7 @@ mod cases {
         };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         let result = physical_plan.next(&mut graph).unwrap().unwrap();
 
         if let GValue::Edge(e_key) = &result.value {
@@ -694,8 +709,8 @@ mod cases {
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![marko_id, josh_id] }), // Start from Marko and Josh
-                LogicalStep::OutE(LogicalOutEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None }), /* Get all outgoing
-                                                                                                                  * edges */
+                LogicalStep::OutE(LogicalOutEStep { labels: smallvec![], end_vertex_ids: None, rank: None }), /* Get all outgoing
+                                                                                                               * edges */
                 LogicalStep::HasProperty(LogicalHasPropertyStep {
                     key: SmolStr::new("weight"),
                     value: Primitive::Float64(1.0),
@@ -709,7 +724,7 @@ mod cases {
         ];
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         let result = physical_plan.next(&mut graph).unwrap().unwrap();
 
         if let GValue::Edge(e_key) = &result.value {
@@ -737,7 +752,7 @@ mod cases {
         // Sub-plan 1: outE().count()
         let out_e_count_sub_plan = LogicalPlan {
             steps: vec![
-                LogicalStep::OutE(LogicalOutEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None }),
+                LogicalStep::OutE(LogicalOutEStep { labels: smallvec![], end_vertex_ids: None, rank: None }),
                 LogicalStep::Count(LogicalCountStep {}),
             ],
         };
@@ -745,7 +760,7 @@ mod cases {
         // Sub-plan 2: inE().count()
         let in_e_count_sub_plan = LogicalPlan {
             steps: vec![
-                LogicalStep::InE(LogicalInEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None }),
+                LogicalStep::InE(LogicalInEStep { labels: smallvec![], end_vertex_ids: None, rank: None }),
                 LogicalStep::Count(LogicalCountStep {}),
             ],
         };
@@ -759,7 +774,7 @@ mod cases {
         };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
 
         let mut results = Vec::new();
         while let Ok(Some(traverser)) = physical_plan.next(&mut graph) {
@@ -781,11 +796,11 @@ mod cases {
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
-                LogicalStep::Out(LogicalOutStep { label_ids: smallvec![], end_vertex_ids: None }),
+                LogicalStep::Out(LogicalOutStep { labels: smallvec![], end_vertex_ids: None }),
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -805,11 +820,11 @@ mod cases {
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![lop_id] }),
-                LogicalStep::In(LogicalInStep { label_ids: smallvec![], end_vertex_ids: None }),
+                LogicalStep::In(LogicalInStep { labels: smallvec![], end_vertex_ids: None }),
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -830,12 +845,12 @@ mod cases {
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
-                LogicalStep::OutE(LogicalOutEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None }),
+                LogicalStep::OutE(LogicalOutEStep { labels: smallvec![], end_vertex_ids: None, rank: None }),
                 LogicalStep::InV(LogicalInVStep {}),
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -849,12 +864,12 @@ mod cases {
         let logical_plan2 = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
-                LogicalStep::OutE(LogicalOutEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None }),
+                LogicalStep::OutE(LogicalOutEStep { labels: smallvec![], end_vertex_ids: None, rank: None }),
                 LogicalStep::OutV(LogicalOutVStep {}),
             ],
         };
         let mut builder2: PhysicalPlanBuilder = Default::default();
-        let physical_plan2 = builder2.build(&logical_plan2, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan2 = builder2.build(&logical_plan2, &graph.schema).unwrap();
         let mut results2 = Vec::new();
         while let Ok(Some(t)) = physical_plan2.next(&mut graph) {
             results2.push(t.as_ref().value.clone());
@@ -872,11 +887,11 @@ mod cases {
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![josh_id] }),
-                LogicalStep::Both(LogicalBothStep { label_ids: smallvec![], end_vertex_ids: None }),
+                LogicalStep::Both(LogicalBothStep { labels: smallvec![], end_vertex_ids: None }),
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -889,11 +904,11 @@ mod cases {
         let logical_plan_e = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![josh_id] }),
-                LogicalStep::BothE(LogicalBothEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None }),
+                LogicalStep::BothE(LogicalBothEStep { labels: smallvec![], end_vertex_ids: None, rank: None }),
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan_e = builder.build(&logical_plan_e, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan_e = builder.build(&logical_plan_e, &graph.schema).unwrap();
         let mut results_e = Vec::new();
         while let Ok(Some(t)) = physical_plan_e.next(&mut graph) {
             results_e.push(t.as_ref().value.clone());
@@ -910,12 +925,12 @@ mod cases {
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
-                LogicalStep::Out(LogicalOutStep { label_ids: smallvec![], end_vertex_ids: None }),
-                LogicalStep::HasLabel(LogicalHasLabelStep { label_ids: smallvec![SOFTWARE_LABEL_ID] }),
+                LogicalStep::Out(LogicalOutStep { labels: smallvec![], end_vertex_ids: None }),
+                LogicalStep::HasLabel(LogicalHasLabelStep { labels: smallvec!["software".into()] }),
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -933,12 +948,12 @@ mod cases {
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
-                LogicalStep::OutE(LogicalOutEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None }),
+                LogicalStep::OutE(LogicalOutEStep { labels: smallvec![], end_vertex_ids: None, rank: None }),
                 LogicalStep::OtherV(LogicalOtherVStep {}),
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -964,7 +979,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -989,7 +1004,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -1001,7 +1016,9 @@ mod cases {
         let keys: Vec<SmolStr> = results
             .iter()
             .map(|p| match p {
-                GValue::Property(Property { owner: _, key, value: _ }) => key.clone(),
+                GValue::Property(Property { owner: _, key, value: _ }) => {
+                    graph.schema.read().unwrap().prop_key_str(*key).unwrap().clone()
+                }
                 _ => unreachable!("unexpecte result"),
             })
             .collect();
@@ -1036,7 +1053,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -1052,8 +1069,8 @@ mod cases {
 
         let sub_plan = LogicalPlan {
             steps: vec![
-                LogicalStep::Out(LogicalOutStep { label_ids: smallvec![], end_vertex_ids: None }),
-                LogicalStep::HasLabel(LogicalHasLabelStep { label_ids: smallvec![SOFTWARE_LABEL_ID] }),
+                LogicalStep::Out(LogicalOutStep { labels: smallvec![], end_vertex_ids: None }),
+                LogicalStep::HasLabel(LogicalHasLabelStep { labels: smallvec!["software".into()] }),
             ],
         };
         let logical_plan = LogicalPlan {
@@ -1063,7 +1080,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -1082,14 +1099,14 @@ mod cases {
         // Vertex 1 (marko) already exists in the committed graph.
         let logical_plan = LogicalPlan {
             steps: vec![LogicalStep::AddV(LogicalAddVStep {
-                label_id: PERSON_LABEL_ID,
+                label: "person".into(),
                 vertex_id: Some(1),
                 properties: HashMap::new(),
             })],
         };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         let result = physical_plan.next(&mut graph);
 
         assert!(matches!(result, Err(StoreError::DuplicateVertex(1))));
@@ -1103,7 +1120,7 @@ mod cases {
         // The marko->vadas "knows" edge already exists in the committed graph.
         let logical_plan = LogicalPlan {
             steps: vec![LogicalStep::AddE(LogicalAddEStep {
-                label_id: KNOWS_LABEL_ID,
+                label: "knows".into(),
                 out_v_id: Some(1),
                 in_v_id: Some(2),
                 properties: HashMap::new(),
@@ -1112,7 +1129,7 @@ mod cases {
         };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         let result = physical_plan.next(&mut graph);
 
         assert!(matches!(result, Err(StoreError::DuplicateEdge(_))));
@@ -1128,13 +1145,13 @@ mod cases {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
                 LogicalStep::Out(LogicalOutStep {
-                    label_ids: smallvec![KNOWS_LABEL_ID, CREATED_LABEL_ID],
+                    labels: smallvec!["knows".into(), "created".into()],
                     end_vertex_ids: None,
                 }),
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
             results.push(t.as_ref().value.clone());
@@ -1157,7 +1174,7 @@ mod cases {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
                 LogicalStep::OutE(LogicalOutEStep {
-                    label_ids: smallvec![KNOWS_LABEL_ID],
+                    labels: smallvec!["knows".into()],
                     end_vertex_ids: Some(smallvec![vadas_id]),
                     rank: None,
                 }),
@@ -1165,7 +1182,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         assert!(physical_plan.next(&mut graph).unwrap().is_none());
         graph.commit().unwrap();
 
@@ -1191,12 +1208,12 @@ mod cases {
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![josh_id] }),
-                LogicalStep::OutE(LogicalOutEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None }),
+                LogicalStep::OutE(LogicalOutEStep { labels: smallvec![], end_vertex_ids: None, rank: None }),
                 LogicalStep::Drop(LogicalDropStep {}),
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         assert!(physical_plan.next(&mut graph).unwrap().is_none());
         graph.commit().unwrap();
 
@@ -1225,7 +1242,7 @@ mod cases {
             steps: vec![LogicalStep::V(LogicalVStep { ids: smallvec![99] }), LogicalStep::Drop(LogicalDropStep {})],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         assert!(physical_plan.next(&mut graph).unwrap().is_none());
         graph.commit().unwrap();
 
@@ -1243,7 +1260,7 @@ mod cases {
             steps: vec![LogicalStep::V(LogicalVStep { ids: smallvec![1] }), LogicalStep::Drop(LogicalDropStep {})],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         assert!(matches!(physical_plan.next(&mut graph), Err(StoreError::IncidentEdges)));
     }
 
@@ -1263,16 +1280,18 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         assert!(physical_plan.next(&mut graph).unwrap().is_none());
         graph.commit().unwrap();
 
         let mut verify = create_logical_graph(&store);
         let _ = verify.get_vertex(marko_id).unwrap().unwrap();
-        assert!(verify.get_value(&CanonicalKey::Vertex(marko_id), &SmolStr::new("age")).unwrap().is_none());
+        let age_id = verify.schema.read().unwrap().prop_key_id("age").unwrap();
+        let name_id = verify.schema.read().unwrap().prop_key_id("name").unwrap();
+        assert!(verify.get_value(&CanonicalKey::Vertex(marko_id), age_id).unwrap().is_none());
         // "name" is untouched.
         assert_eq!(
-            verify.get_value(&CanonicalKey::Vertex(marko_id), &SmolStr::new("name")).unwrap().unwrap(),
+            verify.get_value(&CanonicalKey::Vertex(marko_id), name_id).unwrap().unwrap(),
             Primitive::String(SmolStr::new("marko"))
         );
     }
@@ -1291,7 +1310,7 @@ mod cases {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
                 LogicalStep::OutE(LogicalOutEStep {
-                    label_ids: smallvec![KNOWS_LABEL_ID],
+                    labels: smallvec!["knows".into()],
                     end_vertex_ids: Some(smallvec![josh_id]),
                     rank: None,
                 }),
@@ -1300,13 +1319,14 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         assert!(physical_plan.next(&mut graph).unwrap().is_none());
         graph.commit().unwrap();
 
         let mut verify = create_logical_graph(&store);
         let _ = verify.get_edge(&edge_cek.out_key()).unwrap().unwrap();
-        assert!(verify.get_value(&CanonicalKey::Edge(edge_cek), &SmolStr::new("weight")).unwrap().is_none());
+        let weight_id = verify.schema.read().unwrap().prop_key_id("weight").unwrap();
+        assert!(verify.get_value(&CanonicalKey::Edge(edge_cek), weight_id).unwrap().is_none());
     }
 
     #[test]
@@ -1324,7 +1344,7 @@ mod cases {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
                 LogicalStep::OutE(LogicalOutEStep {
-                    label_ids: smallvec![KNOWS_LABEL_ID],
+                    labels: smallvec!["knows".into()],
                     end_vertex_ids: Some(smallvec![vadas_id]),
                     rank: None,
                 }),
@@ -1332,7 +1352,7 @@ mod cases {
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&drop_edge_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&drop_edge_plan, &graph.schema).unwrap();
         assert!(physical_plan.next(&mut graph).unwrap().is_none());
         graph.commit().unwrap();
 
@@ -1345,7 +1365,7 @@ mod cases {
             ],
         };
         let mut builder2: PhysicalPlanBuilder = Default::default();
-        let physical_plan2 = builder2.build(&drop_v_plan, &graph2.schema.read().unwrap()).unwrap();
+        let physical_plan2 = builder2.build(&drop_v_plan, &graph2.schema).unwrap();
         assert!(physical_plan2.next(&mut graph2).unwrap().is_none());
         graph2.commit().unwrap();
 
@@ -1364,9 +1384,9 @@ mod cases {
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![1] }),
-                LogicalStep::HasLabel(LogicalHasLabelStep { label_ids: smallvec![PERSON_LABEL_ID] }),
+                LogicalStep::HasLabel(LogicalHasLabelStep { labels: smallvec!["person".into()] }),
                 LogicalStep::OutE(LogicalOutEStep {
-                    label_ids: smallvec![KNOWS_LABEL_ID],
+                    labels: smallvec!["knows".into()],
                     end_vertex_ids: None,
                     rank: None,
                 }),
@@ -1375,7 +1395,7 @@ mod cases {
         };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
 
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
@@ -1397,7 +1417,7 @@ mod cases {
         // First branch: outE("created")
         let created_plan = LogicalPlan {
             steps: vec![LogicalStep::OutE(LogicalOutEStep {
-                label_ids: smallvec![CREATED_LABEL_ID],
+                labels: smallvec!["created".into()],
                 end_vertex_ids: None,
                 rank: None,
             })],
@@ -1406,7 +1426,7 @@ mod cases {
         // Second branch: outE("knows")
         let knows_plan = LogicalPlan {
             steps: vec![LogicalStep::OutE(LogicalOutEStep {
-                label_ids: smallvec![KNOWS_LABEL_ID],
+                labels: smallvec!["knows".into()],
                 end_vertex_ids: None,
                 rank: None,
             })],
@@ -1420,7 +1440,7 @@ mod cases {
         };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
 
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
@@ -1448,13 +1468,13 @@ mod cases {
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
-                LogicalStep::Out(LogicalOutStep { label_ids: smallvec![], end_vertex_ids: None }),
+                LogicalStep::Out(LogicalOutStep { labels: smallvec![], end_vertex_ids: None }),
                 LogicalStep::HasId(LogicalHasIdStep { ids: smallvec![3, 4] }),
             ],
         };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
 
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
@@ -1486,7 +1506,7 @@ mod cases {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
                 LogicalStep::OutE(LogicalOutEStep {
-                    label_ids: smallvec![KNOWS_LABEL_ID],
+                    labels: smallvec!["knows".into()],
                     end_vertex_ids: None,
                     rank: None,
                 }),
@@ -1505,7 +1525,7 @@ mod cases {
         }
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
 
         let mut results = Vec::new();
         while let Ok(Some(t)) = physical_plan.next(&mut graph) {
@@ -1542,7 +1562,7 @@ mod cases {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![josh_id] }),
                 LogicalStep::InE(LogicalInEStep {
-                    label_ids: smallvec![KNOWS_LABEL_ID],
+                    labels: smallvec!["knows".into()],
                     end_vertex_ids: None,
                     rank: None,
                 }),
@@ -1552,7 +1572,7 @@ mod cases {
         apply_rules(&mut logical_plan).unwrap();
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         assert!(format!("{:?}", physical_plan).contains("GetEStep"), "expected GetEStep to be chosen");
 
         let mut results = Vec::new();
@@ -1588,7 +1608,7 @@ mod cases {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![josh_id] }),
                 LogicalStep::BothE(LogicalBothEStep {
-                    label_ids: smallvec![KNOWS_LABEL_ID],
+                    labels: smallvec!["knows".into()],
                     end_vertex_ids: None,
                     rank: None,
                 }),
@@ -1598,7 +1618,7 @@ mod cases {
         apply_rules(&mut logical_plan).unwrap();
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         assert!(format!("{:?}", physical_plan).contains("GetEStep"), "expected GetEStep to be chosen");
 
         let mut results = Vec::new();
@@ -1620,14 +1640,14 @@ mod cases {
         let mut logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
-                LogicalStep::Out(LogicalOutStep { label_ids: smallvec![KNOWS_LABEL_ID], end_vertex_ids: None }),
+                LogicalStep::Out(LogicalOutStep { labels: smallvec!["knows".into()], end_vertex_ids: None }),
                 LogicalStep::HasId(LogicalHasIdStep { ids: smallvec![josh_id] }),
             ],
         };
         apply_rules(&mut logical_plan).unwrap();
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         assert!(format!("{:?}", physical_plan).contains("GetEStep"), "expected GetEStep to be chosen");
 
         let mut results = Vec::new();
@@ -1644,12 +1664,23 @@ mod cases {
         // single GetEStep point lookup keyed on the exact rank, not just label+dst.
         let (store, _dir) = open_rocks_store();
         let schema = std::sync::Arc::new(std::sync::RwLock::new(crate::schema::Schema::new()));
-        schema
-            .write()
-            .unwrap()
-            .edge_configs
-            .insert(KNOWS_LABEL_ID, crate::schema::definition::EdgeConfig { multi_edge: true });
+        {
+            let mut s = schema.write().unwrap();
+            s.edge_mode = crate::schema::definition::EdgeMode::Multi;
+            s.register_vertex_label("dummy").unwrap(); // 0
+            s.register_vertex_label("person").unwrap(); // 1 (PERSON_LABEL_ID)
+            s.register_edge_label("dummy").unwrap(); // 0
+            s.register_edge_label("dummy2").unwrap(); // 1
+            s.register_edge_label("dummy3").unwrap(); // 2
+            s.register_edge_label("knows").unwrap(); // 3 (KNOWS_LABEL_ID)
+        }
         let mut graph: LogicalGraph<RocksStorage> = LogicalGraph::new(store.begin(), schema);
+        graph.staged_schema.staged_vertex_labels.insert(0);
+        graph.staged_schema.staged_vertex_labels.insert(1);
+        graph.staged_schema.staged_edge_labels.insert(0);
+        graph.staged_schema.staged_edge_labels.insert(1);
+        graph.staged_schema.staged_edge_labels.insert(2);
+        graph.staged_schema.staged_edge_labels.insert(3);
 
         let marko_id = graph.add_vertex(1, PERSON_LABEL_ID).unwrap();
         let josh_id = graph.add_vertex(4, PERSON_LABEL_ID).unwrap();
@@ -1683,7 +1714,7 @@ mod cases {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
                 LogicalStep::OutE(LogicalOutEStep {
-                    label_ids: smallvec![KNOWS_LABEL_ID],
+                    labels: smallvec!["knows".into()],
                     end_vertex_ids: None,
                     rank: None,
                 }),
@@ -1706,7 +1737,7 @@ mod cases {
         assert_eq!(logical_plan.steps.len(), 2, "the where() and has(\"rank\",1) steps should both be folded away");
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         assert!(format!("{:?}", physical_plan).contains("GetEStep"), "expected GetEStep to be chosen");
 
         let mut results = Vec::new();
@@ -1730,12 +1761,23 @@ mod cases {
         // regardless of rank.
         let (store, _dir) = open_rocks_store();
         let schema = std::sync::Arc::new(std::sync::RwLock::new(crate::schema::Schema::new()));
-        schema
-            .write()
-            .unwrap()
-            .edge_configs
-            .insert(KNOWS_LABEL_ID, crate::schema::definition::EdgeConfig { multi_edge: true });
+        {
+            let mut s = schema.write().unwrap();
+            s.edge_mode = crate::schema::definition::EdgeMode::Multi;
+            s.register_vertex_label("dummy").unwrap(); // 0
+            s.register_vertex_label("person").unwrap(); // 1 (PERSON_LABEL_ID)
+            s.register_edge_label("dummy").unwrap(); // 0
+            s.register_edge_label("dummy2").unwrap(); // 1
+            s.register_edge_label("dummy3").unwrap(); // 2
+            s.register_edge_label("knows").unwrap(); // 3 (KNOWS_LABEL_ID)
+        }
         let mut graph: LogicalGraph<RocksStorage> = LogicalGraph::new(store.begin(), schema);
+        graph.staged_schema.staged_vertex_labels.insert(0);
+        graph.staged_schema.staged_vertex_labels.insert(1);
+        graph.staged_schema.staged_edge_labels.insert(0);
+        graph.staged_schema.staged_edge_labels.insert(1);
+        graph.staged_schema.staged_edge_labels.insert(2);
+        graph.staged_schema.staged_edge_labels.insert(3);
 
         let marko_id = graph.add_vertex(1, PERSON_LABEL_ID).unwrap();
         let josh_id = graph.add_vertex(4, PERSON_LABEL_ID).unwrap();
@@ -1769,7 +1811,7 @@ mod cases {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
                 LogicalStep::OutE(LogicalOutEStep {
-                    label_ids: smallvec![KNOWS_LABEL_ID],
+                    labels: smallvec!["knows".into()],
                     end_vertex_ids: None,
                     rank: None,
                 }),
@@ -1786,7 +1828,7 @@ mod cases {
         }
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&logical_plan, &graph.schema.read().unwrap()).unwrap();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
         assert!(
             !format!("{:?}", physical_plan).contains("GetEStep"),
             "must not use GetEStep when rank is unknown for a multi-edge label"

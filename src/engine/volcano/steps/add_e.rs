@@ -29,7 +29,6 @@ use crate::{
         error::StoreError,
         gvalue::Primitive,
         keys::{CanonicalKey, Direction, EdgeKey, LabelId, Rank, VertexKey, DEFAULT_RANK},
-        prop_key::PropKey,
         CanonicalEdgeKey, GValue, Property,
     },
 };
@@ -60,7 +59,7 @@ impl AddEStep {
         label_id: LabelId,
         out_v_id: VertexKey,
         in_v_id: VertexKey,
-        properties: HashMap<PropKey, Primitive>,
+        properties: HashMap<u16, Primitive>,
         rank: Option<Rank>,
     ) -> Self {
         let final_rank = rank.unwrap_or(DEFAULT_RANK);

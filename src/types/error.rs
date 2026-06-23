@@ -64,6 +64,12 @@ pub enum StoreError {
     /// An error returned directly by the RocksDB storage engine.
     RocksDb(rocksdb::Error),
     Io(std::io::Error),
+    /// A schema definition or strictness rule was violated.
+    SchemaViolation(String),
+    /// A schema version mismatch or concurrency conflict occurred.
+    SchemaConflict(String),
+    /// The ID space or limit for schema labels/keys was exhausted.
+    SchemaExhausted(String),
     /// A traversal step or feature that is not yet implemented.
     UnsupportedOperation(String),
     /// A value in the pipeline had a type that the current step cannot handle.
@@ -89,6 +95,9 @@ impl fmt::Display for StoreError {
             StoreError::MissingColumnFamily(name) => write!(f, "missing column family: {name}"),
             StoreError::RocksDb(e) => write!(f, "storage engine error: {e}"),
             StoreError::Io(e) => write!(f, "I/O error: {e}"),
+            StoreError::SchemaViolation(msg) => write!(f, "schema violation: {msg}"),
+            StoreError::SchemaConflict(msg) => write!(f, "schema conflict: {msg}"),
+            StoreError::SchemaExhausted(msg) => write!(f, "schema exhausted: {msg}"),
             StoreError::UnsupportedOperation(msg) => write!(f, "unsupported operation: {msg}"),
             StoreError::RuntimeError(msg) => write!(f, "runtime error: {msg}"),
             StoreError::UnexpectedDataType(msg) => write!(f, "unexpected datatype: {msg}"),

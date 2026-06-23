@@ -23,11 +23,15 @@
 //!
 //! # Built-in keys
 //!
-//! Two keys are reserved and synthesized on-the-fly by [`Vertex`](crate::types::Vertex)
+//! Three keys are reserved and synthesized on-the-fly by [`Vertex`](crate::types::Vertex)
 //! and [`Edge`](crate::types::Edge) rather than stored in `props`:
 //!
 //! - [`ID`] (`"id"`) — the element's numeric identifier ([`VertexKey`](crate::types::VertexKey)).
+//!   Vertices only; edges are identified by their composite key instead.
 //! - [`LABEL`] (`"label"`) — the element's label as its numeric [`LabelId`](crate::types::LabelId).
+//!   Both vertices and edges.
+//! - [`RANK`] (`"rank"`) — disambiguates parallel edges with the same label between the
+//!   same two vertices (multi-edge mode). Edges only.
 //!
 //! Querying these keys via `get_property` / `get_value` always succeeds without a
 //! `props` scan.
@@ -43,3 +47,7 @@ pub type PropKey = SmolStr;
 pub const ID: PropKey = SmolStr::new_static("id");
 pub const LABEL: PropKey = SmolStr::new_static("label");
 pub const RANK: PropKey = SmolStr::new_static("rank");
+
+pub const ID_KEY_ID: u16 = 0;
+pub const LABEL_KEY_ID: u16 = 1;
+pub const RANK_KEY_ID: u16 = 2;

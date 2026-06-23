@@ -22,7 +22,7 @@ use rocksdb::{BlockBasedOptions, ColumnFamilyDescriptor, OptimisticTransactionDB
 use crate::{
     store::{
         rocks::{
-            encoding::{CF_EDGES_IN, CF_EDGES_OUT, CF_VERTEX_DEGREE, CF_VERTICES, EDGE_PREFIX_LENGTH},
+            encoding::{CF_EDGES_IN, CF_EDGES_OUT, CF_SCHEMA, CF_VERTEX_DEGREE, CF_VERTICES, EDGE_PREFIX_LENGTH},
             snapshot::Snapshot,
             transaction::Transaction,
         },
@@ -35,7 +35,7 @@ use crate::{
 /// This struct owns the underlying RocksDB database handle.
 /// Call the `begin` method to start a new transaction against this store.
 pub struct RocksStorage {
-    pub(super) db: Arc<OptimisticTransactionDB>,
+    pub(crate) db: Arc<OptimisticTransactionDB>,
     /// Retained so `get_ticker_count` can be called after the DB is open.
     /// `open_cf_descriptors` takes `&Options`, so `opts` is not consumed.
     /// Wrapped in Mutex because Options is Send but not Sync.
@@ -71,11 +71,12 @@ impl RocksStorage {
         let mut vertex_cf_opts = Options::default();
         vertex_cf_opts.set_block_based_table_factory(&vertex_block_opts);
 
-        let cfs = [CF_VERTICES, CF_VERTEX_DEGREE, CF_EDGES_OUT, CF_EDGES_IN]
+        let cfs = [CF_VERTICES, CF_VERTEX_DEGREE, CF_EDGES_OUT, CF_EDGES_IN, CF_SCHEMA]
             .into_iter()
             .map(|name| match name {
                 CF_EDGES_OUT | CF_EDGES_IN => ColumnFamilyDescriptor::new(name, edge_cf_opts.clone()),
                 CF_VERTICES | CF_VERTEX_DEGREE => ColumnFamilyDescriptor::new(name, vertex_cf_opts.clone()),
+                CF_SCHEMA => ColumnFamilyDescriptor::new(name, Options::default()),
                 _ => unreachable!(),
             })
             .collect::<Vec<_>>();
@@ -87,6 +88,87 @@ impl RocksStorage {
             #[cfg(feature = "rocksdb-stats")]
             opts: std::sync::Mutex::new(opts),
         })
+    }
+
+    /// Load schema from CF_SCHEMA, or initialize it with defaults if not present.
+    pub fn load_schema(
+        &self,
+        defaults: crate::schema::definition::GraphOptions,
+    ) -> Result<crate::schema::Schema, StoreError> {
+        use crate::{
+            schema::definition::{Cardinality, DataType, EdgeMode, PropKeyConfig, Schema, SchemaMode},
+            store::rocks::encoding::{
+                decode_schema_label_value, decode_schema_meta, decode_schema_prop_value, encode_schema_meta, CF_SCHEMA,
+                SCHEMA_KIND_EDGE_LABEL, SCHEMA_KIND_META, SCHEMA_KIND_PROP_KEY, SCHEMA_KIND_VERTEX_LABEL,
+                SCHEMA_META_KEY,
+            },
+        };
+        use rocksdb::IteratorMode;
+
+        let cf = self.db.cf_handle(CF_SCHEMA).ok_or(StoreError::MissingColumnFamily(CF_SCHEMA))?;
+
+        let mut schema = Schema::new();
+
+        if let Some(meta_bytes) = self.db.get_cf(&cf, SCHEMA_META_KEY).map_err(StoreError::RocksDb)? {
+            let (version, edge_mode_u8, schema_mode_u8) =
+                decode_schema_meta(&meta_bytes).ok_or(StoreError::CorruptData("invalid schema metadata"))?;
+            schema.version = version;
+            schema.edge_mode = EdgeMode::from_u8(edge_mode_u8).ok_or(StoreError::CorruptData("invalid edge mode"))?;
+            schema.mode = SchemaMode::from_u8(schema_mode_u8).ok_or(StoreError::CorruptData("invalid schema mode"))?;
+        } else {
+            // Brand new. Save defaults.
+            schema.version = 0;
+            schema.edge_mode = defaults.edge_mode;
+            schema.mode = defaults.mode;
+
+            let meta_bytes = encode_schema_meta(schema.version, schema.edge_mode.to_u8(), schema.mode.to_u8());
+            self.db.put_cf(&cf, SCHEMA_META_KEY, meta_bytes).map_err(StoreError::RocksDb)?;
+        }
+
+        // Iterate CF_SCHEMA to load everything
+        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
+        for item in iter {
+            let (k, v) = item.map_err(StoreError::RocksDb)?;
+            if k.is_empty() {
+                continue;
+            }
+            let kind = k[0];
+            if kind == SCHEMA_KIND_META {
+                continue;
+            }
+            let name_bytes = &k[1..];
+            let name_str =
+                std::str::from_utf8(name_bytes).map_err(|_| StoreError::CorruptData("invalid schema name encoding"))?;
+
+            match kind {
+                SCHEMA_KIND_VERTEX_LABEL => {
+                    let id =
+                        decode_schema_label_value(&v).ok_or(StoreError::CorruptData("invalid vertex label value"))?;
+                    schema.vertex_labels.insert(id, smol_str::SmolStr::new(name_str));
+                    schema.persisted_vertex_labels.insert(id);
+                }
+                SCHEMA_KIND_EDGE_LABEL => {
+                    let id =
+                        decode_schema_label_value(&v).ok_or(StoreError::CorruptData("invalid edge label value"))?;
+                    schema.edge_labels.insert(id, smol_str::SmolStr::new(name_str));
+                    schema.persisted_edge_labels.insert(id);
+                }
+                SCHEMA_KIND_PROP_KEY => {
+                    let (id, data_type_u8, cardinality_u8) =
+                        decode_schema_prop_value(&v).ok_or(StoreError::CorruptData("invalid prop key value"))?;
+                    let data_type = DataType::from_u8(data_type_u8)
+                        .ok_or(StoreError::CorruptData("invalid data type discriminant"))?;
+                    let cardinality = Cardinality::from_u8(cardinality_u8)
+                        .ok_or(StoreError::CorruptData("invalid cardinality discriminant"))?;
+                    schema.prop_keys.insert(id, smol_str::SmolStr::new(name_str));
+                    schema.prop_key_types.insert(id, PropKeyConfig { data_type, cardinality });
+                    schema.persisted_prop_keys.insert(id);
+                }
+                _ => {}
+            }
+        }
+
+        Ok(schema)
     }
 }
 

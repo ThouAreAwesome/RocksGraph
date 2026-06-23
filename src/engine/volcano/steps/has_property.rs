@@ -25,7 +25,7 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{error::StoreError, gvalue::Primitive, prop_key::PropKey, CanonicalKey, GValue},
+    types::{error::StoreError, gvalue::Primitive, prop_key::LABEL_KEY_ID, CanonicalKey, GValue},
 };
 
 /// A physical step that filters traversers based on a specific property key and its expected value.
@@ -35,16 +35,27 @@ pub struct HasPropertyStep {
     upstream: Option<StepRef>,
 
     // ── Static/Fixed configuration ──
-    /// The property key to filter by.
-    prop_key: PropKey,
+    /// The property key ID to filter by.
+    prop_key_id: u16,
     /// The expected value of the property.
     expected_value: Primitive,
 }
 
-/// Creates a new `HasPropertyStep` with the property key and expected value to filter by.
+/// Creates a new `HasPropertyStep` with the property key ID and expected value to filter by.
 impl HasPropertyStep {
-    pub fn new(prop_key: PropKey, expected_value: Primitive) -> Self {
-        Self { upstream: None, prop_key, expected_value }
+    pub fn new(prop_key_id: u16, expected_value: Primitive) -> Self {
+        Self { upstream: None, prop_key_id, expected_value }
+    }
+
+    /// `ctx.get_value`/`get_property` return the element's label as a raw
+    /// `Primitive::Int32(label_id)` (see `Vertex`/`Edge::get_value`) — decode it to the
+    /// label's string name so `.has("label", "person")` compares like-for-like with the
+    /// `Primitive::String` an expected value would naturally take.
+    fn decode_if_label(&self, ctx: &dyn GraphCtx, key: &CanonicalKey, value: Primitive) -> Primitive {
+        if self.prop_key_id != LABEL_KEY_ID {
+            return value;
+        }
+        ctx.schema().read().unwrap().decode_label_value(key, value)
     }
 }
 
@@ -61,14 +72,18 @@ impl CoreStep for HasPropertyStep {
             let Some(t) = upstream.next(ctx)? else { return Ok(None) };
             match &t.value {
                 GValue::Vertex(vk) => {
-                    if let Some(vl) = ctx.get_value(&CanonicalKey::Vertex(*vk), &self.prop_key)? {
+                    let key = CanonicalKey::Vertex(*vk);
+                    if let Some(vl) = ctx.get_value(&key, self.prop_key_id)? {
+                        let vl = self.decode_if_label(ctx, &key, vl);
                         if vl == self.expected_value {
                             return Ok(Some(smallvec![t]));
                         }
                     }
                 }
                 GValue::Edge(ek) => {
-                    if let Some(et) = ctx.get_value(&CanonicalKey::Edge(ek.canonical_edge_key()), &self.prop_key)? {
+                    let key = CanonicalKey::Edge(ek.canonical_edge_key());
+                    if let Some(et) = ctx.get_value(&key, self.prop_key_id)? {
+                        let et = self.decode_if_label(ctx, &key, et);
                         if et == self.expected_value {
                             return Ok(Some(smallvec![t]));
                         }

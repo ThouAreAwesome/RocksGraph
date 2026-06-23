@@ -17,16 +17,142 @@
 
 use bimap::BiHashMap;
 use smol_str::SmolStr;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use crate::types::{LabelId, PropKey};
+use crate::types::{CanonicalKey, LabelId, Primitive, PropKey};
 
-/// Configuration for an edge label.
+/// On-disk discriminant: 0=Auto, 1=Strict. Pinned explicitly (rather than relying on
+/// declaration order) since these values are persisted in the `schema` CF; see
+/// [`SchemaMode::to_u8`]/[`SchemaMode::from_u8`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct EdgeConfig {
-    /// If true, multiple edges of this label are allowed between a vertex pair (Multigraph).
-    /// If false, at most one edge of this label can exist between a vertex pair (Simple Graph).
-    pub multi_edge: bool,
+#[repr(u8)]
+pub enum SchemaMode {
+    #[default]
+    Auto = 0,
+    Strict = 1,
+}
+
+impl SchemaMode {
+    pub fn to_u8(self) -> u8 {
+        self as u8
+    }
+
+    pub fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            0 => Some(SchemaMode::Auto),
+            1 => Some(SchemaMode::Strict),
+            _ => None,
+        }
+    }
+}
+
+/// On-disk discriminant: 0=Single, 1=Multi. Pinned explicitly for the same reason as
+/// [`SchemaMode`]; see [`EdgeMode::to_u8`]/[`EdgeMode::from_u8`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u8)]
+pub enum EdgeMode {
+    #[default]
+    Single = 0,
+    Multi = 1,
+}
+
+impl EdgeMode {
+    pub fn to_u8(self) -> u8 {
+        self as u8
+    }
+
+    pub fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            0 => Some(EdgeMode::Single),
+            1 => Some(EdgeMode::Multi),
+            _ => None,
+        }
+    }
+}
+
+/// On-disk discriminant, pinned explicitly for the same reason as [`SchemaMode`];
+/// see [`DataType::to_u8`]/[`DataType::from_u8`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum DataType {
+    Bool = 0,
+    Int32 = 1,
+    Int64 = 2,
+    Float32 = 3,
+    Float64 = 4,
+    String = 5,
+    Uuid = 6,
+}
+
+impl DataType {
+    pub fn from_primitive(val: &Primitive) -> Self {
+        match val {
+            Primitive::Bool(_) => DataType::Bool,
+            Primitive::Int32(_) => DataType::Int32,
+            Primitive::Int64(_) => DataType::Int64,
+            Primitive::Float32(_) => DataType::Float32,
+            Primitive::Float64(_) => DataType::Float64,
+            Primitive::String(_) => DataType::String,
+            Primitive::Uuid(_) => DataType::Uuid,
+            Primitive::Null => DataType::String,
+        }
+    }
+
+    pub fn to_u8(self) -> u8 {
+        self as u8
+    }
+
+    pub fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            0 => Some(DataType::Bool),
+            1 => Some(DataType::Int32),
+            2 => Some(DataType::Int64),
+            3 => Some(DataType::Float32),
+            4 => Some(DataType::Float64),
+            5 => Some(DataType::String),
+            6 => Some(DataType::Uuid),
+            _ => None,
+        }
+    }
+}
+
+/// On-disk discriminant, pinned explicitly for the same reason as [`SchemaMode`];
+/// see [`Cardinality::to_u8`]/[`Cardinality::from_u8`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Cardinality {
+    Single = 0,
+}
+
+impl Cardinality {
+    pub fn to_u8(self) -> u8 {
+        self as u8
+    }
+
+    pub fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            0 => Some(Cardinality::Single),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PropKeyConfig {
+    pub data_type: DataType,
+    pub cardinality: Cardinality,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GraphOptions {
+    pub mode: SchemaMode,
+    pub edge_mode: EdgeMode,
+}
+
+impl Default for GraphOptions {
+    fn default() -> Self {
+        Self { mode: SchemaMode::Auto, edge_mode: EdgeMode::Single }
+    }
 }
 
 /// Maximum number of distinct vertex or edge labels (12-bit label_id space).
@@ -38,8 +164,12 @@ pub const MAX_LABELS: usize = 4096;
 /// All three maps are append-only after initial load; IDs are never reused.
 ///
 /// Thread-safety: wrap in `Arc<RwLock<Schema>>` when shared across queries.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone)]
 pub struct Schema {
+    pub mode: SchemaMode,
+    pub edge_mode: EdgeMode,
+    pub version: u64,
+
     /// Maps between `LabelId` and the vertex label string (e.g. `"person"`).
     pub vertex_labels: BiHashMap<LabelId, SmolStr>,
 
@@ -53,8 +183,56 @@ pub struct Schema {
     /// Interning is in-memory only; the on-disk format stores the raw string.
     pub prop_keys: BiHashMap<u16, PropKey>,
 
-    /// Maps between `LabelId` and the edge label's configuration.
-    pub edge_configs: HashMap<LabelId, EdgeConfig>,
+    /// Maps property key ID to its configuration type.
+    pub prop_key_types: HashMap<u16, PropKeyConfig>,
+
+    /// Set of vertex label IDs successfully persisted on disk.
+    pub persisted_vertex_labels: HashSet<LabelId>,
+
+    /// Set of edge label IDs successfully persisted on disk.
+    pub persisted_edge_labels: HashSet<LabelId>,
+
+    /// Set of property key IDs successfully persisted on disk.
+    pub persisted_prop_keys: HashSet<u16>,
+}
+
+impl Default for Schema {
+    fn default() -> Self {
+        use crate::types::prop_key::{ID, ID_KEY_ID, LABEL, LABEL_KEY_ID, RANK, RANK_KEY_ID};
+        use bimap::BiHashMap;
+        use std::collections::{HashMap, HashSet};
+
+        let mut prop_keys = BiHashMap::new();
+        prop_keys.insert(ID_KEY_ID, ID);
+        prop_keys.insert(LABEL_KEY_ID, LABEL);
+        prop_keys.insert(RANK_KEY_ID, RANK);
+
+        let mut prop_key_types = HashMap::new();
+        prop_key_types
+            .insert(ID_KEY_ID, PropKeyConfig { data_type: DataType::Int64, cardinality: Cardinality::Single });
+        prop_key_types
+            .insert(LABEL_KEY_ID, PropKeyConfig { data_type: DataType::Int32, cardinality: Cardinality::Single });
+        prop_key_types
+            .insert(RANK_KEY_ID, PropKeyConfig { data_type: DataType::Int32, cardinality: Cardinality::Single });
+
+        let mut persisted_prop_keys = HashSet::new();
+        persisted_prop_keys.insert(ID_KEY_ID);
+        persisted_prop_keys.insert(LABEL_KEY_ID);
+        persisted_prop_keys.insert(RANK_KEY_ID);
+
+        Schema {
+            mode: SchemaMode::Auto,
+            edge_mode: EdgeMode::Single,
+            version: 0,
+            vertex_labels: BiHashMap::new(),
+            edge_labels: BiHashMap::new(),
+            prop_keys,
+            prop_key_types,
+            persisted_vertex_labels: HashSet::new(),
+            persisted_edge_labels: HashSet::new(),
+            persisted_prop_keys,
+        }
+    }
 }
 
 impl Schema {
@@ -104,29 +282,16 @@ impl Schema {
 
     /// Register a new edge label, returning its id.
     pub fn register_edge_label(&mut self, name: impl Into<SmolStr>) -> Option<LabelId> {
-        self.register_edge_label_with_config(name, EdgeConfig::default())
-    }
-
-    /// Register a new edge label with a specific configuration, returning its id.
-    pub fn register_edge_label_with_config(&mut self, name: impl Into<SmolStr>, config: EdgeConfig) -> Option<LabelId> {
         let s = name.into();
-        let id = if let Some(&id) = self.edge_labels.get_by_right(&s) {
-            id
-        } else {
-            let id = self.edge_labels.len() as u16;
-            if self.edge_labels.len() >= MAX_LABELS {
-                return None;
-            }
-            self.edge_labels.insert(id, s);
-            id
-        };
-        self.edge_configs.insert(id, config);
+        if let Some(&id) = self.edge_labels.get_by_right(&s) {
+            return Some(id);
+        }
+        let id = self.edge_labels.len() as u16;
+        if self.edge_labels.len() >= MAX_LABELS {
+            return None;
+        }
+        self.edge_labels.insert(id, s);
         Some(id)
-    }
-
-    /// Retrieve the configuration of a registered edge label.
-    pub fn edge_config(&self, id: LabelId) -> EdgeConfig {
-        self.edge_configs.get(&id).copied().unwrap_or_default()
     }
 
     // ── Property keys ─────────────────────────────────────────────────────────
@@ -153,5 +318,202 @@ impl Schema {
         }
         self.prop_keys.insert(id, s);
         Some(id)
+    }
+
+    // ── Resolve & Declare Helpers ─────────────────────────────────────────────
+
+    /// Resolve vertex label by name (mutating, SchemaMode-gated).
+    pub fn resolve_vertex_label(&mut self, name: &str) -> Result<LabelId, crate::types::StoreError> {
+        if let Some(id) = self.vertex_label_id(name) {
+            return Ok(id);
+        }
+        if self.mode == SchemaMode::Strict {
+            return Err(crate::types::StoreError::SchemaViolation(format!("Undeclared vertex label: '{}'", name)));
+        }
+        if let Some(id) = self.register_vertex_label(name) {
+            self.version += 1;
+            Ok(id)
+        } else {
+            Err(crate::types::StoreError::SchemaExhausted("Vertex label ID space exhausted".to_string()))
+        }
+    }
+
+    /// Declare vertex label by name (explicit management).
+    pub fn declare_vertex_label(&mut self, name: &str) -> Result<LabelId, crate::types::StoreError> {
+        if let Some(id) = self.vertex_label_id(name) {
+            return Ok(id);
+        }
+        if let Some(id) = self.register_vertex_label(name) {
+            Ok(id)
+        } else {
+            Err(crate::types::StoreError::SchemaExhausted("Vertex label ID space exhausted".to_string()))
+        }
+    }
+
+    /// Resolve edge label by name (mutating, SchemaMode-gated).
+    pub fn resolve_edge_label(&mut self, name: &str) -> Result<LabelId, crate::types::StoreError> {
+        if let Some(id) = self.edge_label_id(name) {
+            return Ok(id);
+        }
+        if self.mode == SchemaMode::Strict {
+            return Err(crate::types::StoreError::SchemaViolation(format!("Undeclared edge label: '{}'", name)));
+        }
+        if let Some(id) = self.register_edge_label(name) {
+            self.version += 1;
+            Ok(id)
+        } else {
+            Err(crate::types::StoreError::SchemaExhausted("Edge label ID space exhausted".to_string()))
+        }
+    }
+
+    /// Declare edge label by name (explicit management).
+    pub fn declare_edge_label(&mut self, name: &str) -> Result<LabelId, crate::types::StoreError> {
+        if let Some(id) = self.edge_label_id(name) {
+            return Ok(id);
+        }
+        if let Some(id) = self.register_edge_label(name) {
+            Ok(id)
+        } else {
+            Err(crate::types::StoreError::SchemaExhausted("Edge label ID space exhausted".to_string()))
+        }
+    }
+
+    /// Resolve property key by name (mutating, SchemaMode-gated).
+    pub fn resolve_prop_key(&mut self, name: &str, inferred_type: DataType) -> Result<u16, crate::types::StoreError> {
+        if let Some(id) = self.prop_key_id(name) {
+            if let Some(config) = self.prop_key_types.get(&id) {
+                if config.data_type != inferred_type {
+                    return Err(crate::types::StoreError::SchemaViolation(format!(
+                        "Property key '{}' is already defined with type {:?}, but requested {:?}",
+                        name, config.data_type, inferred_type
+                    )));
+                }
+            } else {
+                self.prop_key_types
+                    .insert(id, PropKeyConfig { data_type: inferred_type, cardinality: Cardinality::Single });
+                self.version += 1;
+            }
+            return Ok(id);
+        }
+        if self.mode == SchemaMode::Strict {
+            return Err(crate::types::StoreError::SchemaViolation(format!("Undeclared property key: '{}'", name)));
+        }
+        if let Some(id) = self.register_prop_key(name) {
+            self.prop_key_types
+                .insert(id, PropKeyConfig { data_type: inferred_type, cardinality: Cardinality::Single });
+            self.version += 1;
+            Ok(id)
+        } else {
+            Err(crate::types::StoreError::SchemaExhausted("Property key ID space exhausted".to_string()))
+        }
+    }
+
+    /// Declare property key by name (explicit management).
+    pub fn declare_prop_key(
+        &mut self,
+        name: &str,
+        data_type: DataType,
+        cardinality: Cardinality,
+    ) -> Result<u16, crate::types::StoreError> {
+        if let Some(id) = self.prop_key_id(name) {
+            if let Some(config) = self.prop_key_types.get(&id) {
+                if config.data_type != data_type || config.cardinality != cardinality {
+                    return Err(crate::types::StoreError::SchemaConflict(format!(
+                        "Property key '{}' is already defined with type {:?} and cardinality {:?}, but requested {:?} and {:?}",
+                        name, config.data_type, config.cardinality, data_type, cardinality
+                    )));
+                }
+            }
+            return Ok(id);
+        }
+        if let Some(id) = self.register_prop_key(name) {
+            self.prop_key_types.insert(id, PropKeyConfig { data_type, cardinality });
+            Ok(id)
+        } else {
+            Err(crate::types::StoreError::SchemaExhausted("Property key ID space exhausted".to_string()))
+        }
+    }
+
+    /// One-way ratchet: Multi -> Single is not allowed.
+    pub fn declare_edge_mode(&mut self, mode: EdgeMode) -> Result<(), crate::types::StoreError> {
+        if self.edge_mode == EdgeMode::Multi && mode == EdgeMode::Single {
+            return Err(crate::types::StoreError::SchemaConflict(
+                "edge_mode: Multi -> Single is not allowed".to_string(),
+            ));
+        }
+        self.edge_mode = mode;
+        Ok(())
+    }
+
+    /// Either direction is allowed.
+    pub fn declare_schema_mode(&mut self, mode: SchemaMode) -> Result<(), crate::types::StoreError> {
+        self.mode = mode;
+        Ok(())
+    }
+
+    /// Decode a raw `Primitive::Int32(label_id)` — as returned by `get_value`/`get_property`
+    /// for the reserved `"label"` key (see `Vertex`/`Edge::get_value`) — into the label's
+    /// string name. Returns `value` unchanged for anything else, since this only ever
+    /// applies to the synthesized `"label"` property.
+    ///
+    /// Falls back to the raw numeric id (stringified) if the id has no registered name,
+    /// e.g. data written before the in-memory `Schema` was populated.
+    pub fn decode_label_value(&self, key: &CanonicalKey, value: Primitive) -> Primitive {
+        let Primitive::Int32(label_id) = value else { return value };
+        let label_id = label_id as LabelId;
+        let name = match key {
+            CanonicalKey::Vertex(_) => self.vertex_label_str(label_id),
+            CanonicalKey::Edge(_) => self.edge_label_str(label_id),
+            CanonicalKey::Empty => None,
+        };
+        Primitive::String(name.cloned().unwrap_or_else(|| SmolStr::from(label_id.to_string())))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // `to_u8`/`from_u8` must be exact inverses: their values are the on-disk wire format
+    // for the `schema` CF (see `store/rocks/encoding.rs`), shared by `SchemaManagement::commit`,
+    // `LogicalGraph::commit`, and `RocksStorage::load_schema`. A mismatch here would silently
+    // corrupt persisted schema data rather than fail loudly.
+    #[test]
+    fn schema_mode_u8_roundtrip() {
+        for mode in [SchemaMode::Auto, SchemaMode::Strict] {
+            assert_eq!(SchemaMode::from_u8(mode.to_u8()), Some(mode));
+        }
+        assert_eq!(SchemaMode::from_u8(2), None);
+    }
+
+    #[test]
+    fn edge_mode_u8_roundtrip() {
+        for mode in [EdgeMode::Single, EdgeMode::Multi] {
+            assert_eq!(EdgeMode::from_u8(mode.to_u8()), Some(mode));
+        }
+        assert_eq!(EdgeMode::from_u8(2), None);
+    }
+
+    #[test]
+    fn data_type_u8_roundtrip() {
+        let all = [
+            DataType::Bool,
+            DataType::Int32,
+            DataType::Int64,
+            DataType::Float32,
+            DataType::Float64,
+            DataType::String,
+            DataType::Uuid,
+        ];
+        for dt in all {
+            assert_eq!(DataType::from_u8(dt.to_u8()), Some(dt));
+        }
+        assert_eq!(DataType::from_u8(7), None);
+    }
+
+    #[test]
+    fn cardinality_u8_roundtrip() {
+        assert_eq!(Cardinality::from_u8(Cardinality::Single.to_u8()), Some(Cardinality::Single));
+        assert_eq!(Cardinality::from_u8(1), None);
     }
 }

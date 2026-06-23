@@ -22,7 +22,7 @@ echo "=== Running Gremlin Read Benchmark ==="
 
 cd "$PROJECT_ROOT" || exit
 
-PARALLELISM=3
+PARALLELISM=5
 STORE_DIR="$PROJECT_ROOT/data/rocksGraph-1M"
 FILE_PATH="$PROJECT_ROOT/bench_data/soc-LiveJournal1-1M.txt"
 

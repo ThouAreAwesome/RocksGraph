@@ -22,8 +22,8 @@
 //! A traversal is built in three phases:
 //!
 //! 1. **Source** — `snap.g()` → [`ReadTraversal`], `tx.g()` → [`WriteTraversal`].
-//! 2. **Steps** — chain pipeline steps: `.V([1])`, `.out([KNOWS])`, `.values(["name"])`, …
-//!    Every step method takes `self` by value and returns `Self`.
+//! 2. **Steps** — chain pipeline steps: `.V([1])`, `.out([KNOWS])`, `.values(["name"])`, … Every step method takes
+//!    `self` by value and returns `Self`.
 //! 3. **Terminal** — execute and collect results:
 //!    - [`ReadTraversal::next`] / [`WriteTraversal::next`] → `Result<Option<Value>>`
 //!    - [`ReadTraversal::to_list`] / [`WriteTraversal::to_list`] → `Result<Vec<Value>>`
@@ -64,7 +64,7 @@ use crate::{
     },
     types::{
         gvalue::GValue,
-        keys::{CanonicalKey, EdgeKey, LabelId},
+        keys::{CanonicalKey, EdgeKey},
         StoreError,
     },
 };
@@ -98,7 +98,10 @@ pub(crate) fn materialize(gv: GValue, ctx: &mut dyn GraphCtx) -> Result<Value, S
             }
         },
         GValue::Property(p) => {
-            Ok(Value::Property(UserProperty { key: p.key.to_string(), value: Box::new(primitive_to_value(p.value)) }))
+            let schema_guard = ctx.schema();
+            let schema = schema_guard.read().unwrap();
+            let key_str = schema.prop_key_str(p.key).map(|k| k.to_string()).unwrap_or_else(|| format!("key_{}", p.key));
+            Ok(Value::Property(UserProperty { key: key_str, value: Box::new(primitive_to_value(p.value)) }))
         }
         GValue::List(list) => {
             let mut out = Vec::with_capacity(list.len());
@@ -174,7 +177,7 @@ impl GraphTraversal {
         let mut logical = self.plan;
         apply_rules(&mut logical)?;
         let schema = graph.schema();
-        let plan = PhysicalPlanBuilder {}.build(&logical, &schema.read().unwrap())?;
+        let plan = PhysicalPlanBuilder {}.build(&logical, &schema)?;
         Ok(BuiltTraversal { graph, plan })
     }
 
@@ -192,14 +195,18 @@ impl GraphTraversal {
         self
     }
 
-    pub fn addV(mut self, label_id: LabelId) -> Self {
-        self.plan.steps.push(LogicalStep::AddV(AddVStep { label_id, vertex_id: None, properties: HashMap::new() }));
+    pub fn addV(mut self, label: impl Into<SmolStr>) -> Self {
+        self.plan.steps.push(LogicalStep::AddV(AddVStep {
+            label: label.into(),
+            vertex_id: None,
+            properties: HashMap::new(),
+        }));
         self
     }
 
-    pub fn addE(mut self, label_id: LabelId) -> Self {
+    pub fn addE(mut self, label: impl Into<SmolStr>) -> Self {
         self.plan.steps.push(LogicalStep::AddE(AddEStep {
-            label_id,
+            label: label.into(),
             out_v_id: None,
             in_v_id: None,
             properties: HashMap::new(),
@@ -218,51 +225,51 @@ impl GraphTraversal {
         self
     }
 
-    pub fn out(mut self, labels: impl IntoIterator<Item = impl Into<u16>>) -> Self {
+    pub fn out(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
         self.plan.steps.push(LogicalStep::Out(OutStep {
-            label_ids: labels.into_iter().map(Into::into).collect(),
+            labels: labels.into_iter().map(Into::into).collect(),
             end_vertex_ids: None,
         }));
         self
     }
 
-    pub fn outE(mut self, labels: impl IntoIterator<Item = impl Into<u16>>) -> Self {
+    pub fn outE(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
         self.plan.steps.push(LogicalStep::OutE(OutEStep {
-            label_ids: labels.into_iter().map(Into::into).collect(),
+            labels: labels.into_iter().map(Into::into).collect(),
             end_vertex_ids: None,
             rank: None,
         }));
         self
     }
 
-    pub fn r#in(mut self, labels: impl IntoIterator<Item = impl Into<u16>>) -> Self {
+    pub fn r#in(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
         self.plan.steps.push(LogicalStep::In(InStep {
-            label_ids: labels.into_iter().map(Into::into).collect(),
+            labels: labels.into_iter().map(Into::into).collect(),
             end_vertex_ids: None,
         }));
         self
     }
 
-    pub fn inE(mut self, labels: impl IntoIterator<Item = impl Into<u16>>) -> Self {
+    pub fn inE(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
         self.plan.steps.push(LogicalStep::InE(InEStep {
-            label_ids: labels.into_iter().map(Into::into).collect(),
+            labels: labels.into_iter().map(Into::into).collect(),
             end_vertex_ids: None,
             rank: None,
         }));
         self
     }
 
-    pub fn both(mut self, labels: impl IntoIterator<Item = impl Into<u16>>) -> Self {
+    pub fn both(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
         self.plan.steps.push(LogicalStep::Both(BothStep {
-            label_ids: labels.into_iter().map(Into::into).collect(),
+            labels: labels.into_iter().map(Into::into).collect(),
             end_vertex_ids: None,
         }));
         self
     }
 
-    pub fn bothE(mut self, labels: impl IntoIterator<Item = impl Into<u16>>) -> Self {
+    pub fn bothE(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
         self.plan.steps.push(LogicalStep::BothE(BothEStep {
-            label_ids: labels.into_iter().map(Into::into).collect(),
+            labels: labels.into_iter().map(Into::into).collect(),
             end_vertex_ids: None,
             rank: None,
         }));
@@ -274,10 +281,10 @@ impl GraphTraversal {
         self
     }
 
-    pub fn hasLabel(mut self, labels: impl IntoIterator<Item = impl Into<u16>>) -> Self {
+    pub fn hasLabel(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
         self.plan
             .steps
-            .push(LogicalStep::HasLabel(HasLabelStep { label_ids: labels.into_iter().map(Into::into).collect() }));
+            .push(LogicalStep::HasLabel(HasLabelStep { labels: labels.into_iter().map(Into::into).collect() }));
         self
     }
 
@@ -403,34 +410,34 @@ pub trait TraversalBuilder: Sized {
         self
     }
 
-    fn out(mut self, labels: impl IntoIterator<Item = impl Into<u16>>) -> Self {
+    fn out(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
         self.plan_mut().steps.push(LogicalStep::Out(OutStep {
-            label_ids: labels.into_iter().map(Into::into).collect(),
+            labels: labels.into_iter().map(Into::into).collect(),
             end_vertex_ids: None,
         }));
         self
     }
 
-    fn in_(mut self, labels: impl IntoIterator<Item = impl Into<u16>>) -> Self {
+    fn in_(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
         self.plan_mut().steps.push(LogicalStep::In(InStep {
-            label_ids: labels.into_iter().map(Into::into).collect(),
+            labels: labels.into_iter().map(Into::into).collect(),
             end_vertex_ids: None,
         }));
         self
     }
 
-    fn both(mut self, labels: impl IntoIterator<Item = impl Into<u16>>) -> Self {
+    fn both(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
         self.plan_mut().steps.push(LogicalStep::Both(BothStep {
-            label_ids: labels.into_iter().map(Into::into).collect(),
+            labels: labels.into_iter().map(Into::into).collect(),
             end_vertex_ids: None,
         }));
         self
     }
 
     #[allow(non_snake_case)]
-    fn outE(mut self, labels: impl IntoIterator<Item = impl Into<u16>>) -> Self {
+    fn outE(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
         self.plan_mut().steps.push(LogicalStep::OutE(OutEStep {
-            label_ids: labels.into_iter().map(Into::into).collect(),
+            labels: labels.into_iter().map(Into::into).collect(),
             end_vertex_ids: None,
             rank: None,
         }));
@@ -438,9 +445,9 @@ pub trait TraversalBuilder: Sized {
     }
 
     #[allow(non_snake_case)]
-    fn inE(mut self, labels: impl IntoIterator<Item = impl Into<u16>>) -> Self {
+    fn inE(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
         self.plan_mut().steps.push(LogicalStep::InE(InEStep {
-            label_ids: labels.into_iter().map(Into::into).collect(),
+            labels: labels.into_iter().map(Into::into).collect(),
             end_vertex_ids: None,
             rank: None,
         }));
@@ -448,9 +455,9 @@ pub trait TraversalBuilder: Sized {
     }
 
     #[allow(non_snake_case)]
-    fn bothE(mut self, labels: impl IntoIterator<Item = impl Into<u16>>) -> Self {
+    fn bothE(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
         self.plan_mut().steps.push(LogicalStep::BothE(BothEStep {
-            label_ids: labels.into_iter().map(Into::into).collect(),
+            labels: labels.into_iter().map(Into::into).collect(),
             end_vertex_ids: None,
             rank: None,
         }));
@@ -486,10 +493,10 @@ pub trait TraversalBuilder: Sized {
     }
 
     #[allow(non_snake_case)]
-    fn hasLabel(mut self, label_ids: impl IntoIterator<Item = impl Into<u16>>) -> Self {
+    fn hasLabel(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
         self.plan_mut()
             .steps
-            .push(LogicalStep::HasLabel(HasLabelStep { label_ids: label_ids.into_iter().map(Into::into).collect() }));
+            .push(LogicalStep::HasLabel(HasLabelStep { labels: labels.into_iter().map(Into::into).collect() }));
         self
     }
 
@@ -622,16 +629,30 @@ impl<'s> WriteTraversal<'s> {
 
     // ── Write steps ───────────────────────────────────────────────────────────
 
+    /// Add a vertex with the given label.
+    ///
+    /// In `SchemaMode::Auto` (the default), an unrecognized `label` is registered
+    /// automatically on first use. In `SchemaMode::Strict`, `label` must already have been
+    /// declared via [`Graph::open_management`](crate::api::Graph::open_management) — an
+    /// undeclared label fails with `StoreError::SchemaViolation` instead. Same rule applies
+    /// to property keys passed to [`property`](Self::property). See
+    /// [`SchemaManagement`](crate::schema::SchemaManagement) for a worked example.
     #[allow(non_snake_case)]
-    pub fn addV(mut self, label_id: LabelId) -> Self {
-        self.plan.steps.push(LogicalStep::AddV(AddVStep { label_id, vertex_id: None, properties: HashMap::new() }));
+    pub fn addV(mut self, label: impl Into<SmolStr>) -> Self {
+        self.plan.steps.push(LogicalStep::AddV(AddVStep {
+            label: label.into(),
+            vertex_id: None,
+            properties: HashMap::new(),
+        }));
         self
     }
 
+    /// Add an edge with the given label. See [`addV`](Self::addV) for how `label` is resolved
+    /// against the schema depending on `SchemaMode`.
     #[allow(non_snake_case)]
-    pub fn addE(mut self, label_id: LabelId) -> Self {
+    pub fn addE(mut self, label: impl Into<SmolStr>) -> Self {
         self.plan.steps.push(LogicalStep::AddE(AddEStep {
-            label_id,
+            label: label.into(),
             out_v_id: None,
             in_v_id: None,
             properties: HashMap::new(),
@@ -654,6 +675,10 @@ impl<'s> WriteTraversal<'s> {
     ///
     /// `value` must be a scalar — passing `Value::Vertex`, `Value::List`, etc. is a
     /// programming error and the step will be silently dropped.
+    ///
+    /// `key` is resolved against the schema the same way `label` is in [`addV`](Self::addV) —
+    /// implicitly registered in `SchemaMode::Auto`, or rejected with
+    /// `StoreError::SchemaViolation` in `SchemaMode::Strict` unless already declared.
     pub fn property(mut self, key: impl Into<SmolStr>, value: impl Into<Value>) -> Self {
         if let Some(prim) = value_to_primitive(value.into()) {
             self.plan.steps.push(LogicalStep::Property(PropertyStep { prop_key: key.into(), prop_value: prim }));

@@ -25,7 +25,7 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{element::Property, error::StoreError, gvalue::Primitive, keys::CanonicalKey, prop_key::PropKey, GValue},
+    types::{element::Property, error::StoreError, gvalue::Primitive, keys::CanonicalKey, GValue},
 };
 
 /// A physical step that sets a property on the element carried by the incoming traverser.
@@ -42,8 +42,8 @@ pub struct PropertyStep {
 
 /// Creates a new `PropertyStep` with the property key and value to set.
 impl PropertyStep {
-    pub fn new(prop_key: PropKey, prop_value: Primitive) -> Self {
-        Self { upstream: None, prop: Property { owner: CanonicalKey::Empty, key: prop_key, value: prop_value } }
+    pub fn new(prop_key_id: u16, prop_value: Primitive) -> Self {
+        Self { upstream: None, prop: Property { owner: CanonicalKey::Empty, key: prop_key_id, value: prop_value } }
     }
 }
 

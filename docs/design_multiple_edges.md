@@ -82,7 +82,7 @@ pub struct Schema {
 `edge_mode` has a single value for the whole `Schema`, not a `HashMap<LabelId, _>` — every
 edge label is governed by the same setting. It is set once when the graph is created
 (`GraphOptions`, bootstrapping a fresh database only) and changed thereafter only through
-`ManagementSystem::set_edge_mode(...)` (`design_auto_schema.md` §4), so it participates in
+`SchemaManagement::set_edge_mode(...)` (`design_auto_schema.md` §4), so it participates in
 the same version/CAS guarantee as every other schema change, and is persisted/read the same
 way as `SchemaMode` — every process opening this graph sees the same `edge_mode`.
 

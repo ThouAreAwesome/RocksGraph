@@ -40,7 +40,7 @@ Two first-class **schema modes**, selected per `Graph`:
   that want schema drift to be a build-time/deploy-time decision, not a runtime accident.
 
 Both modes are served by the same explicit, **JanusGraph-style management interface**:
-a `ManagementSystem` opened from the `Graph` handle, with builder methods to define vertex
+a `SchemaManagement` opened from the `Graph` handle, with builder methods to define vertex
 labels, edge labels, and property keys, committed as one atomic, version-checked batch.
 This interface is *mandatory* in `Strict` mode and *optional but available* in `Auto` mode
 (e.g. to declare a property key's data type up front).
@@ -63,7 +63,7 @@ store — deals exclusively in numeric ids (`label_id`, `prop_key_id`); both kin
 the same shape this far down, exactly mirroring each other rather than one staying string
 and the other numeric. `Schema` itself is touched only by `GraphCtx` implementations (called
 from `build_step`, and from `Schema`'s own decode paths — `get_value`'s "label" case and
-`materialize`/`get_all_props`'s property-key case, §6/§8) and by `ManagementSystem`, which
+`materialize`/`get_all_props`'s property-key case, §6/§8) and by `SchemaManagement`, which
 talks to `Schema` directly but never enters this pipeline at
 all — it's a second, independent way to reach the same `Schema`, not a continuation of it.
 
@@ -132,7 +132,7 @@ all — it's a second, independent way to reach the same `Schema`, not a continu
                    ── separately: the schema-only path ──
 
 ┌──────────────────────────────────────────────────────────────────────────┐
-│ ManagementSystem — STRINGS, never enters the pipeline above              │
+│ SchemaManagement — STRINGS, never enters the pipeline above              │
 │   open_management() → make_vertex_label()/make_edge_label()/             │
 │   make_property_key()/set_edge_mode()/set_schema_mode() → commit()       │
 └─────────────────────────────────┬────────────────────────────────────────┘
@@ -184,7 +184,7 @@ Five things to take away from this:
   nothing to convert, ever (§6). The `Store`/`GraphStore` trait stays numeric because it
   must never import `Schema` at all (confirmed already true of `src/store/traits.rs` today).
   Both of these are unaffected by where resolution happens — they were never the boundary.
-- **`ManagementSystem` is a separate, shorter path.** It skips `LogicalPlan`, the optimizer,
+- **`SchemaManagement` is a separate, shorter path.** It skips `LogicalPlan`, the optimizer,
   and the volcano engine entirely — it's a thin wrapper that stages calls into a batch and
   applies them to `Schema` directly at `commit()`. This is why it can use plain
   CAS-on-`version` (§4) instead of needing any of the traversal machinery.
@@ -202,7 +202,7 @@ pub enum SchemaMode {
     #[default]
     Auto,
     /// Reject writes that reference an undeclared label or property key.
-    /// Schema must be populated via `ManagementSystem` first.
+    /// Schema must be populated via `SchemaManagement` first.
     Strict,
 }
 
@@ -225,7 +225,7 @@ pub struct Schema {
 
 `mode` and `edge_mode` are treated identically: both are graph-wide schema *content*, not
 a per-process runtime preference. Both are persisted in the schema CF, both participate in
-`version`/CAS, and both are changed exactly one way — through `ManagementSystem` (§4),
+`version`/CAS, and both are changed exactly one way — through `SchemaManagement` (§4),
 never through a direct setter on `Graph`. This is what makes `SchemaMode` consistent: every
 process that opens a given on-disk graph sees the same `mode`, because it's read from disk,
 not chosen at `open()` time.
@@ -255,7 +255,7 @@ it and ignore whatever `GraphOptions` was passed. If the metadata entry is absen
 fresh database), the supplied `GraphOptions` (or its defaults) are written as that entry
 before `open` returns, so every subsequent open — from any process, with or without
 `GraphOptions` — sees the same values. After that first write, the only way to change
-`mode` or `edge_mode` is `ManagementSystem` (§4), where they go through the same
+`mode` or `edge_mode` is `SchemaManagement` (§4), where they go through the same
 version/CAS check as any declaration.
 
 ### 1. Schema CF on disk
@@ -359,7 +359,7 @@ touched directly by exactly three kinds of code, and nothing else:
 - **`PhysicalPlanBuilder`**, which resolves names at build time (§6) — it receives a handle
   to `Schema` the same way `Graph::schema()`'s callers always have: a plain `Arc` clone, not
   a bespoke trait method per operation.
-- **`ManagementSystem`**, on the schema-declaration path (§4).
+- **`SchemaManagement`**, on the schema-declaration path (§4).
 
 Everything else — the Gremlin builder, `LogicalPlan`, the optimizer, every volcano physical
 step, and the `Store`/`GraphStore` trait (`S::Txn`/`S::Snapshot`) — never imports `Schema`
@@ -381,7 +381,7 @@ it — exactly how `Graph::schema()` already works one layer up:
 Graph
   schema: Arc<RwLock<Schema>>
   ├── .schema() -> Arc<RwLock<Schema>>                (already implemented, src/api.rs:89)
-  ├── .open_management() -> ManagementSystem<'_>      (§4 — direct access, bypasses GraphCtx)
+  ├── .open_management() -> SchemaManagement          (§4 — direct access, bypasses GraphCtx)
   ├── .read()  -> ReadSession   ─┐
   └── .begin() -> TxSession     ─┴─ both pass Arc::clone(&self.schema) into
                                      LogicalSnapshot / LogicalGraph (already implemented)
@@ -408,7 +408,7 @@ steps' `produce()` exactly as today, with an already-resolved `LabelId` in hand.
 
 The `RwLock` is acquired for **writing** only when the schema actually changes: a new label
 or property key introduced via `resolve_*` at build time (Auto mode), or a `commit()` on a
-`ManagementSystem` session. Every other access — `vertex_label_id`/`edge_label_id`/`prop_key_id`
+`SchemaManagement` session. Every other access — `vertex_label_id`/`edge_label_id`/`prop_key_id`
 lookups, `values("label")`'s decode, and `materialize`/`get_all_props`'s property-key decode
 (§8) — takes the read lock (shared, non-blocking under concurrent reads).
 
@@ -422,11 +422,11 @@ the per-label multiplicity knob (`design_multiple_edges.md` §2):
 ```rust
 let mgmt = graph.open_management();
 
-mgmt.make_property_key("name").data_type(DataType::String).make()?;
-mgmt.make_property_key("since").data_type(DataType::Int64).make()?;
+mgmt.make_property_key("name", DataType::String).make();
+mgmt.make_property_key("since", DataType::Int64).make();
 
-mgmt.make_vertex_label("person").make()?;
-mgmt.make_edge_label("knows").make()?;     // no per-label multiplicity — see set_edge_mode below
+mgmt.make_vertex_label("person").make();
+mgmt.make_edge_label("knows").make();     // no per-label multiplicity — see set_edge_mode below
 mgmt.set_edge_mode(EdgeMode::Multi);       // graph-wide, one-way: Single -> Multi only (see below)
 mgmt.set_schema_mode(SchemaMode::Strict);  // graph-wide, either direction
 
@@ -434,30 +434,35 @@ mgmt.commit()?;   // CAS-validates + applies the whole batch atomically, persist
 ```
 
 **Staging, not immediate effect.** Each `make_*`/`set_edge_mode` call accumulates into a
-`ManagementBatch` owned by the `ManagementSystem` session; it does **not** touch the shared
+`pending_*` vector owned by the `SchemaManagement` session; it does **not** touch the shared
 `Schema` until `commit()`. This mirrors JanusGraph's transactional management system and
 means a batch of related declarations either all land or none do.
 
 ```rust
-pub struct ManagementSystem<'g> {
-    schema: &'g Arc<RwLock<Schema>>,
-    base_version: u64,        // captured at open_management() — see "Versioning and CAS" below
-    batch: ManagementBatch,
+pub struct SchemaManagement {
+    store: Arc<RocksStorage>,
+    schema: Arc<std::sync::RwLock<Schema>>,
+    base_version: u64,
+    pending_vertex_labels: Vec<String>,
+    pending_edge_labels: Vec<String>,
+    pending_prop_keys: Vec<(String, DataType, Cardinality)>,
+    pending_edge_mode: Option<EdgeMode>,
+    pending_schema_mode: Option<SchemaMode>,
 }
 
 impl Graph {
     /// Open a schema-management session, mirroring JanusGraph's `graph.openManagement()`.
-    pub fn open_management(&self) -> ManagementSystem<'_> { .. }
+    pub fn open_management(&self) -> SchemaManagement { .. }
 }
 
-pub struct PropertyKeyMaker<'g, 'm> { mgmt: &'m mut ManagementSystem<'g>, name: SmolStr, data_type: DataType }
-pub struct VertexLabelMaker<'g, 'm> { mgmt: &'m mut ManagementSystem<'g>, name: SmolStr }
-pub struct EdgeLabelMaker<'g, 'm>   { mgmt: &'m mut ManagementSystem<'g>, name: SmolStr }
+pub struct PropertyKeyMaker<'a> { mgmt: &'a mut SchemaManagement, name: String, data_type: DataType, cardinality: Cardinality }
+pub struct VertexLabelMaker<'a> { mgmt: &'a mut SchemaManagement, name: String }
+pub struct EdgeLabelMaker<'a>   { mgmt: &'a mut SchemaManagement, name: String }
 
-impl<'g> ManagementSystem<'g> {
-    pub fn make_property_key(&mut self, name: impl Into<SmolStr>) -> PropertyKeyMaker<'g, '_> { .. }
-    pub fn make_vertex_label(&mut self, name: impl Into<SmolStr>) -> VertexLabelMaker<'g, '_> { .. }
-    pub fn make_edge_label(&mut self, name: impl Into<SmolStr>) -> EdgeLabelMaker<'g, '_> { .. }
+impl SchemaManagement {
+    pub fn make_property_key(&mut self, name: impl Into<String>, data_type: DataType) -> PropertyKeyMaker<'_> { .. }
+    pub fn make_vertex_label(&mut self, name: impl Into<String>) -> VertexLabelMaker<'_> { .. }
+    pub fn make_edge_label(&mut self, name: impl Into<String>) -> EdgeLabelMaker<'_> { .. }
 
     /// Stage a graph-wide multiplicity change. Applied atomically with everything
     /// else in this batch at `commit()`. `commit()` rejects `EdgeMode::Multi -> EdgeMode::Single`
@@ -466,11 +471,6 @@ impl<'g> ManagementSystem<'g> {
 
     /// Stage a graph-wide schema-mode change (either direction is allowed).
     pub fn set_schema_mode(&mut self, mode: SchemaMode) -> &mut Self { .. }
-
-    /// Read-only introspection — `mgmt.printSchema()` equivalent, minus pretty-printing.
-    pub fn vertex_labels(&self) -> impl Iterator<Item = &str>;
-    pub fn edge_labels(&self) -> impl Iterator<Item = &str>;
-    pub fn property_keys(&self) -> impl Iterator<Item = &str>;
 
     pub fn commit(self) -> Result<(), StoreError> { .. } // see "Versioning and CAS commit" below
 }
@@ -511,7 +511,7 @@ instead of simply holding a lock for the session's whole lifetime:
      touching `Schema`*. This is the **same variant and the same retry contract** already
      documented for data transactions (`src/types/error.rs`: "the only variant that callers
      are expected to retry... retry the transaction from scratch") — a stale
-     `ManagementSystem` is conceptually no different from a stale `TxSession`.
+     `SchemaManagement` is conceptually no different from a stale `TxSession`.
    - **Match** → apply every staged `declare_*`/`set_edge_mode`/`set_schema_mode` call,
      increment `version` by 1, and write the schema CF batch (declarations + the new
      `[version, edge_mode, schema_mode]` metadata entry) in one `WriteBatch`.
@@ -538,7 +538,7 @@ invalid (every label/key on disk was, by construction, resolved or declared at t
 it was written, regardless of what `schema_mode` is set to afterwards).
 
 `resolve_*` (§6) also increments `version` on every new auto-registration, under the same
-write lock it already takes — so a `ManagementSystem` staged concurrently with an Auto-mode
+write lock it already takes — so a `SchemaManagement` staged concurrently with an Auto-mode
 write that registers a brand-new name will correctly see its `base_version` go stale and
 get `StoreError::Conflict` at `commit()`, even though the racing write was a regular
 traversal, not another management session.
@@ -547,7 +547,7 @@ traversal, not another management session.
 
 ```rust
 impl Schema {
-    /// Always allowed, in either `SchemaMode`. Used only by `ManagementSystem::commit()`.
+    /// Always allowed, in either `SchemaMode`. Used only by `SchemaManagement::commit()`.
     /// Does not touch `version` itself — the caller (`commit()`) bumps it once per batch.
     pub fn declare_vertex_label(&mut self, name: &str) -> Result<LabelId, StoreError> {
         self.register_vertex_label(name).ok_or(StoreError::SchemaExhausted)
@@ -627,10 +627,10 @@ Three new `StoreError` variants:
 ```rust
 pub enum StoreError {
     // ...
-    /// `SchemaMode::Strict` and the name was never declared via `ManagementSystem`,
+    /// `SchemaMode::Strict` and the name was never declared via `SchemaManagement`,
     /// or a write-time type mismatch occurred against a declared DataType.
     SchemaViolation(SmolStr),
-    /// `ManagementSystem::commit()` redeclared an existing name with an incompatible config.
+    /// `SchemaManagement::commit()` redeclared an existing name with an incompatible config.
     SchemaConflict(SmolStr),
     /// The 12-bit (labels) or 16-bit (prop keys) id space is exhausted.
     SchemaExhausted,
@@ -666,7 +666,7 @@ When new labels or property keys are registered dynamically in `SchemaMode::Auto
 
 To prevent type coercion bugs and schema corruption:
 - Each property key has a designated `DataType` stored in `PropKeyConfig`.
-- In `SchemaMode::Strict`, keys and their types are pre-declared via `ManagementSystem`.
+- In `SchemaMode::Strict`, keys and their types are pre-declared via `SchemaManagement`.
 - In `SchemaMode::Auto`, a key's `DataType` is inferred and registered on its very first write.
 - At write time (`LogicalGraph::set_property`), the engine retrieves the `PropKeyConfig` for the resolved `prop_key_id`. It validates that the type of the incoming `Primitive` matches the registered `DataType`.
 - Mismatched writes are rejected immediately with `StoreError::SchemaViolation`.
@@ -910,7 +910,7 @@ operation.
 | Crash after schema CF write, before vertex CF write | The label/key exists in schema but no element uses it yet. Harmless; ids are never reused. |
 | Crash after vertex CF write, before schema CF write | **Impossible** — both writes are in the same `WriteBatch`; RocksDB guarantees atomicity within a batch. |
 | Two concurrent transactions resolving the same new label (Auto) | `RwLock` write lock is held for the duration of `resolve_*`. The second writer sees the already-registered id and skips the schema write; `version` only advances once. |
-| `ManagementSystem::commit()` races a concurrent `resolve_*` or another `commit()` | Whichever takes the `Schema` write lock first wins and advances `version`. Any other in-flight `ManagementSystem` whose `base_version` no longer matches gets `StoreError::Conflict` from its own `commit()` — same retry contract as a data-transaction conflict: discard the session, reopen `open_management()`, restage, retry. |
+| `SchemaManagement::commit()` races a concurrent `resolve_*` or another `commit()` | Whichever takes the `Schema` write lock first wins and advances `version`. Any other in-flight `SchemaManagement` whose `base_version` no longer matches gets `StoreError::Conflict` from its own `commit()` — same retry contract as a data-transaction conflict: discard the session, reopen `open_management()`, restage, retry. |
 | `commit()` redeclares an existing name with an incompatible config (e.g. a different `data_type`) | `StoreError::SchemaConflict` — not retryable; the caller's batch is wrong, not stale. |
 | `commit()` stages `set_edge_mode(EdgeMode::Single)` while the persisted `edge_mode` is already `Multi` | `StoreError::SchemaConflict` — the one-way ratchet (§4) rejects the whole batch; not retryable. |
 | `Strict` mode, write references an undeclared name | `StoreError::SchemaViolation` — detected before any batch is built; no partial write occurs. |
@@ -1006,9 +1006,9 @@ is ~73k entries, well within RocksDB's efficient range.
     (§8) — paired with step 15's property-key decode, these are the only two decode points
     in this phase
 
-**Phase 3 — `ManagementSystem` (JanusGraph-style explicit declaration + CAS)**
+**Phase 3 — `SchemaManagement` (JanusGraph-style explicit declaration + CAS)**
 
-18. New module `src/schema/management.rs`: `ManagementSystem`, `ManagementBatch`,
+18. New module `src/schema/management.rs`: `SchemaManagement`,
     `PropertyKeyMaker`, `VertexLabelMaker`, `EdgeLabelMaker`, `set_edge_mode`,
     `set_schema_mode`
 19. Add `declare_vertex_label`/`declare_edge_label`/`declare_prop_key`/`declare_edge_mode`/
@@ -1019,7 +1019,7 @@ is ~73k entries, well within RocksDB's efficient range.
     reuse `StoreError::Conflict` on mismatch)
 21. Add `GraphOptions`, `Graph::open_with_options()`, `Graph::open_management()`. No direct
     `Graph::set_schema_mode()`/`set_edge_mode()` mutators — both go through
-    `ManagementSystem` only, so they're always persisted, versioned, and CAS-checked (§0)
+    `SchemaManagement` only, so they're always persisted, versioned, and CAS-checked (§0)
 22. Remove the empty `schema/index.rs`/`schema/validator.rs` stubs (or fill them in, once
     there's an actual index/validation design to put there); update
     `src/gremlin/tests.rs:583` off the removed `register_edge_label_with_config`
@@ -1053,7 +1053,7 @@ is ~73k entries, well within RocksDB's efficient range.
 | `src/store/rocks/store.rs` | Add schema CF to `open()`; add `load_schema(defaults: GraphOptions)` (bootstraps a fresh DB, otherwise ignored — §0) |
 | `src/store/rocks/transaction.rs` | Include schema bytes (incl. metadata entry) in `WriteBatch` on schema change |
 | `src/schema/definition.rs` | Add `mode`, `edge_mode`, `version`; remove `EdgeConfig`/`edge_configs`; add `resolve_*`, `declare_*`, `PropKeyConfig`, `DataType`, `Cardinality` |
-| `src/schema/management.rs` | **New.** `ManagementSystem`, `ManagementBatch`, the three `*Maker` builders, `set_edge_mode` |
+| `src/schema/management.rs` | **New.** `SchemaManagement`, the three `*Maker` builders, `set_edge_mode` |
 | `src/schema/mod.rs` | Add `pub mod management`; keep/replace `index`/`validator` stubs |
 | `src/types/error.rs` | Add `StoreError::SchemaViolation`, `SchemaConflict`, `SchemaExhausted` |
 | `src/types/element.rs` | `Property.key: PropKey` → `key: u16` (`prop_key_id`); `Vertex`/`Edge::get_property`/`get_value` take `prop_key_id: u16` instead of `&PropKey` (§6) |

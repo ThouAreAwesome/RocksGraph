@@ -23,7 +23,10 @@
 //!
 //! # Property codec
 //!
-//! Format: `count:u16 | (key_len:u16 | key:UTF-8 | tag:u8 | value_bytes)*`
+//! Format: `count:u16 | (key_id:u16 | tag:u8 | value_bytes)*`
+//!
+//! `key_id` is the interned [`Schema`](crate::schema::Schema) property-key id, not the
+//! raw string name — the schema dictionary maps it back to a name on read.
 //!
 //! Tags: `0`=Bool(1B) `1`=Int32(4B) `2`=Int64(8B) `3`=Float32(4B)
 //!       `4`=Float64(8B) `5`=String(len:u16 + UTF-8) `6`=Uuid(16B) `7`=Null(0B)
@@ -219,12 +222,12 @@ mod tests {
         (store, dir)
     }
 
-    fn make_vertex(id: i64, label_id: u16, props: Vec<(SmolStr, Primitive)>) -> Vertex {
+    fn make_vertex(id: i64, label_id: u16, props: Vec<(u16, Primitive)>) -> Vertex {
         let owner = CanonicalKey::Vertex(id);
         Vertex::with_props(id, label_id, props.into_iter().map(|(k, v)| Property { owner, key: k, value: v }).collect())
     }
 
-    fn make_edge(cek: CanonicalEdgeKey, props: Vec<(SmolStr, Primitive)>) -> Edge {
+    fn make_edge(cek: CanonicalEdgeKey, props: Vec<(u16, Primitive)>) -> Edge {
         let owner = CanonicalKey::Edge(cek);
         Edge::with_props(
             cek.src_id,
@@ -242,20 +245,13 @@ mod tests {
     #[test]
     fn insert_and_get_single_vertex() {
         let (mut store, _dir) = open_temp_store();
-        let v = make_vertex(
-            1,
-            3,
-            vec![
-                (SmolStr::new("name"), Primitive::String(SmolStr::new("Alice"))),
-                (SmolStr::new("age"), Primitive::Int32(30)),
-            ],
-        );
+        let v = make_vertex(1, 3, vec![(1u16, Primitive::String(SmolStr::new("Alice"))), (2u16, Primitive::Int32(30))]);
         store.insert_vertices(&mut [v]).unwrap();
         let mut fv = store.get_vertex(1).unwrap().unwrap();
         assert_eq!(fv.id, 1);
         assert_eq!(fv.label_id, 3);
         assert_eq!(fv.all_props().len(), 2);
-        assert_eq!(fv.all_props()[0].key, SmolStr::new("name"));
+        assert_eq!(fv.all_props()[0].key, 1u16);
         assert_eq!(fv.all_props()[0].value, Primitive::String(SmolStr::new("Alice")));
         assert_eq!(fv.all_props()[0].owner, CanonicalKey::Vertex(1));
         assert_eq!(fv.all_props()[1].value, Primitive::Int32(30));
@@ -279,8 +275,8 @@ mod tests {
     #[test]
     fn insert_vertex_overwrite_updates_value() {
         let (mut store, _dir) = open_temp_store();
-        store.insert_vertices(&mut [make_vertex(1, 1, vec![(SmolStr::new("age"), Primitive::Int32(20))])]).unwrap();
-        store.insert_vertices(&mut [make_vertex(1, 2, vec![(SmolStr::new("age"), Primitive::Int32(99))])]).unwrap();
+        store.insert_vertices(&mut [make_vertex(1, 1, vec![(2u16, Primitive::Int32(20))])]).unwrap();
+        store.insert_vertices(&mut [make_vertex(1, 2, vec![(2u16, Primitive::Int32(99))])]).unwrap();
         let mut fv = store.get_vertex(1).unwrap().unwrap();
         assert_eq!(fv.label_id, 2);
         assert_eq!(fv.all_props()[0].value, Primitive::Int32(99));
@@ -318,9 +314,7 @@ mod tests {
     fn insert_edge_readable_out() {
         let (mut store, _dir) = open_temp_store();
         let k = cek(1, 5, 2);
-        store
-            .insert_edges(&mut [make_edge(k, vec![(SmolStr::new("weight"), Primitive::Float64(1.5))])], Direction::OUT)
-            .unwrap();
+        store.insert_edges(&mut [make_edge(k, vec![(1u16, Primitive::Float64(1.5))])], Direction::OUT).unwrap();
         let mut edges = store.get_edges(1, Direction::OUT, None, None, None).unwrap();
         assert_eq!(edges.len(), 1);
         let fe = &mut edges[0];

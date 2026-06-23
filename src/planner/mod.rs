@@ -77,11 +77,11 @@ mod tests {
     }
 
     fn out_e() -> LogicalStep {
-        LogicalStep::OutE(OutEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None })
+        LogicalStep::OutE(OutEStep { labels: smallvec![], end_vertex_ids: None, rank: None })
     }
 
     fn out_e_label() -> LogicalStep {
-        LogicalStep::OutE(OutEStep { label_ids: smallvec![1], end_vertex_ids: None, rank: None })
+        LogicalStep::OutE(OutEStep { labels: smallvec!["1".into()], end_vertex_ids: None, rank: None })
     }
 
     fn other_v() -> LogicalStep {
@@ -93,7 +93,7 @@ mod tests {
     }
 
     fn both_e() -> LogicalStep {
-        LogicalStep::BothE(BothEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None })
+        LogicalStep::BothE(BothEStep { labels: smallvec![], end_vertex_ids: None, rank: None })
     }
 
     fn whr(steps: Vec<LogicalStep>) -> LogicalStep {
@@ -161,7 +161,7 @@ mod tests {
             panic!("expected VStep at step 0");
         }
         if let LogicalStep::OutE(oute) = &plan.steps[1] {
-            assert_eq!(&oute.label_ids[..], &[1u16], "has(\"id\",1) should be folded into V");
+            assert_eq!(&oute.labels[..], &[smol_str::SmolStr::new("1")], "has(\"id\",1) should be folded into V");
             assert_eq!(
                 oute.end_vertex_ids.as_deref(),
                 Some(&[2i64][..]),
@@ -283,7 +283,7 @@ mod tests {
     fn test_add_v_id_prop_merged() {
         use crate::planner::logical_step::AddVStep;
         let steps = vec![
-            LogicalStep::AddV(AddVStep { label_id: 1, vertex_id: None, properties: HashMap::new() }),
+            LogicalStep::AddV(AddVStep { label: "1".into(), vertex_id: None, properties: HashMap::new() }),
             prop(SmolStr::new("id"), Primitive::Int32(321)),
         ];
         let mut plan = LogicalPlan { steps };
@@ -302,7 +302,7 @@ mod tests {
     fn test_add_v_id_prop_duplicate() {
         use crate::planner::logical_step::AddVStep;
         let steps = vec![
-            LogicalStep::AddV(AddVStep { label_id: 1, vertex_id: None, properties: HashMap::new() }),
+            LogicalStep::AddV(AddVStep { label: "1".into(), vertex_id: None, properties: HashMap::new() }),
             prop(SmolStr::new("id"), Primitive::Int64(321)),
             prop(SmolStr::new("id"), Primitive::Int32(21)),
         ];
@@ -316,7 +316,7 @@ mod tests {
         use crate::planner::logical_step::{AddEStep, FromStep, ToStep};
         let steps = vec![
             LogicalStep::AddE(AddEStep {
-                label_id: 1,
+                label: "1".into(),
                 out_v_id: None,
                 in_v_id: None,
                 properties: HashMap::new(),

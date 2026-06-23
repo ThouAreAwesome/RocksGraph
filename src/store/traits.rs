@@ -30,7 +30,7 @@
 //!   ▼
 //! GraphTransaction                  ← store-layer contract
 //!   reads:   get_vertex / get_edge / get_edges
-//!   writes:  put_vertex / put_edge / delete_vertex / delete_edge
+//!   writes:  put_vertex / put_edge / delete_vertex / delete_edge / put_schema_entry
 //!   control: commit / abort
 //!
 //! GraphStore
@@ -209,6 +209,9 @@ pub trait GraphTransaction {
     fn delete_vertex_degree(&mut self, key: VertexKey) -> Result<(), StoreError>;
     /// Delete a single edge record from the specified physical direction index.
     fn delete_edge(&mut self, key: &EdgeKey) -> Result<(), StoreError>;
+
+    /// Stage a schema key-value entry for persistence.
+    fn put_schema_entry(&mut self, kind: u8, name: &str, value: &[u8]) -> Result<(), StoreError>;
 
     // ── Control ───────────────────────────────────────────────────────────────
 

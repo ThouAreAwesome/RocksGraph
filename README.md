@@ -43,7 +43,7 @@ store / RocksDB      OptimisticTransactionDB persistence
 | `engine::volcano` | internal | Pull-based Volcano iterator execution engine |
 | `graph` | internal | Query-scoped in-memory overlay over a `GraphStore` transaction |
 | `store` | internal | Pluggable storage backend abstraction; RocksDB implementation |
-| `schema` | `pub` | Label-ID ↔ label-string bidirectional mapping |
+| `schema` | `pub` | Label/property-key registry; `Auto` vs `Strict` schema modes (see [Schema Modes](#schema-modes)) |
 
 ## Value Types
 
@@ -52,7 +52,7 @@ All user-facing query inputs and outputs use types from `gremlin::value`, re-exp
 | Type | Description |
 |------|-------------|
 | `Value` | Scalar or composite result: `Null`, `Bool`, `Int32`, `Int64`, `Float32`, `Float64`, `String`, `Uuid`, `Vertex`, `Edge`, `Property`, `List`, `Map`, `Path` |
-| `Key` | Property key selector: `Key::Id` (vertex/edge id), `Key::Label` (label id), `Key::Property(String)` (user property). String literals convert to `Key::Property` via `From<&str>`. |
+| `Key` | Property key selector: `Key::Id` (vertex/edge id), `Key::Label` (label, decoded to its string name), `Key::Property(String)` (user property). String literals convert to `Key::Property` via `From<&str>`. |
 | `Predicate` | Filter condition: `Predicate::Eq`, `Within`, `Without`, `Gt`, `Gte`, `Lt`, `Lte`, `Between`, `Ne` |
 | `Vertex` | Materialized vertex: `id`, `label_id`, `properties` |
 | `Edge` | Materialized edge: `out_v`, `in_v`, `label_id`, `rank`, `properties` |
@@ -73,9 +73,9 @@ Predicate constructors are free functions: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`,
 .values([Key::Id])         // returns the vertex id as Value::Int64
 
 // Key::Label → HasLabelStep (label filter)
-.has(Key::Label, PERSON as i64)
-.hasLabel([PERSON])        // shorthand
-.values([Key::Label])      // returns the label id as Value::Int32
+.has(Key::Label, "person")
+.hasLabel(["person"])      // shorthand
+.values([Key::Label])      // returns the label's string name as Value::String
 
 // Key::Property("name") → property-bag lookup
 .has("name", "marko")      // string literals convert to Key::Property automatically
@@ -101,12 +101,12 @@ Each session exposes a single method `g()` that returns a blank traversal. All G
 ```rust
 // Read path
 let mut snap = graph.read();
-let name = snap.g().V([1]).out([KNOWS]).values(["name"]).next()?.unwrap();
+let name = snap.g().V([1]).out(["knows"]).values(["name"]).next()?.unwrap();
 
 // Write path
 let mut tx = graph.begin();
-tx.g().addV(PERSON).property("id", 1i64).property("name", "alice").next()?;
-tx.g().V([1]).out([KNOWS]).count().next()?; // read-your-writes within the same tx
+tx.g().addV("person").property("id", 1i64).property("name", "alice").next()?;
+tx.g().V([1]).out(["knows"]).count().next()?; // read-your-writes within the same tx
 tx.commit()?;
 ```
 
@@ -136,19 +136,21 @@ loop {
 
 ## Supported Gremlin Steps
 
-Labels and edge labels are represented as `u16` integer IDs. String-to-ID mapping is provided by the `schema` module.
+Vertex labels, edge labels, and property keys are plain strings (e.g. `"person"`, `"knows"`) at
+the traversal API. The `schema` module interns them to compact numeric IDs internally — see
+[Schema Modes](#schema-modes) for how and when that registration happens.
 
 ### Traversal
 
 | Step | Method |
 |------|--------|
 | `V(ids)` | `.V([id, ...])` |
-| `out(labels)` | `.out([label_id, ...])` |
-| `in_(labels)` | `.in_([label_id, ...])` |
-| `both(labels)` | `.both([label_id, ...])` |
-| `outE(labels)` | `.outE([label_id, ...])` |
-| `inE(labels)` | `.inE([label_id, ...])` |
-| `bothE(labels)` | `.bothE([label_id, ...])` |
+| `out(labels)` | `.out([label, ...])` |
+| `in_(labels)` | `.in_([label, ...])` |
+| `both(labels)` | `.both([label, ...])` |
+| `outE(labels)` | `.outE([label, ...])` |
+| `inE(labels)` | `.inE([label, ...])` |
+| `bothE(labels)` | `.bothE([label, ...])` |
 | `inV()` | `.inV()` |
 | `outV()` | `.outV()` |
 | `otherV()` | `.otherV()` |
@@ -158,7 +160,7 @@ Labels and edge labels are represented as `u16` integer IDs. String-to-ID mappin
 | Step | Method |
 |------|--------|
 | `has(key, value)` | `.has(key, pred)` — `key` is `Key::Id`, `Key::Label`, or a `&str` |
-| `hasLabel(labels)` | `.hasLabel([label_id, ...])` |
+| `hasLabel(labels)` | `.hasLabel([label, ...])` |
 | `hasId(ids)` | `.hasId([id, ...])` |
 | `is(pred)` | `.is(pred)` — filter the current scalar value |
 | `where(traversal)` | `.r#where(__().xxx())` |
@@ -179,8 +181,8 @@ Labels and edge labels are represented as `u16` integer IDs. String-to-ID mappin
 
 | Step | Method |
 |------|--------|
-| `addV(label)` | `.addV(label_id)` |
-| `addE(label)` | `.addE(label_id)` |
+| `addV(label)` | `.addV(label)` |
+| `addE(label)` | `.addE(label)` |
 | `from(vertex_id)` | `.from(vertex_id)` |
 | `to(vertex_id)` | `.to(vertex_id)` |
 | `property(key, value)` | `.property(key, value)` — `"id"` sets the vertex/edge id |
@@ -221,35 +223,33 @@ let graph = Graph::open(tempfile::tempdir()?.path())?;
 ```rust
 use rocksgraph::{Graph, Key, TraversalBuilder, Value, __};
 
-const KNOWS: u16 = 3;
-
 let graph = Graph::open("./path/to/db")?;
 let mut snap = graph.read();
 
-// Count neighbors of vertex 1 via KNOWS edges
-let count = snap.g().V([1]).out([KNOWS]).count().next()?.unwrap();
+// Count neighbors of vertex 1 via "knows" edges
+let count = snap.g().V([1]).out(["knows"]).count().next()?.unwrap();
 assert_eq!(count, Value::Int64(3));
 
 // Fetch property values
 let name = snap.g().V([1]).values(["name"]).next()?.unwrap();
 assert_eq!(name, Value::String("marko".into()));
 
-// Fetch vertex id and label alongside a property
+// Fetch vertex id and label (decoded to its string name) alongside a property
 let results = snap.g()
     .V([1])
     .values([Key::Id, Key::Label, "name".into()])
     .to_list()?;
 
-// Sub-traversal filter: outgoing KNOWS edges whose other endpoint is vertex 2
+// Sub-traversal filter: outgoing "knows" edges whose other endpoint is vertex 2
 let ct = snap.g()
     .V([1])
-    .outE([KNOWS])
+    .outE(["knows"])
     .r#where(__().otherV().hasId([2]))
     .count()
     .next()?.unwrap();
 
 // Lazy iteration
-for result in snap.g().V([]).out([KNOWS]).iter()? {
+for result in snap.g().V([]).out(["knows"]).iter()? {
     let value = result?;
     // process each Value::Vertex(...)
 }
@@ -260,18 +260,17 @@ for result in snap.g().V([]).out([KNOWS]).iter()? {
 ```rust
 use rocksgraph::{Graph, TraversalBuilder, StoreError};
 
-const PERSON: u16 = 1;
-const KNOWS: u16  = 3;
-
 let graph = Graph::open("./path/to/db")?;
 let mut tx = graph.begin();
 
-// Add vertices — "id" is the reserved property key for the vertex id
-tx.g().addV(PERSON).property("id", 1i64).property("name", "alice").property("age", 30i32).next()?;
-tx.g().addV(PERSON).property("id", 2i64).property("name", "bob").property("age", 25i32).next()?;
+// Add vertices — "id" is the reserved property key for the vertex id.
+// "person" and "knows" register automatically on first use (SchemaMode::Auto,
+// the default) — see "Schema Modes" below for the alternative, explicit-declaration mode.
+tx.g().addV("person").property("id", 1i64).property("name", "alice").property("age", 30i32).next()?;
+tx.g().addV("person").property("id", 2i64).property("name", "bob").property("age", 25i32).next()?;
 
 // Add an edge
-tx.g().addE(KNOWS).from(1).to(2).property("weight", 0.9f64).next()?;
+tx.g().addE("knows").from(1).to(2).property("weight", 0.9f64).next()?;
 
 tx.commit()?;
 ```
@@ -296,9 +295,6 @@ let result = snap.g().V([]).has("name", within(["alice", "bob"])).count().next()
 ```rust
 use rocksgraph::{Graph, TraversalBuilder, StoreError, __};
 
-const PERSON: u16 = 1;
-const KNOWS: u16  = 3;
-
 let graph = Graph::open("./path/to/db")?;
 let mut tx = graph.begin();
 
@@ -306,7 +302,7 @@ let mut tx = graph.begin();
 tx.g()
     .coalesce([
         __().V([42]).values(["name"]),              // branch 1: vertex exists → emit name
-        __().addV(PERSON)                           // branch 2: create it
+        __().addV("person")                          // branch 2: create it
             .property("id", 42i64)
             .property("name", "charlie"),
     ])
@@ -316,8 +312,8 @@ tx.g()
 tx.g()
     .V([42])
     .coalesce([
-        __().outE([KNOWS]).r#where(__().otherV().hasId([99])),
-        __().addE(KNOWS).from(42).to(99).property("weight", 0.5f64),
+        __().outE(["knows"]).r#where(__().otherV().hasId([99])),
+        __().addE("knows").from(42).to(99).property("weight", 0.5f64),
     ])
     .next()?;
 
@@ -330,13 +326,13 @@ tx.commit()?;
 
 ```rust
 // where: filter edges whose other endpoint matches a condition
-snap.g().V([1]).outE([EDGE]).r#where(__().otherV().hasLabel([LABEL])).count().next()?;
+snap.g().V([1]).outE(["knows"]).r#where(__().otherV().hasLabel(["person"])).count().next()?;
 
 // union: merge results from multiple branches
-snap.g().V([1]).union([__().outE([A]), __().outE([B])]).count().next()?;
+snap.g().V([1]).union([__().outE(["knows"]), __().outE(["created"])]).count().next()?;
 
 // coalesce: first non-empty branch
-tx.g().coalesce([__().V([id]).values(["name"]), __().addV(PERSON).property("name", "x")]).next()?;
+tx.g().coalesce([__().V([id]).values(["name"]), __().addV("person").property("name", "x")]).next()?;
 ```
 
 ### Multiple queries per session
@@ -347,13 +343,53 @@ tx.g().coalesce([__().V([id]).values(["name"]), __().addV(PERSON).property("name
 let mut tx = graph.begin();
 
 // Each call to g() is an independent query against the same transaction.
-tx.g().addV(PERSON).property("id", 1i64).property("name", "alice").next()?;
-tx.g().addV(PERSON).property("id", 2i64).property("name", "bob").next()?;
+tx.g().addV("person").property("id", 1i64).property("name", "alice").next()?;
+tx.g().addV("person").property("id", 2i64).property("name", "bob").next()?;
 // alice and bob are both visible here (read-your-writes)
 let count = tx.g().V([]).count().next()?.unwrap();
 
 tx.commit()?; // both writes flushed atomically
 ```
+
+## Schema Modes
+
+Vertex labels, edge labels, and property keys are interned to compact numeric IDs internally
+by the `schema` module. How that registration happens is controlled by `SchemaMode`, set via
+`Graph::open_with_options` (it sticks for the lifetime of the on-disk database — reopening an
+existing database ignores the options passed and uses whatever was persisted):
+
+- **`SchemaMode::Auto`** (the default, used by `Graph::open`) — a label or property key is
+  registered the first time a traversal uses it. This is the mode every example above uses;
+  there is nothing extra to do.
+- **`SchemaMode::Strict`** — nothing is registered implicitly. Every vertex label, edge label,
+  and property key must be declared up front via `Graph::open_management()`, or the write
+  fails with `StoreError::SchemaViolation`.
+
+```rust
+use rocksgraph::{schema::{DataType, GraphOptions, SchemaMode}, Graph, StoreError};
+
+let options = GraphOptions { mode: SchemaMode::Strict, ..Default::default() };
+let graph = Graph::open_with_options("./path/to/db", options)?;
+
+// Declare the schema before any write reaches the engine.
+let mut mgmt = graph.open_management();
+mgmt.make_vertex_label("person").make();
+mgmt.make_property_key("name", DataType::String).make();
+mgmt.commit()?;
+
+let mut tx = graph.begin();
+tx.g().addV("person").property("id", 1i64).property("name", "alice").next()?; // Ok
+tx.commit()?;
+
+let mut tx = graph.begin();
+let err = tx.g().addV("ghost").property("id", 2i64).next().unwrap_err(); // undeclared label
+assert!(matches!(err, StoreError::SchemaViolation(_)));
+```
+
+`SchemaManagement::commit()` is atomic and CAS-checked against concurrent schema changes: either
+every staged label/key in the batch is applied, or none are. See the [`SchemaManagement`
+rustdoc](src/schema/management.rs) for the full guarantees, and `set_edge_mode` /
+`set_schema_mode` for changing graph-wide options (e.g. enabling multi-edges) after creation.
 
 ## Development
 
@@ -408,7 +444,7 @@ just build-release
 
 - **Embedded only:** no server/client mode; queries are executed in-process.
 - **Single-threaded per query:** each volcano pipeline runs single-threaded; multiple sessions can run concurrently against a shared `Graph`.
-- **Integer label IDs:** labels are `u16` integers; string-to-ID mapping is provided by the `schema` module but callers are responsible for managing the mapping.
+- **Schema ID space limits:** up to 4096 distinct vertex labels and 4096 distinct edge labels (independent namespaces), and ~65k property keys per graph — registering past that fails with `StoreError::SchemaExhausted`.
 - **Not TinkerPop-compatible:** RocksGraph is Gremlin-inspired but intentionally departs from the standard. See [docs/design_principles.md](docs/design_principles.md).
 - **No distributed backend:** placeholder exists but is not implemented.
 
@@ -420,7 +456,7 @@ just build-release
 - [ ] Support bulk-load mode: offline SST file generation + direct RocksDB SST ingestion for high-throughput initial loads
 - [x] `ReadSession` / `ReadTraversal` — read-only snapshot path with no OCC overhead
 - [x] `next(), to_list(), iter()` on `ReadTraversal` and `WriteTraversal`
-- [ ] Support strict schema mode
+- [x] Support strict schema mode (see [Schema Modes](#schema-modes))
 - [ ] Range predicates in `HasPropertyStep` (`Gt`, `Lt`, `Between`, etc.)
 
 ### Storage & Distribution

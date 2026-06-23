@@ -75,7 +75,7 @@ mod tests {
     use std::collections::HashMap;
 
     fn addv() -> LogicalStep {
-        LogicalStep::AddV(AddVStep { label_id: 1, vertex_id: None, properties: HashMap::new() })
+        LogicalStep::AddV(AddVStep { label: "1".into(), vertex_id: None, properties: HashMap::new() })
     }
 
     fn prop(key: &str, value: Primitive) -> LogicalStep {

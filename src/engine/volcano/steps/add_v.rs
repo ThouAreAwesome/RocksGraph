@@ -30,7 +30,6 @@ use crate::{
         error::StoreError,
         gvalue::Primitive,
         keys::{CanonicalKey, LabelId, VertexKey},
-        prop_key::PropKey,
         GValue,
     },
 };
@@ -53,7 +52,7 @@ pub struct AddVStep {
 
 /// Creates a new `AddVStep` with the specified vertex details.
 impl AddVStep {
-    pub fn new(label_id: LabelId, vk: VertexKey, properties: HashMap<PropKey, Primitive>) -> Self {
+    pub fn new(label_id: LabelId, vk: VertexKey, properties: HashMap<u16, Primitive>) -> Self {
         let properties = properties
             .into_iter()
             .map(|(key, value)| Property { owner: CanonicalKey::Vertex(vk), key, value })

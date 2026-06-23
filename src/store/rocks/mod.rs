@@ -16,7 +16,7 @@
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 pub(super) mod admin;
-mod encoding;
+pub(crate) mod encoding;
 mod snapshot;
 mod store;
 mod transaction;

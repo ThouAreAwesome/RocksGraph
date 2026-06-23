@@ -25,7 +25,7 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{error::StoreError, keys::LabelId, prop_key::LABEL, CanonicalKey, GValue, Primitive},
+    types::{error::StoreError, keys::LabelId, prop_key::LABEL_KEY_ID, CanonicalKey, GValue, Primitive},
 };
 
 /// A physical step that filters traversers based on the label of the element they carry.
@@ -35,14 +35,16 @@ pub struct HasLabelStep {
     upstream: Option<StepRef>,
 
     // ── Static/Fixed configuration ──
-    /// The list of target label IDs to match.
-    label_ids: SmallVec<[LabelId; 4]>,
+    /// The list of target vertex label IDs to match.
+    vertex_label_ids: SmallVec<[LabelId; 4]>,
+    /// The list of target edge label IDs to match.
+    edge_label_ids: SmallVec<[LabelId; 4]>,
 }
 
-/// Creates a new `HasLabelStep` with a list of target label IDs.
+/// Creates a new `HasLabelStep` with target vertex and edge label IDs.
 impl HasLabelStep {
-    pub fn new(label_ids: SmallVec<[LabelId; 4]>) -> Self {
-        Self { upstream: None, label_ids }
+    pub fn new(vertex_label_ids: SmallVec<[LabelId; 4]>, edge_label_ids: SmallVec<[LabelId; 4]>) -> Self {
+        Self { upstream: None, vertex_label_ids, edge_label_ids }
     }
 }
 
@@ -53,18 +55,19 @@ impl CoreStep for HasLabelStep {
     }
 
     fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
-        // Produces traversers whose element's label ID is present in the `label_ids` list.
+        // Produces traversers whose element's label ID is present in the target list.
         loop {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
             let Some(t) = upstream.next(ctx)? else { return Ok(None) };
             let matched = match &t.value {
                 GValue::Vertex(vk) => {
-                    let Some(Primitive::Int32(lb)) = ctx.get_value(&CanonicalKey::Vertex(*vk), &LABEL).unwrap() else {
-                        unreachable!("")
+                    let Some(Primitive::Int32(lb)) = ctx.get_value(&CanonicalKey::Vertex(*vk), LABEL_KEY_ID).unwrap()
+                    else {
+                        unreachable!("should alway find label id of a vertex")
                     };
-                    self.label_ids.contains(&(lb as u16))
+                    self.vertex_label_ids.contains(&(lb as u16))
                 }
-                GValue::Edge(ek) => self.label_ids.contains(&ek.label_id),
+                GValue::Edge(ek) => self.edge_label_ids.contains(&ek.label_id),
                 _ => false,
             };
             if matched {

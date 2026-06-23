@@ -16,7 +16,10 @@
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 pub mod definition;
-pub mod index;
-pub mod validator;
+pub mod management;
 
-pub use definition::Schema;
+#[cfg(test)]
+pub mod tests;
+
+pub use definition::{Cardinality, DataType, EdgeMode, GraphOptions, PropKeyConfig, Schema, SchemaMode};
+pub use management::SchemaManagement;

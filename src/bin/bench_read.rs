@@ -26,7 +26,11 @@ use std::{
     time::Instant,
 };
 
-const EDGE_LABEL: u16 = 2;
+const EDGE_LABEL: &str = "Knows";
+const NAME_KEY: &str = "name";
+const AGE_KEY: &str = "age";
+const WEIGHT_KEY: &str = "weight";
+const TIMESTAMP_KEY: &str = "timestamp";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
@@ -60,7 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &graph,
         parallelism,
         |snap, src, _dst| {
-            let ct = snap.g().V([]).hasId([src]).values(["name", "age"]).count().next()?.unwrap();
+            let ct = snap.g().V([]).hasId([src]).values([NAME_KEY, AGE_KEY]).count().next()?.unwrap();
             assert_eq!(ct, Value::Int64(2));
             Ok(())
         },
@@ -78,7 +82,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .hasId([src])
                 .outE([EDGE_LABEL])
                 .r#where(__().otherV().hasId([dst]))
-                .values(["weight", "timestamp"])
+                .values([WEIGHT_KEY, TIMESTAMP_KEY])
                 .count()
                 .next()?
                 .unwrap();
@@ -98,7 +102,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .V([])
                 .hasId([src])
                 .bothE([EDGE_LABEL])
-                .values(["weight", "timestamp"])
+                .values([WEIGHT_KEY, TIMESTAMP_KEY])
                 .count()
                 .next()?
                 .unwrap()
@@ -117,7 +121,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         parallelism,
         |snap, src, _dst| {
             let Value::Int64(ct) =
-                snap.g().V([]).hasId([src]).both([EDGE_LABEL]).values(["name", "age"]).count().next()?.unwrap()
+                snap.g().V([]).hasId([src]).both([EDGE_LABEL]).values([NAME_KEY, AGE_KEY]).count().next()?.unwrap()
             else {
                 unreachable!("unexpected gremlin result type")
             };

@@ -54,7 +54,9 @@ use std::collections::HashMap;
 pub enum Key {
     /// The element's system identifier (vertex `id`, or an edge's composite key).
     Id,
-    /// The element's system label (numeric `label_id`).
+    /// The element's label, decoded to its string name (e.g. `"person"`) via the
+    /// schema registry. Internally stored as a numeric `label_id`, but `.values([Key::Label])`
+    /// / `.has(Key::Label, "person")` always see the decoded string, matching `hasLabel`.
     Label,
     /// A user-defined property name.
     Property(String),

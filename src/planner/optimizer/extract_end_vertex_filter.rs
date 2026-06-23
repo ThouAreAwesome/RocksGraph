@@ -206,7 +206,7 @@ mod tests {
                 steps: vec![
                     LogicalStep::OtherV(OtherVStep {}),
                     LogicalStep::HasId(HasIdStep { ids: smallvec![1] }),
-                    LogicalStep::HasLabel(HasLabelStep { label_ids: smallvec![2] }),
+                    LogicalStep::HasLabel(HasLabelStep { labels: smallvec!["2".into()] }),
                 ],
             },
         })];

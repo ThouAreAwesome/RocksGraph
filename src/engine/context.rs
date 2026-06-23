@@ -100,10 +100,10 @@ pub trait GraphCtx {
         limit: u32,
     ) -> Result<(Vec<EdgeKey>, Option<CanonicalEdgeKey>), StoreError>;
 
-    /// Retrieves a property for a given canonical key (vertex or edge) and property key.
-    fn get_property(&mut self, key: &CanonicalKey, prop: &PropKey) -> Result<Option<Property>, StoreError>;
-    /// Retrieves the primitive value of a property for a given canonical key and property key.
-    fn get_value(&mut self, key: &CanonicalKey, prop: &PropKey) -> Result<Option<Primitive>, StoreError>;
+    /// Retrieves a property for a given canonical key (vertex or edge) and property key ID.
+    fn get_property(&mut self, key: &CanonicalKey, prop_key_id: u16) -> Result<Option<Property>, StoreError>;
+    /// Retrieves the primitive value of a property for a given canonical key and property key ID.
+    fn get_value(&mut self, key: &CanonicalKey, prop_key_id: u16) -> Result<Option<Primitive>, StoreError>;
     /// Insert a vertex.
     fn add_vertex(&mut self, id: VertexKey, label_id: LabelId) -> Result<VertexKey, StoreError>;
     /// Insert an edge.
@@ -174,10 +174,10 @@ impl GraphCtx for NoopCtx {
     ) -> Result<(Vec<EdgeKey>, Option<CanonicalEdgeKey>), StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support scan_edges".to_string()))
     }
-    fn get_property(&mut self, _key: &CanonicalKey, _prop: &PropKey) -> Result<Option<Property>, StoreError> {
+    fn get_property(&mut self, _key: &CanonicalKey, _prop_key_id: u16) -> Result<Option<Property>, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support get_property".to_string()))
     }
-    fn get_value(&mut self, _key: &CanonicalKey, _prop: &PropKey) -> Result<Option<Primitive>, StoreError> {
+    fn get_value(&mut self, _key: &CanonicalKey, _prop_key_id: u16) -> Result<Option<Primitive>, StoreError> {
         Err(StoreError::UnsupportedOperation("NoopCtx does not support get_value".to_string()))
     }
     fn add_vertex(&mut self, _id: VertexKey, _label_id: LabelId) -> Result<VertexKey, StoreError> {
@@ -252,11 +252,11 @@ impl<S: GraphStore> GraphCtx for LogicalGraph<S> {
     ) -> Result<(Vec<EdgeKey>, Option<CanonicalEdgeKey>), StoreError> {
         self.scan_edges(label, start_from, limit)
     }
-    fn get_property(&mut self, key: &CanonicalKey, prop: &PropKey) -> Result<Option<Property>, StoreError> {
-        self.get_property(key, prop)
+    fn get_property(&mut self, key: &CanonicalKey, prop_key_id: u16) -> Result<Option<Property>, StoreError> {
+        self.get_property(key, prop_key_id)
     }
-    fn get_value(&mut self, key: &CanonicalKey, prop: &PropKey) -> Result<Option<Primitive>, StoreError> {
-        self.get_value(key, prop)
+    fn get_value(&mut self, key: &CanonicalKey, prop_key_id: u16) -> Result<Option<Primitive>, StoreError> {
+        self.get_value(key, prop_key_id)
     }
     fn add_vertex(&mut self, id: VertexKey, label_id: LabelId) -> Result<VertexKey, StoreError> {
         self.add_vertex(id, label_id)
@@ -285,9 +285,9 @@ impl<S: GraphStore> GraphCtx for LogicalGraph<S> {
     }
     fn batch_size(&self, scenario: BatchScenario) -> u32 {
         match scenario {
-            BatchScenario::ScanVertices => self.scan_vertices_batch_size,
-            BatchScenario::ScanEdges => self.scan_edges_batch_size,
-            BatchScenario::GetAdjacentEdges => self.get_adjacent_edges_batch_size,
+            BatchScenario::ScanVertices => self.scan_config.scan_vertices_batch_size,
+            BatchScenario::ScanEdges => self.scan_config.scan_edges_batch_size,
+            BatchScenario::GetAdjacentEdges => self.scan_config.get_adjacent_edges_batch_size,
         }
     }
     fn schema(&self) -> Arc<RwLock<Schema>> {
@@ -334,11 +334,11 @@ impl<S: GraphStore> GraphCtx for LogicalSnapshot<S> {
     ) -> Result<(Vec<EdgeKey>, Option<CanonicalEdgeKey>), StoreError> {
         self.scan_edges(label, start_from, limit)
     }
-    fn get_property(&mut self, key: &CanonicalKey, prop: &PropKey) -> Result<Option<Property>, StoreError> {
-        self.get_property(key, prop)
+    fn get_property(&mut self, key: &CanonicalKey, prop_key_id: u16) -> Result<Option<Property>, StoreError> {
+        self.get_property(key, prop_key_id)
     }
-    fn get_value(&mut self, key: &CanonicalKey, prop: &PropKey) -> Result<Option<Primitive>, StoreError> {
-        self.get_value(key, prop)
+    fn get_value(&mut self, key: &CanonicalKey, prop_key_id: u16) -> Result<Option<Primitive>, StoreError> {
+        self.get_value(key, prop_key_id)
     }
     fn add_vertex(&mut self, _id: VertexKey, _label_id: LabelId) -> Result<VertexKey, StoreError> {
         Err(StoreError::ReadOnly)
@@ -367,9 +367,9 @@ impl<S: GraphStore> GraphCtx for LogicalSnapshot<S> {
     }
     fn batch_size(&self, scenario: BatchScenario) -> u32 {
         match scenario {
-            BatchScenario::ScanVertices => self.scan_vertices_batch_size,
-            BatchScenario::ScanEdges => self.scan_edges_batch_size,
-            BatchScenario::GetAdjacentEdges => self.get_adjacent_edges_batch_size,
+            BatchScenario::ScanVertices => self.scan_config.scan_vertices_batch_size,
+            BatchScenario::ScanEdges => self.scan_config.scan_edges_batch_size,
+            BatchScenario::GetAdjacentEdges => self.scan_config.get_adjacent_edges_batch_size,
         }
     }
     fn schema(&self) -> Arc<RwLock<Schema>> {

@@ -51,7 +51,6 @@
 use crate::types::{
     gvalue::Primitive,
     keys::{CanonicalEdgeKey, CanonicalKey, LabelId, Rank, VertexKey},
-    prop_key::{PropKey, ID, LABEL, RANK},
     EdgeKey,
 };
 
@@ -114,40 +113,46 @@ impl Vertex {
         &mut self.props
     }
 
-    /// Returns a [`Property`] wrapper for `key`, or `None` if not present.
+    /// Returns a [`Property`] wrapper for `prop_key_id`, or `None` if not present.
     ///
     /// Decodes the property blob on first call; subsequent calls are O(props) scans.
     /// The reserved keys `"id"` and `"label"` are synthesized without a `props` scan.
     #[inline]
-    pub fn get_property(&mut self, key: &PropKey) -> Option<Property> {
-        self.ensure_decoded();
-        if ID == *key {
-            return Some(Property { owner: CanonicalKey::Vertex(self.id), key: ID, value: Primitive::Int64(self.id) });
-        }
-        if LABEL == *key {
+    pub fn get_property(&mut self, prop_key_id: u16) -> Option<Property> {
+        use crate::types::prop_key::{ID_KEY_ID, LABEL_KEY_ID};
+        if prop_key_id == ID_KEY_ID {
             return Some(Property {
                 owner: CanonicalKey::Vertex(self.id),
-                key: LABEL,
+                key: ID_KEY_ID,
+                value: Primitive::Int64(self.id),
+            });
+        }
+        if prop_key_id == LABEL_KEY_ID {
+            return Some(Property {
+                owner: CanonicalKey::Vertex(self.id),
+                key: LABEL_KEY_ID,
                 value: Primitive::Int32(self.label_id as i32),
             });
         }
-        self.props.iter().find(|p| p.key == *key).cloned()
+        self.ensure_decoded();
+        self.props.iter().find(|p| p.key == prop_key_id).cloned()
     }
 
-    /// Returns the bare [`Primitive`] scalar for `key`, or `None` if not present.
+    /// Returns the bare [`Primitive`] scalar for `prop_key_id`, or `None` if not present.
     ///
     /// Decodes the property blob on first call; cheaper than [`get_property`](Vertex::get_property)
     /// when the `Property` wrapper is not needed downstream.
     #[inline]
-    pub fn get_value(&mut self, key: &PropKey) -> Option<Primitive> {
-        if ID == *key {
+    pub fn get_value(&mut self, prop_key_id: u16) -> Option<Primitive> {
+        use crate::types::prop_key::{ID_KEY_ID, LABEL_KEY_ID};
+        if prop_key_id == ID_KEY_ID {
             return Some(Primitive::Int64(self.id));
         }
-        if LABEL == *key {
+        if prop_key_id == LABEL_KEY_ID {
             return Some(Primitive::Int32(self.label_id as i32));
         }
         self.ensure_decoded();
-        self.props.iter().find(|p| p.key == *key).map(|p| p.value.clone())
+        self.props.iter().find(|p| p.key == prop_key_id).map(|p| p.value.clone())
     }
 }
 
@@ -171,6 +176,7 @@ pub struct Edge {
 
 impl Edge {
     /// Construct an edge with already-decoded properties (mutation / admin path).
+    #[inline]
     pub fn with_props(
         src_id: VertexKey,
         label_id: LabelId,
@@ -184,6 +190,7 @@ impl Edge {
     /// Construct an edge from raw store bytes (lazy-decode path).
     ///
     /// `props` starts empty and is decoded lazily on first property access.
+    #[inline]
     pub fn from_raw(
         src_id: VertexKey,
         label_id: LabelId,
@@ -195,6 +202,7 @@ impl Edge {
         Edge { src_id, label_id, dst_id, raw_props: Some((raw, decoder)), props: Vec::new(), rank }
     }
 
+    #[inline]
     fn ensure_decoded(&mut self) {
         if let Some((raw, decoder)) = self.raw_props.take() {
             let cek =
@@ -246,44 +254,46 @@ impl Edge {
         }
     }
 
-    /// Returns a [`Property`] wrapper for `key`, or `None` if not present.
+    /// Returns a [`Property`] wrapper for `prop_key_id`, or `None` if not present.
     ///
     /// Decodes the property blob on first call. The reserved key `"label"` is
     /// synthesized without a `props` scan.
     #[inline]
-    pub fn get_property(&mut self, key: &PropKey) -> Option<Property> {
-        if LABEL == *key {
+    pub fn get_property(&mut self, prop_key_id: u16) -> Option<Property> {
+        use crate::types::prop_key::{LABEL_KEY_ID, RANK_KEY_ID};
+        if LABEL_KEY_ID == prop_key_id {
             return Some(Property {
                 owner: CanonicalKey::Edge(self.canonical_key()),
-                key: LABEL,
+                key: LABEL_KEY_ID,
                 value: Primitive::Int32(self.label_id as i32),
             });
         }
-        if RANK == *key {
+        if RANK_KEY_ID == prop_key_id {
             return Some(Property {
                 owner: CanonicalKey::Edge(self.canonical_key()),
-                key: RANK,
+                key: RANK_KEY_ID,
                 value: Primitive::Int32(self.rank as i32),
             });
         }
         self.ensure_decoded();
-        self.props.iter().find(|p| p.key == *key).cloned()
+        self.props.iter().find(|p| p.key == prop_key_id).cloned()
     }
 
-    /// Returns the bare [`Primitive`] scalar for `key`, or `None` if not present.
+    /// Returns the bare [`Primitive`] scalar for `prop_key_id`, or `None` if not present.
     ///
     /// Decodes the property blob on first call; cheaper than [`get_property`](Edge::get_property)
     /// when the `Property` wrapper is not needed downstream.
     #[inline]
-    pub fn get_value(&mut self, key: &PropKey) -> Option<Primitive> {
-        if LABEL == *key {
+    pub fn get_value(&mut self, prop_key_id: u16) -> Option<Primitive> {
+        use crate::types::prop_key::{LABEL_KEY_ID, RANK_KEY_ID};
+        if LABEL_KEY_ID == prop_key_id {
             return Some(Primitive::Int32(self.label_id as i32));
         }
-        if RANK == *key {
+        if RANK_KEY_ID == prop_key_id {
             return Some(Primitive::Int32(self.rank as i32));
         }
         self.ensure_decoded();
-        self.props.iter().find(|p| *key == p.key).map(|p| p.value.clone())
+        self.props.iter().find(|p| prop_key_id == p.key).map(|p| p.value.clone())
     }
 }
 
@@ -330,7 +340,7 @@ impl Eq for Edge {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Property {
     pub owner: CanonicalKey,
-    pub key: PropKey,
+    pub key: u16,
     pub value: Primitive,
 }
 

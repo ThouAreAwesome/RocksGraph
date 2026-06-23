@@ -33,14 +33,19 @@ use std::{
 
 const RETRY_DELAY_MS: u64 = 1;
 const MAX_RETRIES: usize = 3;
-const EDGE_LABEL: u16 = 2;
+const VERTEX_LABEL: &str = "Person";
+const EDGE_LABEL: &str = "Knows";
+const NAME_KEY: &str = "name";
+const AGE_KEY: &str = "age";
+const WEIGHT_KEY: &str = "weight";
+const TIMESTAMP_KEY: &str = "timestamp";
 
 fn generate_random_string(len: usize) -> String {
     rand::thread_rng().sample_iter(rand::distributions::Alphanumeric).take(len).map(char::from).collect()
 }
 
 /// Upsert a vertex; returns `Ok(true)` if newly created, `Ok(false)` if it already existed.
-fn upsert_vertex(tx: &mut TxSession, label: u16, vertex_id: i64) -> Result<bool, StoreError> {
+fn upsert_vertex(tx: &mut TxSession, label: &str, vertex_id: i64) -> Result<bool, StoreError> {
     let mut rng = rand::thread_rng();
     let result = tx
         .g()
@@ -50,8 +55,8 @@ fn upsert_vertex(tx: &mut TxSession, label: u16, vertex_id: i64) -> Result<bool,
             __().V([vertex_id]).values([Key::Id]),
             __().addV(label)
                 .property("id", vertex_id)
-                .property("name", generate_random_string(10))
-                .property("age", rng.gen_range::<i64, _>(18..100)),
+                .property(NAME_KEY, generate_random_string(10))
+                .property(AGE_KEY, rng.gen_range::<i64, _>(18..100)),
         ])
         .next()?;
 
@@ -64,7 +69,7 @@ fn upsert_vertex(tx: &mut TxSession, label: u16, vertex_id: i64) -> Result<bool,
 }
 
 /// Upsert an edge from `src` → `dst`; returns `Ok(true)` if newly created.
-fn upsert_edge(tx: &mut TxSession, src: i64, dst: i64, edge_type: u16) -> Result<bool, StoreError> {
+fn upsert_edge(tx: &mut TxSession, src: i64, dst: i64, edge_type: &str) -> Result<bool, StoreError> {
     let mut rng = rand::thread_rng();
     let result = tx
         .g()
@@ -74,8 +79,8 @@ fn upsert_edge(tx: &mut TxSession, src: i64, dst: i64, edge_type: u16) -> Result
             __().addE(edge_type)
                 .from(src)
                 .to(dst)
-                .property("weight", rng.gen_range::<f64, _>(0.1..10.0))
-                .property("timestamp", rng.gen_range::<i64, _>(0..1_000_000)),
+                .property(WEIGHT_KEY, rng.gen_range::<f64, _>(0.1..10.0))
+                .property(TIMESTAMP_KEY, rng.gen_range::<i64, _>(0..1_000_000)),
         ])
         .next()?;
 
@@ -109,6 +114,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(3);
 
     let graph = Graph::open(&data_dir)?;
+
+    // Declare the schema up front. Without this, every worker's first transaction races
+    // to auto-register the same handful of labels/property keys (Auto mode): they all
+    // touch the same schema metadata key, so all but one of those early transactions take
+    // an extra OCC-conflict retry purely from schema bookkeeping, polluting the latency
+    // histogram's first few samples. Idempotent — a no-op on a re-run against an existing
+    // database (see `SchemaManagement::commit`).
+    {
+        use rocksgraph::schema::DataType;
+        let mut mgmt = graph.open_management();
+        mgmt.make_vertex_label(VERTEX_LABEL).make();
+        mgmt.make_edge_label(EDGE_LABEL).make();
+        mgmt.make_property_key(NAME_KEY, DataType::String).make();
+        mgmt.make_property_key(AGE_KEY, DataType::Int64).make();
+        mgmt.make_property_key(WEIGHT_KEY, DataType::Float64).make();
+        mgmt.make_property_key(TIMESTAMP_KEY, DataType::Int64).make();
+        mgmt.commit()?;
+    }
 
     let file = File::open(file_path)?;
     let reader = BufReader::new(file);
@@ -155,8 +178,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     // Each attempt uses a fresh transaction (correct for OCC retries).
                     let mut tx = graph.begin();
 
-                    let staged = upsert_vertex(&mut tx, 1u16, src)
-                        .and_then(|_| upsert_vertex(&mut tx, 1u16, dst))
+                    let staged = upsert_vertex(&mut tx, VERTEX_LABEL, src)
+                        .and_then(|_| upsert_vertex(&mut tx, VERTEX_LABEL, dst))
                         .and_then(|_| upsert_edge(&mut tx, src, dst, EDGE_LABEL));
 
                     match staged {

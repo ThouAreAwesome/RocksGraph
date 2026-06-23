@@ -144,7 +144,7 @@ mod tests {
 
     fn adde() -> LogicalStep {
         LogicalStep::AddE(AddEStep {
-            label_id: 1,
+            label: "1".into(),
             out_v_id: None,
             in_v_id: None,
             properties: HashMap::new(),

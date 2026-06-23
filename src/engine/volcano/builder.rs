@@ -46,9 +46,95 @@ use crate::{
         },
     },
     planner::logical_step::{LogicalPlan, LogicalStep},
-    schema::Schema,
-    types::{error::StoreError, keys::Rank, Direction},
+    schema::{DataType, EdgeMode, Schema, SchemaMode},
+    types::{error::StoreError, keys::Rank, Direction, LabelId},
 };
+use smol_str::SmolStr;
+use std::collections::HashMap;
+
+fn primitive_data_type(val: &crate::types::gvalue::Primitive) -> DataType {
+    use crate::types::gvalue::Primitive;
+    match val {
+        Primitive::Bool(_) => DataType::Bool,
+        Primitive::Int32(_) => DataType::Int32,
+        Primitive::Int64(_) => DataType::Int64,
+        Primitive::Float32(_) => DataType::Float32,
+        Primitive::Float64(_) => DataType::Float64,
+        Primitive::String(_) => DataType::String,
+        Primitive::Uuid(_) => DataType::Uuid,
+        Primitive::Null => DataType::String,
+    }
+}
+
+fn resolve_read_vertex_label(name: &str, schema: &Schema) -> Result<Option<LabelId>, StoreError> {
+    if let Some(id) = schema.vertex_label_id(name) {
+        Ok(Some(id))
+    } else {
+        match schema.mode {
+            SchemaMode::Strict => Err(StoreError::SchemaViolation(format!("Undeclared vertex label: '{}'", name))),
+            SchemaMode::Auto => Ok(None),
+        }
+    }
+}
+
+fn resolve_read_edge_label(name: &str, schema: &Schema) -> Result<Option<LabelId>, StoreError> {
+    if let Some(id) = schema.edge_label_id(name) {
+        Ok(Some(id))
+    } else {
+        match schema.mode {
+            SchemaMode::Strict => Err(StoreError::SchemaViolation(format!("Undeclared edge label: '{}'", name))),
+            SchemaMode::Auto => Ok(None),
+        }
+    }
+}
+
+/// Resolve a vertex label for a write step, taking the `Schema` write lock only on the
+/// (post-warmup, rare) path where the label is genuinely new. The common case — the label
+/// was already registered by an earlier write — is satisfied entirely under a read lock.
+///
+/// This matters under concurrency: every `addV`/`property(...)` previously took the write
+/// lock unconditionally, even when nothing was going to change. With several writer threads
+/// doing that simultaneously, the write-preferring `RwLock` starves readers badly enough to
+/// look like a hang (see the regression test below).
+fn resolve_write_vertex_label(name: &str, schema_lock: &std::sync::RwLock<Schema>) -> Result<LabelId, StoreError> {
+    if let Some(id) = schema_lock.read().unwrap().vertex_label_id(name) {
+        return Ok(id);
+    }
+    schema_lock.write().unwrap().resolve_vertex_label(name)
+}
+
+/// Same rationale as [`resolve_write_vertex_label`], for edge labels.
+fn resolve_write_edge_label(name: &str, schema_lock: &std::sync::RwLock<Schema>) -> Result<LabelId, StoreError> {
+    if let Some(id) = schema_lock.read().unwrap().edge_label_id(name) {
+        return Ok(id);
+    }
+    schema_lock.write().unwrap().resolve_edge_label(name)
+}
+
+/// Same rationale as [`resolve_write_vertex_label`], for property keys. The type-mismatch
+/// check against an already-registered key is itself read-only, so the common case (key
+/// already exists, type matches) never escalates to the write lock at all.
+fn resolve_write_prop_key(
+    name: &str,
+    inferred_type: DataType,
+    schema_lock: &std::sync::RwLock<Schema>,
+) -> Result<u16, StoreError> {
+    {
+        let schema = schema_lock.read().unwrap();
+        if let Some(id) = schema.prop_key_id(name) {
+            if let Some(cfg) = schema.prop_key_types.get(&id) {
+                if cfg.data_type != inferred_type {
+                    return Err(StoreError::SchemaViolation(format!(
+                        "Property key '{}' is already defined with type {:?}, but requested {:?}",
+                        name, cfg.data_type, inferred_type
+                    )));
+                }
+                return Ok(id);
+            }
+        }
+    }
+    schema_lock.write().unwrap().resolve_prop_key(name, inferred_type)
+}
 
 #[derive(Clone)]
 pub struct PhysicalPlan {
@@ -92,7 +178,11 @@ impl PhysicalPlan {
 pub struct PhysicalPlanBuilder;
 
 impl PhysicalPlanBuilder {
-    pub fn build(&mut self, plan: &LogicalPlan, schema: &Schema) -> Result<PhysicalPlan, StoreError> {
+    pub fn build(
+        &mut self,
+        plan: &LogicalPlan,
+        schema_lock: &std::sync::RwLock<Schema>,
+    ) -> Result<PhysicalPlan, StoreError> {
         let source = BufferedStep::new(VecSourceStep::empty());
 
         if plan.steps.is_empty() {
@@ -102,7 +192,7 @@ impl PhysicalPlanBuilder {
 
         let mut upstream: Option<StepRef> = Some(source.clone());
         for step in &plan.steps {
-            upstream = self.build_step(step, upstream, schema)?;
+            upstream = self.build_step(step, upstream, schema_lock)?;
         }
 
         Ok(PhysicalPlan { source, tail: upstream.expect("plan must have at least one step") })
@@ -112,7 +202,7 @@ impl PhysicalPlanBuilder {
         &mut self,
         step: &LogicalStep,
         upstream: Option<StepRef>,
-        schema: &Schema,
+        schema_lock: &std::sync::RwLock<Schema>,
     ) -> Result<Option<StepRef>, StoreError> {
         use crate::engine::volcano::steps;
 
@@ -147,14 +237,14 @@ impl PhysicalPlanBuilder {
         // is confirmed single-edge via `Schema`; otherwise fall back to the scan, which
         // already returns every rank correctly regardless of edge mode.
         macro_rules! get_e_or_scan {
-            ($s:expr, $direction:expr, $rank:expr, $output_edges:expr, $scan:expr, $name:literal) => {{
+            ($s:expr, $label_ids:expr, $direction:expr, $rank:expr, $output_edges:expr, $scan:expr, $name:literal) => {{
                 if let Some(end_ids) = &$s.end_vertex_ids {
-                    let rank_safe =
-                        $rank.is_some() || $s.label_ids.iter().all(|id| !schema.edge_config(*id).multi_edge);
-                    if !$s.label_ids.is_empty() && !end_ids.is_empty() && rank_safe {
+                    let schema_read = schema_lock.read().unwrap();
+                    let rank_safe = $rank.is_some() || schema_read.edge_mode == EdgeMode::Single;
+                    if !$label_ids.is_empty() && !end_ids.is_empty() && rank_safe {
                         return wire_required!(
                             BufferedStep::new(steps::get_e::GetEStep::new(
-                                $s.label_ids.clone(),
+                                $label_ids.clone(),
                                 end_ids.clone(),
                                 $direction,
                                 $rank,
@@ -169,23 +259,28 @@ impl PhysicalPlanBuilder {
             }};
         }
 
+        let schema = schema_lock.read().unwrap();
+
         match step {
-            LogicalStep::Both(s) => get_e_or_scan!(
-                s,
-                None,
-                None::<Rank>,
-                false,
-                steps::both::BothStep::new(s.label_ids.clone(), s.end_vertex_ids.clone(), None::<Rank>, false),
-                "BothStep"
-            ),
-            LogicalStep::BothE(s) => get_e_or_scan!(
-                s,
-                None,
-                s.rank,
-                true,
-                steps::both::BothStep::new(s.label_ids.clone(), s.end_vertex_ids.clone(), s.rank, true),
-                "BothEStep"
-            ),
+            LogicalStep::Both(s) => {
+                let label_ids = s
+                    .labels
+                    .iter()
+                    .map(|l| resolve_read_edge_label(l, &schema).map(|id_opt| id_opt.unwrap_or(u16::MAX)))
+                    .collect::<Result<SmallVec<[LabelId; 4]>, _>>()?;
+                let scan_step =
+                    steps::both::BothStep::new(label_ids.clone(), s.end_vertex_ids.clone(), None::<Rank>, false);
+                get_e_or_scan!(s, label_ids, None, None::<Rank>, false, scan_step, "BothStep")
+            }
+            LogicalStep::BothE(s) => {
+                let label_ids = s
+                    .labels
+                    .iter()
+                    .map(|l| resolve_read_edge_label(l, &schema).map(|id_opt| id_opt.unwrap_or(u16::MAX)))
+                    .collect::<Result<SmallVec<[LabelId; 4]>, _>>()?;
+                let scan_step = steps::both::BothStep::new(label_ids.clone(), s.end_vertex_ids.clone(), s.rank, true);
+                get_e_or_scan!(s, label_ids, None, s.rank, true, scan_step, "BothEStep")
+            }
             LogicalStep::V(s) => {
                 wire!(BufferedStep::new(steps::v::VStep::new(s.ids.clone())), None::<StepRef>)
             }
@@ -196,73 +291,97 @@ impl PhysicalPlanBuilder {
                 wire_required!(BufferedStep::new(steps::count::CountStep::default()), upstream, "CountStep")
             }
             LogicalStep::HasLabel(s) => {
+                let mut vertex_label_ids = SmallVec::new();
+                let mut edge_label_ids = SmallVec::new();
+                for l in &s.labels {
+                    let v_id = resolve_read_vertex_label(l, &schema)?;
+                    vertex_label_ids.push(v_id.unwrap_or(u16::MAX));
+                    let e_id = resolve_read_edge_label(l, &schema)?;
+                    edge_label_ids.push(e_id.unwrap_or(u16::MAX));
+                }
                 wire_required!(
-                    BufferedStep::new(steps::has_label::HasLabelStep::new(s.label_ids.clone())),
+                    BufferedStep::new(steps::has_label::HasLabelStep::new(vertex_label_ids, edge_label_ids)),
                     upstream,
                     "HasLabelStep"
                 )
             }
-            LogicalStep::HasProperty(s) => wire_required!(
-                BufferedStep::new(steps::has_property::HasPropertyStep::new(s.key.clone(), s.value.clone())),
-                upstream,
-                "HasPropertyStep"
-            ),
-            LogicalStep::In(s) => get_e_or_scan!(
-                s,
-                Some(Direction::IN),
-                None::<Rank>,
-                false,
-                steps::in_out::InOutStep::new(
-                    s.label_ids.clone(),
+            LogicalStep::HasProperty(s) => {
+                let prop_key_id = if let Some(id) = schema.prop_key_id(&s.key) {
+                    id
+                } else {
+                    match schema.mode {
+                        SchemaMode::Strict => {
+                            return Err(StoreError::SchemaViolation(format!("Undeclared property key: '{}'", s.key)))
+                        }
+                        SchemaMode::Auto => u16::MAX,
+                    }
+                };
+                wire_required!(
+                    BufferedStep::new(steps::has_property::HasPropertyStep::new(prop_key_id, s.value.clone())),
+                    upstream,
+                    "HasPropertyStep"
+                )
+            }
+            LogicalStep::In(s) => {
+                let label_ids = s
+                    .labels
+                    .iter()
+                    .map(|l| resolve_read_edge_label(l, &schema).map(|id_opt| id_opt.unwrap_or(u16::MAX)))
+                    .collect::<Result<SmallVec<[LabelId; 4]>, _>>()?;
+                let scan_step = steps::in_out::InOutStep::new(
+                    label_ids.clone(),
                     Direction::IN,
                     s.end_vertex_ids.clone(),
                     None::<Rank>,
-                    false
-                ),
-                "InStep"
-            ),
-            LogicalStep::InE(s) => get_e_or_scan!(
-                s,
-                Some(Direction::IN),
-                s.rank,
-                true,
-                steps::in_out::InOutStep::new(
-                    s.label_ids.clone(),
+                    false,
+                );
+                get_e_or_scan!(s, label_ids, Some(Direction::IN), None::<Rank>, false, scan_step, "InStep")
+            }
+            LogicalStep::InE(s) => {
+                let label_ids = s
+                    .labels
+                    .iter()
+                    .map(|l| resolve_read_edge_label(l, &schema).map(|id_opt| id_opt.unwrap_or(u16::MAX)))
+                    .collect::<Result<SmallVec<[LabelId; 4]>, _>>()?;
+                let scan_step = steps::in_out::InOutStep::new(
+                    label_ids.clone(),
                     Direction::IN,
                     s.end_vertex_ids.clone(),
                     s.rank,
-                    true
-                ),
-                "InEStep"
-            ),
-            LogicalStep::Out(s) => get_e_or_scan!(
-                s,
-                Some(Direction::OUT),
-                None::<Rank>,
-                false,
-                steps::in_out::InOutStep::new(
-                    s.label_ids.clone(),
+                    true,
+                );
+                get_e_or_scan!(s, label_ids, Some(Direction::IN), s.rank, true, scan_step, "InEStep")
+            }
+            LogicalStep::Out(s) => {
+                let label_ids = s
+                    .labels
+                    .iter()
+                    .map(|l| resolve_read_edge_label(l, &schema).map(|id_opt| id_opt.unwrap_or(u16::MAX)))
+                    .collect::<Result<SmallVec<[LabelId; 4]>, _>>()?;
+                let scan_step = steps::in_out::InOutStep::new(
+                    label_ids.clone(),
                     Direction::OUT,
                     s.end_vertex_ids.clone(),
                     None::<Rank>,
-                    false
-                ),
-                "OutStep"
-            ),
-            LogicalStep::OutE(s) => get_e_or_scan!(
-                s,
-                Some(Direction::OUT),
-                s.rank,
-                true,
-                steps::in_out::InOutStep::new(
-                    s.label_ids.clone(),
+                    false,
+                );
+                get_e_or_scan!(s, label_ids, Some(Direction::OUT), None::<Rank>, false, scan_step, "OutStep")
+            }
+            LogicalStep::OutE(s) => {
+                let label_ids = s
+                    .labels
+                    .iter()
+                    .map(|l| resolve_read_edge_label(l, &schema).map(|id_opt| id_opt.unwrap_or(u16::MAX)))
+                    .collect::<Result<SmallVec<[LabelId; 4]>, _>>()?;
+                let scan_step = steps::in_out::InOutStep::new(
+                    label_ids.clone(),
                     Direction::OUT,
                     s.end_vertex_ids.clone(),
                     s.rank,
-                    true
-                ),
-                "OutEStep"
-            ),
+                    true,
+                );
+                get_e_or_scan!(s, label_ids, Some(Direction::OUT), s.rank, true, scan_step, "OutEStep")
+            }
             LogicalStep::InV(_) => {
                 wire_required!(
                     BufferedStep::new(steps::in_v_out_v::InVOutVStep::new(Direction::IN)),
@@ -288,15 +407,47 @@ impl PhysicalPlanBuilder {
                 )
             }
             LogicalStep::Values(s) => {
+                let resolved_keys = s
+                    .property_keys
+                    .iter()
+                    .map(|k| {
+                        if let Some(id) = schema.prop_key_id(k) {
+                            Ok((k.clone(), id))
+                        } else {
+                            match schema.mode {
+                                SchemaMode::Strict => {
+                                    Err(StoreError::SchemaViolation(format!("Undeclared property key: '{}'", k)))
+                                }
+                                SchemaMode::Auto => Ok((k.clone(), u16::MAX)),
+                            }
+                        }
+                    })
+                    .collect::<Result<SmallVec<[(SmolStr, u16); 4]>, _>>()?;
                 wire_required!(
-                    BufferedStep::new(steps::values::ValuesStep::new(s.property_keys.clone(), false)),
+                    BufferedStep::new(steps::values::ValuesStep::new(resolved_keys, false)),
                     upstream,
                     "ValuesStep"
                 )
             }
             LogicalStep::Properties(s) => {
+                let resolved_keys = s
+                    .property_keys
+                    .iter()
+                    .map(|k| {
+                        if let Some(id) = schema.prop_key_id(k) {
+                            Ok((k.clone(), id))
+                        } else {
+                            match schema.mode {
+                                SchemaMode::Strict => {
+                                    Err(StoreError::SchemaViolation(format!("Undeclared property key: '{}'", k)))
+                                }
+                                SchemaMode::Auto => Ok((k.clone(), u16::MAX)),
+                            }
+                        }
+                    })
+                    .collect::<Result<SmallVec<[(SmolStr, u16); 4]>, _>>()?;
                 wire_required!(
-                    BufferedStep::new(steps::values::ValuesStep::new(s.property_keys.clone(), true)),
+                    BufferedStep::new(steps::values::ValuesStep::new(resolved_keys, true)),
                     upstream,
                     "ValuesStep"
                 )
@@ -305,7 +456,8 @@ impl PhysicalPlanBuilder {
                 if s.plan.steps.is_empty() {
                     return Err(StoreError::RuntimeError("WhereStep must have a non-empty sub-plan.".to_string()));
                 }
-                let physical_plan = self.build(&s.plan, schema)?;
+                drop(schema);
+                let physical_plan = self.build(&s.plan, schema_lock)?;
                 wire_required!(BufferedStep::new(steps::r#where::WhereStep::new(physical_plan)), upstream, "WhereStep")
             }
             LogicalStep::Union(s) => {
@@ -314,7 +466,8 @@ impl PhysicalPlanBuilder {
                         "UnionStep must have at least one child traversal.".to_string(),
                     ));
                 }
-                let physical_plans = s.plans.iter().map(|p| self.build(p, schema)).collect::<Result<_, _>>()?;
+                drop(schema);
+                let physical_plans = s.plans.iter().map(|p| self.build(p, schema_lock)).collect::<Result<_, _>>()?;
                 wire_required!(BufferedStep::new(steps::union::UnionStep::new(physical_plans)), upstream, "UnionStep")
             }
             LogicalStep::AddV(s) => {
@@ -325,8 +478,16 @@ impl PhysicalPlanBuilder {
                             .to_string(),
                     ));
                 };
+                drop(schema);
+                let label_id = resolve_write_vertex_label(&s.label, schema_lock)?;
+                let mut resolved_props = HashMap::new();
+                for (k, v) in &s.properties {
+                    let inferred_type = primitive_data_type(v);
+                    let id = resolve_write_prop_key(k, inferred_type, schema_lock)?;
+                    resolved_props.insert(id, v.clone());
+                }
                 wire!(
-                    BufferedStep::new(steps::add_v::AddVStep::new(s.label_id, vertex_id, s.properties.clone())),
+                    BufferedStep::new(steps::add_v::AddVStep::new(label_id, vertex_id, resolved_props)),
                     None::<StepRef>
                 )
             }
@@ -345,22 +506,31 @@ impl PhysicalPlanBuilder {
                             .to_string(),
                     ));
                 };
+                drop(schema);
+                let label_id = resolve_write_edge_label(&s.label, schema_lock)?;
+                let mut resolved_props = HashMap::new();
+                for (k, v) in &s.properties {
+                    let inferred_type = primitive_data_type(v);
+                    let id = resolve_write_prop_key(k, inferred_type, schema_lock)?;
+                    resolved_props.insert(id, v.clone());
+                }
                 wire!(
-                    BufferedStep::new(steps::add_e::AddEStep::new(
-                        s.label_id,
-                        out_v_id,
-                        in_v_id,
-                        s.properties.clone(),
-                        s.rank,
-                    )),
+                    BufferedStep::new(
+                        steps::add_e::AddEStep::new(label_id, out_v_id, in_v_id, resolved_props, s.rank,)
+                    ),
                     None::<StepRef>
                 )
             }
-            LogicalStep::Property(s) => wire_required!(
-                BufferedStep::new(steps::property::PropertyStep::new(s.prop_key.clone(), s.prop_value.clone())),
-                upstream,
-                "PropertyStep"
-            ),
+            LogicalStep::Property(s) => {
+                drop(schema);
+                let inferred_type = primitive_data_type(&s.prop_value);
+                let id = resolve_write_prop_key(&s.prop_key, inferred_type, schema_lock)?;
+                wire_required!(
+                    BufferedStep::new(steps::property::PropertyStep::new(id, s.prop_value.clone())),
+                    upstream,
+                    "PropertyStep"
+                )
+            }
             LogicalStep::Limit(s) => {
                 wire_required!(BufferedStep::new(steps::limit::LimitStep::new(s.limit)), upstream, "LimitStep")
             }
@@ -373,7 +543,8 @@ impl PhysicalPlanBuilder {
                         "CoalesceStep must have at least one child traversal.".to_string(),
                     ));
                 }
-                let physical_plans = s.plans.iter().map(|p| self.build(p, schema)).collect::<Result<_, _>>()?;
+                drop(schema);
+                let physical_plans = s.plans.iter().map(|p| self.build(p, schema_lock)).collect::<Result<_, _>>()?;
                 wire_required!(
                     BufferedStep::new(steps::coalesce::CoalesceStep::new(physical_plans)),
                     upstream,
@@ -413,6 +584,7 @@ mod tests {
     use crate::{
         engine::{context::NoopCtx, traverser::Traverser},
         planner::logical_step::{CountStep, LogicalPlan, LogicalStep, ScalarFilterStep, WhereStep},
+        schema::Schema,
         types::gvalue::{GValue, Primitive},
     };
 
@@ -430,7 +602,8 @@ mod tests {
             LogicalPlan { steps: vec![LogicalStep::ScalarFilter(ScalarFilterStep { value: Primitive::Int64(2) })] };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&plan, &crate::schema::Schema::default()).unwrap();
+        let schema_lock = std::sync::RwLock::new(Schema::default());
+        let physical_plan = builder.build(&plan, &schema_lock).unwrap();
 
         physical_plan.inject(smallvec![traverser(1), traverser(2), traverser(3)]);
 
@@ -445,7 +618,8 @@ mod tests {
         let plan = LogicalPlan { steps: vec![LogicalStep::Count(CountStep {})] };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&plan, &crate::schema::Schema::default()).unwrap();
+        let schema_lock = std::sync::RwLock::new(Schema::default());
+        let physical_plan = builder.build(&plan, &schema_lock).unwrap();
 
         physical_plan.inject(smallvec![traverser(1), traverser(2), traverser(3)]);
         let mut ctx = NoopCtx;
@@ -467,7 +641,8 @@ mod tests {
         let plan = LogicalPlan { steps: vec![LogicalStep::Where(WhereStep { plan: sub_plan })] };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let physical_plan = builder.build(&plan, &crate::schema::Schema::default()).unwrap();
+        let schema_lock = std::sync::RwLock::new(Schema::default());
+        let physical_plan = builder.build(&plan, &schema_lock).unwrap();
 
         physical_plan.inject(smallvec![traverser(1), traverser(2), traverser(3)]);
 
@@ -495,7 +670,8 @@ mod tests {
             let mut plan = LogicalPlan { steps };
             apply_rules(&mut plan).expect("Optimizer rules failed");
             let mut builder: PhysicalPlanBuilder = Default::default();
-            let physical_plan = builder.build(&plan, &crate::schema::Schema::default()).unwrap();
+            let schema_lock = std::sync::RwLock::new(Schema::default());
+            let physical_plan = builder.build(&plan, &schema_lock).unwrap();
             let debug_str = format!("{:?}", physical_plan);
 
             let mut last_pos = 0;
@@ -521,7 +697,7 @@ mod tests {
         fn test_print_v_hasid_out_properties() {
             let steps = vec![
                 LogicalStep::V(VStep { ids: smallvec![1] }),
-                LogicalStep::Out(OutStep { label_ids: smallvec![], end_vertex_ids: None }),
+                LogicalStep::Out(OutStep { labels: smallvec![], end_vertex_ids: None }),
                 LogicalStep::Properties(PropertiesStep { property_keys: smallvec![] }),
             ];
             assert_plan_contains_in_order(steps, &["VStep", "InOutStep", "ValuesStep"]);
@@ -531,7 +707,7 @@ mod tests {
         fn test_print_v_hasid_oute_count() {
             let steps = vec![
                 LogicalStep::V(VStep { ids: smallvec![1] }),
-                LogicalStep::OutE(OutEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None }),
+                LogicalStep::OutE(OutEStep { labels: smallvec![], end_vertex_ids: None, rank: None }),
                 LogicalStep::Count(CountStep {}),
             ];
             assert_plan_contains_in_order(steps, &["VStep", "InOutStep", "CountStep"]);
@@ -544,7 +720,7 @@ mod tests {
             };
             let steps = vec![
                 LogicalStep::V(VStep { ids: smallvec![1] }),
-                LogicalStep::OutE(OutEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None }),
+                LogicalStep::OutE(OutEStep { labels: smallvec![], end_vertex_ids: None, rank: None }),
                 LogicalStep::Where(WhereStep { plan: where_plan }),
             ];
             assert_plan_contains_in_order(steps, &["VStep", "InOutStep"]);
@@ -557,7 +733,7 @@ mod tests {
             };
             let steps = vec![
                 LogicalStep::V(VStep { ids: smallvec![1] }),
-                LogicalStep::OutE(OutEStep { label_ids: smallvec![123], end_vertex_ids: None, rank: None }),
+                LogicalStep::OutE(OutEStep { labels: smallvec!["123".into()], end_vertex_ids: None, rank: None }),
                 LogicalStep::Where(WhereStep { plan: where_plan }),
             ];
             assert_plan_contains_in_order(steps, &["VStep", "GetEStep"]);
@@ -570,7 +746,7 @@ mod tests {
             };
             let steps = vec![
                 LogicalStep::V(VStep { ids: smallvec![1] }),
-                LogicalStep::InE(InEStep { label_ids: smallvec![456], end_vertex_ids: None, rank: None }),
+                LogicalStep::InE(InEStep { labels: smallvec!["456".into()], end_vertex_ids: None, rank: None }),
                 LogicalStep::Where(WhereStep { plan: where_plan }),
             ];
             assert_plan_contains_in_order(steps, &["VStep", "GetEStep"]);
@@ -581,7 +757,7 @@ mod tests {
             let steps = vec![
                 LogicalStep::V(VStep { ids: smallvec![] }),
                 LogicalStep::HasProperty(HasPropertyStep { key: ID, value: Primitive::Int64(1) }),
-                LogicalStep::InE(InEStep { label_ids: smallvec![], end_vertex_ids: None, rank: None }),
+                LogicalStep::InE(InEStep { labels: smallvec![], end_vertex_ids: None, rank: None }),
                 LogicalStep::OtherV(OtherVStep {}),
                 LogicalStep::HasId(HasIdStep { ids: smallvec![2] }),
             ];
@@ -591,9 +767,9 @@ mod tests {
         #[test]
         fn test_print_union_and_coalesce() {
             let out_plan =
-                LogicalPlan { steps: vec![LogicalStep::Out(OutStep { label_ids: smallvec![], end_vertex_ids: None })] };
+                LogicalPlan { steps: vec![LogicalStep::Out(OutStep { labels: smallvec![], end_vertex_ids: None })] };
             let in_plan =
-                LogicalPlan { steps: vec![LogicalStep::In(InStep { label_ids: smallvec![], end_vertex_ids: None })] };
+                LogicalPlan { steps: vec![LogicalStep::In(InStep { labels: smallvec![], end_vertex_ids: None })] };
 
             let union_steps = vec![
                 LogicalStep::V(VStep { ids: smallvec![1] }),
