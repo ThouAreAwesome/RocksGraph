@@ -376,3 +376,53 @@ impl<S: GraphStore> GraphCtx for LogicalSnapshot<S> {
         Arc::clone(&self.schema)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::keys::AdjacentEdgesOptions;
+    use crate::types::{element::Property, Direction};
+
+    #[test]
+    fn test_noop_ctx_coverage() {
+        let mut ctx = NoopCtx;
+
+        assert!(ctx.get_vertex(1).is_err());
+        assert!(ctx.get_vertices(&[1]).is_err());
+        assert!(ctx
+            .get_edge(&EdgeKey { primary_id: 1, direction: Direction::OUT, label_id: 2, secondary_id: 3, rank: 0 })
+            .is_err());
+        assert!(ctx.get_edges(&[]).is_err());
+        assert!(ctx
+            .get_adjacent_edges(
+                1,
+                Direction::OUT,
+                AdjacentEdgesOptions { label: None, dst: None, rank: None, start_from: None },
+                None
+            )
+            .is_err());
+        assert!(ctx.scan_vertices(None, None, 10).is_err());
+        assert!(ctx.scan_edges(None, None, 10).is_err());
+
+        let canon = CanonicalKey::Vertex(1);
+        assert!(ctx.get_property(&canon, 10).is_err());
+        assert!(ctx.get_value(&canon, 10).is_err());
+
+        assert!(ctx.add_vertex(1, 2).is_err());
+        assert!(ctx
+            .add_edge(&EdgeKey { primary_id: 1, direction: Direction::OUT, label_id: 2, secondary_id: 3, rank: 0 })
+            .is_err());
+
+        let prop = Property { owner: canon, key: 10, value: Primitive::Int32(42) };
+        assert!(ctx.set_property(&prop).is_err());
+        assert!(ctx.drop_property(&prop).is_err());
+        assert!(ctx.drop_vertex(1).is_err());
+        assert!(ctx
+            .drop_edge(&EdgeKey { primary_id: 1, direction: Direction::OUT, label_id: 2, secondary_id: 3, rank: 0 })
+            .is_err());
+
+        assert!(ctx.get_all_props(&canon).is_err());
+        assert_eq!(ctx.batch_size(BatchScenario::ScanVertices), 1000);
+        let _ = ctx.schema();
+    }
+}

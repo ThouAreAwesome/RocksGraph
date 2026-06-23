@@ -600,3 +600,192 @@ impl TryFrom<Value> for Path {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_key_conversions() {
+        let k1 = Key::from("name");
+        assert_eq!(k1, Key::Property("name".into()));
+
+        let k2 = Key::from("name".to_string());
+        assert_eq!(k2, Key::Property("name".into()));
+
+        let k3 = Key::from(smol_str::SmolStr::new("name"));
+        assert_eq!(k3, Key::Property("name".into()));
+    }
+
+    #[test]
+    fn test_predicate_constructors() {
+        assert_eq!(eq(10i32), Predicate::Eq(Value::Int32(10)));
+        assert_eq!(ne(10i32), Predicate::Ne(Value::Int32(10)));
+        assert_eq!(gt(10i32), Predicate::Gt(Value::Int32(10)));
+        assert_eq!(gte(10i32), Predicate::Gte(Value::Int32(10)));
+        assert_eq!(lt(10i32), Predicate::Lt(Value::Int32(10)));
+        assert_eq!(lte(10i32), Predicate::Lte(Value::Int32(10)));
+        assert_eq!(between(1, 10), Predicate::Between(Value::Int32(1), Value::Int32(10)));
+        assert_eq!(within(vec![1, 2]), Predicate::Within(vec![Value::Int32(1), Value::Int32(2)]));
+        assert_eq!(without(vec![1, 2]), Predicate::Without(vec![Value::Int32(1), Value::Int32(2)]));
+
+        let p: Predicate = 10i32.into();
+        assert_eq!(p, Predicate::Eq(Value::Int32(10)));
+    }
+
+    #[test]
+    fn test_value_from_impls() {
+        assert_eq!(Value::from(true), Value::Bool(true));
+        assert_eq!(Value::from(42i32), Value::Int32(42));
+        assert_eq!(Value::from(42i64), Value::Int64(42));
+        assert_eq!(Value::from(5u16), Value::UInt16(5));
+        assert_eq!(Value::from(1.23f32), Value::Float32(1.23));
+        assert_eq!(Value::from(1.23f64), Value::Float64(1.23));
+        assert_eq!(Value::from("hello"), Value::String("hello".to_string()));
+        assert_eq!(Value::from("hello".to_string()), Value::String("hello".to_string()));
+        assert_eq!(Value::from(123u128), Value::Uuid(123));
+    }
+
+    #[test]
+    fn test_map_operations() {
+        let mut map = Map::new();
+        assert!(map.is_empty());
+        assert_eq!(map.len(), 0);
+
+        map.insert("name", "alice");
+        map.insert("age", 30i32);
+
+        assert!(!map.is_empty());
+        assert_eq!(map.len(), 2);
+
+        assert_eq!(map.get_str("name"), Some(&Value::String("alice".to_string())));
+        assert_eq!(map.get_str("age"), Some(&Value::Int32(30)));
+        assert_eq!(map.get_str("nonexistent"), None);
+
+        assert_eq!(map.get(&Value::String("name".to_string())), Some(&Value::String("alice".to_string())));
+        assert_eq!(map.get(&Value::String("nonexistent".to_string())), None);
+
+        let keys_vals: Vec<_> = map.iter().collect();
+        assert_eq!(keys_vals.len(), 2);
+    }
+
+    #[test]
+    fn test_path_operations() {
+        let mut path = Path::default();
+        assert!(path.is_empty());
+        assert_eq!(path.len(), 0);
+
+        path.objects.push(Value::Int32(42));
+        path.labels.push(vec!["a".to_string()]);
+
+        assert!(!path.is_empty());
+        assert_eq!(path.len(), 1);
+
+        assert_eq!(path.select("a"), Some(&Value::Int32(42)));
+        assert_eq!(path.select("b"), None);
+    }
+
+    #[test]
+    fn test_value_conversion_helpers() {
+        // Bool
+        assert_eq!(Value::Bool(true).as_bool(), Some(true));
+        assert_eq!(Value::Null.as_bool(), None);
+
+        // Int32
+        assert_eq!(Value::Int32(42).as_i32(), Some(42));
+        assert_eq!(Value::Null.as_i32(), None);
+
+        // Int64
+        assert_eq!(Value::Int64(42).as_i64(), Some(42));
+        assert_eq!(Value::Int32(42).as_i64(), Some(42));
+        assert_eq!(Value::Null.as_i64(), None);
+
+        // UInt16
+        assert_eq!(Value::UInt16(5).as_u16(), Some(5));
+        assert_eq!(Value::Null.as_u16(), None);
+
+        // Float32
+        assert_eq!(Value::Float32(1.23).as_f32(), Some(1.23));
+        assert_eq!(Value::Null.as_f32(), None);
+
+        // Float64
+        assert_eq!(Value::Float64(1.23).as_f64(), Some(1.23));
+        assert_eq!(Value::Float32(1.23).as_f64(), Some(1.23f32 as f64));
+        assert_eq!(Value::Null.as_f64(), None);
+
+        // String
+        assert_eq!(Value::String("hello".to_string()).as_str(), Some("hello"));
+        assert_eq!(Value::Null.as_str(), None);
+
+        // Uuid
+        assert_eq!(Value::Uuid(123).as_uuid(), Some(123));
+        assert_eq!(Value::Null.as_uuid(), None);
+
+        // Vertex & Edge
+        let v = Vertex { id: 1, label: "person".into(), properties: HashMap::new() };
+        let ev = Value::Vertex(v.clone());
+        assert_eq!(ev.as_vertex(), Some(&v));
+        assert_eq!(Value::Null.as_vertex(), None);
+
+        let e = Edge { out_v: 1, in_v: 2, label: "knows".into(), rank: 0, properties: HashMap::new() };
+        let ee = Value::Edge(e.clone());
+        assert_eq!(ee.as_edge(), Some(&e));
+        assert_eq!(Value::Null.as_edge(), None);
+    }
+
+    #[test]
+    fn test_value_try_from() {
+        assert!(bool::try_from(Value::Bool(true)).unwrap());
+        assert!(bool::try_from(Value::Null).is_err());
+
+        assert_eq!(i32::try_from(Value::Int32(42)).unwrap(), 42);
+        assert!(i32::try_from(Value::Null).is_err());
+
+        assert_eq!(i64::try_from(Value::Int64(42)).unwrap(), 42);
+        assert_eq!(i64::try_from(Value::Int32(42)).unwrap(), 42);
+        assert!(i64::try_from(Value::Null).is_err());
+
+        assert_eq!(u16::try_from(Value::UInt16(5)).unwrap(), 5);
+        assert!(u16::try_from(Value::Null).is_err());
+
+        assert_eq!(f32::try_from(Value::Float32(1.23)).unwrap(), 1.23);
+        assert!(f32::try_from(Value::Null).is_err());
+
+        assert_eq!(f64::try_from(Value::Float64(1.23)).unwrap(), 1.23);
+        assert_eq!(f64::try_from(Value::Float32(1.23f32)).unwrap(), 1.23f32 as f64);
+        assert!(f64::try_from(Value::Null).is_err());
+
+        assert_eq!(String::try_from(Value::String("hello".to_string())).unwrap(), "hello");
+        assert!(String::try_from(Value::Null).is_err());
+
+        assert_eq!(u128::try_from(Value::Uuid(123)).unwrap(), 123);
+        assert!(u128::try_from(Value::Null).is_err());
+
+        let v = Vertex { id: 1, label: "person".into(), properties: HashMap::new() };
+        assert_eq!(Vertex::try_from(Value::Vertex(v.clone())).unwrap(), v);
+        assert!(Vertex::try_from(Value::Null).is_err());
+
+        let e = Edge { out_v: 1, in_v: 2, label: "knows".into(), rank: 0, properties: HashMap::new() };
+        assert_eq!(Edge::try_from(Value::Edge(e.clone())).unwrap(), e);
+        assert!(Edge::try_from(Value::Null).is_err());
+
+        let p = Property { key: "age".into(), value: Box::new(Value::Int32(30)) };
+        assert_eq!(Property::try_from(Value::Property(p.clone())).unwrap(), p);
+        assert!(Property::try_from(Value::Null).is_err());
+
+        let list = vec![Value::Int32(1), Value::Int32(2)];
+        assert_eq!(Vec::<Value>::try_from(Value::List(list.clone())).unwrap(), list);
+        assert!(Vec::<Value>::try_from(Value::Null).is_err());
+
+        let mut map = Map::new();
+        map.insert("name", "alice");
+        assert_eq!(Map::try_from(Value::Map(map.clone())).unwrap(), map);
+        assert!(Map::try_from(Value::Null).is_err());
+
+        let mut path = Path::default();
+        path.objects.push(Value::Int32(42));
+        path.labels.push(vec!["a".to_string()]);
+        assert_eq!(Path::try_from(Value::Path(path.clone())).unwrap(), path);
+        assert!(Path::try_from(Value::Null).is_err());
+    }
+}

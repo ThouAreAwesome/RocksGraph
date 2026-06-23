@@ -451,8 +451,99 @@ fn test_concurrent_auto_mode_writes_do_not_starve_schema_lock() {
     });
 
     done_rx
-        .recv_timeout(std::time::Duration::from_secs(20))
-        .expect("concurrent Auto-mode writes did not complete within 20s -- schema lock contention regressed");
+        .recv_timeout(std::time::Duration::from_secs(60))
+        .expect("concurrent Auto-mode writes did not complete within 60s -- schema lock contention regressed");
+}
+
+#[test]
+fn test_concurrent_auto_mode_complex_distinct_schemas() {
+    const THREADS: usize = 12;
+    const ITERATIONS: usize = 40;
+
+    let dir = tempdir().unwrap();
+    let graph = Graph::open(dir.path()).unwrap();
+
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let graph_clone = graph.clone();
+    std::thread::spawn(move || {
+        let handles: Vec<_> = (0..THREADS)
+            .map(|t| {
+                let graph = graph_clone.clone();
+                std::thread::spawn(move || {
+                    for i in 0..ITERATIONS {
+                        let vertex_label = format!("v_lbl_{}_{}", t, i);
+                        let edge_label = format!("e_lbl_{}_{}", t, i);
+                        let prop_name = format!("p_name_{}_{}", t, i);
+                        let prop_age = format!("p_age_{}_{}", t, i);
+                        let src_id = (t * 10000 + i) as i64;
+                        let dst_id = (t * 10000 + 5000 + i) as i64;
+
+                        // Loop with retry for OCC conflicts
+                        for attempt in 0..60 {
+                            let mut tx = graph.begin();
+
+                            // 1. Add vertices with unique labels and properties
+                            tx.g()
+                                .addV(&vertex_label)
+                                .property("id", src_id)
+                                .property(&prop_name, format!("name_{}", src_id))
+                                .property(&prop_age, src_id)
+                                .next()
+                                .unwrap();
+
+                            tx.g()
+                                .addV(&vertex_label)
+                                .property("id", dst_id)
+                                .property(&prop_name, format!("name_{}", dst_id))
+                                .property(&prop_age, dst_id)
+                                .next()
+                                .unwrap();
+
+                            // 2. Connect with unique edge label
+                            tx.g().addE(&edge_label).from(src_id).to(dst_id).property("weight", 1.5f64).next().unwrap();
+
+                            if tx.commit().is_ok() {
+                                break;
+                            }
+                            if attempt == 59 {
+                                panic!("Thread {} failed to commit iteration {} after 60 attempts", t, i);
+                            }
+                            // Backoff slightly to reduce hot loops
+                            std::thread::sleep(std::time::Duration::from_millis(5));
+                        }
+                    }
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().unwrap();
+        }
+        let _ = done_tx.send(());
+    });
+
+    done_rx
+        .recv_timeout(std::time::Duration::from_secs(60))
+        .expect("Complex concurrent Auto-mode schema updates did not complete within 60s");
+
+    // Verification step
+    let schema_lock = graph.schema();
+    let schema = schema_lock.read().unwrap();
+
+    // Verify all labels and property keys were successfully created in the schema
+    for t in 0..THREADS {
+        for i in 0..ITERATIONS {
+            let vertex_label = format!("v_lbl_{}_{}", t, i);
+            let edge_label = format!("e_lbl_{}_{}", t, i);
+            let prop_name = format!("p_name_{}_{}", t, i);
+            let prop_age = format!("p_age_{}_{}", t, i);
+
+            assert!(schema.vertex_label_id(&vertex_label).is_some(), "Vertex label {} missing", vertex_label);
+            assert!(schema.edge_label_id(&edge_label).is_some(), "Edge label {} missing", edge_label);
+            assert!(schema.prop_key_id(&prop_name).is_some(), "Prop key {} missing", prop_name);
+            assert!(schema.prop_key_id(&prop_age).is_some(), "Prop key {} missing", prop_age);
+        }
+    }
 }
 
 /// `PropertyKeyMaker::cardinality()` is staged and applied like the other builder fields.

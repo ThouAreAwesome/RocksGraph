@@ -30,7 +30,7 @@ use crate::{
 /// vertex labels, edge labels, and property keys are registered implicitly the first time a
 /// traversal uses them. In [`SchemaMode::Strict`], nothing is registered implicitly — every
 /// name used by a traversal must already have been declared and committed here, or the write
-/// is rejected with [`StoreError::SchemaViolation`](crate::types::StoreError::SchemaViolation).
+/// is rejected with [`StoreError::SchemaViolation`].
 ///
 /// # Example: `Strict` mode requires declaring the schema first
 ///

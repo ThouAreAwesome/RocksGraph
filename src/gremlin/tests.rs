@@ -641,4 +641,569 @@ mod integration_test {
             matches!(res_label, Err(StoreError::SchemaViolation(msg)) if msg.contains("Cannot manually set or update the reserved property 'label'"))
         );
     }
+
+    #[test]
+    fn test_e2e_all_supported_data_types() {
+        use crate::schema::DataType;
+
+        let dir = tempfile::tempdir().unwrap();
+        let graph = Graph::open(dir.path()).unwrap();
+
+        // Register keys for all 8 data types
+        {
+            let mut mgmt = graph.open_management();
+            mgmt.make_vertex_label("AllTypesV").make();
+            mgmt.make_edge_label("AllTypesE").make();
+
+            mgmt.make_property_key("p_bool", DataType::Bool).make();
+            mgmt.make_property_key("p_i32", DataType::Int32).make();
+            mgmt.make_property_key("p_i64", DataType::Int64).make();
+            mgmt.make_property_key("p_f32", DataType::Float32).make();
+            mgmt.make_property_key("p_f64", DataType::Float64).make();
+            mgmt.make_property_key("p_string", DataType::String).make();
+            mgmt.make_property_key("p_uuid", DataType::Uuid).make();
+            mgmt.make_property_key("p_u16", DataType::UInt16).make();
+            mgmt.commit().unwrap();
+        }
+
+        let mut tx = graph.begin();
+        tx.g()
+            .addV("AllTypesV")
+            .property("id", 1i64)
+            .property("p_bool", true)
+            .property("p_i32", 42i32)
+            .property("p_i64", 999999i64)
+            .property("p_f32", 1.25f32)
+            .property("p_f64", 123.456f64)
+            .property("p_string", "rocks_graph_db")
+            .property("p_uuid", 123456789012345678901234567890u128)
+            .property("p_u16", 123u16)
+            .next()
+            .unwrap();
+
+        tx.g().addV("AllTypesV").property("id", 2i64).next().unwrap();
+
+        tx.g()
+            .addE("AllTypesE")
+            .from(1)
+            .to(2)
+            .property("p_bool", false)
+            .property("p_i32", 100i32)
+            .property("p_i64", 888888i64)
+            .property("p_f32", 0.5f32)
+            .property("p_f64", 0.999f64)
+            .property("p_string", "edge_property")
+            .property("p_uuid", 98765432109876543210u128)
+            .property("p_u16", 456u16)
+            .next()
+            .unwrap();
+
+        tx.commit().unwrap();
+
+        // Read and verify Vertex properties
+        let mut read = graph.read();
+        let val_v = read.g().V([1]).next().unwrap().unwrap();
+        if let Value::Vertex(v) = val_v {
+            assert_eq!(v.properties.get("p_bool").unwrap()[0], Value::Bool(true));
+            assert_eq!(v.properties.get("p_i32").unwrap()[0], Value::Int32(42));
+            assert_eq!(v.properties.get("p_i64").unwrap()[0], Value::Int64(999999));
+            assert_eq!(v.properties.get("p_f32").unwrap()[0], Value::Float32(1.25));
+            assert_eq!(v.properties.get("p_f64").unwrap()[0], Value::Float64(123.456));
+            assert_eq!(v.properties.get("p_string").unwrap()[0], Value::String("rocks_graph_db".to_string()));
+            assert_eq!(v.properties.get("p_uuid").unwrap()[0], Value::Uuid(123456789012345678901234567890u128));
+            assert_eq!(v.properties.get("p_u16").unwrap()[0], Value::UInt16(123));
+        } else {
+            panic!("Expected Vertex");
+        }
+
+        // Read and verify Edge properties
+        let val_e = read.g().V([1]).outE(["AllTypesE"]).next().unwrap().unwrap();
+        if let Value::Edge(e) = val_e {
+            assert_eq!(*e.properties.get("p_bool").unwrap(), Value::Bool(false));
+            assert_eq!(*e.properties.get("p_i32").unwrap(), Value::Int32(100));
+            assert_eq!(*e.properties.get("p_i64").unwrap(), Value::Int64(888888));
+            assert_eq!(*e.properties.get("p_f32").unwrap(), Value::Float32(0.5));
+            assert_eq!(*e.properties.get("p_f64").unwrap(), Value::Float64(0.999));
+            assert_eq!(*e.properties.get("p_string").unwrap(), Value::String("edge_property".to_string()));
+            assert_eq!(*e.properties.get("p_uuid").unwrap(), Value::Uuid(98765432109876543210u128));
+            assert_eq!(*e.properties.get("p_u16").unwrap(), Value::UInt16(456));
+        } else {
+            panic!("Expected Edge");
+        }
+    }
+
+    #[test]
+    fn test_supported_steps_combinations() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+
+        // 1. V + out + values
+        let name_list = tx.g().V([1]).out(["knows"]).values(["name"]).to_list().unwrap();
+        assert_eq!(name_list.len(), 2);
+
+        // 2. V + r#in + count
+        let in_count = tx.g().V([3]).r#in(["created"]).count().next().unwrap().unwrap();
+        assert_eq!(in_count, Value::Int64(3));
+
+        // 3. V + both + dedup
+        let both_dedup = tx.g().V([4]).both(["knows", "created"]).dedup().count().next().unwrap().unwrap();
+        assert_eq!(both_dedup, Value::Int64(3));
+
+        // 4. V + outE + inV
+        let in_v_count = tx.g().V([1]).outE(["knows"]).inV().count().next().unwrap().unwrap();
+        assert_eq!(in_v_count, Value::Int64(2));
+
+        // 5. V + inE + outV
+        let out_v_count = tx.g().V([3]).inE(["created"]).outV().count().next().unwrap().unwrap();
+        assert_eq!(out_v_count, Value::Int64(3));
+
+        // 6. V + bothE + otherV + path
+        let path_res = tx.g().V([1]).bothE(["knows"]).otherV().path().to_list().unwrap();
+        assert_eq!(path_res.len(), 2);
+
+        // 7. E + inV
+        let e_in_v = tx.g().E([]).inV().count().next().unwrap().unwrap();
+        assert_eq!(e_in_v, Value::Int64(6));
+
+        // 8. E + outV
+        let e_out_v = tx.g().E([]).outV().count().next().unwrap().unwrap();
+        assert_eq!(e_out_v, Value::Int64(6));
+
+        // 9. V + hasLabel + hasId + limit
+        let res_limit = tx.g().V([]).hasLabel(["person"]).hasId([1, 2, 3, 4]).limit(2).to_list().unwrap();
+        assert_eq!(res_limit.len(), 2);
+
+        // 10. V + values + is + fold
+        let is_fold = tx.g().V([]).values(["age"]).is(29i32).fold().next().unwrap().unwrap();
+        if let Value::List(l) = is_fold {
+            assert_eq!(l.len(), 1); // marko (29)
+        } else {
+            panic!("Expected list");
+        }
+
+        // 11. V + coalesce + union
+        let cu_res = tx
+            .g()
+            .V([1])
+            .coalesce([__().out(["knows"]), __().out(["created"])])
+            .union([__().values(["name"]), __().values(["age"])])
+            .to_list()
+            .unwrap();
+        assert_eq!(cu_res.len(), 4);
+
+        // 12. V + out + r#where + path
+        let where_path = tx.g().V([1]).out(["knows"]).r#where(__().has("age", 32i32)).path().to_list().unwrap();
+        assert_eq!(where_path.len(), 1); // only josh (32)
+
+        // 13. addV + property + drop
+        let mut tx_w = graph.begin();
+        tx_w.g().addV("person").property("id", 100i64).property("name", "temp_user").next().unwrap();
+        let exists = tx_w.g().V([100]).next().unwrap().is_some();
+        assert!(exists);
+        tx_w.g().V([100]).drop().next().unwrap();
+        let deleted = tx_w.g().V([100]).next().unwrap().is_none();
+        assert!(deleted);
+
+        // 14. addE + from + to + property (4 steps combined in one write query)
+        tx_w.g().addV("person").property("id", 101i64).next().unwrap();
+        tx_w.g().addV("person").property("id", 102i64).next().unwrap();
+        tx_w.g().addE("knows").from(101).to(102).property("weight", 9.9f64).next().unwrap();
+        let new_edge_weight =
+            tx_w.g().V([101]).outE(["knows"]).r#where(__().otherV().hasId([102])).values(["weight"]).next().unwrap();
+        assert_eq!(new_edge_weight, Some(Value::Float64(9.9)));
+        tx_w.commit().unwrap();
+
+        // 15. V + properties + count — the dedicated Property-element step, distinct from values()
+        let prop_count = tx.g().V([1]).properties(["name", "age"]).count().next().unwrap().unwrap();
+        assert_eq!(prop_count, Value::Int64(2));
+    }
+
+    #[test]
+    fn test_invalid_and_overflow_values() {
+        use crate::schema::DataType;
+
+        let dir = tempfile::tempdir().unwrap();
+        let graph = Graph::open(dir.path()).unwrap();
+
+        // Setup schema with explicit types
+        {
+            let mut mgmt = graph.open_management();
+            mgmt.make_vertex_label("person").make();
+            mgmt.make_property_key("p_i32", DataType::Int32).make();
+            mgmt.make_property_key("p_i64", DataType::Int64).make();
+            mgmt.make_property_key("p_f32", DataType::Float32).make();
+            mgmt.make_property_key("p_bool", DataType::Bool).make();
+            mgmt.make_property_key("p_uuid", DataType::Uuid).make();
+            mgmt.make_property_key("p_string", DataType::String).make();
+            mgmt.commit().unwrap();
+        }
+
+        let mut tx = graph.begin();
+        tx.g().addV("person").property("id", 1i64).next().unwrap();
+
+        // 1. Assigning i64 (which is distinct from Int32 key) -> SchemaViolation
+        let res_1 = tx.g().V([1]).property("p_i32", 1234567890123i64).next();
+        assert!(matches!(res_1, Err(StoreError::SchemaViolation(_))));
+
+        // 1b. Assigning i32 to an explicitly Int64-declared key -> SchemaViolation. Int64 was
+        // the one DataType variant never exercised as the *protected* declared type anywhere
+        // in this file or schema/tests.rs (only ever appearing as the *violating* value).
+        let res_1b = tx.g().V([1]).property("p_i64", 42i32).next();
+        assert!(matches!(res_1b, Err(StoreError::SchemaViolation(_))));
+
+        // 2. Assigning f64 to Float32 key -> SchemaViolation
+        let res_2 = tx.g().V([1]).property("p_f32", 12345.6789f64).next();
+        assert!(matches!(res_2, Err(StoreError::SchemaViolation(_))));
+
+        // 3. Assigning String to Bool key -> SchemaViolation
+        let res_3 = tx.g().V([1]).property("p_bool", "true").next();
+        assert!(matches!(res_3, Err(StoreError::SchemaViolation(_))));
+
+        // 4. Assigning String to Uuid key -> SchemaViolation
+        let res_4 = tx.g().V([1]).property("p_uuid", "uuid-string").next();
+        assert!(matches!(res_4, Err(StoreError::SchemaViolation(_))));
+
+        // 4b. Assigning Int32 to an explicitly String-declared key -> SchemaViolation
+        let res_4b = tx.g().V([1]).property("p_string", 5i32).next();
+        assert!(matches!(res_4b, Err(StoreError::SchemaViolation(_))));
+
+        // 5. Invalid rank values on addE
+        tx.g().addV("person").property("id", 2i64).next().unwrap();
+        // Negative rank value (represented as negative integer) -> UnexpectedDataType
+        let res_rank_neg = tx.g().addE("knows").from(1).to(2).property("rank", -1i32).next();
+        assert!(
+            matches!(res_rank_neg, Err(StoreError::UnexpectedDataType(msg)) if msg.contains("rank must be between 0 and 65535"))
+        );
+
+        // Large rank value (exceeds u16::MAX) -> UnexpectedDataType
+        let res_rank_large = tx.g().addE("knows").from(1).to(2).property("rank", 70000i64).next();
+        assert!(
+            matches!(res_rank_large, Err(StoreError::UnexpectedDataType(msg)) if msg.contains("rank must be between 0 and 65535"))
+        );
+    }
+
+    #[test]
+    fn test_filters_across_all_data_types() {
+        use crate::{gremlin::value::eq, schema::DataType};
+
+        let dir = tempfile::tempdir().unwrap();
+        let graph = Graph::open(dir.path()).unwrap();
+
+        // 1. Declare properties of all types
+        {
+            let mut mgmt = graph.open_management();
+            mgmt.make_vertex_label("Item").make();
+            mgmt.make_property_key("p_bool", DataType::Bool).make();
+            mgmt.make_property_key("p_i32", DataType::Int32).make();
+            mgmt.make_property_key("p_i64", DataType::Int64).make();
+            mgmt.make_property_key("p_f32", DataType::Float32).make();
+            mgmt.make_property_key("p_f64", DataType::Float64).make();
+            mgmt.make_property_key("p_string", DataType::String).make();
+            mgmt.make_property_key("p_uuid", DataType::Uuid).make();
+            mgmt.make_property_key("p_u16", DataType::UInt16).make();
+            mgmt.commit().unwrap();
+        }
+
+        let mut tx = graph.begin();
+        tx.g()
+            .addV("Item")
+            .property("id", 1i64)
+            .property("p_bool", true)
+            .property("p_i32", 10i32)
+            .property("p_i64", 1000i64)
+            .property("p_f32", 1.5f32)
+            .property("p_f64", 10.5f64)
+            .property("p_string", "target_string")
+            .property("p_uuid", 111111u128)
+            .property("p_u16", 20u16)
+            .next()
+            .unwrap();
+
+        tx.g()
+            .addV("Item")
+            .property("id", 2i64)
+            .property("p_bool", false)
+            .property("p_i32", 20i32)
+            .property("p_i64", 2000i64)
+            .property("p_f32", 2.5f32)
+            .property("p_f64", 20.5f64)
+            .property("p_string", "other_string")
+            .property("p_uuid", 222222u128)
+            .property("p_u16", 40u16)
+            .next()
+            .unwrap();
+
+        tx.commit().unwrap();
+
+        let mut read = graph.read();
+
+        // Bool filters
+        let b1 = read.g().V([]).has("p_bool", true).count().next().unwrap().unwrap();
+        assert_eq!(b1, Value::Int64(1));
+        let b2 = read.g().V([]).has("p_bool", eq(false)).count().next().unwrap().unwrap();
+        assert_eq!(b2, Value::Int64(1));
+
+        // Int32 filters
+        let i32_1 = read.g().V([]).has("p_i32", 10i32).count().next().unwrap().unwrap();
+        assert_eq!(i32_1, Value::Int64(1));
+        let i32_2 = read.g().V([]).has("p_i32", eq(20i32)).count().next().unwrap().unwrap();
+        assert_eq!(i32_2, Value::Int64(1));
+
+        // Int64 filters
+        let i64_1 = read.g().V([]).has("p_i64", 1000i64).count().next().unwrap().unwrap();
+        assert_eq!(i64_1, Value::Int64(1));
+        let i64_2 = read.g().V([]).has("p_i64", eq(2000i64)).count().next().unwrap().unwrap();
+        assert_eq!(i64_2, Value::Int64(1));
+
+        // Float32 filters
+        let f32_1 = read.g().V([]).has("p_f32", 1.5f32).count().next().unwrap().unwrap();
+        assert_eq!(f32_1, Value::Int64(1));
+
+        // Float64 filters
+        let f64_1 = read.g().V([]).has("p_f64", 10.5f64).count().next().unwrap().unwrap();
+        assert_eq!(f64_1, Value::Int64(1));
+
+        // String filters
+        let s1 = read.g().V([]).has("p_string", "target_string").count().next().unwrap().unwrap();
+        assert_eq!(s1, Value::Int64(1));
+        let s2 = read.g().V([]).has("p_string", eq("other_string".to_string())).count().next().unwrap().unwrap();
+        assert_eq!(s2, Value::Int64(1));
+
+        // Uuid filters
+        let u1 = read.g().V([]).has("p_uuid", 111111u128).count().next().unwrap().unwrap();
+        assert_eq!(u1, Value::Int64(1));
+        let u2 = read.g().V([]).has("p_uuid", eq(222222u128)).count().next().unwrap().unwrap();
+        assert_eq!(u2, Value::Int64(1));
+
+        // UInt16 filters
+        let u16_1 = read.g().V([]).has("p_u16", 20u16).count().next().unwrap().unwrap();
+        assert_eq!(u16_1, Value::Int64(1));
+
+        // Within — supported for Key::Id and Key::Label specifically (see `push_has_step`'s
+        // dedicated branches), unlike plain property keys which only support Eq today. Never
+        // exercised via the `within()` constructor elsewhere in this file — only its de-facto
+        // equivalent `hasId([...])`/`hasLabel([...])`.
+        use crate::gremlin::value::within;
+        let id_within = read.g().V([]).has(Key::Id, within([1i64, 2i64])).count().next().unwrap().unwrap();
+        assert_eq!(id_within, Value::Int64(2));
+
+        let label_within = read.g().V([]).has(Key::Label, within(["Item"])).count().next().unwrap().unwrap();
+        assert_eq!(label_within, Value::Int64(2));
+
+        // Without is a different story: `push_has_step` has no `Predicate::Without` arm for
+        // either Key::Id or Key::Label (only Eq/Within), so it falls through to the generic
+        // "unsupported predicate" rejection — confirm that's a clean, detected error rather
+        // than a silent no-op or a panic.
+        use crate::gremlin::value::without;
+        let id_without_res = read.g().V([]).has(Key::Id, without([1i64])).next();
+        assert!(matches!(id_without_res, Err(StoreError::UnsupportedOperation(_))));
+
+        let label_without_res = read.g().V([]).has(Key::Label, without(["Item"])).next();
+        assert!(matches!(label_without_res, Err(StoreError::UnsupportedOperation(_))));
+    }
+
+    #[test]
+    fn test_edge_modes_and_rank_validation() {
+        // --- Single-edge Mode ---
+        {
+            let dir = tempfile::tempdir().unwrap();
+            let graph = Graph::open(dir.path()).unwrap();
+            {
+                let schema_arc = graph.schema();
+                let mut schema = schema_arc.write().unwrap();
+                schema.register_vertex_label("person").unwrap();
+                schema.register_edge_label("knows").unwrap();
+            }
+
+            let mut tx = graph.begin();
+            tx.g().addV("person").property("id", 1i64).next().unwrap();
+            tx.g().addV("person").property("id", 2i64).next().unwrap();
+
+            // 1. Add edge
+            tx.g().addE("knows").from(1).to(2).next().unwrap();
+
+            // 2. Duplicate edge should fail
+            let res_dup = tx.g().addE("knows").from(1).to(2).next();
+            assert!(matches!(res_dup, Err(StoreError::DuplicateEdge(_))));
+
+            // 3. Setting non-zero rank on single-edge mode should fail
+            let res_rank = tx.g().addE("knows").from(1).to(2).property("rank", 5u16).next();
+            assert!(matches!(res_rank, Err(StoreError::UnsupportedOperation(_))));
+
+            // 4. A different edge LABEL between the same (src, dst) pair is NOT a duplicate —
+            // single-edge mode restricts at most one edge per (src, label, dst), not per
+            // (src, dst) overall.
+            tx.g().addE("likes").from(1).to(2).next().unwrap();
+            let both_edges = tx.g().V([1]).outE(["knows", "likes"]).count().next().unwrap().unwrap();
+            assert_eq!(both_edges, Value::Int64(2));
+        }
+
+        // --- Multi-edge Mode ---
+        {
+            let dir = tempfile::tempdir().unwrap();
+            let options = crate::schema::GraphOptions {
+                mode: crate::schema::SchemaMode::Auto,
+                edge_mode: crate::schema::EdgeMode::Multi,
+            };
+            let graph = Graph::open_with_options(dir.path(), options).unwrap();
+
+            let mut tx = graph.begin();
+            tx.g().addV("person").property("id", 1i64).next().unwrap();
+            tx.g().addV("person").property("id", 2i64).next().unwrap();
+
+            // 1. Add edge rank 0
+            tx.g().addE("knows").from(1).to(2).property("rank", 0i32).next().unwrap();
+
+            // 2. Duplicate rank 0 edge should fail
+            let res_dup = tx.g().addE("knows").from(1).to(2).property("rank", 0i32).next();
+            assert!(matches!(res_dup, Err(StoreError::DuplicateEdge(_))));
+
+            // 3. Add edge rank 5 (which should succeed)
+            tx.g().addE("knows").from(1).to(2).property("rank", 5i32).next().unwrap();
+
+            tx.commit().unwrap();
+
+            // 4. Query both ranks
+            let mut read = graph.read();
+            let ranks = read.g().V([1]).outE(["knows"]).values(["rank"]).to_list().unwrap();
+            assert_eq!(ranks.len(), 2);
+            assert!(ranks.contains(&Value::UInt16(0)));
+            assert!(ranks.contains(&Value::UInt16(5)));
+
+            // 5. Regression test for the *unmerged* `.has("rank", N)` path. Every rank filter
+            // above (and every one in multi_edge_tests.rs) immediately follows `.outE(...)`,
+            // which `merge_end_vertex_filter` folds into a dedicated physical step — it never
+            // reaches `HasPropertyStep`. Wrapping the same `outE` in a `union()` hides it from
+            // that optimizer rule (sub-plans inside union()/coalesce() are opaque to it, since
+            // the rule only looks at directly-adjacent top-level steps), forcing the filter to
+            // fall through to the generic, unmerged `HasPropertyStep` — which must still
+            // compare correctly against the `UInt16` runtime rank value (see
+            // `HasPropertyStep::new`'s rank normalization).
+            let unmerged_match =
+                read.g().V([1]).union([__().outE(["knows"])]).has("rank", 5i32).count().next().unwrap().unwrap();
+            assert_eq!(unmerged_match, Value::Int64(1));
+
+            let unmerged_no_match =
+                read.g().V([1]).union([__().outE(["knows"])]).has("rank", 99i32).count().next().unwrap().unwrap();
+            assert_eq!(unmerged_no_match, Value::Int64(0));
+        }
+    }
+
+    #[test]
+    fn test_auto_schema_conflict_detection() {
+        let dir = tempfile::tempdir().unwrap();
+        let graph = Graph::open(dir.path()).unwrap();
+
+        // 1. String vs Int32
+        {
+            let mut tx = graph.begin();
+            tx.g().addV("person").property("id", 1i64).property("p_conflict_1", "string_val").next().unwrap();
+            tx.commit().unwrap();
+
+            let mut tx2 = graph.begin();
+            let res = tx2.g().addV("person").property("id", 2i64).property("p_conflict_1", 123i32).next();
+            assert!(
+                matches!(res, Err(StoreError::SchemaViolation(msg)) if msg.contains("already defined with type String, but requested Int32"))
+            );
+        }
+
+        // 2. Bool vs Float64
+        {
+            let mut tx = graph.begin();
+            tx.g().addV("person").property("id", 3i64).property("p_conflict_2", true).next().unwrap();
+            tx.commit().unwrap();
+
+            let mut tx2 = graph.begin();
+            let res = tx2.g().addV("person").property("id", 4i64).property("p_conflict_2", 12.34f64).next();
+            assert!(
+                matches!(res, Err(StoreError::SchemaViolation(msg)) if msg.contains("already defined with type Bool, but requested Float64"))
+            );
+        }
+
+        // 3. Uuid vs String
+        {
+            let mut tx = graph.begin();
+            tx.g().addV("person").property("id", 5i64).property("p_conflict_3", 1234567890u128).next().unwrap();
+            tx.commit().unwrap();
+
+            let mut tx2 = graph.begin();
+            let res = tx2.g().addV("person").property("id", 6i64).property("p_conflict_3", "illegal").next();
+            assert!(
+                matches!(res, Err(StoreError::SchemaViolation(msg)) if msg.contains("already defined with type Uuid, but requested String"))
+            );
+        }
+
+        // 4. UInt16 vs Int32
+        {
+            let mut tx = graph.begin();
+            tx.g().addV("person").property("id", 7i64).property("p_conflict_4", 5u16).next().unwrap();
+            tx.commit().unwrap();
+
+            let mut tx2 = graph.begin();
+            let res = tx2.g().addV("person").property("id", 8i64).property("p_conflict_4", 10i32).next();
+            assert!(
+                matches!(res, Err(StoreError::SchemaViolation(msg)) if msg.contains("already defined with type UInt16, but requested Int32"))
+            );
+        }
+
+        // 5. Float32 vs Float64
+        {
+            let mut tx = graph.begin();
+            tx.g().addV("person").property("id", 9i64).property("p_conflict_5", 1.0f32).next().unwrap();
+            tx.commit().unwrap();
+
+            let mut tx2 = graph.begin();
+            let res = tx2.g().addV("person").property("id", 10i64).property("p_conflict_5", 2.0f64).next();
+            assert!(
+                matches!(res, Err(StoreError::SchemaViolation(msg)) if msg.contains("already defined with type Float32, but requested Float64"))
+            );
+        }
+
+        // 6. Int64 vs Bool — the one DataType variant never exercised as the auto-inferred
+        // protected type anywhere above (only ever appearing as the conflicting/violating value).
+        {
+            let mut tx = graph.begin();
+            tx.g().addV("person").property("id", 11i64).property("p_conflict_6", 1_000_000i64).next().unwrap();
+            tx.commit().unwrap();
+
+            let mut tx2 = graph.begin();
+            let res = tx2.g().addV("person").property("id", 12i64).property("p_conflict_6", false).next();
+            assert!(
+                matches!(res, Err(StoreError::SchemaViolation(msg)) if msg.contains("already defined with type Int64, but requested Bool"))
+            );
+        }
+
+        // 7. Cross-element-kind conflict: property keys are a single global namespace shared
+        // by vertices and edges (not partitioned by element kind), so a key first inferred as
+        // Int32 on a VERTEX must also reject a conflicting type written on an EDGE.
+        {
+            let mut tx = graph.begin();
+            tx.g().addV("person").property("id", 13i64).property("p_conflict_cross", 1i32).next().unwrap();
+            tx.g().addV("person").property("id", 14i64).next().unwrap();
+            tx.commit().unwrap();
+
+            let mut tx2 = graph.begin();
+            let res = tx2.g().addE("knows_cross").from(13).to(14).property("p_conflict_cross", "edge_value").next();
+            assert!(
+                matches!(res, Err(StoreError::SchemaViolation(msg)) if msg.contains("already defined with type Int32, but requested String"))
+            );
+        }
+
+        // 8. Control case: vertex labels and edge labels are *independent* namespaces (see
+        // `Schema::vertex_labels`/`edge_labels`), so reusing the same name for both must NOT
+        // be reported as a conflict — confirms the conflict detection above doesn't false-positive.
+        {
+            let mut tx = graph.begin();
+            tx.g().addV("dup_name").property("id", 15i64).next().unwrap();
+            tx.g().addV("dup_name").property("id", 16i64).next().unwrap();
+            tx.g().addE("dup_name").from(15).to(16).next().unwrap();
+            tx.commit().unwrap();
+
+            let mut read = graph.read();
+            let v_count = read.g().V([]).hasLabel(["dup_name"]).count().next().unwrap().unwrap();
+            assert_eq!(v_count, Value::Int64(2));
+            let e_count = read.g().V([15]).outE(["dup_name"]).count().next().unwrap().unwrap();
+            assert_eq!(e_count, Value::Int64(1));
+        }
+    }
 }

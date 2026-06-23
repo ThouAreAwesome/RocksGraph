@@ -6,7 +6,21 @@
       "Bash(find / -maxdepth 6 -iname \"smol_str-*\" -type d)",
       "Bash(cargo tree *)",
       "Bash(sed -i '' -e 's/`label: Option<String>` in `Value::Vertex`/`label: Option<SmolStr>` in `Value::Vertex`/' -e 's/Change `Value::Vertex.label` to `Option<String>`/Change `Value::Vertex.label` to `Option<SmolStr>`/' -e 's/`Vertex.label: Option<String>`/`Vertex.label: Option<SmolStr>`/' docs/design_with_properties.md)",
-      "Bash(sed -i '' 's/to `Option<String>`/to `Option<SmolStr>`/' docs/design_vertex_label.md)"
+      "Bash(sed -i '' 's/to `Option<String>`/to `Option<SmolStr>`/' docs/design_vertex_label.md)",
+      "Bash(cargo --list)",
+      "Bash(rustup component *)",
+      "Bash(cargo install *)",
+      "Bash(cargo llvm-cov *)",
+      "Bash(just coverage *)",
+      "Bash(chmod +x /Users/austinhan/Workplace/RocksGraph/scripts/coverage.sh)",
+      "Bash(./scripts/coverage.sh --summary)",
+      "Skill(code-review)",
+      "Skill(code-review:*)",
+      "Bash(find /Users/austinhan/Workplace/RocksGraph -iname 'CLAUDE*.md' 2>/dev/null; echo \"---HOME---\"; find ~/.claude -iname 'CLAUDE*.md' 2>/dev/null)",
+      "Read(//Users/austinhan/.claude/**)",
+      "Bash(xxd)",
+      "Bash(echo \"exit code: $?\")",
+      "Bash(echo \"exit: $?\")"
     ],
     "additionalDirectories": [
       "/Users/austinhan/Workplace/RocksGraph/src/schema"

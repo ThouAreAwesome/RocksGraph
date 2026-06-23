@@ -52,3 +52,11 @@ alias fw := full-write
 # Run tests
 test:
     cargo test
+
+# Run tests and open an HTML code coverage report in the browser
+coverage:
+    cargo llvm-cov --open
+
+# Run tests and print a code coverage summary to the terminal
+coverage-summary:
+    cargo llvm-cov

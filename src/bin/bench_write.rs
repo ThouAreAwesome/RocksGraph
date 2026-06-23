@@ -33,6 +33,13 @@ use std::{
 
 const RETRY_DELAY_MS: u64 = 1;
 const MAX_RETRIES: usize = 3;
+/// Hotspot mode deliberately maximizes contention (a handful of keys hammered by every
+/// thread), so it needs a much larger retry budget and a jittered delay instead of disjoint
+/// mode's flat 1ms: with a flat delay, threads that lose a commit race tend to retry in
+/// lockstep and re-collide. Without both of these, ops get dropped outright rather than just
+/// slowed down, which defeats the point of measuring latency/throughput under contention.
+const HOTSPOT_MAX_RETRIES: usize = 50;
+const HOTSPOT_RETRY_DELAY_MS_RANGE: std::ops::RangeInclusive<u64> = 1..=10;
 const VERTEX_LABEL: &str = "Person";
 const EDGE_LABEL: &str = "Knows";
 const NAME_KEY: &str = "name";
@@ -85,7 +92,7 @@ fn upsert_edge(tx: &mut TxSession, src: i64, dst: i64, edge_type: &str) -> Resul
         .next()?;
 
     match result {
-        Some(Value::Int32(_)) => Ok(false),
+        Some(Value::String(_)) => Ok(false),
         Some(Value::Edge(_)) => Ok(true),
         Some(_) => unreachable!("unexpected gremlin result type"),
         None => unreachable!("unexpected gremlin result type"),
@@ -94,17 +101,18 @@ fn upsert_edge(tx: &mut TxSession, src: i64, dst: i64, edge_type: &str) -> Resul
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
+    run_with_args(args)
+}
+
+fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     let data_dir = args
         .iter()
         .position(|arg| arg == "--data-dir")
         .and_then(|pos| args.get(pos + 1).map(PathBuf::from))
         .expect("Please provide a --data-dir fold path for the benchmark");
 
-    let file_path = args
-        .iter()
-        .position(|arg| arg == "--file-path")
-        .and_then(|pos| args.get(pos + 1).map(PathBuf::from))
-        .expect("Please provide a --file-path input graph path for the benchmark");
+    let file_path =
+        args.iter().position(|arg| arg == "--file-path").and_then(|pos| args.get(pos + 1).map(PathBuf::from));
 
     let parallelism = args
         .iter()
@@ -113,14 +121,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(3);
 
+    let mode = args
+        .iter()
+        .position(|arg| arg == "--mode")
+        .and_then(|pos| args.get(pos + 1).map(|s| s.to_string()))
+        .unwrap_or_else(|| "disjoint".to_string());
+
+    let hotspot_keys = args
+        .iter()
+        .position(|arg| arg == "--hotspot-keys")
+        .and_then(|pos| args.get(pos + 1))
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(10);
+
+    let iterations = args
+        .iter()
+        .position(|arg| arg == "--iterations")
+        .and_then(|pos| args.get(pos + 1))
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(1000);
+
+    let is_hotspot = mode == "hotspot";
+
     let graph = Graph::open(&data_dir)?;
 
-    // Declare the schema up front. Without this, every worker's first transaction races
-    // to auto-register the same handful of labels/property keys (Auto mode): they all
-    // touch the same schema metadata key, so all but one of those early transactions take
-    // an extra OCC-conflict retry purely from schema bookkeeping, polluting the latency
-    // histogram's first few samples. Idempotent — a no-op on a re-run against an existing
-    // database (see `SchemaManagement::commit`).
     {
         use rocksgraph::schema::DataType;
         let mut mgmt = graph.open_management();
@@ -133,101 +157,111 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         mgmt.commit()?;
     }
 
-    let file = File::open(file_path)?;
-    let reader = BufReader::new(file);
-    let lines: Arc<Vec<String>> = Arc::new(reader.lines().collect::<Result<_, _>>()?);
+    let lines = if is_hotspot {
+        vec!["0 0".to_string(); iterations]
+    } else if let Some(ref path) = file_path {
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
+        reader.lines().collect::<Result<Vec<String>, _>>()?
+    } else {
+        panic!("Please provide a --file-path input graph path for the disjoint benchmark");
+    };
+    let lines = Arc::new(lines);
 
     let start = Instant::now();
     let mutation_counter = Arc::new(AtomicUsize::new(0));
     let line_count = lines.len();
     let chunk_size = (line_count + parallelism - 1).div_ceil(parallelism);
 
-    use std::sync::mpsc;
-    let (hist_tx, hist_rx) = mpsc::channel::<Histogram<u64>>();
+    let (hist_tx, hist_rx) = std::sync::mpsc::channel::<Histogram<u64>>();
 
     let mut worker_handles = vec![];
     for i in 0..parallelism {
         let lines_chunk = Arc::clone(&lines);
-        let mutation_counter = Arc::clone(&mutation_counter);
         let graph = graph.clone(); // cheap Arc clone
-        let hist_tx = hist_tx.clone();
+        let h_tx = hist_tx.clone();
+        let mutation_counter = Arc::clone(&mutation_counter);
 
         let handle = std::thread::spawn(move || {
-            let _rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("Failed to create tokio runtime");
-
-            let mut local_hist = Histogram::<u64>::new(3).expect("Failed to create histogram");
+            let mut rng = rand::thread_rng();
+            let mut local_hist = Histogram::<u64>::new(3).unwrap();
             let start_index = i * chunk_size;
             let end_index = (start_index + chunk_size).min(line_count);
 
-            for line in &lines_chunk[start_index..end_index] {
-                let parts: Vec<i64> =
-                    line.split_whitespace().map(|s| s.parse::<i64>()).filter_map(Result::ok).collect();
-                if parts.len() != 2 {
-                    continue;
-                }
-                let (src, dst) = (parts[0], parts[1]);
+            for idx in start_index..end_index {
+                let (src, dst) = if is_hotspot {
+                    let s = rng.gen_range(0..hotspot_keys) as i64;
+                    let d = rng.gen_range(0..hotspot_keys) as i64;
+                    (s, d)
+                } else {
+                    let line = &lines_chunk[idx];
+                    let parts: Vec<i64> = line.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+                    if parts.len() != 2 {
+                        continue;
+                    }
+                    (parts[0], parts[1])
+                };
 
                 let op_start = Instant::now();
-                let mut success = false;
-                let mut new_edge = false;
+                let mut retry_count = 0;
+                let max_retries_allowed = if is_hotspot { HOTSPOT_MAX_RETRIES } else { MAX_RETRIES };
 
-                for attempt in 0..MAX_RETRIES {
-                    // Each attempt uses a fresh transaction (correct for OCC retries).
+                // `success` gates histogram recording below: a dropped/failed op's elapsed time
+                // (which includes the full retry budget) must not be folded into the latency
+                // distribution alongside genuine single-attempt commit times.
+                let success = loop {
                     let mut tx = graph.begin();
-
-                    let staged = upsert_vertex(&mut tx, VERTEX_LABEL, src)
-                        .and_then(|_| upsert_vertex(&mut tx, VERTEX_LABEL, dst))
-                        .and_then(|_| upsert_edge(&mut tx, src, dst, EDGE_LABEL));
-
-                    match staged {
-                        Err(e) => {
-                            println!("Failed to stage ({} -> {}): {}", src, dst, e);
-                            break;
+                    match (|| -> Result<bool, StoreError> {
+                        upsert_vertex(&mut tx, VERTEX_LABEL, src)?;
+                        upsert_vertex(&mut tx, VERTEX_LABEL, dst)?;
+                        let is_new = upsert_edge(&mut tx, src, dst, EDGE_LABEL)?;
+                        tx.commit()?;
+                        Ok(is_new)
+                    })() {
+                        Ok(is_new) => {
+                            if is_new {
+                                mutation_counter.fetch_add(1, Ordering::Relaxed);
+                            }
+                            break true;
                         }
-                        Ok(is_new) => match tx.commit() {
-                            Ok(_) => {
-                                success = true;
-                                new_edge = is_new;
-                                break;
+                        Err(StoreError::Conflict) => {
+                            retry_count += 1;
+                            if retry_count > max_retries_allowed {
+                                eprintln!(
+                                    "Dropped op ({} -> {}) after {} retries: still conflicting",
+                                    src, dst, max_retries_allowed
+                                );
+                                break false;
                             }
-                            Err(StoreError::Conflict) if attempt < MAX_RETRIES - 1 => {
-                                // tx consumed by commit(); new one created next iteration.
-                                std::thread::sleep(Duration::from_millis(RETRY_DELAY_MS));
-                            }
-                            Err(e) => {
-                                println!("Commit failed ({} -> {}): {}", src, dst, e);
-                                break;
-                            }
-                        },
+                            let delay_ms =
+                                if is_hotspot { rng.gen_range(HOTSPOT_RETRY_DELAY_MS_RANGE) } else { RETRY_DELAY_MS };
+                            std::thread::sleep(Duration::from_millis(delay_ms));
+                        }
+                        Err(e) => {
+                            eprintln!("Dropped op ({} -> {}): fatal error: {}", src, dst, e);
+                            break false;
+                        }
                     }
-                }
+                };
 
                 if success {
-                    let _ = local_hist.record(op_start.elapsed().as_nanos() as u64);
-                    if new_edge {
-                        mutation_counter.fetch_add(1, Ordering::Relaxed);
-                    }
-                } else {
-                    println!("Failed to upsert edge ({} -> {}) after {} retries", src, dst, MAX_RETRIES);
+                    local_hist.record(op_start.elapsed().as_nanos() as u64).unwrap();
                 }
             }
-            hist_tx.send(local_hist).unwrap();
+            h_tx.send(local_hist).unwrap();
         });
         worker_handles.push(handle);
     }
 
     drop(hist_tx);
-    for handle in worker_handles {
-        let _ = handle.join();
+    for h in worker_handles {
+        h.join().unwrap();
     }
 
     let mut final_hist: Option<Histogram<u64>> = None;
     for h in hist_rx {
-        if let Some(ref mut main_h) = final_hist {
-            main_h.add(h).unwrap();
+        if let Some(ref mut fh) = final_hist {
+            fh.add(h).unwrap();
         } else {
             final_hist = Some(h);
         }
@@ -254,4 +288,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_bench_write_disjoint() {
+        let dir = tempdir().unwrap();
+        let file_dir = tempdir().unwrap();
+        let file_path = file_dir.path().join("graph.txt");
+        std::fs::write(&file_path, "1 2\n3 4\n").unwrap();
+
+        let args = vec![
+            "bench_write".to_string(),
+            "--data-dir".to_string(),
+            dir.path().to_str().unwrap().to_string(),
+            "--file-path".to_string(),
+            file_path.to_str().unwrap().to_string(),
+            "--parallelism".to_string(),
+            "1".to_string(),
+            "--mode".to_string(),
+            "disjoint".to_string(),
+            "--iterations".to_string(),
+            "2".to_string(),
+        ];
+        assert!(run_with_args(args).is_ok());
+    }
+
+    #[test]
+    fn test_bench_write_hotspot() {
+        let dir = tempdir().unwrap();
+        let args = vec![
+            "bench_write".to_string(),
+            "--data-dir".to_string(),
+            dir.path().to_str().unwrap().to_string(),
+            "--parallelism".to_string(),
+            "1".to_string(),
+            "--mode".to_string(),
+            "hotspot".to_string(),
+            "--iterations".to_string(),
+            "2".to_string(),
+        ];
+        assert!(run_with_args(args).is_ok());
+    }
 }

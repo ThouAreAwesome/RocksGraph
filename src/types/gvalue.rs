@@ -34,10 +34,7 @@
 //! second element of each pair is the set of step labels (from `as("x")`) that
 //! named this position, or `None` when the position is unnamed.
 
-use std::{
-    collections::HashMap,
-    hash::{Hash, Hasher},
-};
+use std::hash::{Hash, Hasher};
 
 use smallvec::SmallVec;
 use smol_str::SmolStr;
@@ -173,7 +170,7 @@ pub enum GValue {
     List(Vec<GValue>),
     /// A key-value map (e.g. result of `valueMap()`).
     #[allow(dead_code)]
-    Map(HashMap<GValue, GValue>),
+    Map(Vec<(GValue, GValue)>),
     /// A sequence of traversal positions with optional step labels.
     ///
     /// Each entry is `(value, labels)` where `labels` is the set of `as("x")`

@@ -1840,4 +1840,778 @@ mod cases {
         }
         assert_eq!(results.len(), 2, "the scan must find both ranks, not just rank=0");
     }
+
+    #[test]
+    fn test_dedup_step() {
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+
+        let logical_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: smallvec![1, 1, 4, 4] }),
+                LogicalStep::Dedup(crate::planner::logical_step::DedupStep {}),
+            ],
+        };
+        let mut builder: PhysicalPlanBuilder = Default::default();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
+        let mut results = Vec::new();
+        while let Ok(Some(t)) = physical_plan.next(&mut graph) {
+            results.push(t.as_ref().value.clone());
+        }
+        assert_eq!(results.len(), 2);
+        assert!(results.contains(&GValue::Vertex(1)));
+        assert!(results.contains(&GValue::Vertex(4)));
+    }
+
+    #[test]
+    fn test_fold_step() {
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+        let marko_id = graph.get_vertex(1).unwrap().unwrap();
+
+        let logical_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
+                LogicalStep::Values(LogicalValuesStep {
+                    property_keys: smallvec![SmolStr::new("name"), SmolStr::new("age")],
+                }),
+                LogicalStep::Fold(crate::planner::logical_step::FoldStep {}),
+            ],
+        };
+        let mut builder: PhysicalPlanBuilder = Default::default();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
+        let mut results = Vec::new();
+        while let Ok(Some(t)) = physical_plan.next(&mut graph) {
+            results.push(t.as_ref().value.clone());
+        }
+        assert_eq!(results.len(), 1);
+        if let GValue::List(list) = &results[0] {
+            assert_eq!(list.len(), 2);
+            assert!(list.contains(&GValue::Scalar(Primitive::String(SmolStr::new("marko")))));
+            assert!(list.contains(&GValue::Scalar(Primitive::Int32(29))));
+        } else {
+            panic!("Expected a list result from fold");
+        }
+    }
+
+    #[test]
+    fn test_path_step() {
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+        let marko_id = graph.get_vertex(1).unwrap().unwrap();
+
+        // g.V(1).outE("knows").inV().path()
+        let logical_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
+                LogicalStep::OutE(LogicalOutEStep {
+                    labels: smallvec!["knows".into()],
+                    end_vertex_ids: None,
+                    rank: None,
+                }),
+                LogicalStep::InV(LogicalInVStep {}),
+                LogicalStep::Path(crate::planner::logical_step::PathStep {}),
+            ],
+        };
+        let mut builder: PhysicalPlanBuilder = Default::default();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
+        let mut results = Vec::new();
+        while let Ok(Some(t)) = physical_plan.next(&mut graph) {
+            results.push(t.as_ref().value.clone());
+        }
+
+        // Marko knows V(2) (vadas) and V(4) (josh)
+        assert_eq!(results.len(), 2);
+        for res in results {
+            if let GValue::Path(path) = res {
+                assert_eq!(path.len(), 3);
+                assert_eq!(path[0].0, GValue::Vertex(1));
+                assert!(matches!(path[1].0, GValue::Edge(_)));
+                assert!(matches!(path[2].0, GValue::Vertex(2) | GValue::Vertex(4)));
+            } else {
+                panic!("Expected path results");
+            }
+        }
+    }
+
+    #[test]
+    fn test_end_vertex_filter_step() {
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+        let marko_id = graph.get_vertex(1).unwrap().unwrap();
+        let josh_id = graph.get_vertex(4).unwrap().unwrap();
+
+        let logical_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
+                LogicalStep::OutE(LogicalOutEStep {
+                    labels: smallvec!["knows".into(), "created".into()],
+                    end_vertex_ids: None,
+                    rank: None,
+                }),
+                LogicalStep::EndVertexFilter(crate::planner::logical_step::EndVertexFilter { ids: smallvec![josh_id] }),
+            ],
+        };
+        let mut builder: PhysicalPlanBuilder = Default::default();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
+        let mut results = Vec::new();
+        while let Ok(Some(t)) = physical_plan.next(&mut graph) {
+            results.push(t.as_ref().value.clone());
+        }
+
+        assert_eq!(results.len(), 1);
+        if let GValue::Edge(edge) = &results[0] {
+            assert_eq!(edge.secondary_id, josh_id);
+        } else {
+            panic!("Expected an edge result");
+        }
+    }
+
+    #[test]
+    fn test_end_vertex_filter_non_edge_error() {
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+
+        let logical_plan = LogicalPlan {
+            steps: vec![
+                LogicalStep::V(LogicalVStep { ids: smallvec![1] }),
+                LogicalStep::EndVertexFilter(crate::planner::logical_step::EndVertexFilter { ids: smallvec![2] }),
+            ],
+        };
+        let mut builder: PhysicalPlanBuilder = Default::default();
+        let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
+        let res = physical_plan.next(&mut graph);
+        assert!(matches!(res, Err(StoreError::UnexpectedDataType(_))));
+    }
+
+    #[test]
+    fn test_step_edge_cases_with_graph() {
+        use crate::{
+            engine::{
+                traverser::Traverser,
+                volcano::{
+                    builder::PhysicalPlan,
+                    steps::{
+                        both::BothStep,
+                        coalesce::CoalesceStep,
+                        drop::DropStep,
+                        end_vertex_filter::EndVertexFilter,
+                        has_id::HasIdStep,
+                        has_label::HasLabelStep,
+                        has_property::HasPropertyStep,
+                        in_v_out_v::InVOutVStep,
+                        limit::LimitStep,
+                        other_v::OtherVStep,
+                        property::PropertyStep,
+                        r#where::WhereStep,
+                        traits::{BufferedStep, CoreStep, StepRef},
+                        vec_source::VecSourceStep,
+                    },
+                },
+            },
+            types::{gvalue::Primitive, Direction, EdgeKey, GValue},
+        };
+        use smallvec::smallvec;
+        use std::rc::Rc;
+
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+
+        // 1. DropStep without upstream
+        {
+            let mut step = DropStep::default();
+            assert!(step.upper().is_none());
+            assert!(step.produce(&mut graph).unwrap().is_none());
+        }
+
+        // 2. CoalesceStep multiple branches
+        {
+            let src = BufferedStep::new(VecSourceStep::empty());
+            src.inner
+                .borrow_mut()
+                .core
+                .inject(smallvec![Rc::new(Traverser::new(GValue::Scalar(Primitive::Int32(42))))]);
+
+            let b1_src = BufferedStep::new(VecSourceStep::empty());
+            let mut b1_limit = LimitStep::new(0);
+            b1_limit.add_upper(b1_src.clone() as StepRef);
+            let b1_limit_step = BufferedStep::new(b1_limit);
+            let b1_plan = PhysicalPlan { source: b1_src, tail: b1_limit_step as StepRef };
+
+            let b2_src = BufferedStep::new(VecSourceStep::empty());
+            let b2_plan = PhysicalPlan { source: b2_src.clone(), tail: b2_src.clone() as StepRef };
+
+            let mut step = CoalesceStep::new(smallvec![b1_plan, b2_plan]);
+            step.add_upper(src.clone() as StepRef);
+
+            let res = step.produce(&mut graph).unwrap().unwrap();
+            assert_eq!(res.len(), 1);
+            assert_eq!(res[0].value, GValue::Scalar(Primitive::Int32(42)));
+        }
+
+        // 3. DropStep unexpected datatype
+        {
+            let src = BufferedStep::new(VecSourceStep::empty());
+            src.inner
+                .borrow_mut()
+                .core
+                .inject(smallvec![Rc::new(Traverser::new(GValue::Scalar(Primitive::Int32(42))))]);
+            let mut step = DropStep::default();
+            step.add_upper(src.clone() as StepRef);
+            assert!(step.produce(&mut graph).is_err());
+        }
+
+        // 4. InVOutVStep unexpected datatype
+        {
+            let src = BufferedStep::new(VecSourceStep::empty());
+            src.inner
+                .borrow_mut()
+                .core
+                .inject(smallvec![Rc::new(Traverser::new(GValue::Scalar(Primitive::Int32(42))))]);
+            let mut step = InVOutVStep::new(Direction::OUT);
+            step.add_upper(src.clone() as StepRef);
+            assert!(step.produce(&mut graph).unwrap().is_none());
+        }
+
+        // 5. OtherVStep unexpected datatype
+        {
+            let src = BufferedStep::new(VecSourceStep::empty());
+            src.inner
+                .borrow_mut()
+                .core
+                .inject(smallvec![Rc::new(Traverser::new(GValue::Scalar(Primitive::Int32(42))))]);
+            let mut step = OtherVStep::default();
+            step.add_upper(src.clone() as StepRef);
+            assert!(step.produce(&mut graph).unwrap().is_none());
+        }
+
+        // 6. PropertyStep unexpected datatype (skipped)
+        {
+            let src = BufferedStep::new(VecSourceStep::empty());
+            src.inner
+                .borrow_mut()
+                .core
+                .inject(smallvec![Rc::new(Traverser::new(GValue::Scalar(Primitive::Int32(42))))]);
+            let mut step = PropertyStep::new(1u16, Primitive::Int32(1));
+            step.add_upper(src.clone() as StepRef);
+            assert!(step.produce(&mut graph).unwrap().is_none());
+        }
+
+        // 7. WhereStep non-matching sub-plan
+        {
+            let src = BufferedStep::new(VecSourceStep::empty());
+            src.inner
+                .borrow_mut()
+                .core
+                .inject(smallvec![Rc::new(Traverser::new(GValue::Scalar(Primitive::Int32(42))))]);
+            let b_src = BufferedStep::new(VecSourceStep::empty());
+            let mut b_limit = LimitStep::new(0);
+            b_limit.add_upper(b_src.clone() as StepRef);
+            let b_limit_step = BufferedStep::new(b_limit);
+            let b_plan = PhysicalPlan { source: b_src, tail: b_limit_step as StepRef };
+            let mut step = WhereStep::new(b_plan);
+            step.add_upper(src.clone() as StepRef);
+            assert!(step.produce(&mut graph).unwrap().is_none());
+        }
+
+        // 8. EndVertexFilterStep unexpected datatype
+        {
+            let src = BufferedStep::new(VecSourceStep::empty());
+            src.inner
+                .borrow_mut()
+                .core
+                .inject(smallvec![Rc::new(Traverser::new(GValue::Scalar(Primitive::Int32(42))))]);
+            let mut step = EndVertexFilter::new(smallvec![1]);
+            step.add_upper(src.clone() as StepRef);
+            assert!(step.produce(&mut graph).is_err());
+        }
+
+        // 9. EndVertexFilterStep non-matching edge
+        {
+            let src = BufferedStep::new(VecSourceStep::empty());
+            src.inner.borrow_mut().core.inject(smallvec![Rc::new(Traverser::new(GValue::Edge(EdgeKey {
+                primary_id: 1,
+                direction: Direction::OUT,
+                label_id: 3,
+                secondary_id: 2,
+                rank: 0,
+            })))]);
+            let mut step = EndVertexFilter::new(smallvec![99]);
+            step.add_upper(src.clone() as StepRef);
+            assert!(step.produce(&mut graph).unwrap().is_none());
+        }
+
+        // 10. HasIdStep non-matching ID
+        {
+            let src = BufferedStep::new(VecSourceStep::empty());
+            src.inner
+                .borrow_mut()
+                .core
+                .inject(smallvec![Rc::new(Traverser::new(GValue::Scalar(Primitive::Int32(42))))]);
+            let mut step = HasIdStep::new(smallvec![99]);
+            step.add_upper(src.clone() as StepRef);
+            assert!(step.produce(&mut graph).unwrap().is_none());
+        }
+
+        // 11. HasLabelStep edge non-matching
+        {
+            let src = BufferedStep::new(VecSourceStep::empty());
+            src.inner.borrow_mut().core.inject(smallvec![Rc::new(Traverser::new(GValue::Edge(EdgeKey {
+                primary_id: 1,
+                direction: Direction::OUT,
+                label_id: 3,
+                secondary_id: 2,
+                rank: 0,
+            }))),]);
+            let mut step = HasLabelStep::new(smallvec![], smallvec![99]);
+            step.add_upper(src.clone() as StepRef);
+            assert!(step.produce(&mut graph).unwrap().is_none());
+        }
+
+        // 12. HasPropertyStep matching vertex and non-matching vertex
+        {
+            let age_id = graph.schema.read().unwrap().prop_key_id("age").unwrap();
+
+            let src = BufferedStep::new(VecSourceStep::empty());
+            src.inner.borrow_mut().core.inject(smallvec![
+                Rc::new(Traverser::new(GValue::Vertex(1))), // marko (age 29)
+                Rc::new(Traverser::new(GValue::Vertex(2))), // vadas (age 27)
+            ]);
+
+            let mut step = HasPropertyStep::new(age_id, Primitive::Int32(29));
+            step.add_upper(src.clone() as StepRef);
+
+            let res = step.produce(&mut graph).unwrap().unwrap();
+            assert_eq!(res.len(), 1);
+            if let GValue::Vertex(v) = res[0].value {
+                assert_eq!(v, 1);
+            } else {
+                panic!("expected vertex 1");
+            }
+            assert!(step.produce(&mut graph).unwrap().is_none());
+        }
+
+        // 13. BothStep non-vertex filtered out
+        {
+            let src = BufferedStep::new(VecSourceStep::empty());
+            src.inner
+                .borrow_mut()
+                .core
+                .inject(smallvec![Rc::new(Traverser::new(GValue::Scalar(Primitive::Int32(42)))),]);
+            let mut step = BothStep::new(smallvec![], None, None, false);
+            step.add_upper(src.clone() as StepRef);
+            assert!(step.produce(&mut graph).unwrap().is_none());
+        }
+    }
+
+    #[test]
+    fn test_additional_physical_steps_coverage() {
+        use crate::{
+            engine::{
+                traverser::Traverser,
+                volcano::{
+                    builder::PhysicalPlan,
+                    steps::{
+                        both::BothStep,
+                        coalesce::CoalesceStep,
+                        dedup::DedupStep,
+                        drop::DropStep,
+                        e::EStep,
+                        end_vertex_filter::EndVertexFilter,
+                        fold::FoldStep,
+                        has_id::HasIdStep,
+                        has_label::HasLabelStep,
+                        has_property::HasPropertyStep,
+                        in_v_out_v::InVOutVStep,
+                        limit::LimitStep,
+                        other_v::OtherVStep,
+                        path::PathStep,
+                        property::PropertyStep,
+                        r#where::WhereStep,
+                        scalar_filter::ScalarFilterStep,
+                        traits::{BufferedStep, CoreStep, StepRef},
+                        union::UnionStep,
+                        vec_source::VecSourceStep,
+                    },
+                },
+            },
+            types::{
+                element::Property,
+                gvalue::Primitive,
+                keys::{CanonicalKey, EdgeKey},
+                Direction, GValue,
+            },
+        };
+        use smallvec::smallvec;
+        use std::rc::Rc;
+
+        let (store, _dir) = open_rocks_store();
+        let mut graph = create_tinkerpop_modern_graph(&store);
+
+        // 1. BothStep extra coverage
+        {
+            let src = BufferedStep::new(VecSourceStep::empty());
+            src.inner.borrow_mut().core.inject(smallvec![Rc::new(Traverser::new(GValue::Vertex(1))),]);
+            let mut step = BothStep::new(smallvec![1u16], None, None, true);
+            step.add_upper(src.clone() as StepRef);
+
+            let _ = step.produce(&mut graph);
+            assert!(step.upper().is_some());
+            step.reset();
+        }
+
+        // 2. CoalesceStep empty plans or exhausted plans
+        {
+            let mut step = CoalesceStep::new(smallvec![]);
+            assert!(step.produce(&mut graph).unwrap().is_none());
+            assert!(step.upper().is_none());
+            step.reset();
+
+            let src = BufferedStep::new(VecSourceStep::empty());
+            src.inner
+                .borrow_mut()
+                .core
+                .inject(smallvec![Rc::new(Traverser::new(GValue::Scalar(Primitive::Int32(42))))]);
+
+            let b1_src = BufferedStep::new(VecSourceStep::empty());
+            let mut b1_limit = LimitStep::new(0);
+            b1_limit.add_upper(b1_src.clone() as StepRef);
+            let b1_limit_step = BufferedStep::new(b1_limit);
+            let b1_plan = PhysicalPlan { source: b1_src, tail: b1_limit_step as StepRef };
+
+            let mut step = CoalesceStep::new(smallvec![b1_plan]);
+            step.add_upper(src.clone() as StepRef);
+            assert!(step.produce(&mut graph).unwrap().is_none());
+            step.reset();
+        }
+
+        // 3. DedupStep edge deduplication and upper is none
+        {
+            let mut step = DedupStep::default();
+            assert!(step.produce(&mut graph).unwrap().is_none());
+            assert!(step.upper().is_none());
+            step.reset();
+
+            let src = BufferedStep::new(VecSourceStep::empty());
+            let edge1 = GValue::Edge(EdgeKey {
+                primary_id: 1,
+                direction: Direction::OUT,
+                label_id: 2,
+                secondary_id: 3,
+                rank: 0,
+            });
+            let edge2 = GValue::Edge(EdgeKey {
+                primary_id: 1,
+                direction: Direction::OUT,
+                label_id: 2,
+                secondary_id: 3,
+                rank: 0,
+            });
+            src.inner
+                .borrow_mut()
+                .core
+                .inject(smallvec![Rc::new(Traverser::new(edge1)), Rc::new(Traverser::new(edge2)),]);
+            let mut step = DedupStep::default();
+            step.add_upper(src.clone() as StepRef);
+            let res = step.produce(&mut graph).unwrap().unwrap();
+            assert_eq!(res.len(), 1);
+            assert!(step.produce(&mut graph).unwrap().is_none());
+            step.reset();
+        }
+
+        // 4. DropStep property dropping
+        {
+            let name_id = graph.schema.read().unwrap().prop_key_id("name").unwrap();
+            let src = BufferedStep::new(VecSourceStep::empty());
+            src.inner.borrow_mut().core.inject(smallvec![Rc::new(Traverser::new(GValue::Property(Property {
+                owner: CanonicalKey::Vertex(1),
+                key: name_id,
+                value: Primitive::String("marko".into()),
+            })))]);
+            let mut step = DropStep::default();
+            step.add_upper(src.clone() as StepRef);
+            assert!(step.produce(&mut graph).unwrap().is_none());
+            assert!(graph.get_value(&CanonicalKey::Vertex(1), name_id).unwrap().is_none());
+
+            let src2 = BufferedStep::new(VecSourceStep::empty());
+            let mut step = DropStep::default();
+            step.add_upper(src2.clone() as StepRef);
+            step.reset();
+            assert!(step.upper().is_some());
+        }
+
+        // 5. EStep panic/pagination/not found
+        {
+            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let dummy = BufferedStep::new(VecSourceStep::empty());
+                let mut step = EStep::new(smallvec![]);
+                step.add_upper(dummy as StepRef);
+            }));
+            assert!(res.is_err());
+
+            let mut step = EStep::new(smallvec![]);
+            let mut edges_count = 0;
+            while let Some(res) = step.produce(&mut graph).unwrap() {
+                edges_count += res.len();
+            }
+            assert!(edges_count > 0);
+            assert!(step.produce(&mut graph).unwrap().is_none());
+            step.reset();
+
+            // Lookup a real edge: Marko (1) -> created -> Lop (3)
+            let created_label_id = graph.schema.read().unwrap().edge_label_id("created").unwrap();
+            let mut step = EStep::new(smallvec![EdgeKey {
+                primary_id: 1,
+                direction: Direction::OUT,
+                label_id: created_label_id,
+                secondary_id: 3,
+                rank: 0,
+            }]);
+            let res = step.produce(&mut graph).unwrap().unwrap();
+            assert_eq!(res.len(), 1);
+            assert!(step.produce(&mut graph).unwrap().is_none());
+            step.reset();
+        }
+
+        // 6. EndVertexFilter basic checks
+        {
+            let mut step = EndVertexFilter::default();
+            assert!(step.produce(&mut graph).unwrap().is_none());
+            step.reset();
+            assert!(step.upper().is_none());
+
+            let src = BufferedStep::new(VecSourceStep::empty());
+            let mut step = EndVertexFilter::default();
+            step.add_upper(src.clone() as StepRef);
+            step.reset();
+            assert!(step.upper().is_some());
+        }
+
+        // 7. FoldStep early return on emitted
+        {
+            let mut step = FoldStep::default();
+            assert!(step.produce(&mut graph).unwrap().is_none());
+
+            let src = BufferedStep::new(VecSourceStep::empty());
+            src.inner
+                .borrow_mut()
+                .core
+                .inject(smallvec![Rc::new(Traverser::new(GValue::Scalar(Primitive::Int32(10))))]);
+            let mut step = FoldStep::default();
+            step.add_upper(src.clone() as StepRef);
+            let res = step.produce(&mut graph).unwrap().unwrap();
+            assert_eq!(res.len(), 1);
+            assert!(step.produce(&mut graph).unwrap().is_none());
+
+            step.reset();
+            assert!(step.upper().is_some());
+        }
+
+        // 8. HasIdStep non-vertex values and other coverage
+        {
+            let mut step = HasIdStep::new(smallvec![1]);
+            assert!(step.produce(&mut graph).unwrap().is_none());
+
+            let src = BufferedStep::new(VecSourceStep::empty());
+            src.inner.borrow_mut().core.inject(smallvec![
+                Rc::new(Traverser::new(GValue::Scalar(Primitive::Int32(10)))),
+                Rc::new(Traverser::new(GValue::Vertex(1))),
+            ]);
+            let mut step = HasIdStep::new(smallvec![1]);
+            step.add_upper(src.clone() as StepRef);
+            let res = step.produce(&mut graph).unwrap().unwrap();
+            assert_eq!(res.len(), 1);
+            assert_eq!(res[0].value, GValue::Vertex(1));
+
+            step.reset();
+            assert!(step.upper().is_some());
+        }
+
+        // 9. HasLabelStep non-vertex/non-edge coverage
+        {
+            let mut step = HasLabelStep::new(smallvec![], smallvec![]);
+            assert!(step.produce(&mut graph).unwrap().is_none());
+
+            let src = BufferedStep::new(VecSourceStep::empty());
+            src.inner
+                .borrow_mut()
+                .core
+                .inject(smallvec![Rc::new(Traverser::new(GValue::Scalar(Primitive::Int32(10)))),]);
+            let mut step = HasLabelStep::new(smallvec![], smallvec![]);
+            step.add_upper(src.clone() as StepRef);
+            assert!(step.produce(&mut graph).unwrap().is_none());
+
+            step.reset();
+            assert!(step.upper().is_some());
+        }
+
+        // 10. InVOutVStep IN and OUT direction
+        {
+            let mut step = InVOutVStep::new(Direction::IN);
+            assert!(step.produce(&mut graph).unwrap().is_none());
+
+            let src = BufferedStep::new(VecSourceStep::empty());
+            src.inner.borrow_mut().core.inject(smallvec![Rc::new(Traverser::new(GValue::Edge(EdgeKey {
+                primary_id: 1,
+                direction: Direction::OUT,
+                label_id: 2,
+                secondary_id: 3,
+                rank: 0,
+            })))]);
+            let mut step = InVOutVStep::new(Direction::IN);
+            step.add_upper(src.clone() as StepRef);
+            let res = step.produce(&mut graph).unwrap().unwrap();
+            assert_eq!(res.len(), 1);
+            assert_eq!(res[0].value, GValue::Vertex(3));
+
+            let src_out = BufferedStep::new(VecSourceStep::empty());
+            src_out.inner.borrow_mut().core.inject(smallvec![Rc::new(Traverser::new(GValue::Edge(EdgeKey {
+                primary_id: 1,
+                direction: Direction::OUT,
+                label_id: 2,
+                secondary_id: 3,
+                rank: 0,
+            })))]);
+            let mut step_out = InVOutVStep::new(Direction::OUT);
+            step_out.add_upper(src_out.clone() as StepRef);
+            let res_out = step_out.produce(&mut graph).unwrap().unwrap();
+            assert_eq!(res_out.len(), 1);
+            assert_eq!(res_out[0].value, GValue::Vertex(1));
+
+            step.reset();
+            assert!(step.upper().is_some());
+        }
+
+        // 11. LimitStep upper is none
+        {
+            let mut step = LimitStep::new(2);
+            assert!(step.produce(&mut graph).unwrap().is_none());
+
+            step.reset();
+            assert!(step.upper().is_none());
+
+            let src = BufferedStep::new(VecSourceStep::empty());
+            let mut step = LimitStep::new(2);
+            step.add_upper(src.clone() as StepRef);
+            step.reset();
+            assert!(step.upper().is_some());
+        }
+
+        // 12. OtherVStep non-edge values filtering
+        {
+            let mut step = OtherVStep::default();
+            assert!(step.produce(&mut graph).unwrap().is_none());
+
+            let src = BufferedStep::new(VecSourceStep::empty());
+            src.inner
+                .borrow_mut()
+                .core
+                .inject(smallvec![Rc::new(Traverser::new(GValue::Scalar(Primitive::Int32(10)))),]);
+            let mut step = OtherVStep::default();
+            step.add_upper(src.clone() as StepRef);
+            assert!(step.produce(&mut graph).unwrap().is_none());
+
+            step.reset();
+            assert!(step.upper().is_some());
+        }
+
+        // 13. PathStep empty paths and emitted true
+        {
+            let mut step = PathStep::new();
+            assert!(step.produce(&mut graph).unwrap().is_none());
+
+            let src = BufferedStep::new(VecSourceStep::empty());
+            let mut step = PathStep::new();
+            step.add_upper(src.clone() as StepRef);
+            assert!(step.produce(&mut graph).unwrap().is_none());
+            assert!(step.produce(&mut graph).unwrap().is_none());
+
+            step.reset();
+            assert!(step.upper().is_some());
+        }
+
+        // 14. PropertyStep non-vertex/non-edge elements
+        {
+            let mut step = PropertyStep::new(1, Primitive::Int32(1));
+            assert!(step.produce(&mut graph).unwrap().is_none());
+
+            let src = BufferedStep::new(VecSourceStep::empty());
+            src.inner
+                .borrow_mut()
+                .core
+                .inject(smallvec![Rc::new(Traverser::new(GValue::Scalar(Primitive::Int32(10)))),]);
+            let mut step = PropertyStep::new(1, Primitive::Int32(1));
+            step.add_upper(src.clone() as StepRef);
+            assert!(step.produce(&mut graph).unwrap().is_none());
+
+            step.reset();
+            assert!(step.upper().is_some());
+        }
+
+        // 15. ScalarFilterStep non-scalar/non-matching
+        {
+            let mut step = ScalarFilterStep::new(Primitive::Int32(10));
+            assert!(step.produce(&mut graph).unwrap().is_none());
+
+            let src = BufferedStep::new(VecSourceStep::empty());
+            src.inner.borrow_mut().core.inject(smallvec![
+                Rc::new(Traverser::new(GValue::Vertex(1))),
+                Rc::new(Traverser::new(GValue::Scalar(Primitive::Int32(5)))),
+            ]);
+            let mut step = ScalarFilterStep::new(Primitive::Int32(10));
+            step.add_upper(src.clone() as StepRef);
+            assert!(step.produce(&mut graph).unwrap().is_none());
+
+            step.reset();
+            assert!(step.upper().is_some());
+        }
+
+        // 16. UnionStep empty plans
+        {
+            let mut step = UnionStep::new(smallvec![]);
+            assert!(step.produce(&mut graph).unwrap().is_none());
+
+            let src = BufferedStep::new(VecSourceStep::empty());
+            src.inner.borrow_mut().core.inject(smallvec![Rc::new(Traverser::new(GValue::Vertex(1))),]);
+            let mut step = UnionStep::new(smallvec![]);
+            step.add_upper(src.clone() as StepRef);
+            assert!(step.produce(&mut graph).unwrap().is_none());
+
+            let b_src = BufferedStep::new(VecSourceStep::empty());
+            let b_plan = PhysicalPlan { source: b_src.clone(), tail: b_src.clone() as StepRef };
+            let mut step = UnionStep::new(smallvec![b_plan]);
+            step.add_upper(src.clone() as StepRef);
+            step.reset();
+            assert!(step.upper().is_some());
+        }
+
+        // 17. WhereStep upper is none
+        {
+            let b_src = BufferedStep::new(VecSourceStep::empty());
+            let b_plan = PhysicalPlan { source: b_src.clone(), tail: b_src.clone() as StepRef };
+            let mut step = WhereStep::new(b_plan);
+            assert!(step.produce(&mut graph).unwrap().is_none());
+
+            let src = BufferedStep::new(VecSourceStep::empty());
+            let b_src2 = BufferedStep::new(VecSourceStep::empty());
+            let b_plan2 = PhysicalPlan { source: b_src2.clone(), tail: b_src2.clone() as StepRef };
+            let mut step = WhereStep::new(b_plan2);
+            step.add_upper(src.clone() as StepRef);
+            step.reset();
+            assert!(step.upper().is_some());
+        }
+
+        // 18. HasPropertyStep extra coverage
+        {
+            let age_id = graph.schema.read().unwrap().prop_key_id("age").unwrap();
+            let mut step = HasPropertyStep::new(age_id, Primitive::Int32(29));
+            assert!(step.produce(&mut graph).unwrap().is_none());
+            assert!(step.upper().is_none());
+
+            let src = BufferedStep::new(VecSourceStep::empty());
+            step.add_upper(src.clone() as StepRef);
+            assert!(step.upper().is_some());
+            step.reset();
+        }
+    }
 }

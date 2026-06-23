@@ -1,151 +1,174 @@
-# Concurrent Transaction Pressure Testing Design
+# Design: Concurrent Transaction Pressure Testing
 
-## 1. Problem Statement
+## Problem
 
-RocksGraph employs **Optimistic Concurrency Control (OCC)** at the transaction commit boundary. Each transaction maintains an in-memory overlay of changes (vertices, edges, and properties) which are validated against RocksDB's state and flushed atomically on `commit()`. If another transaction committed changes to any of the same keys during this timeframe, the commit fails with a `StoreError::Conflict`.
+RocksGraph uses Optimistic Concurrency Control (OCC) at commit time: each transaction stages
+changes in an in-memory overlay, and `commit()` fails with `StoreError::Conflict` if another
+transaction committed to an overlapping key first. The existing test suite verifies this in two
+narrow ways — neither of which exercises real concurrency under load:
 
-While single-threaded unit tests verify individual operations, they cannot simulate real-world production environments where multiple threads concurrently read and write to shared datasets. A dedicated concurrent pressure testing suite is necessary to verify:
-1. **OCC correctness**: Ensuring conflicts are correctly identified and no phantom updates or lost updates bypass validation.
-2. **Deadlock freedom**: Verifying that internal synchronization mechanisms (like the schema `RwLock` or write paths) do not cause deadlocks under high contention.
-3. **Data consistency invariants**: Confirming that the graph's structural integrity (like vertex degree counts and indices) is preserved when multiple threads concurrently add or remove vertices and edges.
-4. **Retry & Backoff robustness**: Evaluating client-side transaction retry behavior under severe load.
+- **Deterministic two-handle interleaving** ([graph.rs:2376](../src/graph.rs#L2376) `run_conflict`/
+  `run_no_conflict`, [transaction.rs:579](../src/store/rocks/transaction.rs#L579)
+  `test_read_write_conflict`) — two transaction handles on *one* thread, with the test choosing
+  the exact commit order. Good for "does X always conflict with Y," but proves nothing about
+  what happens when many threads race for real.
+- **One real-thread stress test, schema-only** ([schema/tests.rs:385](../src/schema/tests.rs#L385)
+  `test_concurrent_auto_mode_writes_do_not_starve_schema_lock`) — 8 threads racing to
+  auto-register the same labels/keys, retrying on conflict, wrapped in an `mpsc`/`recv_timeout`
+  watchdog. This already covers "concurrent schema registration doesn't deadlock or starve" well.
+  It does **not** cover contention on ordinary vertex/edge *data* writes — the case most likely to
+  matter to a caller running real concurrent traffic.
 
----
+What's missing is a real-thread test for **data-write contention** (not schema), plus a way to
+generate **sustained concurrent load** for throughput/latency measurement rather than a fixed
+8×60-iteration smoke test.
 
-## 2. Testing Scenarios
+## Non-goals (deferred)
 
-The suite divides transaction testing into four distinct contention profiles:
+- **Mixed read/write isolation testing** (verifying `LogicalSnapshot` repeatable-read holds while
+  writers mutate the graph) is a different problem — it tests snapshot isolation semantics, not
+  OCC conflict handling — and deserves its own design. Not in scope here.
+- **Concurrent schema-update *contention*** is already covered by the existing integration test
+  [`test_concurrent_auto_mode_writes_do_not_starve_schema_lock`](../src/schema/tests.rs#L385)
+  (8 threads racing to register the *same* handful of labels/keys). No new test was planned for
+  that. During implementation, a second schema test was added alongside it —
+  `test_concurrent_auto_mode_complex_distinct_schemas` (12 threads × 40 iterations, each
+  registering *fully unique* labels/keys per iteration — 1 vertex label, 1 edge label, and 2
+  property keys — asserting all ~1920 entries land in the final schema). That's a genuinely
+  different angle — registration *volume* with near-zero
+  per-key contention, rather than many threads fighting over one key — so it's accepted as a
+  worthwhile addition to the schema-side coverage, not a duplicate of the existing test.
+- **Jittered backoff**: While a fully featured exponential backoff system is deferred, a simple
+  random jitter delay (e.g. `thread::sleep(Duration::from_millis(rng.gen_range(1..10)))`) is adopted
+  in the hotspot test to break lockstep scheduling collisions induced by the `Barrier` releases.
+- **`loom`-style exhaustive interleaving exploration.** Real-thread tests are probabilistic, not
+  exhaustive; `loom` would model-check every interleaving instead. That's a genuinely different
+  testing style (and a new dependency) — worth a future design doc if real-thread tests turn out
+  to miss a rare race, not bundled into this one.
 
-```mermaid
-graph TD
-    A[Concurrent Pressure Test Suite] --> B[Hotspot Contention]
-    A --> C[Disjoint Writes]
-    A --> D[Mixed Read/Write Workload]
-    A --> E[Concurrent Schema Updates]
-    
-    B --> B1[Single vertex updates]
-    C --> C1[Isolated ID ranges]
-    D --> D1[Continuous readers + active writers]
-    E --> E1[Raced auto-registration]
-```
+## Design
 
-### 2.1 Hotspot Contention (High Conflict Rate)
-*   **Goal**: Maximize the probability of transaction conflicts.
-*   **Pattern**: $N$ threads concurrently attempt to fetch, increment, and write back a shared numeric property on the exact same vertex ID (e.g., `id: 0`).
-*   **Validation**:
-    - The client must implement a retry loop with exponential backoff to handle `StoreError::Conflict`.
-    - Once all threads finish, the final value of the shared property must be exactly equal to the total number of successfully committed increments across all threads.
+Two deliverables, both built entirely from patterns and dependencies already in the codebase —
+no new crates, no new test-execution mechanism.
 
-### 2.2 Disjoint Writes (Throughput / Low Conflict)
-*   **Goal**: Test write path safety under parallel load with zero expected conflicts.
-*   **Pattern**: Each thread is assigned a distinct ID space (e.g., Thread $i$ writes to range $[i \times 1000, (i+1) \times 1000]$). Threads add vertices and connect them with edges.
-*   **Validation**:
-    - Zero `StoreError::Conflict` errors should occur.
-    - Post-test verification must confirm all created vertices and edges exist in the database, with correct properties and structural endpoints.
+### 1. New data-write contention tests — `src/concurrency_tests.rs`
 
-### 2.3 Mixed Read/Write Workload
-*   **Goal**: Ensure Repeatable Read isolation holds for readers while writers are mutating the graph.
-*   **Pattern**:
-    - **Writers** continuously add, modify, and drop edges/vertices.
-    - **Readers** run multi-step traversals (e.g., `g.V().out().out().count()`) or read snapshots.
-*   **Validation**:
-    - Readers must never observe partial or dirty writes (intermediate states of uncommitted transactions).
-    - Repeatable reads must be maintained within the scope of each read transaction (`LogicalSnapshot`).
-
-### 2.4 Concurrent Schema Updates
-*   **Goal**: Stress-test the automatic schema registry lock boundaries.
-*   **Pattern**: $N$ threads concurrently write to new, unregistered labels and property keys. This forces multiple threads to try to write to the schema catalog at the same time.
-*   **Validation**:
-    - The schema registry's `RwLock` must safely serialize updates without deadlocks.
-    - The database must successfully register all new types, and subsequent transactions must be able to read/write properties matching those schema schemas.
-
----
-
-## 3. Reference Implementation Architecture
-
-The concurrent test harness is designed around standard Rust threading primitives to ensure high scheduling contention.
-
-### 3.1 Synchronization and Coordination
-*   **`std::sync::Barrier`**: Initiates worker threads at the exact same millisecond. Without this, early threads would complete their execution before later threads are fully spawned, reducing peak contention.
-*   **`std::sync::atomic`**: Atomic counters (e.g., `AtomicUsize`) track successful commits, conflicts, and transaction execution times without introducing lock bottlenecks.
-*   **Jittered Exponential Backoff**: Transactions must use jittered randomized backoffs when retrying after a `StoreError::Conflict` to avoid lockstep starvation.
-
-### 3.2 Invariant Verification Pattern
-The general flow of a pressure test must match this structure:
+A new sibling test file, mirroring the existing
+[`gremlin::multi_edge_tests`](../src/gremlin/multi_edge_tests.rs) precedent (a thematically
+distinct integration-style suite gets its own file rather than being squeezed into `graph.rs`'s
+existing inline `mod tests`, which is already 3000+ lines). Declared in `lib.rs` alongside the
+other top-level modules:
 
 ```rust
-// 1. Initialize DB and declare base schema
-let graph = Graph::open(temp_path)?;
-setup_initial_state(&graph)?;
-
-// 2. Initialize thread barrier and atomic trackers
-let barrier = Arc::new(Barrier::new(num_threads));
-let commit_counter = Arc::new(AtomicUsize::new(0));
-
-// 3. Spawn workers
-let mut handles = vec![];
-for thread_idx in 0..num_threads {
-    let graph = graph.clone();
-    let barrier = Arc::clone(&barrier);
-    let commit_counter = Arc::clone(&commit_counter);
-    
-    handles.push(std::thread::spawn(move || {
-        barrier.wait(); // Start at the same time
-        
-        for _ in 0..iterations {
-            let mut success = false;
-            for attempt in 0..max_retries {
-                let mut tx = graph.begin();
-                
-                // Perform read & mutation
-                execute_operation(&mut tx, thread_idx)?;
-                
-                match tx.commit() {
-                    Ok(_) => {
-                        commit_counter.fetch_add(1, Ordering::SeqCst);
-                        success = true;
-                        break; // Success
-                    }
-                    Err(StoreError::Conflict) => {
-                        // Apply backoff and retry
-                        apply_backoff(attempt);
-                    }
-                    Err(e) => return Err(e),
-                }
-            }
-            assert!(success, "Transaction starved and failed to commit");
-        }
-        Ok(())
-    }));
-}
-
-// 4. Join threads
-for h in handles {
-    h.join().unwrap().unwrap();
-}
-
-// 5. Run single-threaded verification
-let mut verify_tx = graph.begin();
-assert_invariants(&mut verify_tx, commit_counter.load(Ordering::SeqCst))?;
+// src/lib.rs
+#[cfg(test)]
+mod concurrency_tests;
 ```
 
----
+Written entirely against the **public API** (`Graph`, `TraversalBuilder`, `Value`, `StoreError`,
+`__`) — the same surface `bench_write.rs`/`bench_read.rs` already use as external callers — so it
+exercises the system exactly as a real client would, with no crate-internal shortcuts.
 
-## 4. Execution and Diagnostics
+#### 1a. Hotspot contention — no lost updates
 
-### 4.1 Running the Pressure Tests
-Pressure tests are integrated under cargo:
-*   To run integration pressure tests:
-    ```bash
-    cargo test --test concurrent_pressure
-    ```
-*   To run high-load write benchmarks:
-    ```bash
-    cargo run --bin bench_write -- --data-dir ./data --file-path ./graph.txt --parallelism 8
-    ```
+*Goal*: maximize the conflict rate and prove OCC never loses an update under contention.
 
-### 4.2 Diagnostic Metrics
-To inspect transactional performance under load, the suite reports:
-*   **Throughput**: Commits completed per second.
-*   **Latency Distribution**: p50, p90, p95, p99, and max latency in microseconds (using the `hdrhistogram` crate).
-*   **Conflict Rate**: Total conflicts divided by total successful transactions (shows the severity of contention).
+- `N` threads share one vertex (`id: 0`) with an integer counter property.
+- Each thread loops `ITERATIONS` times: read the current counter, write back `current + 1`,
+  retry on `StoreError::Conflict` with a randomized jitter delay (e.g. 1-10ms) to break lockstep
+  scheduling collisions induced by the `Barrier`, giving up and failing the test if a single
+  increment exhausts its retry budget. **Only `Conflict` is retried** — `StoreError::LockError`
+  is deliberately *not* in the retry set: its one call site
+  ([`schema/management.rs:135`](../src/schema/management.rs#L135)) only fires when
+  `RwLock::write()` returns `Err`, which in `std::sync::RwLock` means the lock is *poisoned*
+  (another thread already panicked while holding it) — not contention, and not reachable from
+  this test's plain `.property()` writes anyway (no `SchemaManagement` session involved). If it
+  ever did fire, retrying would just burn the retry budget on a condition that never clears;
+  treating it (and anything besides `Conflict`) as an immediate hard failure is both more correct
+  and surfaces the real bug instead of masking it as "exhausted retries."
+- A `std::sync::Barrier` releases all threads at once before their first attempt — std-only, one
+  line, and it directly serves the stated goal (maximize true overlapping commits) instead of
+  leaving thread start order to OS scheduling jitter.
+- **Invariant**: each thread's closure returns its own count of successfully committed
+  increments (no shared `AtomicUsize` needed); the watchdog's supervisor thread sums all
+  `JoinHandle` results and sends the total through the same `mpsc` channel used for completion.
+  That sum must exactly equal the counter's final database value — any mismatch means an update
+  was lost (a commit that should have conflicted didn't) or double-counted.
+- Wrapped in the same `mpsc::channel` + `recv_timeout` watchdog as the schema-lock test, so a
+  deadlock regression fails fast with a clear message instead of hanging CI.
+
+#### 1b. Disjoint writes — zero conflicts, full integrity
+
+*Goal*: prove the write path is safe under parallel load when there's no logical reason to
+conflict, and that nothing gets silently dropped or corrupted.
+
+- `N` threads, each assigned a disjoint ID range (thread `i` owns `[i*1000, (i+1)*1000)`), each
+  creating vertices and connecting them with edges — no shared keys at all.
+- **Pre-declared schema**: declare every label/property key the threads will use via
+  `Graph::open_management()` before spawning them — exactly the same reason
+  [`bench_write.rs`](../src/bin/bench_write.rs#L116-L134) does this already: in Auto mode, every
+  worker's *first* transaction would otherwise race to auto-register the same handful of
+  labels/keys, which touch one shared schema metadata key regardless of how disjoint the actual
+  vertex/edge IDs are. That's a real `StoreError::Conflict`, just not the kind this test is
+  trying to catch — without pre-declaring, the "zero conflicts" invariant below would be false
+  for a reason that has nothing to do with data-write disjointness. (1a's hotspot test doesn't
+  *need* this — it already expects and retries through conflicts — but doing it there too removes
+  one source of wasted retries on the first iteration.)
+- **Invariant**: zero `StoreError::Conflict` across all threads (any conflict here indicates a
+  key-collision bug, e.g. two "disjoint" ranges accidentally overlapping, or false-positive
+  conflict detection). After joining, a single-threaded verification pass confirms every vertex
+  and edge exists with the expected properties and endpoints.
+
+### 2. `bench_write` hotspot mode — sustained load, not just a smoke test
+
+The unit tests above prove correctness at a fixed, small scale (enough threads/iterations to
+exercise the race, bounded so the test suite stays fast). They are not a load test. For
+throughput/latency under *sustained* contention, extend the existing
+[`bin/bench_write.rs`](../src/bin/bench_write.rs) rather than building a second harness:
+
+- Add a `--mode hotspot|disjoint` flag (default `disjoint`, today's existing behavior —
+  upserting from the input edge-list file with effectively-low collision odds).
+- In `hotspot` mode, instead of reading `(src, dst)` pairs from the input file, every worker
+  repeatedly targets the *same* small fixed set of vertex/edge IDs (configurable count, e.g.
+  `--hotspot-keys 10`) for `--iterations` rounds.
+- Reuses 100% of the existing machinery: per-thread `hdrhistogram::Histogram`, the
+  `MAX_RETRIES`/`RETRY_DELAY_MS` retry loop, the `--parallelism` thread count, the merged
+  percentile report at the end. Only the key-selection logic changes.
+- This is the tool to answer "what's commit latency at p99 when 32 threads are hammering the same
+  10 vertices," which the unit tests above are deliberately too small-scale to answer.
+- The existing `MAX_RETRIES`/`RETRY_DELAY_MS` (3 attempts, flat 1ms) are tuned for disjoint
+  mode's low conflict rate and are kept as-is there. Hotspot mode uses its own larger budget
+  (50 attempts) with a jittered 1-10ms delay — confirmed by running it locally with only 10
+  hotspot keys at `--parallelism 8`: with the disjoint-mode budget, several operations were
+  dropped outright ("Failed to upsert edge ... after 3 retries") instead of just running slower,
+  which would have silently understated both the mutation count and the latency histogram
+  (survivor bias — only the luckier ops get recorded).
+
+`bench_read.rs` is unaffected — concurrent reads never conflict in this OCC model (conflicts are
+a commit-time, write-write phenomenon), so a "hotspot" mode has nothing to add there.
+
+## Implementation Plan
+
+1. Add `src/concurrency_tests.rs`; declare it `#[cfg(test)] mod concurrency_tests;`
+   in `src/lib.rs`.
+2. Implement `hotspot_contention_preserves_all_updates`: pre-declare schema, shared-vertex
+   counter increment race, `Barrier`-synchronized start, jittered retry on `Conflict` only (hard
+   `unwrap`/fail on any other error), each worker closure returning its own successful-commit
+   count, summed by the watchdog's supervisor thread and sent through the `mpsc` channel. Assert
+   the sum equals the counter's final database value.
+3. Implement `disjoint_writes_never_conflict`: pre-declare schema via `open_management()`,
+   per-thread disjoint ID ranges, assert zero `StoreError::Conflict` across all threads, then
+   verify every created vertex/edge in a single-threaded pass.
+4. Run `cargo test` and `just full-check`; tune thread count / iteration count so the two new
+   tests add low-single-digit seconds to the suite, not minutes.
+5. (Separate, smaller change) Add `--mode`/`--hotspot-keys` to `bin/bench_write.rs`; manually spot-check
+   a hotspot run locally (not part of `cargo test` — it's a standalone load-generation binary, same as today).
+
+## Affected Files
+
+- `src/lib.rs` — new `#[cfg(test)] mod concurrency_tests;` declaration
+- `src/concurrency_tests.rs` — new file, both contention tests
+- `src/bin/bench_write.rs` — `--mode`/`--hotspot-keys`/`--iterations` flags, hotspot key-selection
+  branch, and a hotspot-specific retry budget/jitter (see §2 note below)
+- `src/schema/tests.rs` — additional `test_concurrent_auto_mode_complex_distinct_schemas`
+  (accepted addition beyond the original plan; see Non-goals)

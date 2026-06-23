@@ -34,6 +34,10 @@ const TIMESTAMP_KEY: &str = "timestamp";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
+    run_with_args(args)
+}
+
+fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     let data_dir = args
         .iter()
         .position(|arg| arg == "--data-dir")
@@ -256,4 +260,70 @@ where
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_bench_read() {
+        let dir = tempdir().unwrap();
+        {
+            let graph = Graph::open(dir.path()).unwrap();
+            let mut snap = graph.begin();
+            {
+                use rocksgraph::schema::DataType;
+                let mut mgmt = graph.open_management();
+                mgmt.make_vertex_label("Person").make();
+                mgmt.make_edge_label("Knows").make();
+                mgmt.make_property_key("name", DataType::String).make();
+                mgmt.make_property_key("age", DataType::Int64).make();
+                mgmt.make_property_key("weight", DataType::Float64).make();
+                mgmt.make_property_key("timestamp", DataType::Int64).make();
+                mgmt.commit().unwrap();
+            }
+            snap.g()
+                .addV("Person")
+                .property("id", 1i64)
+                .property("name", "alice")
+                .property("age", 30i64)
+                .next()
+                .unwrap();
+            snap.g().addV("Person").property("id", 2i64).property("name", "bob").property("age", 25i64).next().unwrap();
+            snap.g()
+                .addE("Knows")
+                .from(1)
+                .to(2)
+                .property("weight", 0.5f64)
+                .property("timestamp", 100i64)
+                .next()
+                .unwrap();
+            snap.g()
+                .addE("Knows")
+                .from(2)
+                .to(1)
+                .property("weight", 0.6f64)
+                .property("timestamp", 200i64)
+                .next()
+                .unwrap();
+            snap.commit().unwrap();
+        }
+
+        let file_dir = tempdir().unwrap();
+        let file_path = file_dir.path().join("graph.txt");
+        std::fs::write(&file_path, "1 2\n").unwrap();
+
+        let args = vec![
+            "bench_read".to_string(),
+            "--data-dir".to_string(),
+            dir.path().to_str().unwrap().to_string(),
+            "--file-path".to_string(),
+            file_path.to_str().unwrap().to_string(),
+            "--parallelism".to_string(),
+            "1".to_string(),
+        ];
+        assert!(run_with_args(args).is_ok());
+    }
 }

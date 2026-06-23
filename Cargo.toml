@@ -1,10 +1,14 @@
 [package]
 authors = ["Austin Han <austinhan1024@gmail.com>"]
-description = "A Gremlin-compatible property graph engine"
+description = "A Gremlin-inspired property graph query engine written in Rust, backed by RocksDB"
 edition = "2021"
-license = "GPL-2.0"
+license = "GPL-2.0-or-later"
 name = "rocksgraph"
 version = "0.1.0"
+readme = "README.md"
+repository = "https://github.com/austinhan/rocksgraph"
+keywords = ["graph", "gremlin", "rocksdb", "database"]
+categories = ["database-implementations", "data-structures"]
 
 [features]
 # Enable RocksDB statistics collection. Adds ~5-10% overhead on every storage
@@ -12,10 +16,7 @@ version = "0.1.0"
 rocksdb-stats = []
 
 [dependencies]
-
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-toml = "0.8"
 
 # Compact inline strings (≤22 bytes stack-allocated)
 smol_str = "0.2"
@@ -38,6 +39,7 @@ rocksdb = "0.22"
 
 # Bidirectional hash map — used by Schema for label_id ↔ label_string lookup
 bimap = "0.6"
+
 # tokio tasks
 tokio = { version = "1.52.3", features = [
     "sync",
@@ -49,14 +51,13 @@ tokio = { version = "1.52.3", features = [
 ] }
 async-trait = "0.1.89"
 futures-util = "0.3.32"
-tokio-tungstenite = "0.29.0"
-url = "2.5.8"
 tempfile = "3"
 rand = "0.8"
 hdrhistogram = "7.5.4"
 
 [dev-dependencies]
-tempfile = "3"
+# tempfile is already inherited from [dependencies] above
+
 
 [profile.release]
 debug = true

@@ -26,14 +26,14 @@
 //!
 //! // Read-only snapshot query — three ways to consume results
 //! let mut snap = graph.read();
-//! let count = snap.g().V([1]).out([KNOWS]).count().next()?.unwrap(); // first result
-//! let names = snap.g().V([1]).out([KNOWS]).values(["name"]).to_list()?; // Vec<GValue>
-//! for v in snap.g().V([]).out([KNOWS]).iter()? { println!("{:?}", v?); } // lazy
+//! let count = snap.g().V([1]).out(&["knows"]).count().next()?.unwrap(); // first result
+//! let names = snap.g().V([1]).out(&["knows"]).values(&["name"]).to_list()?; // Vec<GValue>
+//! for v in snap.g().V([]).out(&["knows"]).iter()? { println!("{:?}", v?); } // lazy
 //!
 //! // Read-write transaction
 //! let mut tx = graph.begin();
-//! tx.g().addV(PERSON).property("name", "alice").next()?;
-//! tx.g().addE(KNOWS).from(1).to(2).property("weight", 0.9f64).next()?;
+//! tx.g().addV("person").property("name", "alice").next()?;
+//! tx.g().addE("knows").from(1).to(2).property("weight", 0.9f64).next()?;
 //! tx.commit()?;
 //! ```
 //!
@@ -74,8 +74,13 @@ pub use api::{Graph, ReadSession, TxSession};
 // to where/coalesce/union without naming the type.
 #[doc(hidden)]
 pub use gremlin::traversal::GraphTraversal;
-pub use gremlin::traversal::{BuiltTraversal, ReadTraversal, TraversalBuilder, WriteTraversal, __};
-pub use gremlin::value::{
-    between, eq, gt, gte, lt, lte, ne, within, without, Edge, Key, Map, Path, Predicate, Property, Value, Vertex,
+pub use gremlin::{
+    traversal::{BuiltTraversal, ReadTraversal, TraversalBuilder, WriteTraversal, __},
+    value::{
+        between, eq, gt, gte, lt, lte, ne, within, without, Edge, Key, Map, Path, Predicate, Property, Value, Vertex,
+    },
 };
 pub use types::{BatchScenario, StoreError};
+
+#[cfg(test)]
+mod concurrency_tests;

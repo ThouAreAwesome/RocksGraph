@@ -335,4 +335,47 @@ mod tests {
             panic!("expected AddVStep at step 0");
         }
     }
+
+    #[test]
+    fn test_logical_step_optimizer_coverage() {
+        use crate::planner::logical_step::*;
+        use smallvec::smallvec;
+
+        let dummy_rule: OptimizerRule = |_plan| Ok(false);
+
+        let mut steps = vec![
+            LogicalStep::Both(BothStep { labels: smallvec![], end_vertex_ids: None }),
+            LogicalStep::BothE(BothEStep { labels: smallvec![], end_vertex_ids: None, rank: None }),
+            LogicalStep::Count(CountStep {}),
+            LogicalStep::HasLabel(HasLabelStep { labels: smallvec![] }),
+            LogicalStep::HasProperty(HasPropertyStep { key: SmolStr::new("key"), value: Primitive::Int32(0) }),
+            LogicalStep::In(InStep { labels: smallvec![], end_vertex_ids: None }),
+            LogicalStep::InE(InEStep { labels: smallvec![], end_vertex_ids: None, rank: None }),
+            LogicalStep::Out(OutStep { labels: smallvec![], end_vertex_ids: None }),
+            LogicalStep::InV(InVStep {}),
+            LogicalStep::OtherV(OtherVStep {}),
+            LogicalStep::OutV(OutVStep {}),
+            LogicalStep::ScalarFilter(ScalarFilterStep { value: Primitive::Int32(0) }),
+            LogicalStep::Values(ValuesStep { property_keys: smallvec![] }),
+            LogicalStep::Properties(PropertiesStep { property_keys: smallvec![] }),
+            LogicalStep::From(FromStep { vertex_id: 0 }),
+            LogicalStep::To(ToStep { vertex_id: 0 }),
+            LogicalStep::Limit(LimitStep { limit: 0 }),
+            LogicalStep::EndVertexFilter(EndVertexFilter { ids: smallvec![] }),
+            LogicalStep::Drop(DropStep {}),
+            LogicalStep::Path(PathStep {}),
+            LogicalStep::Dedup(DedupStep {}),
+            LogicalStep::Fold(FoldStep {}),
+        ];
+
+        for step in steps.iter_mut() {
+            let res = step.optimize(&dummy_rule);
+            assert!(res.is_ok());
+        }
+
+        // Call optimize on a step struct instance directly to cover default Optimizer trait implementation
+        let mut drop_step = DropStep {};
+        let res = drop_step.optimize(&dummy_rule);
+        assert!(res.is_ok());
+    }
 }

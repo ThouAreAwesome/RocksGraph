@@ -80,3 +80,6 @@ pub use keys::{
     LabelId, Rank, VertexKey,
 };
 pub use prop_key::PropKey;
+
+#[cfg(test)]
+pub mod tests;

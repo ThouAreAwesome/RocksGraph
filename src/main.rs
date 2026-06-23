@@ -20,3 +20,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("do not support client-server mode yet.");
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_main_fn() {
+        assert!(main().is_ok());
+    }
+}

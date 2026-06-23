@@ -297,35 +297,30 @@ impl Edge {
     }
 }
 
+/// Identity-only equality: two `Vertex` handles are the same vertex iff `id` and `label_id`
+/// match, regardless of their property contents. This is deliberate, not an oversight —
+/// properties are excluded so that comparing a vertex fetched before a property update against
+/// one fetched after still reports them as the same vertex, matching how callers reason about
+/// graph identity (a vertex doesn't become "a different vertex" because a property changed).
 impl PartialEq for Vertex {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
-        if self.id != other.id || self.label_id != other.label_id {
-            return false;
-        }
-        match (&self.raw_props, &other.raw_props) {
-            (Some((a, _)), Some((b, _))) => a == b,
-            (None, None) => self.props == other.props,
-            _ => false,
-        }
+        self.id == other.id && self.label_id == other.label_id
     }
 }
 
 impl Eq for Vertex {}
 
+/// Identity-only equality, mirroring [`Vertex`]'s rationale above: `src_id` + `label_id` +
+/// `rank` + `dst_id` form an edge's full identity tuple (`rank` distinguishes parallel edges in
+/// multi-edge mode); properties are intentionally excluded.
 impl PartialEq for Edge {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
-        if self.src_id != other.src_id
-            || self.label_id != other.label_id
-            || self.rank != other.rank
-            || self.dst_id != other.dst_id
-        {
-            return false;
-        }
-        match (&self.raw_props, &other.raw_props) {
-            (Some((a, _)), Some((b, _))) => a == b,
-            (None, None) => self.props == other.props,
-            _ => false,
-        }
+        self.src_id == other.src_id
+            && self.label_id == other.label_id
+            && self.rank == other.rank
+            && self.dst_id == other.dst_id
     }
 }
 

@@ -21,8 +21,8 @@
 //! Graph::open("./db")
 //!   ├── .read()  → ReadSession   (snapshot, read-only)
 //!   │               └── .g() → ReadTraversal
-//!   │                           .V([1]).out([KNOWS]).next()?       // Option<GValue>
-//!   │                           .V([]).values(["name"]).to_list()? // Vec<GValue>
+//!   │                           .V([1]).out(&["knows"]).next()?       // Option<GValue>
+//!   │                           .V([]).values(&["name"]).to_list()? // Vec<GValue>
 //!   │                           .V([]).out([]).iter()?             // BuiltTraversal (Iterator)
 //!   └── .begin() → TxSession     (OCC transaction, read-write)
 //!                   ├── .g() → WriteTraversal
@@ -69,8 +69,8 @@ use crate::{
 /// ```ignore
 /// let graph = Graph::open("./my_graph")?;
 /// let mut snap = graph.read();
-/// let person  = snap.g().V([1]).out(["knows"]).next()?;            // Option<GValue>
-/// let names   = snap.g().V([1]).out(["knows"]).values(["name"]).to_list()?; // Vec<GValue>
+/// let person  = snap.g().V([1]).out(&["knows"]).next()?;            // Option<GValue>
+/// let names   = snap.g().V([1]).out(&["knows"]).values(&["name"]).to_list()?; // Vec<GValue>
 /// ```
 pub struct Graph {
     store: Arc<RocksStorage>,

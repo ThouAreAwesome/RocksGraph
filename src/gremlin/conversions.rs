@@ -173,3 +173,79 @@ pub(crate) fn push_has_step(steps: &mut Vec<LogicalStep>, key: Key, pred: Predic
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gremlin::value::ne;
+
+    #[test]
+    fn test_value_to_primitive() {
+        assert_eq!(value_to_primitive(Value::Null), Some(Primitive::Null));
+        assert_eq!(value_to_primitive(Value::Bool(true)), Some(Primitive::Bool(true)));
+        assert_eq!(value_to_primitive(Value::Int32(42)), Some(Primitive::Int32(42)));
+        assert_eq!(value_to_primitive(Value::Int64(42)), Some(Primitive::Int64(42)));
+        assert_eq!(value_to_primitive(Value::UInt16(5)), Some(Primitive::UInt16(5)));
+        assert_eq!(value_to_primitive(Value::Float32(1.23)), Some(Primitive::Float32(1.23)));
+        assert_eq!(value_to_primitive(Value::Float64(1.23)), Some(Primitive::Float64(1.23)));
+        assert_eq!(value_to_primitive(Value::String("hello".to_string())), Some(Primitive::String("hello".into())));
+        assert_eq!(value_to_primitive(Value::Uuid(123)), Some(Primitive::Uuid(123)));
+
+        // Non-scalar
+        assert_eq!(value_to_primitive(Value::List(vec![])), None);
+    }
+
+    #[test]
+    fn test_primitive_to_value() {
+        assert_eq!(primitive_to_value(Primitive::Null), Value::Null);
+        assert_eq!(primitive_to_value(Primitive::Bool(true)), Value::Bool(true));
+        assert_eq!(primitive_to_value(Primitive::Int32(42)), Value::Int32(42));
+        assert_eq!(primitive_to_value(Primitive::Int64(42)), Value::Int64(42));
+        assert_eq!(primitive_to_value(Primitive::UInt16(5)), Value::UInt16(5));
+        assert_eq!(primitive_to_value(Primitive::Float32(1.23)), Value::Float32(1.23));
+        assert_eq!(primitive_to_value(Primitive::Float64(1.23)), Value::Float64(1.23));
+        assert_eq!(primitive_to_value(Primitive::String("hello".into())), Value::String("hello".to_string()));
+        assert_eq!(primitive_to_value(Primitive::Uuid(123)), Value::Uuid(123));
+    }
+
+    #[test]
+    fn test_key_to_prop_key() {
+        assert_eq!(key_to_prop_key(Key::Id), crate::types::prop_key::ID.clone());
+        assert_eq!(key_to_prop_key(Key::Label), crate::types::prop_key::LABEL.clone());
+        assert_eq!(key_to_prop_key(Key::Property("name".into())), SmolStr::from("name"));
+    }
+
+    #[test]
+    fn test_push_has_step_errors() {
+        let mut steps = Vec::new();
+
+        // ID error cases
+        assert!(push_has_step(&mut steps, Key::Id, ne(10i32)).is_err());
+        assert!(push_has_step(&mut steps, Key::Id, Predicate::Within(vec![Value::Null])).is_err());
+
+        // Label error cases
+        assert!(push_has_step(&mut steps, Key::Label, ne("person")).is_err());
+        assert!(push_has_step(&mut steps, Key::Label, Predicate::Within(vec![Value::Null])).is_err());
+
+        // Property error cases
+        assert!(push_has_step(&mut steps, Key::Property("age".into()), ne(10i32)).is_err());
+        assert!(push_has_step(&mut steps, Key::Property("age".into()), Predicate::Eq(Value::List(vec![]))).is_err());
+
+        // Success cases
+        assert!(push_has_step(&mut steps, Key::Id, Predicate::Eq(Value::Int64(42))).is_ok());
+        assert!(push_has_step(&mut steps, Key::Id, Predicate::Eq(Value::Int32(42))).is_ok());
+        assert!(push_has_step(&mut steps, Key::Id, Predicate::Within(vec![Value::Int64(42)])).is_ok());
+        assert!(push_has_step(&mut steps, Key::Id, Predicate::Within(vec![Value::Int32(42)])).is_ok());
+
+        assert!(push_has_step(&mut steps, Key::Label, Predicate::Eq(Value::String("person".to_string()))).is_ok());
+        assert!(push_has_step(&mut steps, Key::Label, Predicate::Eq(Value::Int32(1))).is_ok());
+        assert!(push_has_step(&mut steps, Key::Label, Predicate::Eq(Value::Int64(1))).is_ok());
+        assert!(
+            push_has_step(&mut steps, Key::Label, Predicate::Within(vec![Value::String("person".to_string())])).is_ok()
+        );
+        assert!(push_has_step(&mut steps, Key::Label, Predicate::Within(vec![Value::Int32(1)])).is_ok());
+        assert!(push_has_step(&mut steps, Key::Label, Predicate::Within(vec![Value::Int64(1)])).is_ok());
+
+        assert!(push_has_step(&mut steps, Key::Property("age".into()), Predicate::Eq(Value::Int32(42))).is_ok());
+    }
+}

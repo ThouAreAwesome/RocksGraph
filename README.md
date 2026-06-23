@@ -5,7 +5,7 @@ RocksGraph takes the traversal model from TinkerPop but makes deliberate departu
 where the standard's design choices create unnecessary complexity or overhead.
 See [docs/design_principles.md](docs/design_principles.md) for the full rationale.
 
-> **Status:** Early-stage (v0.1.0). Not yet production-ready or published to crates.io.
+> **Status:** Beta (v0.1.0). Under active development. Preparing for release on crates.io.
 
 ## Overview
 
