@@ -573,4 +573,72 @@ mod integration_test {
         let res3 = tx.g().addE("knows").from(1).to(2).property("rank", 5i32).next();
         assert!(matches!(res3, Err(StoreError::UnsupportedOperation(_))));
     }
+
+    #[test]
+    fn test_value_conversions_and_helpers() {
+        let v_bool = Value::Bool(true);
+        let v_i32 = Value::Int32(42);
+        let v_i64 = Value::Int64(100);
+        let v_str = Value::String("hello".to_string());
+
+        assert_eq!(v_bool.as_bool(), Some(true));
+        assert_eq!(v_i32.as_i32(), Some(42));
+        assert_eq!(v_i32.as_i64(), Some(42i64));
+        assert_eq!(v_i64.as_i64(), Some(100i64));
+        assert_eq!(v_str.as_str(), Some("hello"));
+
+        let b: bool = v_bool.clone().try_into().unwrap();
+        assert!(b);
+        let i: i64 = v_i64.clone().try_into().unwrap();
+        assert_eq!(i, 100);
+        let s: String = v_str.clone().try_into().unwrap();
+        assert_eq!(s, "hello");
+
+        let err: Result<bool, _> = v_i64.try_into();
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_silent_step_failures_rejection() {
+        let dir = tempfile::tempdir().unwrap();
+        let graph = Graph::open(dir.path()).unwrap();
+        let mut tx = graph.begin();
+
+        // 1. Manually writing property("label", ...) is a schema violation
+        let res1 = tx.g().addV("person").property("label", "illegal").next();
+        assert!(matches!(res1, Err(StoreError::SchemaViolation(_))));
+
+        // 2. Writing non-scalar property value is a datatype error
+        let res2 = tx.g().addV("person").property("complex", Value::List(vec![])).next();
+        assert!(matches!(res2, Err(StoreError::UnexpectedDataType(_))));
+
+        // 3. is() with range predicate is unsupported on scalar filter
+        let res3 = tx.g().V([]).values(["age"]).is(crate::gremlin::value::gt(30i32)).next();
+        assert!(matches!(res3, Err(StoreError::UnsupportedOperation(_))));
+    }
+
+    #[test]
+    fn test_reserved_key_write_validation() {
+        let dir = tempfile::tempdir().unwrap();
+        let graph = Graph::open(dir.path()).unwrap();
+        let mut tx = graph.begin();
+
+        // Misplaced "id" will not be folded, and compiling the physical plan must fail with SchemaViolation
+        let res_id = tx.g().V([1]).property("id", 999i64).next();
+        assert!(
+            matches!(res_id, Err(StoreError::SchemaViolation(msg)) if msg.contains("Unfolded or misplaced reserved property key"))
+        );
+
+        // Misplaced "rank" will not be folded, and compiling the physical plan must fail with SchemaViolation
+        let res_rank = tx.g().V([1]).property("rank", 1i64).next();
+        assert!(
+            matches!(res_rank, Err(StoreError::SchemaViolation(msg)) if msg.contains("Unfolded or misplaced reserved property key"))
+        );
+
+        // Explicitly setting "label" must fail with SchemaViolation early
+        let res_label = tx.g().V([1]).property("label", "new_label").next();
+        assert!(
+            matches!(res_label, Err(StoreError::SchemaViolation(msg)) if msg.contains("Cannot manually set or update the reserved property 'label'"))
+        );
+    }
 }

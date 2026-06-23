@@ -30,6 +30,7 @@ use crate::{
     types::{
         gvalue::Primitive,
         prop_key::{PropKey, ID, LABEL},
+        StoreError,
     },
 };
 
@@ -43,6 +44,7 @@ pub(crate) fn value_to_primitive(v: Value) -> Option<Primitive> {
         Value::Bool(b) => Some(Primitive::Bool(b)),
         Value::Int32(n) => Some(Primitive::Int32(n)),
         Value::Int64(n) => Some(Primitive::Int64(n)),
+        Value::UInt16(n) => Some(Primitive::UInt16(n)),
         Value::Float32(f) => Some(Primitive::Float32(f)),
         Value::Float64(f) => Some(Primitive::Float64(f)),
         Value::String(s) => Some(Primitive::String(SmolStr::from(s))),
@@ -58,6 +60,7 @@ pub(crate) fn primitive_to_value(p: Primitive) -> Value {
         Primitive::Bool(b) => Value::Bool(b),
         Primitive::Int32(n) => Value::Int32(n),
         Primitive::Int64(n) => Value::Int64(n),
+        Primitive::UInt16(n) => Value::UInt16(n),
         Primitive::Float32(f) => Value::Float32(f),
         Primitive::Float64(f) => Value::Float64(f),
         Primitive::String(s) => Value::String(s.to_string()),
@@ -75,7 +78,7 @@ pub(crate) fn key_to_prop_key(k: Key) -> PropKey {
     match k {
         Key::Id => ID.clone(),
         Key::Label => LABEL.clone(),
-        Key::Property(s) => SmolStr::from(s),
+        Key::Property(s) => s,
     }
 }
 
@@ -83,19 +86,38 @@ pub(crate) fn key_to_prop_key(k: Key) -> PropKey {
 ///
 /// Routing:
 /// - `Key::Id`  + `Predicate::Eq(Int64)` or `Within([Int64…])` → `HasIdStep`
-/// - `Key::Label` + `Predicate::Eq(String|Int32|Int64)` or `Within` → `HasLabelStep`
-///   (the usual case is a string label name, e.g. `.has(Key::Label, "person")`)
+/// - `Key::Label` + `Predicate::Eq(String|Int32|Int64)` or `Within` → `HasLabelStep` (the usual case is a string label
+///   name, e.g. `.has(Key::Label, "person")`)
 /// - `Key::Property(s)` + `Predicate::Eq(scalar)` → `HasPropertyStep`
 /// - Other combos → no-op (use dedicated step methods instead)
-pub(crate) fn push_has_step(steps: &mut Vec<LogicalStep>, key: Key, pred: Predicate) {
+pub(crate) fn push_has_step(steps: &mut Vec<LogicalStep>, key: Key, pred: Predicate) -> Result<(), StoreError> {
     match key {
         Key::Id => {
             let ids: SmallVec<[i64; 4]> = match pred {
                 Predicate::Eq(Value::Int64(n)) => smallvec![n],
+                Predicate::Eq(Value::Int32(n)) => smallvec![n as i64],
                 Predicate::Within(vs) => {
-                    vs.into_iter().filter_map(|v| if let Value::Int64(n) = v { Some(n) } else { None }).collect()
+                    let mut parsed = SmallVec::new();
+                    for v in vs {
+                        match v {
+                            Value::Int64(n) => parsed.push(n),
+                            Value::Int32(n) => parsed.push(n as i64),
+                            other => {
+                                return Err(StoreError::UnexpectedDataType(format!(
+                                    "ID has-filter expects i32 or i64, got {:?}",
+                                    other
+                                )))
+                            }
+                        }
+                    }
+                    parsed
                 }
-                _ => return,
+                other => {
+                    return Err(StoreError::UnsupportedOperation(format!(
+                        "Unsupported predicate for ID has-filter, got: {:?}",
+                        other
+                    )))
+                }
             };
             steps.push(LogicalStep::HasId(HasIdStep { ids }));
         }
@@ -104,26 +126,50 @@ pub(crate) fn push_has_step(steps: &mut Vec<LogicalStep>, key: Key, pred: Predic
                 Predicate::Eq(Value::String(s)) => smallvec![SmolStr::from(s)],
                 Predicate::Eq(Value::Int32(n)) => smallvec![SmolStr::from(n.to_string())],
                 Predicate::Eq(Value::Int64(n)) => smallvec![SmolStr::from(n.to_string())],
-                Predicate::Within(vs) => vs
-                    .into_iter()
-                    .filter_map(|v| match v {
-                        Value::String(s) => Some(SmolStr::from(s)),
-                        Value::Int32(n) => Some(SmolStr::from(n.to_string())),
-                        Value::Int64(n) => Some(SmolStr::from(n.to_string())),
-                        _ => None,
-                    })
-                    .collect(),
-                _ => return,
+                Predicate::Within(vs) => {
+                    let mut parsed = SmallVec::new();
+                    for v in vs {
+                        match v {
+                            Value::String(s) => parsed.push(SmolStr::from(s)),
+                            Value::Int32(n) => parsed.push(SmolStr::from(n.to_string())),
+                            Value::Int64(n) => parsed.push(SmolStr::from(n.to_string())),
+                            other => {
+                                return Err(StoreError::UnexpectedDataType(format!(
+                                    "Label has-filter expects String, i32 or i64, got {:?}",
+                                    other
+                                )))
+                            }
+                        }
+                    }
+                    parsed
+                }
+                other => {
+                    return Err(StoreError::UnsupportedOperation(format!(
+                        "Unsupported predicate for Label has-filter, got: {:?}",
+                        other
+                    )))
+                }
             };
             steps.push(LogicalStep::HasLabel(HasLabelStep { labels }));
         }
-        Key::Property(s) => {
-            if let Predicate::Eq(v) = pred {
-                if let Some(p) = value_to_primitive(v) {
-                    steps.push(LogicalStep::HasProperty(HasPropertyStep { key: SmolStr::from(s), value: p }));
+        Key::Property(s) => match pred {
+            Predicate::Eq(v) => {
+                if let Some(p) = value_to_primitive(v.clone()) {
+                    steps.push(LogicalStep::HasProperty(HasPropertyStep { key: s, value: p }));
+                } else {
+                    return Err(StoreError::UnexpectedDataType(format!(
+                        "Property has-filter expects scalar value, got complex type: {:?}",
+                        v
+                    )));
                 }
             }
-            // TODO: extend HasPropertyStep for range predicates (Gt, Lt, Between, etc.)
-        }
+            other => {
+                return Err(StoreError::UnsupportedOperation(format!(
+                    "Non-equality filters on user properties are not yet supported, got: {:?}",
+                    other
+                )))
+            }
+        },
     }
+    Ok(())
 }

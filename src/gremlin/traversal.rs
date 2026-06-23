@@ -65,6 +65,7 @@ use crate::{
     types::{
         gvalue::GValue,
         keys::{CanonicalKey, EdgeKey},
+        prop_key::LABEL,
         StoreError,
     },
 };
@@ -79,29 +80,41 @@ pub(crate) fn materialize(gv: GValue, ctx: &mut dyn GraphCtx) -> Result<Value, S
         GValue::Vertex(vk) => match ctx.get_all_props(&CanonicalKey::Vertex(vk))? {
             None => Err(StoreError::NotFound),
             Some((label_id, props)) => {
-                let mut properties: HashMap<String, Vec<Value>> = HashMap::new();
+                let schema_guard = ctx.schema();
+                let schema = schema_guard.read().unwrap();
+                let label = schema
+                    .vertex_label_str(label_id)
+                    .cloned()
+                    .unwrap_or_else(|| SmolStr::from(format!("vertex_{}", label_id)));
+                let mut properties: HashMap<SmolStr, Vec<Value>> = HashMap::new();
                 for (key, prim) in props {
-                    properties.entry(key.to_string()).or_default().push(primitive_to_value(prim));
+                    properties.entry(key).or_default().push(primitive_to_value(prim));
                 }
-                Ok(Value::Vertex(UserVertex { id: vk, label_id, properties }))
+                Ok(Value::Vertex(UserVertex { id: vk, label, properties }))
             }
         },
         GValue::Edge(ek) => match ctx.get_all_props(&CanonicalKey::Edge(ek.canonical_edge_key()))? {
             None => Err(StoreError::NotFound),
             Some((label_id, props)) => {
                 let cek = ek.canonical_edge_key();
-                let mut properties: HashMap<String, Value> = HashMap::new();
+                let schema_guard = ctx.schema();
+                let schema = schema_guard.read().unwrap();
+                let label = schema
+                    .edge_label_str(label_id)
+                    .cloned()
+                    .unwrap_or_else(|| SmolStr::from(format!("edge_{}", label_id)));
+                let mut properties: HashMap<SmolStr, Value> = HashMap::new();
                 for (key, prim) in props {
-                    properties.insert(key.to_string(), primitive_to_value(prim));
+                    properties.insert(key, primitive_to_value(prim));
                 }
-                Ok(Value::Edge(UserEdge { out_v: cek.src_id, in_v: cek.dst_id, label_id, rank: cek.rank, properties }))
+                Ok(Value::Edge(UserEdge { out_v: cek.src_id, in_v: cek.dst_id, label, rank: cek.rank, properties }))
             }
         },
         GValue::Property(p) => {
             let schema_guard = ctx.schema();
             let schema = schema_guard.read().unwrap();
-            let key_str = schema.prop_key_str(p.key).map(|k| k.to_string()).unwrap_or_else(|| format!("key_{}", p.key));
-            Ok(Value::Property(UserProperty { key: key_str, value: Box::new(primitive_to_value(p.value)) }))
+            let key = schema.prop_key_str(p.key).cloned().unwrap_or_else(|| SmolStr::from(format!("key_{}", p.key)));
+            Ok(Value::Property(UserProperty { key, value: Box::new(primitive_to_value(p.value)) }))
         }
         GValue::List(list) => {
             let mut out = Vec::with_capacity(list.len());
@@ -155,25 +168,44 @@ impl<'g> Iterator for BuiltTraversal<'g> {
     }
 }
 
+// ── PlanAppender ──────────────────────────────────────────────────────────────
+
+pub trait PlanAppender: Sized {
+    fn plan_mut(&mut self) -> &mut LogicalPlan;
+    fn record_error(&mut self, err: StoreError);
+    fn push_step(&mut self, step: LogicalStep) {
+        self.plan_mut().steps.push(step);
+    }
+}
+
 // ── GraphTraversal (anonymous / sub-traversal) ────────────────────────────────
 
 /// An anonymous traversal for use inside `where_`, `coalesce`, and `union`.
 ///
 /// Obtain one with [`__`].  All step methods take `self` by value and return
 /// `Self`, making the chain a pure sequence of moves with no hidden state.
-#[derive(Clone)]
 pub struct GraphTraversal {
     plan: LogicalPlan,
+    pub(crate) error: Option<StoreError>,
+}
+
+impl Clone for GraphTraversal {
+    fn clone(&self) -> Self {
+        Self { plan: self.plan.clone(), error: None }
+    }
 }
 
 /// Entry point for anonymous sub-traversals (mirrors Gremlin's `__`).
 pub fn __() -> GraphTraversal {
-    GraphTraversal { plan: LogicalPlan { steps: vec![] } }
+    GraphTraversal { plan: LogicalPlan { steps: vec![] }, error: None }
 }
 
 #[allow(non_snake_case)]
 impl GraphTraversal {
     pub(crate) fn build(self, graph: &mut dyn GraphCtx) -> Result<BuiltTraversal<'_>, StoreError> {
+        if let Some(err) = self.error {
+            return Err(err);
+        }
         let mut logical = self.plan;
         apply_rules(&mut logical)?;
         let schema = graph.schema();
@@ -185,18 +217,8 @@ impl GraphTraversal {
         self.plan
     }
 
-    pub fn V(mut self, ids: impl IntoIterator<Item = i64>) -> Self {
-        self.plan.steps.push(LogicalStep::V(crate::planner::logical_step::VStep { ids: ids.into_iter().collect() }));
-        self
-    }
-
-    pub fn E(mut self, keys: impl IntoIterator<Item = EdgeKey>) -> Self {
-        self.plan.steps.push(LogicalStep::E(EStep { keys: keys.into_iter().collect() }));
-        self
-    }
-
     pub fn addV(mut self, label: impl Into<SmolStr>) -> Self {
-        self.plan.steps.push(LogicalStep::AddV(AddVStep {
+        self.push_step(LogicalStep::AddV(AddVStep {
             label: label.into(),
             vertex_id: None,
             properties: HashMap::new(),
@@ -205,7 +227,7 @@ impl GraphTraversal {
     }
 
     pub fn addE(mut self, label: impl Into<SmolStr>) -> Self {
-        self.plan.steps.push(LogicalStep::AddE(AddEStep {
+        self.push_step(LogicalStep::AddE(AddEStep {
             label: label.into(),
             out_v_id: None,
             in_v_id: None,
@@ -216,210 +238,79 @@ impl GraphTraversal {
     }
 
     pub fn from(mut self, vertex_id: i64) -> Self {
-        self.plan.steps.push(LogicalStep::From(FromStep { vertex_id }));
+        self.push_step(LogicalStep::From(FromStep { vertex_id }));
         self
     }
 
     pub fn to(mut self, vertex_id: i64) -> Self {
-        self.plan.steps.push(LogicalStep::To(ToStep { vertex_id }));
-        self
-    }
-
-    pub fn out(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
-        self.plan.steps.push(LogicalStep::Out(OutStep {
-            labels: labels.into_iter().map(Into::into).collect(),
-            end_vertex_ids: None,
-        }));
-        self
-    }
-
-    pub fn outE(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
-        self.plan.steps.push(LogicalStep::OutE(OutEStep {
-            labels: labels.into_iter().map(Into::into).collect(),
-            end_vertex_ids: None,
-            rank: None,
-        }));
-        self
-    }
-
-    pub fn r#in(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
-        self.plan.steps.push(LogicalStep::In(InStep {
-            labels: labels.into_iter().map(Into::into).collect(),
-            end_vertex_ids: None,
-        }));
-        self
-    }
-
-    pub fn inE(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
-        self.plan.steps.push(LogicalStep::InE(InEStep {
-            labels: labels.into_iter().map(Into::into).collect(),
-            end_vertex_ids: None,
-            rank: None,
-        }));
-        self
-    }
-
-    pub fn both(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
-        self.plan.steps.push(LogicalStep::Both(BothStep {
-            labels: labels.into_iter().map(Into::into).collect(),
-            end_vertex_ids: None,
-        }));
-        self
-    }
-
-    pub fn bothE(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
-        self.plan.steps.push(LogicalStep::BothE(BothEStep {
-            labels: labels.into_iter().map(Into::into).collect(),
-            end_vertex_ids: None,
-            rank: None,
-        }));
-        self
-    }
-
-    pub fn count(mut self) -> Self {
-        self.plan.steps.push(LogicalStep::Count(CountStep {}));
-        self
-    }
-
-    pub fn hasLabel(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
-        self.plan
-            .steps
-            .push(LogicalStep::HasLabel(HasLabelStep { labels: labels.into_iter().map(Into::into).collect() }));
-        self
-    }
-
-    pub fn inV(mut self) -> Self {
-        self.plan.steps.push(LogicalStep::InV(InVStep {}));
-        self
-    }
-
-    pub fn otherV(mut self) -> Self {
-        self.plan.steps.push(LogicalStep::OtherV(OtherVStep {}));
-        self
-    }
-
-    pub fn outV(mut self) -> Self {
-        self.plan.steps.push(LogicalStep::OutV(OutVStep {}));
-        self
-    }
-
-    pub fn has(mut self, key: impl Into<Key>, pred: impl Into<Predicate>) -> Self {
-        push_has_step(&mut self.plan.steps, key.into(), pred.into());
-        self
-    }
-
-    pub fn is(mut self, pred: impl Into<Predicate>) -> Self {
-        if let Predicate::Eq(v) = pred.into() {
-            if let Some(p) = value_to_primitive(v) {
-                self.plan.steps.push(LogicalStep::ScalarFilter(ScalarFilterStep { value: p }));
-            }
-        }
+        self.push_step(LogicalStep::To(ToStep { vertex_id }));
         self
     }
 
     pub fn property(mut self, key: impl Into<SmolStr>, value: impl Into<Value>) -> Self {
-        if let Some(prim) = value_to_primitive(value.into()) {
-            self.plan.steps.push(LogicalStep::Property(PropertyStep { prop_key: key.into(), prop_value: prim }));
+        let key_smol = key.into();
+        if key_smol == LABEL {
+            self.record_error(StoreError::SchemaViolation(
+                "Cannot manually set or update the reserved property 'label'. Vertex and edge labels must be specified when creating elements via addV()/addE().".to_string()
+            ));
+            return self;
+        }
+        let val = value.into();
+        if let Some(prim) = value_to_primitive(val.clone()) {
+            self.push_step(LogicalStep::Property(PropertyStep { prop_key: key_smol, prop_value: prim }));
+        } else {
+            self.record_error(StoreError::UnexpectedDataType(format!(
+                "property() expects a scalar primitive value, got complex type: {:?}",
+                val
+            )));
         }
         self
     }
 
-    pub fn values(mut self, keys: impl IntoIterator<Item = impl Into<Key>>) -> Self {
-        self.plan.steps.push(LogicalStep::Values(ValuesStep {
-            property_keys: keys.into_iter().map(|k| key_to_prop_key(k.into())).collect(),
-        }));
+    pub fn drop(mut self) -> Self {
+        self.push_step(LogicalStep::Drop(DropStep {}));
         self
     }
+}
 
-    pub fn properties(mut self, keys: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
-        self.plan.steps.push(LogicalStep::Properties(PropertiesStep {
-            property_keys: keys.into_iter().map(Into::into).collect(),
-        }));
-        self
+impl PlanAppender for GraphTraversal {
+    fn plan_mut(&mut self) -> &mut LogicalPlan {
+        &mut self.plan
     }
-
-    pub fn r#where(mut self, sub: GraphTraversal) -> Self {
-        self.plan.steps.push(LogicalStep::Where(WhereStep { plan: sub.into_plan() }));
-        self
-    }
-
-    pub fn union(mut self, subs: impl IntoIterator<Item = GraphTraversal>) -> Self {
-        self.plan
-            .steps
-            .push(LogicalStep::Union(UnionStep { plans: subs.into_iter().map(|t| t.into_plan()).collect() }));
-        self
-    }
-
-    pub fn coalesce(mut self, subs: impl IntoIterator<Item = GraphTraversal>) -> Self {
-        self.plan
-            .steps
-            .push(LogicalStep::Coalesce(CoalesceStep { plans: subs.into_iter().map(|t| t.into_plan()).collect() }));
-        self
-    }
-
-    pub fn limit(mut self, n: u32) -> Self {
-        self.plan.steps.push(LogicalStep::Limit(LimitStep { limit: n }));
-        self
-    }
-
-    pub fn hasId(mut self, ids: impl IntoIterator<Item = i64>) -> Self {
-        self.plan.steps.push(LogicalStep::HasId(HasIdStep { ids: ids.into_iter().collect() }));
-        self
-    }
-
-    pub fn properties_step(mut self, keys: impl IntoIterator<Item = impl AsRef<str>>) -> Self {
-        self.plan.steps.push(LogicalStep::Properties(PropertiesStep {
-            property_keys: keys.into_iter().map(|k| SmolStr::new(k.as_ref())).collect(),
-        }));
-        self
-    }
-
-    pub fn path(mut self) -> Self {
-        self.plan.steps.push(LogicalStep::Path(PathStep {}));
-        self
-    }
-
-    pub fn dedup(mut self) -> Self {
-        self.plan.steps.push(LogicalStep::Dedup(DedupStep {}));
-        self
-    }
-
-    pub fn fold(mut self) -> Self {
-        self.plan.steps.push(LogicalStep::Fold(FoldStep {}));
-        self
+    fn record_error(&mut self, err: StoreError) {
+        if self.error.is_none() {
+            self.error = Some(err);
+        }
     }
 }
 
 // ── TraversalBuilder ──────────────────────────────────────────────────────────
 
 /// Shared read pipeline steps for both [`ReadTraversal`] and [`WriteTraversal`].
-pub trait TraversalBuilder: Sized {
-    #[doc(hidden)]
-    fn plan_mut(&mut self) -> &mut LogicalPlan;
-
+pub trait TraversalBuilder: PlanAppender {
     #[allow(non_snake_case)]
     fn V(mut self, ids: impl IntoIterator<Item = i64>) -> Self {
         use crate::planner::logical_step::VStep;
-        self.plan_mut().steps.push(LogicalStep::V(VStep { ids: ids.into_iter().collect() }));
+        self.push_step(LogicalStep::V(VStep { ids: ids.into_iter().collect() }));
         self
     }
 
     #[allow(non_snake_case)]
     fn E(mut self, keys: impl IntoIterator<Item = EdgeKey>) -> Self {
-        self.plan_mut().steps.push(LogicalStep::E(EStep { keys: keys.into_iter().collect() }));
+        self.push_step(LogicalStep::E(EStep { keys: keys.into_iter().collect() }));
         self
     }
 
     fn out(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
-        self.plan_mut().steps.push(LogicalStep::Out(OutStep {
+        self.push_step(LogicalStep::Out(OutStep {
             labels: labels.into_iter().map(Into::into).collect(),
             end_vertex_ids: None,
         }));
         self
     }
 
-    fn in_(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
-        self.plan_mut().steps.push(LogicalStep::In(InStep {
+    fn r#in(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
+        self.push_step(LogicalStep::In(InStep {
             labels: labels.into_iter().map(Into::into).collect(),
             end_vertex_ids: None,
         }));
@@ -427,7 +318,7 @@ pub trait TraversalBuilder: Sized {
     }
 
     fn both(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
-        self.plan_mut().steps.push(LogicalStep::Both(BothStep {
+        self.push_step(LogicalStep::Both(BothStep {
             labels: labels.into_iter().map(Into::into).collect(),
             end_vertex_ids: None,
         }));
@@ -436,7 +327,7 @@ pub trait TraversalBuilder: Sized {
 
     #[allow(non_snake_case)]
     fn outE(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
-        self.plan_mut().steps.push(LogicalStep::OutE(OutEStep {
+        self.push_step(LogicalStep::OutE(OutEStep {
             labels: labels.into_iter().map(Into::into).collect(),
             end_vertex_ids: None,
             rank: None,
@@ -446,7 +337,7 @@ pub trait TraversalBuilder: Sized {
 
     #[allow(non_snake_case)]
     fn inE(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
-        self.plan_mut().steps.push(LogicalStep::InE(InEStep {
+        self.push_step(LogicalStep::InE(InEStep {
             labels: labels.into_iter().map(Into::into).collect(),
             end_vertex_ids: None,
             rank: None,
@@ -456,7 +347,7 @@ pub trait TraversalBuilder: Sized {
 
     #[allow(non_snake_case)]
     fn bothE(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
-        self.plan_mut().steps.push(LogicalStep::BothE(BothEStep {
+        self.push_step(LogicalStep::BothE(BothEStep {
             labels: labels.into_iter().map(Into::into).collect(),
             end_vertex_ids: None,
             rank: None,
@@ -466,19 +357,19 @@ pub trait TraversalBuilder: Sized {
 
     #[allow(non_snake_case)]
     fn inV(mut self) -> Self {
-        self.plan_mut().steps.push(LogicalStep::InV(InVStep {}));
+        self.push_step(LogicalStep::InV(InVStep {}));
         self
     }
 
     #[allow(non_snake_case)]
     fn outV(mut self) -> Self {
-        self.plan_mut().steps.push(LogicalStep::OutV(OutVStep {}));
+        self.push_step(LogicalStep::OutV(OutVStep {}));
         self
     }
 
     #[allow(non_snake_case)]
     fn otherV(mut self) -> Self {
-        self.plan_mut().steps.push(LogicalStep::OtherV(OtherVStep {}));
+        self.push_step(LogicalStep::OtherV(OtherVStep {}));
         self
     }
 
@@ -488,29 +379,42 @@ pub trait TraversalBuilder: Sized {
     /// `pred` accepts any scalar (→ `Predicate::Eq`) or an explicit predicate from
     /// [`eq`](crate::gremlin::value::eq), [`gt`](crate::gremlin::value::gt), etc.
     fn has(mut self, key: impl Into<Key>, pred: impl Into<Predicate>) -> Self {
-        push_has_step(self.plan_mut().steps.as_mut(), key.into(), pred.into());
+        if let Err(err) = push_has_step(self.plan_mut().steps.as_mut(), key.into(), pred.into()) {
+            self.record_error(err);
+        }
         self
     }
 
     #[allow(non_snake_case)]
     fn hasLabel(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
-        self.plan_mut()
-            .steps
-            .push(LogicalStep::HasLabel(HasLabelStep { labels: labels.into_iter().map(Into::into).collect() }));
+        self.push_step(LogicalStep::HasLabel(HasLabelStep { labels: labels.into_iter().map(Into::into).collect() }));
         self
     }
 
     #[allow(non_snake_case)]
     fn hasId(mut self, ids: impl IntoIterator<Item = i64>) -> Self {
-        self.plan_mut().steps.push(LogicalStep::HasId(HasIdStep { ids: ids.into_iter().collect() }));
+        self.push_step(LogicalStep::HasId(HasIdStep { ids: ids.into_iter().collect() }));
         self
     }
 
     /// Filter the current scalar to equal `pred`.
     fn is(mut self, pred: impl Into<Predicate>) -> Self {
-        if let Predicate::Eq(v) = pred.into() {
-            if let Some(p) = value_to_primitive(v) {
-                self.plan_mut().steps.push(LogicalStep::ScalarFilter(ScalarFilterStep { value: p }));
+        match pred.into() {
+            Predicate::Eq(v) => {
+                if let Some(p) = value_to_primitive(v.clone()) {
+                    self.push_step(LogicalStep::ScalarFilter(ScalarFilterStep { value: p }));
+                } else {
+                    self.record_error(StoreError::UnexpectedDataType(format!(
+                        "is() expects a scalar primitive value, got complex type: {:?}",
+                        v
+                    )));
+                }
+            }
+            other => {
+                self.record_error(StoreError::UnsupportedOperation(format!(
+                    "is() only supports Eq predicate with scalar value, got: {:?}",
+                    other
+                )));
             }
         }
         self
@@ -518,7 +422,7 @@ pub trait TraversalBuilder: Sized {
 
     /// Extract scalar values for the given keys (including `Key::Id` and `Key::Label`).
     fn values(mut self, keys: impl IntoIterator<Item = impl Into<Key>>) -> Self {
-        self.plan_mut().steps.push(LogicalStep::Values(ValuesStep {
+        self.push_step(LogicalStep::Values(ValuesStep {
             property_keys: keys.into_iter().map(|k| key_to_prop_key(k.into())).collect(),
         }));
         self
@@ -528,56 +432,71 @@ pub trait TraversalBuilder: Sized {
     ///
     /// `Key::Id` and `Key::Label` are not property elements — use `.values()` for those.
     fn properties(mut self, keys: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
-        self.plan_mut().steps.push(LogicalStep::Properties(PropertiesStep {
+        self.push_step(LogicalStep::Properties(PropertiesStep {
             property_keys: keys.into_iter().map(Into::into).collect(),
         }));
         self
     }
 
     fn count(mut self) -> Self {
-        self.plan_mut().steps.push(LogicalStep::Count(CountStep {}));
+        self.push_step(LogicalStep::Count(CountStep {}));
         self
     }
 
     fn limit(mut self, n: u32) -> Self {
-        self.plan_mut().steps.push(LogicalStep::Limit(LimitStep { limit: n }));
+        self.push_step(LogicalStep::Limit(LimitStep { limit: n }));
         self
     }
 
     fn path(mut self) -> Self {
-        self.plan_mut().steps.push(LogicalStep::Path(PathStep {}));
+        self.push_step(LogicalStep::Path(PathStep {}));
         self
     }
 
     fn dedup(mut self) -> Self {
-        self.plan_mut().steps.push(LogicalStep::Dedup(DedupStep {}));
+        self.push_step(LogicalStep::Dedup(DedupStep {}));
         self
     }
 
     fn fold(mut self) -> Self {
-        self.plan_mut().steps.push(LogicalStep::Fold(FoldStep {}));
+        self.push_step(LogicalStep::Fold(FoldStep {}));
         self
     }
 
-    fn r#where(mut self, sub: GraphTraversal) -> Self {
-        self.plan_mut().steps.push(LogicalStep::Where(WhereStep { plan: sub.into_plan() }));
+    fn r#where(mut self, mut sub: GraphTraversal) -> Self {
+        if let Some(err) = sub.error.take() {
+            self.record_error(err);
+        }
+        self.push_step(LogicalStep::Where(WhereStep { plan: sub.into_plan() }));
         self
     }
 
     fn coalesce(mut self, subs: impl IntoIterator<Item = GraphTraversal>) -> Self {
-        self.plan_mut()
-            .steps
-            .push(LogicalStep::Coalesce(CoalesceStep { plans: subs.into_iter().map(|t| t.into_plan()).collect() }));
+        let mut plans = Vec::new();
+        for mut sub in subs {
+            if let Some(err) = sub.error.take() {
+                self.record_error(err);
+            }
+            plans.push(sub.into_plan());
+        }
+        self.push_step(LogicalStep::Coalesce(CoalesceStep { plans }));
         self
     }
 
     fn union(mut self, subs: impl IntoIterator<Item = GraphTraversal>) -> Self {
-        self.plan_mut()
-            .steps
-            .push(LogicalStep::Union(UnionStep { plans: subs.into_iter().map(|t| t.into_plan()).collect() }));
+        let mut plans = Vec::new();
+        for mut sub in subs {
+            if let Some(err) = sub.error.take() {
+                self.record_error(err);
+            }
+            plans.push(sub.into_plan());
+        }
+        self.push_step(LogicalStep::Union(UnionStep { plans: plans.into_iter().collect() }));
         self
     }
 }
+
+impl<T: PlanAppender> TraversalBuilder for T {}
 
 // ── ReadTraversal ─────────────────────────────────────────────────────────────
 
@@ -585,16 +504,20 @@ pub trait TraversalBuilder: Sized {
 pub struct ReadTraversal<'s> {
     plan: LogicalPlan,
     ctx: &'s mut dyn GraphCtx,
+    pub(crate) error: Option<StoreError>,
 }
 
 impl<'s> ReadTraversal<'s> {
     pub(crate) fn new(ctx: &'s mut dyn GraphCtx) -> Self {
-        Self { plan: LogicalPlan { steps: vec![] }, ctx }
+        Self { plan: LogicalPlan { steps: vec![] }, ctx, error: None }
     }
 
     /// Build the physical plan and return a lazy iterator over all results.
     pub fn iter(self) -> Result<BuiltTraversal<'s>, StoreError> {
-        GraphTraversal { plan: self.plan }.build(self.ctx)
+        if let Some(err) = self.error {
+            return Err(err);
+        }
+        GraphTraversal { plan: self.plan, error: None }.build(self.ctx)
     }
 
     /// Execute and return the first result (`tryNext()` in Gremlin).
@@ -608,9 +531,14 @@ impl<'s> ReadTraversal<'s> {
     }
 }
 
-impl TraversalBuilder for ReadTraversal<'_> {
+impl PlanAppender for ReadTraversal<'_> {
     fn plan_mut(&mut self) -> &mut LogicalPlan {
         &mut self.plan
+    }
+    fn record_error(&mut self, err: StoreError) {
+        if self.error.is_none() {
+            self.error = Some(err);
+        }
     }
 }
 
@@ -620,26 +548,19 @@ impl TraversalBuilder for ReadTraversal<'_> {
 pub struct WriteTraversal<'s> {
     plan: LogicalPlan,
     ctx: &'s mut dyn GraphCtx,
+    pub(crate) error: Option<StoreError>,
 }
 
 impl<'s> WriteTraversal<'s> {
     pub(crate) fn new(ctx: &'s mut dyn GraphCtx) -> Self {
-        Self { plan: LogicalPlan { steps: vec![] }, ctx }
+        Self { plan: LogicalPlan { steps: vec![] }, ctx, error: None }
     }
 
-    // ── Write steps ───────────────────────────────────────────────────────────
+    // ── Concrete mutating methods ─────────────────────────────────────────────
 
-    /// Add a vertex with the given label.
-    ///
-    /// In `SchemaMode::Auto` (the default), an unrecognized `label` is registered
-    /// automatically on first use. In `SchemaMode::Strict`, `label` must already have been
-    /// declared via [`Graph::open_management`](crate::api::Graph::open_management) — an
-    /// undeclared label fails with `StoreError::SchemaViolation` instead. Same rule applies
-    /// to property keys passed to [`property`](Self::property). See
-    /// [`SchemaManagement`](crate::schema::SchemaManagement) for a worked example.
     #[allow(non_snake_case)]
     pub fn addV(mut self, label: impl Into<SmolStr>) -> Self {
-        self.plan.steps.push(LogicalStep::AddV(AddVStep {
+        self.push_step(LogicalStep::AddV(AddVStep {
             label: label.into(),
             vertex_id: None,
             properties: HashMap::new(),
@@ -647,11 +568,9 @@ impl<'s> WriteTraversal<'s> {
         self
     }
 
-    /// Add an edge with the given label. See [`addV`](Self::addV) for how `label` is resolved
-    /// against the schema depending on `SchemaMode`.
     #[allow(non_snake_case)]
     pub fn addE(mut self, label: impl Into<SmolStr>) -> Self {
-        self.plan.steps.push(LogicalStep::AddE(AddEStep {
+        self.push_step(LogicalStep::AddE(AddEStep {
             label: label.into(),
             out_v_id: None,
             in_v_id: None,
@@ -662,32 +581,37 @@ impl<'s> WriteTraversal<'s> {
     }
 
     pub fn from(mut self, vertex_id: i64) -> Self {
-        self.plan.steps.push(LogicalStep::From(FromStep { vertex_id }));
+        self.push_step(LogicalStep::From(FromStep { vertex_id }));
         self
     }
 
     pub fn to(mut self, vertex_id: i64) -> Self {
-        self.plan.steps.push(LogicalStep::To(ToStep { vertex_id }));
+        self.push_step(LogicalStep::To(ToStep { vertex_id }));
         self
     }
 
-    /// Set a property on the current element.
-    ///
-    /// `value` must be a scalar — passing `Value::Vertex`, `Value::List`, etc. is a
-    /// programming error and the step will be silently dropped.
-    ///
-    /// `key` is resolved against the schema the same way `label` is in [`addV`](Self::addV) —
-    /// implicitly registered in `SchemaMode::Auto`, or rejected with
-    /// `StoreError::SchemaViolation` in `SchemaMode::Strict` unless already declared.
     pub fn property(mut self, key: impl Into<SmolStr>, value: impl Into<Value>) -> Self {
-        if let Some(prim) = value_to_primitive(value.into()) {
-            self.plan.steps.push(LogicalStep::Property(PropertyStep { prop_key: key.into(), prop_value: prim }));
+        let key_smol = key.into();
+        if key_smol == LABEL {
+            self.record_error(StoreError::SchemaViolation(
+                "Cannot manually set or update the reserved property 'label'. Vertex and edge labels must be specified when creating elements via addV()/addE().".to_string()
+            ));
+            return self;
+        }
+        let val = value.into();
+        if let Some(prim) = value_to_primitive(val.clone()) {
+            self.push_step(LogicalStep::Property(PropertyStep { prop_key: key_smol, prop_value: prim }));
+        } else {
+            self.record_error(StoreError::UnexpectedDataType(format!(
+                "property() expects a scalar primitive value, got complex type: {:?}",
+                val
+            )));
         }
         self
     }
 
     pub fn drop(mut self) -> Self {
-        self.plan.steps.push(LogicalStep::Drop(DropStep {}));
+        self.push_step(LogicalStep::Drop(DropStep {}));
         self
     }
 
@@ -695,7 +619,10 @@ impl<'s> WriteTraversal<'s> {
 
     /// Build the physical plan and return a lazy iterator over all results.
     pub fn iter(self) -> Result<BuiltTraversal<'s>, StoreError> {
-        GraphTraversal { plan: self.plan }.build(self.ctx)
+        if let Some(err) = self.error {
+            return Err(err);
+        }
+        GraphTraversal { plan: self.plan, error: None }.build(self.ctx)
     }
 
     /// Execute and return the first result.
@@ -709,8 +636,13 @@ impl<'s> WriteTraversal<'s> {
     }
 }
 
-impl TraversalBuilder for WriteTraversal<'_> {
+impl PlanAppender for WriteTraversal<'_> {
     fn plan_mut(&mut self) -> &mut LogicalPlan {
         &mut self.plan
+    }
+    fn record_error(&mut self, err: StoreError) {
+        if self.error.is_none() {
+            self.error = Some(err);
+        }
     }
 }

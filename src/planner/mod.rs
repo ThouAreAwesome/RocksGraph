@@ -17,7 +17,7 @@
 
 pub mod logical_step;
 
-mod optimizer;
+pub(crate) mod optimizer;
 
 use crate::{
     planner::{

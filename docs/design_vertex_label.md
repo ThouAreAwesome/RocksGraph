@@ -55,7 +55,7 @@ ArangoDB, trading a schema migration for consistent, zero-cost label access.
 
 ### Option A — Keep label in value, make it optional at API boundary
 
-- Change `Value::Vertex.label_id` from `u16` to `Option<u16>`
+- Change `Value::Vertex.label` (decoded string, formerly numeric `label_id`) to `Option<SmolStr>`
 - `None` when `PropHint::None` is used (see `design_with_properties.md`)
 - Minimal store change; `hasLabel()` stays a value-side filter
 - Best as a short-term step while Option B is planned

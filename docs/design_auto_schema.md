@@ -822,7 +822,12 @@ method is needed beyond `schema()`, §3):
   Since `LogicalGraph`/`LogicalSnapshot` already own `schema: Arc<RwLock<Schema>>` directly,
   `get_all_props` decodes every `prop_key_id` to a string *internally* before returning —
   its signature (`Vec<(PropKey, Primitive)>`) stays exactly as it is today; only the
-  implementation changes. `materialize` itself needs no edit for these two arms.
+  implementation changes.
+  ~~`materialize` itself needs no edit for these two arms.~~ Correction: this missed that
+  `get_all_props` returns `(LabelId, Vec<(PropKey, Primitive)>)` — the label id itself, not
+  just the property keys, was still left numeric on the public `Value::Vertex`/`Value::Edge`
+  (`label_id: u16`) until a follow-up fix decoded it to `label: String` in `materialize`'s
+  `GValue::Vertex`/`GValue::Edge` arms, matching `Key::Label`'s decode behavior.
 - **`materialize`'s `GValue::Property` arm** ([`src/gremlin/traversal.rs:100`](../src/gremlin/traversal.rs#L100))
   — backs `.properties(...)`-style results, where the physical step already carries the
   original string next to the id it resolved (see "Where encoding happens" above) for the

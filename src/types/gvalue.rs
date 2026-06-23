@@ -55,6 +55,7 @@ pub enum Primitive {
     Bool(bool),
     Int32(i32),
     Int64(i64),
+    UInt16(u16),
     Float32(f32),
     Float64(f64),
     String(SmolStr),
@@ -69,6 +70,7 @@ impl PartialEq for Primitive {
             (Self::Bool(a), Self::Bool(b)) => a == b,
             (Self::Int32(a), Self::Int32(b)) => a == b,
             (Self::Int64(a), Self::Int64(b)) => a == b,
+            (Self::UInt16(a), Self::UInt16(b)) => a == b,
             (Self::Float32(a), Self::Float32(b)) => a.to_bits() == b.to_bits(),
             (Self::Float64(a), Self::Float64(b)) => a.to_bits() == b.to_bits(),
             (Self::String(a), Self::String(b)) => a == b,
@@ -89,6 +91,7 @@ impl Hash for Primitive {
             Self::Bool(v) => v.hash(state),
             Self::Int32(v) => v.hash(state),
             Self::Int64(v) => v.hash(state),
+            Self::UInt16(v) => v.hash(state),
             Self::Float32(v) => v.to_bits().hash(state),
             Self::Float64(v) => v.to_bits().hash(state),
             Self::String(v) => v.hash(state),
@@ -113,6 +116,11 @@ impl From<i32> for Primitive {
 impl From<i64> for Primitive {
     fn from(v: i64) -> Self {
         Self::Int64(v)
+    }
+}
+impl From<u16> for Primitive {
+    fn from(v: u16) -> Self {
+        Self::UInt16(v)
     }
 }
 impl From<f32> for Primitive {

@@ -82,6 +82,7 @@ pub enum DataType {
     Float64 = 4,
     String = 5,
     Uuid = 6,
+    UInt16 = 7,
 }
 
 impl DataType {
@@ -90,6 +91,7 @@ impl DataType {
             Primitive::Bool(_) => DataType::Bool,
             Primitive::Int32(_) => DataType::Int32,
             Primitive::Int64(_) => DataType::Int64,
+            Primitive::UInt16(_) => DataType::UInt16,
             Primitive::Float32(_) => DataType::Float32,
             Primitive::Float64(_) => DataType::Float64,
             Primitive::String(_) => DataType::String,
@@ -111,6 +113,7 @@ impl DataType {
             4 => Some(DataType::Float64),
             5 => Some(DataType::String),
             6 => Some(DataType::Uuid),
+            7 => Some(DataType::UInt16),
             _ => None,
         }
     }
@@ -213,7 +216,7 @@ impl Default for Schema {
         prop_key_types
             .insert(LABEL_KEY_ID, PropKeyConfig { data_type: DataType::Int32, cardinality: Cardinality::Single });
         prop_key_types
-            .insert(RANK_KEY_ID, PropKeyConfig { data_type: DataType::Int32, cardinality: Cardinality::Single });
+            .insert(RANK_KEY_ID, PropKeyConfig { data_type: DataType::UInt16, cardinality: Cardinality::Single });
 
         let mut persisted_prop_keys = HashSet::new();
         persisted_prop_keys.insert(ID_KEY_ID);
@@ -504,11 +507,12 @@ mod tests {
             DataType::Float64,
             DataType::String,
             DataType::Uuid,
+            DataType::UInt16,
         ];
         for dt in all {
             assert_eq!(DataType::from_u8(dt.to_u8()), Some(dt));
         }
-        assert_eq!(DataType::from_u8(7), None);
+        assert_eq!(DataType::from_u8(8), None);
     }
 
     #[test]

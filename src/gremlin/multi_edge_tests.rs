@@ -81,9 +81,9 @@ mod multi_edge_integration_test {
         // 5. Verify rank property accesses return correct values (shortcut logic test)
         let ranks = read.g().V([10]).outE(["purchased"]).values(["rank"]).to_list().unwrap();
         assert_eq!(ranks.len(), 3);
-        assert!(ranks.contains(&Value::Int32(0)));
-        assert!(ranks.contains(&Value::Int32(1)));
-        assert!(ranks.contains(&Value::Int32(2)));
+        assert!(ranks.contains(&Value::UInt16(0)));
+        assert!(ranks.contains(&Value::UInt16(1)));
+        assert!(ranks.contains(&Value::UInt16(2)));
 
         // 6. Verify filtering by rank works
         let evening_edge_count =
@@ -174,9 +174,7 @@ mod multi_edge_integration_test {
                 assert_eq!(edge.out_v, 1);
                 assert_eq!(edge.in_v, 2);
                 assert_eq!(edge.rank, 5);
-                // Look up mapped ID of "knows" to compare with edge.label_id
-                let knows_id = graph.schema().read().unwrap().edge_label_id("knows").unwrap();
-                assert_eq!(edge.label_id, knows_id);
+                assert_eq!(edge.label, "knows");
             } else {
                 panic!("Expected Edge in path segment");
             }
@@ -217,9 +215,9 @@ mod multi_edge_integration_test {
         let mut read2 = graph.read();
         let remaining_ranks = read2.g().V([1]).outE(["knows"]).values(["rank"]).to_list().unwrap();
         assert_eq!(remaining_ranks.len(), 2);
-        assert!(remaining_ranks.contains(&Value::Int32(0)));
-        assert!(remaining_ranks.contains(&Value::Int32(2)));
-        assert!(!remaining_ranks.contains(&Value::Int32(1)));
+        assert!(remaining_ranks.contains(&Value::UInt16(0)));
+        assert!(remaining_ranks.contains(&Value::UInt16(2)));
+        assert!(!remaining_ranks.contains(&Value::UInt16(1)));
 
         // Verify degree count is decremented to 2
         let final_counts = read2.g().V([1]).outE(["knows"]).count().next().unwrap().unwrap();

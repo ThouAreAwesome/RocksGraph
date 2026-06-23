@@ -25,7 +25,13 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{error::StoreError, gvalue::Primitive, prop_key::LABEL_KEY_ID, CanonicalKey, GValue},
+    planner::optimizer::primitive_to_rank,
+    types::{
+        error::StoreError,
+        gvalue::Primitive,
+        prop_key::{LABEL_KEY_ID, RANK_KEY_ID},
+        CanonicalKey, GValue,
+    },
 };
 
 /// A physical step that filters traversers based on a specific property key and its expected value.
@@ -43,7 +49,25 @@ pub struct HasPropertyStep {
 
 /// Creates a new `HasPropertyStep` with the property key ID and expected value to filter by.
 impl HasPropertyStep {
+    /// Normalizes `expected_value` for reserved keys whose runtime representation doesn't
+    /// match whatever literal type a caller wrote.
+    ///
+    /// This only matters for an *unmerged* `.has("rank", N)` — the common case
+    /// (`.outE(...).has("rank", N)`) gets folded into a dedicated physical step by
+    /// `merge_end_vertex_filter` before this step is ever built. But a `.has("rank", N)` that
+    /// doesn't immediately follow an edge-emitting step falls through to here, and
+    /// `Edge::get_value(RANK_KEY_ID)` always returns `Primitive::UInt16`. Without this, a
+    /// perfectly valid `.has("rank", 5i32)` would compare `Primitive::Int32` against
+    /// `Primitive::UInt16` and silently never match. Reuses `primitive_to_rank` — the same
+    /// Int32/Int64/UInt16-to-`u16` conversion the merge rules already apply — so a value that
+    /// isn't a valid rank (wrong type or out of range) is left as-is, which simply never
+    /// matches the `UInt16` runtime value rather than panicking.
     pub fn new(prop_key_id: u16, expected_value: Primitive) -> Self {
+        let expected_value = if prop_key_id == RANK_KEY_ID {
+            primitive_to_rank(&expected_value).map(Primitive::UInt16).unwrap_or(expected_value)
+        } else {
+            expected_value
+        };
         Self { upstream: None, prop_key_id, expected_value }
     }
 

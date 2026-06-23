@@ -1,4 +1,17 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(echo \"=== schema/definition.rs - DataType context ===\" && sed -n '1,120' /Users/austinhan/Workplace/RocksGraph/src/schema/definition.rs && echo \"=== ValueType/DataType/PropertyType/ColumnType definitions across src ===\" && grep -rn \"enum DataType\\\\|enum ValueType\\\\|enum PropertyType\\\\|enum ColumnType\\\\|enum.*Schema.*Mode\\\\|enum EdgeMode\" src/ && echo \"=== schema/definition.rs around 440-475 \\(label decode\\) ===\" && sed -n '440,475p' /Users/austinhan/Workplace/RocksGraph/src/schema/definition.rs)",
+      "Bash(git log *)",
+      "Bash(find / -maxdepth 6 -iname \"smol_str-*\" -type d)",
+      "Bash(cargo tree *)",
+      "Bash(sed -i '' -e 's/`label: Option<String>` in `Value::Vertex`/`label: Option<SmolStr>` in `Value::Vertex`/' -e 's/Change `Value::Vertex.label` to `Option<String>`/Change `Value::Vertex.label` to `Option<SmolStr>`/' -e 's/`Vertex.label: Option<String>`/`Vertex.label: Option<SmolStr>`/' docs/design_with_properties.md)",
+      "Bash(sed -i '' 's/to `Option<String>`/to `Option<SmolStr>`/' docs/design_vertex_label.md)"
+    ],
+    "additionalDirectories": [
+      "/Users/austinhan/Workplace/RocksGraph/src/schema"
+    ]
+  },
   "hooks": {
     "PostToolUse": [
       {

@@ -47,7 +47,12 @@ use crate::{
     },
     planner::logical_step::{LogicalPlan, LogicalStep},
     schema::{DataType, EdgeMode, Schema, SchemaMode},
-    types::{error::StoreError, keys::Rank, Direction, LabelId},
+    types::{
+        error::StoreError,
+        keys::Rank,
+        prop_key::{ID, LABEL, RANK},
+        Direction, LabelId,
+    },
 };
 use smol_str::SmolStr;
 use std::collections::HashMap;
@@ -58,6 +63,7 @@ fn primitive_data_type(val: &crate::types::gvalue::Primitive) -> DataType {
         Primitive::Bool(_) => DataType::Bool,
         Primitive::Int32(_) => DataType::Int32,
         Primitive::Int64(_) => DataType::Int64,
+        Primitive::UInt16(_) => DataType::UInt16,
         Primitive::Float32(_) => DataType::Float32,
         Primitive::Float64(_) => DataType::Float64,
         Primitive::String(_) => DataType::String,
@@ -522,6 +528,12 @@ impl PhysicalPlanBuilder {
                 )
             }
             LogicalStep::Property(s) => {
+                if s.prop_key == ID || s.prop_key == LABEL || s.prop_key == RANK {
+                    return Err(StoreError::SchemaViolation(format!(
+                        "Unfolded or misplaced reserved property key: '{}'. Writes to reserved keys must immediately follow the creating step (addV/addE) to be optimized.",
+                        s.prop_key
+                    )));
+                }
                 drop(schema);
                 let inferred_type = primitive_data_type(&s.prop_value);
                 let id = resolve_write_prop_key(&s.prop_key, inferred_type, schema_lock)?;

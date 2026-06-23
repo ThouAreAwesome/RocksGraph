@@ -58,21 +58,22 @@ fn materialize(gv: GValue, ctx: &mut dyn GraphCtx) -> Result<Value, StoreError> 
     match gv {
         GValue::Vertex(vk, hint) => match hint {
             PropHint::All  => { /* current get_all_props() path */ }
-            PropHint::None => Ok(Value::Vertex(Vertex { id: vk, label_id: None, properties: HashMap::new() }))
+            PropHint::None => Ok(Value::Vertex(Vertex { id: vk, label: None, properties: HashMap::new() }))
             PropHint::Keys(keys) => { /* get_label() + per-key get_value() */ }
         }
         GValue::Edge(ek, hint) => match hint {
             PropHint::All  => { /* current get_all_props() path */ }
-            PropHint::None => Ok(Value::Edge(Edge { out_v, in_v, label_id: ek.label_id, rank: ek.rank, properties: HashMap::new() }))
-            PropHint::Keys(keys) => { /* per-key get_value(), label free from ek.label_id */ }
+            PropHint::None => Ok(Value::Edge(Edge { out_v, in_v, label: Some(schema.edge_label_str(ek.label_id)...), rank: ek.rank, properties: HashMap::new() }))
+            PropHint::Keys(keys) => { /* per-key get_value(); label_id still free from ek.label_id, but resolving it to a string now needs the in-memory schema lookup */ }
         }
         _ => { /* unchanged */ }
     }
 }
 ```
 
-Note: `PropHint::None` on edges costs zero extra reads — `label_id` is already in `EdgeKey`.
-`PropHint::None` on vertices still needs a label read unless Option B from
+Note: `PropHint::None` on edges costs zero extra *RocksDB* reads — `label_id` is already in
+`EdgeKey`, and resolving it to the `label` string is an in-memory schema lookup, not a store
+read. `PropHint::None` on vertices still needs a label read unless Option B from
 `design_vertex_label.md` is implemented first.
 
 ## New GraphCtx methods needed
@@ -92,15 +93,15 @@ fn get_label(&mut self, key: &CanonicalKey) -> Result<Option<LabelId>, StoreErro
 Both can be omitted until `PropHint::Keys` is implemented; `PropHint::None` is the
 valuable first milestone.
 
-## Value::Vertex label_id change (prerequisite)
+## Value::Vertex label change (prerequisite)
 
-`PropHint::None` requires `label_id: Option<u16>` in `Value::Vertex` (see
+`PropHint::None` requires `label: Option<SmolStr>` in `Value::Vertex` (see
 `design_vertex_label.md` Option A). Without this, we cannot return a vertex without
 fetching the label.
 
 ## Implementation order
 
-1. Change `Value::Vertex.label_id` to `Option<u16>` (prerequisite, low effort)
+1. Change `Value::Vertex.label` to `Option<SmolStr>` (prerequisite, low effort)
 2. Add `PropHint` enum
 3. Add `withProperties()` to `TraversalBuilder` / `GraphTraversal` → `LogicalStep::WithProperties`
 4. Thread hint into `BuiltTraversal` (plan-level, simpler first cut)
@@ -110,7 +111,7 @@ fetching the label.
 
 ## Affected Files
 
-- `src/gremlin/value.rs` — `Vertex.label_id: Option<u16>`
+- `src/gremlin/value.rs` — `Vertex.label: Option<SmolStr>`
 - `src/gremlin/traversal.rs` — `materialize()`, `BuiltTraversal`, `withProperties()` step
 - `src/planner/logical_step.rs` — `LogicalStep::WithProperties`
 - `src/engine/volcano/builder.rs` — extract hint during physical plan build

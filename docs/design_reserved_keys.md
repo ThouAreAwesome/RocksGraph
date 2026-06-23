@@ -79,20 +79,11 @@ syntax for setting structural identity on write — they never reach a generic `
 the paths the optimizer recognizes. `"label"` has no write-side equivalent: it is only ever set
 via `addV(label)`/`addE(label)`'s dedicated argument, never via `.property("label", ...)`.
 
-### 1.4 An unguarded gap
+### 1.4 Closed Gap — Explicit Rejection of Reserved Key Writes
 
-Nothing currently stops a caller from writing `.property("id", ...)`, `.property("label", ...)`,
-or `.property("rank", ...)` in a position the optimizer rules above don't recognize (e.g. not
-immediately following `addV`/`addE`, or on an unrelated step). Depending on the value's type,
-this either:
-
-- **Errors** with `StoreError::SchemaViolation`, if the value's inferred type doesn't match the
-  locked-in `Int64`/`Int32`/`Int32` (e.g. `.property("label", "person")` — a `String`); or
-- **Silently succeeds and is permanently unreadable**, if the type happens to match (e.g.
-  `.property("label", 99i32)`) — the write lands in the property blob, but every read path
-  intercepts `LABEL_KEY_ID` before ever consulting stored properties (§1.2), so the value can
-  never be observed again. It is dead data, not a visible bug, but also not a deliberate,
-  validated rejection the way TinkerGraph's reserved-key check is (§3.1).
+Writes to reserved property keys (`id`, `label`, and `rank`) are explicitly validated and rejected:
+- **`label` writes** are checked early on the traversal builder (`WriteTraversal::property` and `GraphTraversal::property`) and rejected with `StoreError::SchemaViolation("Cannot manually set or update the reserved property 'label'...")`.
+- **`id` and `rank` writes** that are not folded by the optimizer rules (e.g., when they are misplaced or do not immediately follow element creation) are validated during physical plan building and rejected with `StoreError::SchemaViolation("Unfolded or misplaced reserved property key...")`. This prevents silent data drops and ensures safety.
 
 ### 1.5 Gremlin-layer access paths
 
@@ -219,10 +210,7 @@ two are unrelated names in unrelated grammars.
 These are design decisions, not bugs — recorded here for a deliberate choice rather than a
 silent drift:
 
-1. **Reject reserved-key writes outright?** Should `.property("id"|"label"|"rank", ...)`
-   outside the optimizer-recognized positions become a hard build-time error (TinkerGraph-style
-   reserved-key rejection), instead of relying on type-lock collisions to catch most misuse and
-   silently swallowing the rest?
+1. **Reject reserved-key writes outright? (Resolved)** Yes. Misplaced writes to `"id"`, `"label"`, and `"rank"` are now explicitly checked and rejected with a build-time `StoreError::SchemaViolation`.
 2. **Add `Key::Rank`?** For symmetry with `Key::Id`/`Key::Label`, should there be an explicit
    token for rank, even though it would alias the same `PropKey` as the bare string `"rank"`
    either way?

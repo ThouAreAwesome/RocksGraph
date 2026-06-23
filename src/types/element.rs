@@ -272,7 +272,7 @@ impl Edge {
             return Some(Property {
                 owner: CanonicalKey::Edge(self.canonical_key()),
                 key: RANK_KEY_ID,
-                value: Primitive::Int32(self.rank as i32),
+                value: Primitive::UInt16(self.rank),
             });
         }
         self.ensure_decoded();
@@ -290,7 +290,7 @@ impl Edge {
             return Some(Primitive::Int32(self.label_id as i32));
         }
         if RANK_KEY_ID == prop_key_id {
-            return Some(Primitive::Int32(self.rank as i32));
+            return Some(Primitive::UInt16(self.rank));
         }
         self.ensure_decoded();
         self.props.iter().find(|p| prop_key_id == p.key).map(|p| p.value.clone())

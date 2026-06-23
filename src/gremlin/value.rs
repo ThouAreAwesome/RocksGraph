@@ -41,6 +41,8 @@
 //! Bare scalars implicitly become [`Predicate::Eq`] via `From` impls, so
 //! `.has("age", 42i32)` is equivalent to `.has("age", eq(42i32))`.
 
+use crate::types::StoreError;
+use smol_str::SmolStr;
 use std::collections::HashMap;
 
 // ── Key ───────────────────────────────────────────────────────────────────────
@@ -48,7 +50,7 @@ use std::collections::HashMap;
 /// A step key: either a system attribute or a user-defined property name.
 ///
 /// Used in `.has(key, pred)` and `.values(keys)`.
-/// `Key::Property("name")` can be constructed directly from `&str` or `String`
+/// `Key::Property("name")` can be constructed directly from `&str`, `String`, or `SmolStr`
 /// via the `From` impls, so callers rarely need to write `Key::Property(...)`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Key {
@@ -59,17 +61,27 @@ pub enum Key {
     /// / `.has(Key::Label, "person")` always see the decoded string, matching `hasLabel`.
     Label,
     /// A user-defined property name.
-    Property(String),
+    ///
+    /// `SmolStr` rather than `String`, matching `.property()`/`.properties()`/`.hasLabel()`
+    /// and the materialized `Property.key`/`Vertex.properties`/`Edge.properties` key type —
+    /// resolving a `Key::Property` never needs more than a clone, not a fresh allocation.
+    Property(SmolStr),
 }
 
 impl From<&str> for Key {
     fn from(s: &str) -> Self {
-        Key::Property(s.to_owned())
+        Key::Property(SmolStr::new(s))
     }
 }
 
 impl From<String> for Key {
     fn from(s: String) -> Self {
+        Key::Property(SmolStr::from(s))
+    }
+}
+
+impl From<SmolStr> for Key {
+    fn from(s: SmolStr) -> Self {
         Key::Property(s)
     }
 }
@@ -164,6 +176,10 @@ pub enum Value {
     Bool(bool),
     Int32(i32),
     Int64(i64),
+    /// Unsigned 16-bit integer. The canonical type for an edge's `rank`
+    /// (see [`Edge::rank`]) — `.property("rank", 5u16)` and the value
+    /// `.values(["rank"])` returns both use this variant.
+    UInt16(u16),
     Float32(f32),
     Float64(f64),
     String(String),
@@ -203,6 +219,11 @@ impl From<i64> for Value {
         Value::Int64(v)
     }
 }
+impl From<u16> for Value {
+    fn from(v: u16) -> Self {
+        Value::UInt16(v)
+    }
+}
 impl From<f32> for Value {
     fn from(v: f32) -> Self {
         Value::Float32(v)
@@ -233,9 +254,16 @@ impl From<u128> for Value {
 
 /// A fully materialized vertex with all its properties.
 ///
-/// `label_id` is the numeric label identifier from the schema registry.
-/// To resolve it to a human-readable string, use
-/// [`Schema::vertex_label_str`](crate::schema::definition::Schema::vertex_label_str).
+/// `label` is the label's string name (e.g. `"person"`), already resolved from the
+/// internal numeric `label_id` via the schema registry at materialization time —
+/// consistent with `Key::Label` / `.values([Key::Label])`.
+///
+/// `label` and the `properties` keys are [`SmolStr`] rather than `String`: both are drawn
+/// from the schema's interned label/property-key registry
+/// ([`Schema`](crate::schema::definition::Schema)), so materializing a result can clone or
+/// move the existing `SmolStr` instead of heap-allocating a fresh `String` per element.
+/// `SmolStr` derefs to `&str`, so lookups/comparisons against string literals are unaffected
+/// (e.g. `vertex.properties.get("name")`, `edge.label == "knows"`).
 ///
 /// `properties` uses multi-cardinality: each key maps to a `Vec<Value>` to
 /// support TinkerPop VertexProperty semantics.  For the common single-value
@@ -243,20 +271,27 @@ impl From<u128> for Value {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Vertex {
     pub id: i64,
-    pub label_id: u16,
-    pub properties: HashMap<String, Vec<Value>>,
+    pub label: SmolStr,
+    pub properties: HashMap<SmolStr, Vec<Value>>,
 }
 
 // ── Edge ──────────────────────────────────────────────────────────────────────
 
 /// A fully materialized directed edge with all its properties.
+///
+/// `label` is the label's string name, resolved from the internal numeric
+/// `label_id` at materialization time (see [`Vertex::label`]).
+///
+/// `rank` is `u16` end to end: `.property("rank", 5u16)` on write, [`Value::UInt16`] from
+/// `.values(["rank"])` on generic read, and this raw `u16` field on full materialization —
+/// no widening through `Int32`/`Int64` at any point.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Edge {
     pub out_v: i64,
     pub in_v: i64,
-    pub label_id: u16,
+    pub label: SmolStr,
     pub rank: u16,
-    pub properties: HashMap<String, Value>,
+    pub properties: HashMap<SmolStr, Value>,
 }
 
 // ── Property ──────────────────────────────────────────────────────────────────
@@ -268,7 +303,7 @@ pub struct Edge {
 /// is always a scalar variant.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Property {
-    pub key: String,
+    pub key: SmolStr,
     pub value: Box<Value>,
 }
 
@@ -345,5 +380,223 @@ impl Path {
 
     pub fn is_empty(&self) -> bool {
         self.objects.is_empty()
+    }
+}
+
+// ── Value Conversion Helpers & TryFrom ──────────────────────────────────────
+
+impl Value {
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            Value::Bool(b) => Some(*b),
+            _ => None,
+        }
+    }
+
+    pub fn as_i32(&self) -> Option<i32> {
+        match self {
+            Value::Int32(n) => Some(*n),
+            _ => None,
+        }
+    }
+
+    pub fn as_i64(&self) -> Option<i64> {
+        match self {
+            Value::Int64(n) => Some(*n),
+            Value::Int32(n) => Some(*n as i64),
+            _ => None,
+        }
+    }
+
+    pub fn as_u16(&self) -> Option<u16> {
+        match self {
+            Value::UInt16(n) => Some(*n),
+            _ => None,
+        }
+    }
+
+    pub fn as_f32(&self) -> Option<f32> {
+        match self {
+            Value::Float32(f) => Some(*f),
+            _ => None,
+        }
+    }
+
+    pub fn as_f64(&self) -> Option<f64> {
+        match self {
+            Value::Float64(f) => Some(*f),
+            Value::Float32(f) => Some(*f as f64),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Value::String(s) => Some(s.as_str()),
+            _ => None,
+        }
+    }
+
+    pub fn as_uuid(&self) -> Option<u128> {
+        match self {
+            Value::Uuid(u) => Some(*u),
+            _ => None,
+        }
+    }
+
+    pub fn as_vertex(&self) -> Option<&Vertex> {
+        match self {
+            Value::Vertex(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub fn as_edge(&self) -> Option<&Edge> {
+        match self {
+            Value::Edge(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+impl TryFrom<Value> for bool {
+    type Error = StoreError;
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Bool(b) => Ok(b),
+            other => Err(StoreError::UnexpectedDataType(format!("Expected Bool, got {:?}", other))),
+        }
+    }
+}
+
+impl TryFrom<Value> for i32 {
+    type Error = StoreError;
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Int32(n) => Ok(n),
+            other => Err(StoreError::UnexpectedDataType(format!("Expected Int32, got {:?}", other))),
+        }
+    }
+}
+
+impl TryFrom<Value> for i64 {
+    type Error = StoreError;
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Int64(n) => Ok(n),
+            Value::Int32(n) => Ok(n as i64),
+            other => Err(StoreError::UnexpectedDataType(format!("Expected Int64 or Int32, got {:?}", other))),
+        }
+    }
+}
+
+impl TryFrom<Value> for u16 {
+    type Error = StoreError;
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::UInt16(n) => Ok(n),
+            other => Err(StoreError::UnexpectedDataType(format!("Expected UInt16, got {:?}", other))),
+        }
+    }
+}
+
+impl TryFrom<Value> for f32 {
+    type Error = StoreError;
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Float32(f) => Ok(f),
+            other => Err(StoreError::UnexpectedDataType(format!("Expected Float32, got {:?}", other))),
+        }
+    }
+}
+
+impl TryFrom<Value> for f64 {
+    type Error = StoreError;
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Float64(f) => Ok(f),
+            Value::Float32(f) => Ok(f as f64),
+            other => Err(StoreError::UnexpectedDataType(format!("Expected Float64 or Float32, got {:?}", other))),
+        }
+    }
+}
+
+impl TryFrom<Value> for String {
+    type Error = StoreError;
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::String(s) => Ok(s),
+            other => Err(StoreError::UnexpectedDataType(format!("Expected String, got {:?}", other))),
+        }
+    }
+}
+
+impl TryFrom<Value> for u128 {
+    type Error = StoreError;
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Uuid(u) => Ok(u),
+            other => Err(StoreError::UnexpectedDataType(format!("Expected Uuid, got {:?}", other))),
+        }
+    }
+}
+
+impl TryFrom<Value> for Vertex {
+    type Error = StoreError;
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Vertex(v) => Ok(v),
+            other => Err(StoreError::UnexpectedDataType(format!("Expected Vertex, got {:?}", other))),
+        }
+    }
+}
+
+impl TryFrom<Value> for Edge {
+    type Error = StoreError;
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Edge(e) => Ok(e),
+            other => Err(StoreError::UnexpectedDataType(format!("Expected Edge, got {:?}", other))),
+        }
+    }
+}
+
+impl TryFrom<Value> for Property {
+    type Error = StoreError;
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Property(p) => Ok(p),
+            other => Err(StoreError::UnexpectedDataType(format!("Expected Property, got {:?}", other))),
+        }
+    }
+}
+
+impl TryFrom<Value> for Vec<Value> {
+    type Error = StoreError;
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::List(l) => Ok(l),
+            other => Err(StoreError::UnexpectedDataType(format!("Expected List, got {:?}", other))),
+        }
+    }
+}
+
+impl TryFrom<Value> for Map {
+    type Error = StoreError;
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Map(m) => Ok(m),
+            other => Err(StoreError::UnexpectedDataType(format!("Expected Map, got {:?}", other))),
+        }
+    }
+}
+
+impl TryFrom<Value> for Path {
+    type Error = StoreError;
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Path(p) => Ok(p),
+            other => Err(StoreError::UnexpectedDataType(format!("Expected Path, got {:?}", other))),
+        }
     }
 }

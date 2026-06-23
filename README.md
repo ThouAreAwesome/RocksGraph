@@ -51,11 +51,11 @@ All user-facing query inputs and outputs use types from `gremlin::value`, re-exp
 
 | Type | Description |
 |------|-------------|
-| `Value` | Scalar or composite result: `Null`, `Bool`, `Int32`, `Int64`, `Float32`, `Float64`, `String`, `Uuid`, `Vertex`, `Edge`, `Property`, `List`, `Map`, `Path` |
-| `Key` | Property key selector: `Key::Id` (vertex/edge id), `Key::Label` (label, decoded to its string name), `Key::Property(String)` (user property). String literals convert to `Key::Property` via `From<&str>`. |
+| `Value` | Scalar or composite result: `Null`, `Bool`, `Int32`, `Int64`, `UInt16`, `Float32`, `Float64`, `String`, `Uuid`, `Vertex`, `Edge`, `Property`, `List`, `Map`, `Path` |
+| `Key` | Property key selector: `Key::Id` (vertex/edge id), `Key::Label` (label, decoded to its string name), `Key::Property(SmolStr)` (user property). String literals convert to `Key::Property` via `From<&str>`. |
 | `Predicate` | Filter condition: `Predicate::Eq`, `Within`, `Without`, `Gt`, `Gte`, `Lt`, `Lte`, `Between`, `Ne` |
-| `Vertex` | Materialized vertex: `id`, `label_id`, `properties` |
-| `Edge` | Materialized edge: `out_v`, `in_v`, `label_id`, `rank`, `properties` |
+| `Vertex` | Materialized vertex: `id`, `label` (decoded string name), `properties` |
+| `Edge` | Materialized edge: `out_v`, `in_v`, `label` (decoded string name), `rank` (`u16`, see `Value::UInt16`), `properties` |
 | `Property` | Key-value property element returned by `.properties()` |
 | `Map` | Ordered key-value map returned by `.group()` etc. |
 | `Path` | Sequence of values with per-step labels returned by `.path()` |

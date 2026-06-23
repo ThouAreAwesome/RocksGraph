@@ -27,10 +27,17 @@ use crate::types::{gvalue::Primitive, keys::Rank, StoreError};
 /// Converts a `Primitive` rank value (as written by `.property("rank", N)` or
 /// `.has("rank", N)`) into a `Rank`, range-checked against `u16`.
 ///
-/// Shared by `merge_adde_ids` (folding `property("rank", N)` into `AddE`) and
-/// `merge_end_vertex_filter` (folding `has("rank", N)` into `OutE`/`InE`/`BothE`).
+/// `Primitive::UInt16` — the canonical representation `Edge::get_value(RANK_KEY_ID)` now
+/// returns — passes through directly with no range check needed; `Int32`/`Int64` stay
+/// supported for ergonomic literals like `.property("rank", 5)`.
+///
+/// Shared by `merge_adde_ids` (folding `property("rank", N)` into `AddE`),
+/// `merge_end_vertex_filter` (folding `has("rank", N)` into `OutE`/`InE`/`BothE`), and
+/// `HasPropertyStep::new` (normalizing an unmerged `.has("rank", N)` filter so it compares
+/// like-for-like against the `UInt16` runtime value).
 pub(crate) fn primitive_to_rank(value: &Primitive) -> Result<Rank, StoreError> {
     match value {
+        Primitive::UInt16(r) => Ok(*r),
         Primitive::Int32(r) => {
             if *r < 0 || *r > u16::MAX as i32 {
                 return Err(StoreError::UnexpectedDataType("rank must be between 0 and 65535".into()));
