@@ -45,8 +45,9 @@ use std::fmt::Display;
 /// Unique identifier for a vertex.
 pub type VertexKey = i64;
 
-/// Numeric id for an edge label, mapped via the schema registry.
-/// 12 bits are used semantically (max 4 096 distinct labels); stored as u16.
+/// Numeric id for a vertex/edge label, mapped via the schema registry.
+/// 15 bits are used semantically (max 32 768 distinct labels); stored as u16, with the high bit
+/// reserved for a possible future tag (see `schema::definition::MAX_LABELS`).
 pub type LabelId = u16;
 
 /// Disambiguates parallel edges sharing the same (src, label, dst) triple.

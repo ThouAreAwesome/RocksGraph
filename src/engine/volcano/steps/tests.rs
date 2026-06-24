@@ -39,7 +39,7 @@ mod cases {
         types::{
             element::Property,
             error::StoreError,
-            gvalue::Primitive,
+            gvalue::{Primitive, PrimitivePredicate},
             keys::{AdjacentEdgesOptions, CanonicalEdgeKey, CanonicalKey, LabelId, VertexKey},
             prop_key::LABEL,
             Direction, EdgeKey, GValue,
@@ -51,12 +51,14 @@ mod cases {
         collections::HashMap, // For PhysicalPlan::inject
     };
 
-    // Define LabelIds for common labels used across tests
-    const PERSON_LABEL_ID: LabelId = 1;
-    const SOFTWARE_LABEL_ID: LabelId = 2;
-    const KNOWS_LABEL_ID: LabelId = 3;
-    const CREATED_LABEL_ID: LabelId = 4;
-    const FRIENDS_LABEL_ID: LabelId = 5;
+    // Define LabelIds for common labels used across tests. Ids start at 1 (0 is reserved to
+    // mean "no such label"), and a "dummy" label is registered first in every fixture below to
+    // occupy id 1, so these constants start at 2.
+    const PERSON_LABEL_ID: LabelId = 2;
+    const SOFTWARE_LABEL_ID: LabelId = 3;
+    const KNOWS_LABEL_ID: LabelId = 4;
+    const CREATED_LABEL_ID: LabelId = 5;
+    const FRIENDS_LABEL_ID: LabelId = 6;
     // --- Test Helpers ---
     /// Opens a new `RocksStorage` instance in a temporary directory for testing.
     fn open_rocks_store() -> (RocksStorage, tempfile::TempDir) {
@@ -99,16 +101,16 @@ mod cases {
 
         let (name_key, age_key, lang_key, weight_key) = {
             let mut schema = graph.schema.write().unwrap();
-            schema.register_vertex_label("dummy").unwrap(); // ID 0
-            schema.register_vertex_label("person").unwrap(); // ID 1 (PERSON_LABEL_ID)
-            schema.register_vertex_label("software").unwrap(); // ID 2 (SOFTWARE_LABEL_ID)
+            schema.register_vertex_label("dummy").unwrap(); // ID 1
+            schema.register_vertex_label("person").unwrap(); // ID 2 (PERSON_LABEL_ID)
+            schema.register_vertex_label("software").unwrap(); // ID 3 (SOFTWARE_LABEL_ID)
 
-            schema.register_edge_label("dummy").unwrap(); // ID 0
-            schema.register_edge_label("dummy2").unwrap(); // ID 1
-            schema.register_edge_label("dummy3").unwrap(); // ID 2
-            schema.register_edge_label("knows").unwrap(); // ID 3 (KNOWS_LABEL_ID)
-            schema.register_edge_label("created").unwrap(); // ID 4 (CREATED_LABEL_ID)
-            schema.register_edge_label("friends").unwrap(); // ID 5 (FRIENDS_LABEL_ID)
+            schema.register_edge_label("dummy").unwrap(); // ID 1
+            schema.register_edge_label("dummy2").unwrap(); // ID 2
+            schema.register_edge_label("dummy3").unwrap(); // ID 3
+            schema.register_edge_label("knows").unwrap(); // ID 4 (KNOWS_LABEL_ID)
+            schema.register_edge_label("created").unwrap(); // ID 5 (CREATED_LABEL_ID)
+            schema.register_edge_label("friends").unwrap(); // ID 6 (FRIENDS_LABEL_ID)
 
             let name_key = schema.resolve_prop_key("name", crate::schema::DataType::String).unwrap();
             let age_key = schema.resolve_prop_key("age", crate::schema::DataType::Int32).unwrap();
@@ -117,15 +119,15 @@ mod cases {
             (name_key, age_key, lang_key, weight_key)
         };
 
-        graph.staged_schema.staged_vertex_labels.insert(0);
         graph.staged_schema.staged_vertex_labels.insert(1);
         graph.staged_schema.staged_vertex_labels.insert(2);
-        graph.staged_schema.staged_edge_labels.insert(0);
+        graph.staged_schema.staged_vertex_labels.insert(3);
         graph.staged_schema.staged_edge_labels.insert(1);
         graph.staged_schema.staged_edge_labels.insert(2);
         graph.staged_schema.staged_edge_labels.insert(3);
         graph.staged_schema.staged_edge_labels.insert(4);
         graph.staged_schema.staged_edge_labels.insert(5);
+        graph.staged_schema.staged_edge_labels.insert(6);
         graph.staged_schema.staged_prop_keys.insert(name_key);
         graph.staged_schema.staged_prop_keys.insert(age_key);
         graph.staged_schema.staged_prop_keys.insert(lang_key);
@@ -605,7 +607,7 @@ mod cases {
                 }),
                 LogicalStep::HasProperty(LogicalHasPropertyStep {
                     key: SmolStr::new("weight"),
-                    value: Primitive::Float64(1.0),
+                    pred: PrimitivePredicate::Eq(Primitive::Float64(1.0)),
                 }), // Ensure we are on the correct edge
                 LogicalStep::Property(LogicalPropertyStep {
                     prop_key: SmolStr::new("duration"),
@@ -649,7 +651,7 @@ mod cases {
                 LogicalStep::V(LogicalVStep { ids: smallvec![marko_id, vadas_id] }),
                 LogicalStep::HasProperty(LogicalHasPropertyStep {
                     key: SmolStr::new("age"),
-                    value: Primitive::Int32(29),
+                    pred: PrimitivePredicate::Eq(Primitive::Int32(29)),
                 }),
             ],
         };
@@ -671,7 +673,8 @@ mod cases {
 
         let marko_id = graph.get_vertex(1).unwrap().unwrap();
         let vadas_id = graph.get_vertex(2).unwrap().unwrap();
-        let _knows_edge_key = CanonicalEdgeKey { src_id: marko_id, label_id: 3, rank: 0, dst_id: vadas_id };
+        let _knows_edge_key =
+            CanonicalEdgeKey { src_id: marko_id, label_id: KNOWS_LABEL_ID, rank: 0, dst_id: vadas_id };
         let josh_id = graph.get_vertex(4).unwrap().unwrap();
         let _lop_id = graph.get_vertex(3).unwrap().unwrap();
         let ripple_id = graph.get_vertex(5).unwrap().unwrap();
@@ -688,7 +691,7 @@ mod cases {
                 }), /* Get all outgoing edges */
                 LogicalStep::HasProperty(LogicalHasPropertyStep {
                     key: SmolStr::new("weight"),
-                    value: Primitive::Float64(1.0),
+                    pred: PrimitivePredicate::Eq(Primitive::Float64(1.0)),
                 }),
             ],
         };
@@ -713,7 +716,7 @@ mod cases {
                                                                                                                * edges */
                 LogicalStep::HasProperty(LogicalHasPropertyStep {
                     key: SmolStr::new("weight"),
-                    value: Primitive::Float64(1.0),
+                    pred: PrimitivePredicate::Eq(Primitive::Float64(1.0)),
                 }),
             ],
         };
@@ -926,7 +929,9 @@ mod cases {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
                 LogicalStep::Out(LogicalOutStep { labels: smallvec![], end_vertex_ids: None }),
-                LogicalStep::HasLabel(LogicalHasLabelStep { labels: smallvec!["software".into()] }),
+                LogicalStep::HasLabel(LogicalHasLabelStep {
+                    pred: PrimitivePredicate::Eq(Primitive::String(SmolStr::new("software"))),
+                }),
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
@@ -1049,7 +1054,9 @@ mod cases {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
                 LogicalStep::Values(LogicalValuesStep { property_keys: smallvec![SmolStr::new("age")] }),
-                LogicalStep::ScalarFilter(LogicalScalarFilterStep { value: Primitive::Int32(29) }),
+                LogicalStep::ScalarFilter(LogicalScalarFilterStep {
+                    pred: PrimitivePredicate::Eq(Primitive::Int32(29)),
+                }),
             ],
         };
         let mut builder: PhysicalPlanBuilder = Default::default();
@@ -1070,7 +1077,9 @@ mod cases {
         let sub_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::Out(LogicalOutStep { labels: smallvec![], end_vertex_ids: None }),
-                LogicalStep::HasLabel(LogicalHasLabelStep { labels: smallvec!["software".into()] }),
+                LogicalStep::HasLabel(LogicalHasLabelStep {
+                    pred: PrimitivePredicate::Eq(Primitive::String(SmolStr::new("software"))),
+                }),
             ],
         };
         let logical_plan = LogicalPlan {
@@ -1384,7 +1393,9 @@ mod cases {
         let logical_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![1] }),
-                LogicalStep::HasLabel(LogicalHasLabelStep { labels: smallvec!["person".into()] }),
+                LogicalStep::HasLabel(LogicalHasLabelStep {
+                    pred: PrimitivePredicate::Eq(Primitive::String(SmolStr::new("person"))),
+                }),
                 LogicalStep::OutE(LogicalOutEStep {
                     labels: smallvec!["knows".into()],
                     end_vertex_ids: None,
@@ -1469,7 +1480,9 @@ mod cases {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
                 LogicalStep::Out(LogicalOutStep { labels: smallvec![], end_vertex_ids: None }),
-                LogicalStep::HasId(LogicalHasIdStep { ids: smallvec![3, 4] }),
+                LogicalStep::HasId(LogicalHasIdStep {
+                    pred: PrimitivePredicate::Within(vec![Primitive::Int64(3), Primitive::Int64(4)]),
+                }),
             ],
         };
 
@@ -1498,7 +1511,7 @@ mod cases {
         let where_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::OtherV(LogicalOtherVStep {}),
-                LogicalStep::HasId(LogicalHasIdStep { ids: smallvec![josh_id] }),
+                LogicalStep::HasId(LogicalHasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(josh_id)) }),
             ],
         };
 
@@ -1555,7 +1568,7 @@ mod cases {
         let where_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::OtherV(LogicalOtherVStep {}),
-                LogicalStep::HasId(LogicalHasIdStep { ids: smallvec![marko_id] }),
+                LogicalStep::HasId(LogicalHasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(marko_id)) }),
             ],
         };
         let mut logical_plan = LogicalPlan {
@@ -1601,7 +1614,7 @@ mod cases {
         let where_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::OtherV(LogicalOtherVStep {}),
-                LogicalStep::HasId(LogicalHasIdStep { ids: smallvec![marko_id] }),
+                LogicalStep::HasId(LogicalHasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(marko_id)) }),
             ],
         };
         let mut logical_plan = LogicalPlan {
@@ -1641,7 +1654,7 @@ mod cases {
             steps: vec![
                 LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
                 LogicalStep::Out(LogicalOutStep { labels: smallvec!["knows".into()], end_vertex_ids: None }),
-                LogicalStep::HasId(LogicalHasIdStep { ids: smallvec![josh_id] }),
+                LogicalStep::HasId(LogicalHasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(josh_id)) }),
             ],
         };
         apply_rules(&mut logical_plan).unwrap();
@@ -1667,20 +1680,20 @@ mod cases {
         {
             let mut s = schema.write().unwrap();
             s.edge_mode = crate::schema::definition::EdgeMode::Multi;
-            s.register_vertex_label("dummy").unwrap(); // 0
-            s.register_vertex_label("person").unwrap(); // 1 (PERSON_LABEL_ID)
-            s.register_edge_label("dummy").unwrap(); // 0
-            s.register_edge_label("dummy2").unwrap(); // 1
-            s.register_edge_label("dummy3").unwrap(); // 2
-            s.register_edge_label("knows").unwrap(); // 3 (KNOWS_LABEL_ID)
+            s.register_vertex_label("dummy").unwrap(); // 1
+            s.register_vertex_label("person").unwrap(); // 2 (PERSON_LABEL_ID)
+            s.register_edge_label("dummy").unwrap(); // 1
+            s.register_edge_label("dummy2").unwrap(); // 2
+            s.register_edge_label("dummy3").unwrap(); // 3
+            s.register_edge_label("knows").unwrap(); // 4 (KNOWS_LABEL_ID)
         }
         let mut graph: LogicalGraph<RocksStorage> = LogicalGraph::new(store.begin(), schema);
-        graph.staged_schema.staged_vertex_labels.insert(0);
         graph.staged_schema.staged_vertex_labels.insert(1);
-        graph.staged_schema.staged_edge_labels.insert(0);
+        graph.staged_schema.staged_vertex_labels.insert(2);
         graph.staged_schema.staged_edge_labels.insert(1);
         graph.staged_schema.staged_edge_labels.insert(2);
         graph.staged_schema.staged_edge_labels.insert(3);
+        graph.staged_schema.staged_edge_labels.insert(4);
 
         let marko_id = graph.add_vertex(1, PERSON_LABEL_ID).unwrap();
         let josh_id = graph.add_vertex(4, PERSON_LABEL_ID).unwrap();
@@ -1707,7 +1720,7 @@ mod cases {
         let where_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::OtherV(LogicalOtherVStep {}),
-                LogicalStep::HasId(LogicalHasIdStep { ids: smallvec![josh_id] }),
+                LogicalStep::HasId(LogicalHasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(josh_id)) }),
             ],
         };
         let mut logical_plan = LogicalPlan {
@@ -1721,7 +1734,7 @@ mod cases {
                 LogicalStep::Where(LogicalWhereStep { plan: where_plan }),
                 LogicalStep::HasProperty(LogicalHasPropertyStep {
                     key: SmolStr::new("rank"),
-                    value: Primitive::Int32(1),
+                    pred: PrimitivePredicate::Eq(Primitive::Int32(1)),
                 }),
             ],
         };
@@ -1764,20 +1777,20 @@ mod cases {
         {
             let mut s = schema.write().unwrap();
             s.edge_mode = crate::schema::definition::EdgeMode::Multi;
-            s.register_vertex_label("dummy").unwrap(); // 0
-            s.register_vertex_label("person").unwrap(); // 1 (PERSON_LABEL_ID)
-            s.register_edge_label("dummy").unwrap(); // 0
-            s.register_edge_label("dummy2").unwrap(); // 1
-            s.register_edge_label("dummy3").unwrap(); // 2
-            s.register_edge_label("knows").unwrap(); // 3 (KNOWS_LABEL_ID)
+            s.register_vertex_label("dummy").unwrap(); // 1
+            s.register_vertex_label("person").unwrap(); // 2 (PERSON_LABEL_ID)
+            s.register_edge_label("dummy").unwrap(); // 1
+            s.register_edge_label("dummy2").unwrap(); // 2
+            s.register_edge_label("dummy3").unwrap(); // 3
+            s.register_edge_label("knows").unwrap(); // 4 (KNOWS_LABEL_ID)
         }
         let mut graph: LogicalGraph<RocksStorage> = LogicalGraph::new(store.begin(), schema);
-        graph.staged_schema.staged_vertex_labels.insert(0);
         graph.staged_schema.staged_vertex_labels.insert(1);
-        graph.staged_schema.staged_edge_labels.insert(0);
+        graph.staged_schema.staged_vertex_labels.insert(2);
         graph.staged_schema.staged_edge_labels.insert(1);
         graph.staged_schema.staged_edge_labels.insert(2);
         graph.staged_schema.staged_edge_labels.insert(3);
+        graph.staged_schema.staged_edge_labels.insert(4);
 
         let marko_id = graph.add_vertex(1, PERSON_LABEL_ID).unwrap();
         let josh_id = graph.add_vertex(4, PERSON_LABEL_ID).unwrap();
@@ -1804,7 +1817,7 @@ mod cases {
         let where_plan = LogicalPlan {
             steps: vec![
                 LogicalStep::OtherV(LogicalOtherVStep {}),
-                LogicalStep::HasId(LogicalHasIdStep { ids: smallvec![josh_id] }),
+                LogicalStep::HasId(LogicalHasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(josh_id)) }),
             ],
         };
         let mut logical_plan = LogicalPlan {
@@ -2148,7 +2161,7 @@ mod cases {
                 .borrow_mut()
                 .core
                 .inject(smallvec![Rc::new(Traverser::new(GValue::Scalar(Primitive::Int32(42))))]);
-            let mut step = HasIdStep::new(smallvec![99]);
+            let mut step = HasIdStep::new(PrimitivePredicate::Eq(Primitive::Int64(99)));
             step.add_upper(src.clone() as StepRef);
             assert!(step.produce(&mut graph).unwrap().is_none());
         }
@@ -2163,7 +2176,10 @@ mod cases {
                 secondary_id: 2,
                 rank: 0,
             }))),]);
-            let mut step = HasLabelStep::new(smallvec![], smallvec![99]);
+            let mut step = HasLabelStep::new(
+                PrimitivePredicate::Eq(Primitive::Int32(99)),
+                PrimitivePredicate::Eq(Primitive::Int32(99)),
+            );
             step.add_upper(src.clone() as StepRef);
             assert!(step.produce(&mut graph).unwrap().is_none());
         }
@@ -2178,7 +2194,7 @@ mod cases {
                 Rc::new(Traverser::new(GValue::Vertex(2))), // vadas (age 27)
             ]);
 
-            let mut step = HasPropertyStep::new(age_id, Primitive::Int32(29));
+            let mut step = HasPropertyStep::new(age_id, PrimitivePredicate::Eq(Primitive::Int32(29)));
             step.add_upper(src.clone() as StepRef);
 
             let res = step.produce(&mut graph).unwrap().unwrap();
@@ -2409,7 +2425,7 @@ mod cases {
 
         // 8. HasIdStep non-vertex values and other coverage
         {
-            let mut step = HasIdStep::new(smallvec![1]);
+            let mut step = HasIdStep::new(PrimitivePredicate::Eq(Primitive::Int64(1)));
             assert!(step.produce(&mut graph).unwrap().is_none());
 
             let src = BufferedStep::new(VecSourceStep::empty());
@@ -2417,7 +2433,7 @@ mod cases {
                 Rc::new(Traverser::new(GValue::Scalar(Primitive::Int32(10)))),
                 Rc::new(Traverser::new(GValue::Vertex(1))),
             ]);
-            let mut step = HasIdStep::new(smallvec![1]);
+            let mut step = HasIdStep::new(PrimitivePredicate::Eq(Primitive::Int64(1)));
             step.add_upper(src.clone() as StepRef);
             let res = step.produce(&mut graph).unwrap().unwrap();
             assert_eq!(res.len(), 1);
@@ -2429,7 +2445,7 @@ mod cases {
 
         // 9. HasLabelStep non-vertex/non-edge coverage
         {
-            let mut step = HasLabelStep::new(smallvec![], smallvec![]);
+            let mut step = HasLabelStep::new(PrimitivePredicate::Within(vec![]), PrimitivePredicate::Within(vec![]));
             assert!(step.produce(&mut graph).unwrap().is_none());
 
             let src = BufferedStep::new(VecSourceStep::empty());
@@ -2437,7 +2453,7 @@ mod cases {
                 .borrow_mut()
                 .core
                 .inject(smallvec![Rc::new(Traverser::new(GValue::Scalar(Primitive::Int32(10)))),]);
-            let mut step = HasLabelStep::new(smallvec![], smallvec![]);
+            let mut step = HasLabelStep::new(PrimitivePredicate::Within(vec![]), PrimitivePredicate::Within(vec![]));
             step.add_upper(src.clone() as StepRef);
             assert!(step.produce(&mut graph).unwrap().is_none());
 
@@ -2550,7 +2566,7 @@ mod cases {
 
         // 15. ScalarFilterStep non-scalar/non-matching
         {
-            let mut step = ScalarFilterStep::new(Primitive::Int32(10));
+            let mut step = ScalarFilterStep::new(PrimitivePredicate::Eq(Primitive::Int32(10)));
             assert!(step.produce(&mut graph).unwrap().is_none());
 
             let src = BufferedStep::new(VecSourceStep::empty());
@@ -2558,7 +2574,7 @@ mod cases {
                 Rc::new(Traverser::new(GValue::Vertex(1))),
                 Rc::new(Traverser::new(GValue::Scalar(Primitive::Int32(5)))),
             ]);
-            let mut step = ScalarFilterStep::new(Primitive::Int32(10));
+            let mut step = ScalarFilterStep::new(PrimitivePredicate::Eq(Primitive::Int32(10)));
             step.add_upper(src.clone() as StepRef);
             assert!(step.produce(&mut graph).unwrap().is_none());
 
@@ -2604,7 +2620,7 @@ mod cases {
         // 18. HasPropertyStep extra coverage
         {
             let age_id = graph.schema.read().unwrap().prop_key_id("age").unwrap();
-            let mut step = HasPropertyStep::new(age_id, Primitive::Int32(29));
+            let mut step = HasPropertyStep::new(age_id, PrimitivePredicate::Eq(Primitive::Int32(29)));
             assert!(step.produce(&mut graph).unwrap().is_none());
             assert!(step.upper().is_none());
 

@@ -1611,12 +1611,12 @@ mod tests {
         let mut c = ctx(&store);
         let key = c.add_vertex(100, 1).unwrap();
 
-        let prop = Property { owner: CanonicalKey::Vertex(key), key: 3, value: Primitive::Int32(42) };
+        let prop = Property { owner: CanonicalKey::Vertex(key), key: 4, value: Primitive::Int32(42) };
         c.set_property(&prop).unwrap();
 
         let v = c.get_vertex(key).unwrap();
         assert_eq!(v, Some(key));
-        let val = c.get_value(&CanonicalKey::Vertex(key), 3).unwrap();
+        let val = c.get_value(&CanonicalKey::Vertex(key), 4).unwrap();
         assert_eq!(val, Some(Primitive::Int32(42)));
     }
 
@@ -1626,13 +1626,13 @@ mod tests {
         let mut c = ctx(&store);
         let key = c.add_vertex(100, 1).unwrap();
 
-        let prop1 = Property { owner: CanonicalKey::Vertex(key), key: 5, value: Primitive::Int32(1) };
-        let prop2 = Property { owner: CanonicalKey::Vertex(key), key: 5, value: Primitive::Int32(2) };
+        let prop1 = Property { owner: CanonicalKey::Vertex(key), key: 6, value: Primitive::Int32(1) };
+        let prop2 = Property { owner: CanonicalKey::Vertex(key), key: 6, value: Primitive::Int32(2) };
         c.set_property(&prop1).unwrap();
         c.set_property(&prop2).unwrap();
 
         let _ = c.get_vertex(key).unwrap().unwrap();
-        let val = c.get_value(&CanonicalKey::Vertex(key), 5).unwrap();
+        let val = c.get_value(&CanonicalKey::Vertex(key), 6).unwrap();
         assert_eq!(val, Some(Primitive::Int32(2)));
     }
 
@@ -1645,11 +1645,11 @@ mod tests {
         let k = cek(v1, 5, v2);
         c.add_edge(&k.out_key()).unwrap();
 
-        let prop = Property { owner: CanonicalKey::Edge(k), key: 7, value: Primitive::Float64(1.5) };
+        let prop = Property { owner: CanonicalKey::Edge(k), key: 8, value: Primitive::Float64(1.5) };
         c.set_property(&prop).unwrap();
 
         let _ = c.get_edge(&k.out_key()).unwrap().unwrap();
-        let val = c.get_value(&CanonicalKey::Edge(k), 7).unwrap();
+        let val = c.get_value(&CanonicalKey::Edge(k), 8).unwrap();
         assert_eq!(val, Some(Primitive::Float64(1.5)));
     }
 
@@ -1663,8 +1663,8 @@ mod tests {
         // Two contexts concurrently update the same property key with different values.
         let mut c2 = ctx(&store);
         let mut c3 = ctx(&store);
-        let prop1 = Property { owner: CanonicalKey::Vertex(key), key: 5, value: Primitive::Int32(1) };
-        let prop2 = Property { owner: CanonicalKey::Vertex(key), key: 5, value: Primitive::Int32(2) };
+        let prop1 = Property { owner: CanonicalKey::Vertex(key), key: 6, value: Primitive::Int32(1) };
+        let prop2 = Property { owner: CanonicalKey::Vertex(key), key: 6, value: Primitive::Int32(2) };
         c2.set_property(&prop1).unwrap();
         c3.set_property(&prop2).unwrap();
 
@@ -1674,7 +1674,7 @@ mod tests {
         assert!(matches!(result, Err(StoreError::Conflict)));
         let mut c4 = ctx(&store);
         let _ = c4.get_vertex(key).unwrap().unwrap();
-        let val = c4.get_value(&CanonicalKey::Vertex(key), 5).unwrap();
+        let val = c4.get_value(&CanonicalKey::Vertex(key), 6).unwrap();
         assert_eq!(val, Some(Primitive::Int32(1)));
     }
 
@@ -1692,8 +1692,8 @@ mod tests {
         let mut c3 = ctx(&store);
         c2.get_edge(&k.out_key()).unwrap();
         c3.get_edge(&k.out_key()).unwrap();
-        let prop1 = Property { owner: CanonicalKey::Edge(k), key: 5, value: Primitive::Int32(1) };
-        let prop2 = Property { owner: CanonicalKey::Edge(k), key: 5, value: Primitive::Int32(2) };
+        let prop1 = Property { owner: CanonicalKey::Edge(k), key: 6, value: Primitive::Int32(1) };
+        let prop2 = Property { owner: CanonicalKey::Edge(k), key: 6, value: Primitive::Int32(2) };
         c2.set_property(&prop1).unwrap();
         c3.set_property(&prop2).unwrap();
 
@@ -1711,15 +1711,15 @@ mod tests {
         let mut c = ctx(&store);
         let key = c.add_vertex(100, 1).unwrap();
 
-        let prop1 = Property { owner: CanonicalKey::Vertex(key), key: 8, value: Primitive::Int32(1) };
-        let prop2 = Property { owner: CanonicalKey::Vertex(key), key: 9, value: Primitive::Int32(2) };
+        let prop1 = Property { owner: CanonicalKey::Vertex(key), key: 9, value: Primitive::Int32(1) };
+        let prop2 = Property { owner: CanonicalKey::Vertex(key), key: 10, value: Primitive::Int32(2) };
         c.set_property(&prop1).unwrap();
         c.set_property(&prop2).unwrap();
-        c.drop_property(&Property { owner: CanonicalKey::Vertex(key), key: 8, value: Primitive::Null }).unwrap();
+        c.drop_property(&Property { owner: CanonicalKey::Vertex(key), key: 9, value: Primitive::Null }).unwrap();
 
         let _ = c.get_vertex(key).unwrap().unwrap();
-        let val_a = c.get_value(&CanonicalKey::Vertex(key), 8).unwrap();
-        let val_b = c.get_value(&CanonicalKey::Vertex(key), 9).unwrap();
+        let val_a = c.get_value(&CanonicalKey::Vertex(key), 9).unwrap();
+        let val_b = c.get_value(&CanonicalKey::Vertex(key), 10).unwrap();
         assert_eq!(val_a, None);
         assert_eq!(val_b, Some(Primitive::Int32(2)));
     }
@@ -1729,9 +1729,9 @@ mod tests {
         let (store, _dir) = open();
         let mut c = ctx(&store);
         let key = c.add_vertex(100, 1).unwrap();
-        c.drop_property(&Property { owner: CanonicalKey::Vertex(key), key: 11, value: Primitive::Null }).unwrap();
+        c.drop_property(&Property { owner: CanonicalKey::Vertex(key), key: 12, value: Primitive::Null }).unwrap();
         let _ = c.get_vertex(key).unwrap().unwrap();
-        let val = c.get_value(&CanonicalKey::Vertex(key), 11).unwrap();
+        let val = c.get_value(&CanonicalKey::Vertex(key), 12).unwrap();
         assert_eq!(val, None);
     }
 
@@ -1740,14 +1740,14 @@ mod tests {
         let (store, _dir) = open();
         let mut c1 = ctx(&store);
         let key = c1.add_vertex(100, 1).unwrap();
-        let prop = Property { owner: CanonicalKey::Vertex(key), key: 5, value: Primitive::Int32(1) };
+        let prop = Property { owner: CanonicalKey::Vertex(key), key: 6, value: Primitive::Int32(1) };
         c1.set_property(&prop).unwrap();
         c1.commit().unwrap();
 
         let mut c2 = ctx(&store);
         let mut c3 = ctx(&store);
-        c2.drop_property(&Property { owner: CanonicalKey::Vertex(key), key: 5, value: Primitive::Null }).unwrap();
-        let prop = Property { owner: CanonicalKey::Vertex(key), key: 5, value: Primitive::Int32(2) };
+        c2.drop_property(&Property { owner: CanonicalKey::Vertex(key), key: 6, value: Primitive::Null }).unwrap();
+        let prop = Property { owner: CanonicalKey::Vertex(key), key: 6, value: Primitive::Int32(2) };
         c3.set_property(&prop).unwrap();
 
         c2.commit().unwrap();
@@ -1761,15 +1761,15 @@ mod tests {
         let (store, _dir) = open();
         let mut c1 = ctx(&store);
         let key = c1.add_vertex(100, 1).unwrap();
-        let prop1 = Property { owner: CanonicalKey::Vertex(key), key: 5, value: Primitive::Int32(1) };
+        let prop1 = Property { owner: CanonicalKey::Vertex(key), key: 6, value: Primitive::Int32(1) };
         c1.set_property(&prop1).unwrap();
         c1.commit().unwrap();
 
         let mut c2 = ctx(&store);
         let mut c3 = ctx(&store);
-        let prop2 = Property { owner: CanonicalKey::Vertex(key), key: 5, value: Primitive::Int32(2) };
+        let prop2 = Property { owner: CanonicalKey::Vertex(key), key: 6, value: Primitive::Int32(2) };
         c2.set_property(&prop2).unwrap();
-        c3.drop_property(&Property { owner: CanonicalKey::Vertex(key), key: 5, value: Primitive::Null }).unwrap();
+        c3.drop_property(&Property { owner: CanonicalKey::Vertex(key), key: 6, value: Primitive::Null }).unwrap();
 
         c2.commit().unwrap();
 
@@ -1785,7 +1785,7 @@ mod tests {
         let v2 = c1.add_vertex(2, 1).unwrap();
         let k = cek(v1, 5, v2);
         c1.add_edge(&k.out_key()).unwrap();
-        let prop1 = Property { owner: CanonicalKey::Edge(k), key: 5, value: Primitive::Int32(1) };
+        let prop1 = Property { owner: CanonicalKey::Edge(k), key: 6, value: Primitive::Int32(1) };
         c1.set_property(&prop1).unwrap();
         c1.commit().unwrap();
 
@@ -1793,8 +1793,8 @@ mod tests {
         let mut c3 = ctx(&store);
         let _ = c2.get_edge(&k.out_key()).unwrap();
         let _ = c3.get_edge(&k.out_key()).unwrap();
-        c2.drop_property(&Property { owner: CanonicalKey::Edge(k), key: 5, value: Primitive::Null }).unwrap();
-        let prop2 = Property { owner: CanonicalKey::Edge(k), key: 5, value: Primitive::Int32(2) };
+        c2.drop_property(&Property { owner: CanonicalKey::Edge(k), key: 6, value: Primitive::Null }).unwrap();
+        let prop2 = Property { owner: CanonicalKey::Edge(k), key: 6, value: Primitive::Int32(2) };
         c3.set_property(&prop2).unwrap();
 
         c2.commit().unwrap();
@@ -1811,7 +1811,7 @@ mod tests {
         let v2 = c1.add_vertex(2, 1).unwrap();
         let k = cek(v1, 5, v2);
         c1.add_edge(&k.out_key()).unwrap();
-        let prop1 = Property { owner: CanonicalKey::Edge(k), key: 5, value: Primitive::Int32(1) };
+        let prop1 = Property { owner: CanonicalKey::Edge(k), key: 6, value: Primitive::Int32(1) };
         c1.set_property(&prop1).unwrap();
         c1.commit().unwrap();
 
@@ -1819,9 +1819,9 @@ mod tests {
         let mut c3 = ctx(&store);
         let _ = c2.get_edge(&k.out_key()).unwrap();
         let _ = c3.get_edge(&k.out_key()).unwrap();
-        let prop2 = Property { owner: CanonicalKey::Edge(k), key: 5, value: Primitive::Int32(2) };
+        let prop2 = Property { owner: CanonicalKey::Edge(k), key: 6, value: Primitive::Int32(2) };
         c2.set_property(&prop2).unwrap();
-        let prop3 = Property { owner: CanonicalKey::Edge(k), key: 5, value: Primitive::Null };
+        let prop3 = Property { owner: CanonicalKey::Edge(k), key: 6, value: Primitive::Null };
         c3.drop_property(&prop3).unwrap();
 
         c2.commit().unwrap();
@@ -1884,7 +1884,7 @@ mod tests {
         let mut c = ctx(&store);
         let key = c.add_vertex(100, 1).unwrap();
         c.drop_element(&CanonicalKey::Vertex(key)).unwrap();
-        let prop = Property { owner: CanonicalKey::Vertex(key), key: 5, value: Primitive::Int32(1) };
+        let prop = Property { owner: CanonicalKey::Vertex(key), key: 6, value: Primitive::Int32(1) };
         let err = c.set_property(&prop);
         assert!(err.is_err());
         assert_eq!(err.unwrap_err().to_string(), "element is tombstoned");
@@ -2009,9 +2009,9 @@ mod tests {
         let mut c3 = ctx(&store);
         let _ = c2.get_edge(&k.out_key()).unwrap();
         let _ = c3.get_edge(&k.out_key()).unwrap();
-        let prop1 = Property { owner: CanonicalKey::Edge(k), key: 5, value: Primitive::Int32(1) };
+        let prop1 = Property { owner: CanonicalKey::Edge(k), key: 6, value: Primitive::Int32(1) };
         c2.set_property(&prop1).unwrap();
-        let prop2 = Property { owner: CanonicalKey::Edge(k), key: 5, value: Primitive::Null };
+        let prop2 = Property { owner: CanonicalKey::Edge(k), key: 6, value: Primitive::Null };
         c3.drop_property(&prop2).unwrap();
 
         c2.commit().unwrap();
@@ -2034,7 +2034,7 @@ mod tests {
         let mut c3 = ctx(&store);
         let _ = c2.get_edge(&k.out_key()).unwrap();
         let _ = c3.get_edge(&k.out_key()).unwrap();
-        let prop1 = Property { owner: CanonicalKey::Edge(k), key: 5, value: Primitive::Int32(1) };
+        let prop1 = Property { owner: CanonicalKey::Edge(k), key: 6, value: Primitive::Int32(1) };
         c2.drop_element(&CanonicalKey::Edge(k)).unwrap();
         c3.set_property(&prop1).unwrap();
 
@@ -2053,7 +2053,7 @@ mod tests {
             let mut c = ctx(&store);
             let key = c.add_vertex(77, 7).unwrap();
             let prop =
-                Property { owner: CanonicalKey::Vertex(key), key: 4, value: Primitive::String(SmolStr::new("Alice")) };
+                Property { owner: CanonicalKey::Vertex(key), key: 5, value: Primitive::String(SmolStr::new("Alice")) };
             c.set_property(&prop).unwrap();
             c.commit().unwrap();
             key
@@ -2079,7 +2079,7 @@ mod tests {
         {
             let mut c = ctx(&store);
             c.add_edge(&k.out_key()).unwrap();
-            let prop = Property { owner: CanonicalKey::Edge(k), key: 10, value: Primitive::Int32(99) };
+            let prop = Property { owner: CanonicalKey::Edge(k), key: 11, value: Primitive::Int32(99) };
             c.set_property(&prop).unwrap();
             c.commit().unwrap();
         }
@@ -2514,7 +2514,7 @@ mod tests {
                 },
                 |c, (v1, _)| {
                     c.get_vertex(v1).unwrap();
-                    let prop = Property { owner: CanonicalKey::Vertex(v1), key: 5, value: Primitive::Int32(1) };
+                    let prop = Property { owner: CanonicalKey::Vertex(v1), key: 6, value: Primitive::Int32(1) };
                     c.set_property(&prop).unwrap();
                 },
             );
@@ -2525,7 +2525,7 @@ mod tests {
             run_non_conflict(
                 |c| {
                     let v1 = c.add_vertex(1, 1).unwrap();
-                    let prop = Property { owner: CanonicalKey::Vertex(v1), key: 5, value: Primitive::Int32(1) };
+                    let prop = Property { owner: CanonicalKey::Vertex(v1), key: 6, value: Primitive::Int32(1) };
                     c.set_property(&prop).unwrap();
                     let v2 = c.add_vertex(2, 1).unwrap();
                     (v1, v2)
@@ -2535,7 +2535,7 @@ mod tests {
                 },
                 |c, (v1, _)| {
                     c.get_vertex(v1).unwrap();
-                    c.drop_property(&Property { owner: CanonicalKey::Vertex(v1), key: 5, value: Primitive::Null })
+                    c.drop_property(&Property { owner: CanonicalKey::Vertex(v1), key: 6, value: Primitive::Null })
                         .unwrap();
                 },
             );
@@ -2620,7 +2620,7 @@ mod tests {
                 },
                 |c, e| {
                     c.get_edge(&e.out_key()).unwrap();
-                    let prop = Property { owner: CanonicalKey::Edge(e), key: 5, value: Primitive::Int32(1) };
+                    let prop = Property { owner: CanonicalKey::Edge(e), key: 6, value: Primitive::Int32(1) };
                     c.set_property(&prop).unwrap();
                 },
             );
@@ -2634,7 +2634,7 @@ mod tests {
                     let v2 = c.add_vertex(2, 1).unwrap();
                     let e = cek(v1, 5, v2);
                     c.add_edge(&e.out_key()).unwrap();
-                    let prop = Property { owner: CanonicalKey::Edge(e), key: 5, value: Primitive::Int32(1) };
+                    let prop = Property { owner: CanonicalKey::Edge(e), key: 6, value: Primitive::Int32(1) };
                     c.set_property(&prop).unwrap();
                     e
                 },
@@ -2644,7 +2644,7 @@ mod tests {
                 },
                 |c, e| {
                     c.get_edge(&e.out_key()).unwrap();
-                    c.drop_property(&Property { owner: CanonicalKey::Edge(e), key: 5, value: Primitive::Null })
+                    c.drop_property(&Property { owner: CanonicalKey::Edge(e), key: 6, value: Primitive::Null })
                         .unwrap();
                 },
             );
@@ -2666,7 +2666,7 @@ mod tests {
                 },
                 |c, (v1, _)| {
                     c.get_vertex(v1).unwrap();
-                    let prop = Property { owner: CanonicalKey::Vertex(v1), key: 5, value: Primitive::Int32(1) };
+                    let prop = Property { owner: CanonicalKey::Vertex(v1), key: 6, value: Primitive::Int32(1) };
                     c.set_property(&prop).unwrap();
                 },
             );
@@ -2677,7 +2677,7 @@ mod tests {
             run_non_conflict(
                 |c| {
                     let v1 = c.add_vertex(1, 1).unwrap();
-                    let prop = Property { owner: CanonicalKey::Vertex(v1), key: 5, value: Primitive::Int32(1) };
+                    let prop = Property { owner: CanonicalKey::Vertex(v1), key: 6, value: Primitive::Int32(1) };
                     c.set_property(&prop).unwrap();
                     let v2 = c.add_vertex(2, 1).unwrap();
                     let e = cek(v1, 5, v2);
@@ -2690,7 +2690,7 @@ mod tests {
                 },
                 |c, (v1, _)| {
                     c.get_vertex(v1).unwrap();
-                    c.drop_property(&Property { owner: CanonicalKey::Vertex(v1), key: 5, value: Primitive::Null })
+                    c.drop_property(&Property { owner: CanonicalKey::Vertex(v1), key: 6, value: Primitive::Null })
                         .unwrap();
                 },
             );
@@ -2708,12 +2708,12 @@ mod tests {
                 },
                 |c, e| {
                     c.get_edge(&e.out_key()).unwrap();
-                    let prop = Property { owner: CanonicalKey::Edge(e), key: 5, value: Primitive::Int32(1) };
+                    let prop = Property { owner: CanonicalKey::Edge(e), key: 6, value: Primitive::Int32(1) };
                     c.set_property(&prop).unwrap();
                 },
                 |c, e| {
                     c.get_edge(&e.out_key()).unwrap();
-                    let prop = Property { owner: CanonicalKey::Edge(e), key: 5, value: Primitive::Int32(2) };
+                    let prop = Property { owner: CanonicalKey::Edge(e), key: 6, value: Primitive::Int32(2) };
                     c.set_property(&prop).unwrap();
                 },
             );
@@ -2734,12 +2734,12 @@ mod tests {
                 },
                 |c, (e1, _e2): (CanonicalEdgeKey, CanonicalEdgeKey)| {
                     c.get_edge(&e1.out_key()).unwrap();
-                    let prop = Property { owner: CanonicalKey::Edge(e1), key: 5, value: Primitive::Int32(1) };
+                    let prop = Property { owner: CanonicalKey::Edge(e1), key: 6, value: Primitive::Int32(1) };
                     c.set_property(&prop).unwrap();
                 },
                 |c, (_e1, e2): (CanonicalEdgeKey, CanonicalEdgeKey)| {
                     c.get_edge(&e2.out_key()).unwrap();
-                    let prop = Property { owner: CanonicalKey::Edge(e2), key: 6, value: Primitive::Int32(2) };
+                    let prop = Property { owner: CanonicalKey::Edge(e2), key: 7, value: Primitive::Int32(2) };
                     c.set_property(&prop).unwrap();
                 },
             );
@@ -2753,18 +2753,18 @@ mod tests {
                     let v2 = c.add_vertex(2, 1).unwrap();
                     let e = cek(v1, 5, v2);
                     c.add_edge(&e.out_key()).unwrap();
-                    let prop = Property { owner: CanonicalKey::Edge(e), key: 5, value: Primitive::Int32(1) };
+                    let prop = Property { owner: CanonicalKey::Edge(e), key: 6, value: Primitive::Int32(1) };
                     c.set_property(&prop).unwrap();
                     e
                 },
                 |c, e| {
                     c.get_edge(&e.out_key()).unwrap();
-                    let prop = Property { owner: CanonicalKey::Edge(e), key: 5, value: Primitive::Null };
+                    let prop = Property { owner: CanonicalKey::Edge(e), key: 6, value: Primitive::Null };
                     c.drop_property(&prop).unwrap();
                 },
                 |c, e| {
                     c.get_edge(&e.out_key()).unwrap();
-                    let prop = Property { owner: CanonicalKey::Edge(e), key: 5, value: Primitive::Null };
+                    let prop = Property { owner: CanonicalKey::Edge(e), key: 6, value: Primitive::Null };
                     c.drop_property(&prop).unwrap();
                 },
             );
@@ -2781,20 +2781,20 @@ mod tests {
                     let e2 = cek(v1, 6, v3);
                     c.add_edge(&e.out_key()).unwrap();
                     c.add_edge(&e2.out_key()).unwrap();
-                    let prop1 = Property { owner: CanonicalKey::Edge(e), key: 5, value: Primitive::Int32(1) };
-                    let prop2 = Property { owner: CanonicalKey::Edge(e2), key: 6, value: Primitive::Int32(2) };
+                    let prop1 = Property { owner: CanonicalKey::Edge(e), key: 6, value: Primitive::Int32(1) };
+                    let prop2 = Property { owner: CanonicalKey::Edge(e2), key: 7, value: Primitive::Int32(2) };
                     c.set_property(&prop1).unwrap();
                     c.set_property(&prop2).unwrap();
                     (e, e2)
                 },
                 |c, (e1, _e2): (CanonicalEdgeKey, CanonicalEdgeKey)| {
                     c.get_edge(&e1.out_key()).unwrap();
-                    let prop = Property { owner: CanonicalKey::Edge(e1), key: 5, value: Primitive::Null };
+                    let prop = Property { owner: CanonicalKey::Edge(e1), key: 6, value: Primitive::Null };
                     c.drop_property(&prop).unwrap();
                 },
                 |c, (_e1, e2): (CanonicalEdgeKey, CanonicalEdgeKey)| {
                     c.get_edge(&e2.out_key()).unwrap();
-                    let prop = Property { owner: CanonicalKey::Edge(e2), key: 6, value: Primitive::Null };
+                    let prop = Property { owner: CanonicalKey::Edge(e2), key: 7, value: Primitive::Null };
                     c.drop_property(&prop).unwrap();
                 },
             );
@@ -2808,18 +2808,18 @@ mod tests {
                     let v2 = c.add_vertex(2, 1).unwrap();
                     let e = cek(v1, 5, v2);
                     c.add_edge(&e.out_key()).unwrap();
-                    let prop = Property { owner: CanonicalKey::Edge(e), key: 5, value: Primitive::Int32(1) };
+                    let prop = Property { owner: CanonicalKey::Edge(e), key: 6, value: Primitive::Int32(1) };
                     c.set_property(&prop).unwrap();
                     e
                 },
                 |c, e| {
                     c.get_edge(&e.out_key()).unwrap();
-                    let prop = Property { owner: CanonicalKey::Edge(e), key: 5, value: Primitive::Null };
+                    let prop = Property { owner: CanonicalKey::Edge(e), key: 6, value: Primitive::Null };
                     c.drop_property(&prop).unwrap();
                 },
                 |c, e| {
                     c.get_edge(&e.out_key()).unwrap();
-                    let prop = Property { owner: CanonicalKey::Edge(e), key: 5, value: Primitive::Null };
+                    let prop = Property { owner: CanonicalKey::Edge(e), key: 6, value: Primitive::Null };
                     c.drop_property(&prop).unwrap();
                 },
             );
@@ -2836,22 +2836,22 @@ mod tests {
                     let e2 = cek(v1, 6, v3);
                     c.add_edge(&e.out_key()).unwrap();
                     c.add_edge(&e2.out_key()).unwrap();
-                    let prop1 = Property { owner: CanonicalKey::Edge(e), key: 5, value: Primitive::Int32(1) };
-                    let prop2 = Property { owner: CanonicalKey::Edge(e2), key: 6, value: Primitive::Int32(2) };
+                    let prop1 = Property { owner: CanonicalKey::Edge(e), key: 6, value: Primitive::Int32(1) };
+                    let prop2 = Property { owner: CanonicalKey::Edge(e2), key: 7, value: Primitive::Int32(2) };
                     c.set_property(&prop1).unwrap();
                     c.set_property(&prop2).unwrap();
                     (e, e2)
                 },
                 |c, (e1, _e2): (CanonicalEdgeKey, CanonicalEdgeKey)| {
                     c.get_edge(&e1.out_key()).unwrap();
-                    let val = c.get_value(&CanonicalKey::Edge(e1), 5).unwrap();
+                    let val = c.get_value(&CanonicalKey::Edge(e1), 6).unwrap();
                     assert_eq!(val, Some(Primitive::Int32(1)));
-                    let prop = Property { owner: CanonicalKey::Edge(e1), key: 5, value: Primitive::Null };
+                    let prop = Property { owner: CanonicalKey::Edge(e1), key: 6, value: Primitive::Null };
                     c.drop_property(&prop).unwrap();
                 },
                 |c, (_e1, e2): (CanonicalEdgeKey, CanonicalEdgeKey)| {
                     c.get_edge(&e2.out_key()).unwrap();
-                    let prop = Property { owner: CanonicalKey::Edge(e2), key: 6, value: Primitive::Null };
+                    let prop = Property { owner: CanonicalKey::Edge(e2), key: 7, value: Primitive::Null };
                     c.drop_property(&prop).unwrap();
                 },
             );
@@ -2863,12 +2863,12 @@ mod tests {
                 |c| c.add_vertex(100, 1).unwrap(),
                 |c, v| {
                     c.get_vertex(v).unwrap();
-                    let prop = Property { owner: CanonicalKey::Vertex(v), key: 5, value: Primitive::Int32(1) };
+                    let prop = Property { owner: CanonicalKey::Vertex(v), key: 6, value: Primitive::Int32(1) };
                     c.set_property(&prop).unwrap();
                 },
                 |c, v| {
                     c.get_vertex(v).unwrap();
-                    let prop = Property { owner: CanonicalKey::Vertex(v), key: 5, value: Primitive::Int32(2) };
+                    let prop = Property { owner: CanonicalKey::Vertex(v), key: 6, value: Primitive::Int32(2) };
                     c.set_property(&prop).unwrap();
                 },
             );
@@ -2879,20 +2879,20 @@ mod tests {
             run_conflict(
                 |c| {
                     let v = c.add_vertex(100, 1).unwrap();
-                    let prop = Property { owner: CanonicalKey::Vertex(v), key: 5, value: Primitive::Int32(1) };
+                    let prop = Property { owner: CanonicalKey::Vertex(v), key: 6, value: Primitive::Int32(1) };
                     c.set_property(&prop).unwrap();
                     v
                 },
                 |c, v| {
                     c.get_vertex(v).unwrap();
-                    let prop = Property { owner: CanonicalKey::Vertex(v), key: 5, value: Primitive::Int32(2) };
+                    let prop = Property { owner: CanonicalKey::Vertex(v), key: 6, value: Primitive::Int32(2) };
                     c.set_property(&prop).unwrap();
                 },
                 |c, v| {
                     c.get_vertex(v).unwrap().unwrap();
-                    let val = c.get_value(&CanonicalKey::Vertex(v), 5).unwrap();
+                    let val = c.get_value(&CanonicalKey::Vertex(v), 6).unwrap();
                     assert_eq!(val, Some(Primitive::Int32(1)));
-                    let prop = Property { owner: CanonicalKey::Vertex(v), key: 5, value: Primitive::Null };
+                    let prop = Property { owner: CanonicalKey::Vertex(v), key: 6, value: Primitive::Null };
                     c.drop_property(&prop).unwrap();
                 },
             );
@@ -2904,7 +2904,7 @@ mod tests {
                 |c| c.add_vertex(100, 1).unwrap(),
                 |c, v| {
                     c.get_vertex(v).unwrap();
-                    let prop = Property { owner: CanonicalKey::Vertex(v), key: 5, value: Primitive::Int32(1) };
+                    let prop = Property { owner: CanonicalKey::Vertex(v), key: 6, value: Primitive::Int32(1) };
                     c.set_property(&prop).unwrap();
                 },
                 |c, v| {
@@ -2919,18 +2919,18 @@ mod tests {
             run_conflict(
                 |c| {
                     let v = c.add_vertex(100, 1).unwrap();
-                    let prop = Property { owner: CanonicalKey::Vertex(v), key: 5, value: Primitive::Int32(1) };
+                    let prop = Property { owner: CanonicalKey::Vertex(v), key: 6, value: Primitive::Int32(1) };
                     c.set_property(&prop).unwrap();
                     v
                 },
                 |c, v| {
                     c.get_vertex(v).unwrap();
-                    c.drop_property(&Property { owner: CanonicalKey::Vertex(v), key: 5, value: Primitive::Null })
+                    c.drop_property(&Property { owner: CanonicalKey::Vertex(v), key: 6, value: Primitive::Null })
                         .unwrap();
                 },
                 |c, v| {
                     c.get_vertex(v).unwrap();
-                    c.drop_property(&Property { owner: CanonicalKey::Vertex(v), key: 5, value: Primitive::Null })
+                    c.drop_property(&Property { owner: CanonicalKey::Vertex(v), key: 6, value: Primitive::Null })
                         .unwrap();
                 },
             );
@@ -2941,13 +2941,13 @@ mod tests {
             run_conflict(
                 |c| {
                     let v = c.add_vertex(100, 1).unwrap();
-                    let prop = Property { owner: CanonicalKey::Vertex(v), key: 5, value: Primitive::Int32(1) };
+                    let prop = Property { owner: CanonicalKey::Vertex(v), key: 6, value: Primitive::Int32(1) };
                     c.set_property(&prop).unwrap();
                     v
                 },
                 |c, v| {
                     c.get_vertex(v).unwrap();
-                    c.drop_property(&Property { owner: CanonicalKey::Vertex(v), key: 5, value: Primitive::Null })
+                    c.drop_property(&Property { owner: CanonicalKey::Vertex(v), key: 6, value: Primitive::Null })
                         .unwrap();
                 },
                 |c, v| {
@@ -3031,9 +3031,9 @@ mod tests {
         let alice = {
             let key = c1.add_vertex(101, 1).unwrap();
             let name_prop =
-                Property { owner: CanonicalKey::Vertex(key), key: 4, value: Primitive::String(SmolStr::new("Alice")) };
+                Property { owner: CanonicalKey::Vertex(key), key: 5, value: Primitive::String(SmolStr::new("Alice")) };
             c1.set_property(&name_prop).unwrap();
-            let age_prop = Property { owner: CanonicalKey::Vertex(key), key: 3, value: Primitive::Int32(30) };
+            let age_prop = Property { owner: CanonicalKey::Vertex(key), key: 4, value: Primitive::Int32(30) };
             c1.set_property(&age_prop).unwrap();
             key
         };
@@ -3043,9 +3043,9 @@ mod tests {
         let bob = {
             let key = c2.add_vertex(102, 1).unwrap();
             let name_prop =
-                Property { owner: CanonicalKey::Vertex(key), key: 4, value: Primitive::String(SmolStr::new("Bob")) };
+                Property { owner: CanonicalKey::Vertex(key), key: 5, value: Primitive::String(SmolStr::new("Bob")) };
             c2.set_property(&name_prop).unwrap();
-            let age_prop = Property { owner: CanonicalKey::Vertex(key), key: 3, value: Primitive::Int32(25) };
+            let age_prop = Property { owner: CanonicalKey::Vertex(key), key: 4, value: Primitive::Int32(25) };
             c2.set_property(&age_prop).unwrap();
             key
         };
@@ -3059,19 +3059,19 @@ mod tests {
             let city_key = c.add_vertex(201, 2).unwrap();
             let name_prop = Property {
                 owner: CanonicalKey::Vertex(city_key),
-                key: 4,
+                key: 5,
                 value: Primitive::String(SmolStr::new("London")),
             };
             c.set_property(&name_prop).unwrap();
             // Alice -> London
             let e1 = cek(alice, 2, city_key);
             c.add_edge(&e1.out_key()).unwrap();
-            let since_prop = Property { owner: CanonicalKey::Edge(e1), key: 10, value: Primitive::Int32(2015) };
+            let since_prop = Property { owner: CanonicalKey::Edge(e1), key: 11, value: Primitive::Int32(2015) };
             c.set_property(&since_prop).unwrap();
             // Bob -> London
             let e2 = cek(bob, 2, city_key);
             c.add_edge(&e2.out_key()).unwrap();
-            let since_prop2 = Property { owner: CanonicalKey::Edge(e2), key: 10, value: Primitive::Int32(2019) };
+            let since_prop2 = Property { owner: CanonicalKey::Edge(e2), key: 11, value: Primitive::Int32(2019) };
             c.set_property(&since_prop2).unwrap();
             c.commit().unwrap();
             city_key
@@ -3083,23 +3083,23 @@ mod tests {
         // Vertices survive across contexts.
         let _ = c.get_vertex(alice).unwrap().unwrap();
         assert_eq!(
-            c.get_value(&CanonicalKey::Vertex(alice), 4).unwrap(),
+            c.get_value(&CanonicalKey::Vertex(alice), 5).unwrap(),
             Some(Primitive::String(SmolStr::new("Alice")))
         );
-        assert_eq!(c.get_value(&CanonicalKey::Vertex(alice), 3).unwrap(), Some(Primitive::Int32(30)));
+        assert_eq!(c.get_value(&CanonicalKey::Vertex(alice), 4).unwrap(), Some(Primitive::Int32(30)));
         let (alice_out_e, alice_in_e) = c.vertex_degree_for_test(alice).unwrap().unwrap();
         assert_eq!(alice_out_e, 1);
         assert_eq!(alice_in_e, 0);
 
         let _ = c.get_vertex(bob).unwrap().unwrap();
-        assert_eq!(c.get_value(&CanonicalKey::Vertex(bob), 4).unwrap(), Some(Primitive::String(SmolStr::new("Bob"))));
+        assert_eq!(c.get_value(&CanonicalKey::Vertex(bob), 5).unwrap(), Some(Primitive::String(SmolStr::new("Bob"))));
         let (bob_out_e, bob_in_e) = c.vertex_degree_for_test(bob).unwrap().unwrap();
         assert_eq!(bob_out_e, 1);
         assert_eq!(bob_in_e, 0);
 
         let _ = c.get_vertex(london).unwrap().unwrap();
         assert_eq!(
-            c.get_value(&CanonicalKey::Vertex(london), 4).unwrap(),
+            c.get_value(&CanonicalKey::Vertex(london), 5).unwrap(),
             Some(Primitive::String(SmolStr::new("London")))
         );
         let (london_out_e, london_in_e) = c.vertex_degree_for_test(london).unwrap().unwrap();
@@ -3111,7 +3111,7 @@ mod tests {
         assert_eq!(alice_out.len(), 1);
         let e_ek = alice_out[0];
         assert_eq!(e_ek.secondary_id, london);
-        let since_val = c.get_value(&CanonicalKey::Edge(e_ek.canonical_edge_key()), 10).unwrap();
+        let since_val = c.get_value(&CanonicalKey::Edge(e_ek.canonical_edge_key()), 11).unwrap();
         assert_eq!(since_val, Some(Primitive::Int32(2015)));
 
         // London has two incoming edges: one from Alice, one from Bob.
@@ -3135,7 +3135,7 @@ mod tests {
         txn1.add_vertex(2, 1).unwrap();
         let v3 = txn1.add_vertex(3, 1).unwrap();
         let name_prop =
-            Property { owner: CanonicalKey::Vertex(v1), key: 4, value: Primitive::String(SmolStr::new("Alice")) };
+            Property { owner: CanonicalKey::Vertex(v1), key: 5, value: Primitive::String(SmolStr::new("Alice")) };
         txn1.set_property(&name_prop).unwrap();
         txn1.commit().unwrap();
 

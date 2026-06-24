@@ -26,7 +26,7 @@
 //! [`engine::volcano::builder`]: crate::engine::volcano::builder
 
 use crate::types::{
-    gvalue::Primitive,
+    gvalue::{Primitive, PrimitivePredicate},
     keys::{EdgeKey, Rank, VertexKey},
     prop_key::PropKey,
     StoreError,
@@ -193,7 +193,7 @@ impl Optimizer for BothEStep {}
 /// Represents a logical `hasLabel` step, filtering elements by their label IDs.
 #[derive(Clone)]
 pub struct HasLabelStep {
-    pub labels: SmallVec<[SmolStr; 4]>,
+    pub pred: PrimitivePredicate,
 }
 
 /// Implements the `Optimizer` trait for `HasLabelStep`.
@@ -202,7 +202,7 @@ impl Optimizer for HasLabelStep {}
 #[derive(Clone)]
 pub struct HasPropertyStep {
     pub key: PropKey,
-    pub value: Primitive,
+    pub pred: PrimitivePredicate,
 }
 
 impl Optimizer for HasPropertyStep {}
@@ -269,7 +269,7 @@ impl Optimizer for OutVStep {}
 /// Represents a logical `scalarFilter` step, filtering traversers based on a scalar value.
 #[derive(Clone)]
 pub struct ScalarFilterStep {
-    pub value: Primitive,
+    pub pred: PrimitivePredicate,
 }
 
 impl Optimizer for ScalarFilterStep {}
@@ -392,7 +392,7 @@ impl Optimizer for LimitStep {}
 
 #[derive(Clone)]
 pub struct HasIdStep {
-    pub ids: SmallVec<[VertexKey; 4]>,
+    pub pred: PrimitivePredicate,
 }
 
 impl Optimizer for HasIdStep {}

@@ -53,3 +53,41 @@ pub(crate) fn primitive_to_rank(value: &Primitive) -> Result<Rank, StoreError> {
         _ => Err(StoreError::UnexpectedDataType("only integers can be edge rank".into())),
     }
 }
+
+/// Extracts a vertex-id allowlist from a predicate, for folding `hasId`/`has("id", …)` into a
+/// preceding `V`/`Out`/`In`/`Both` step.
+///
+/// Returns `Ok(None)` when the predicate's *shape* simply isn't an id allowlist (`Ne`, `Gt`,
+/// `Between`, `Without`, …) — these are left unfolded, not an error, since they're valid
+/// predicates that the unfolded step still evaluates correctly. Returns `Err` only when the
+/// shape WAS `Eq`/`Within` but carried a non-integer literal, which is always a caller mistake.
+///
+/// An empty `Within([])` also returns `Ok(None)`: folding it would clear the id list down to
+/// empty, which `VStep`/`EndVertexFilter` would then read as "unconstrained" rather than the
+/// "match nothing" the predicate actually means — so it's deliberately left unfolded instead,
+/// where `HasIdStep`/`HasPropertyStep` evaluate `Within([])` correctly as always-false.
+pub(crate) fn extract_ids_from_predicate(
+    pred: &crate::types::PrimitivePredicate,
+) -> Result<Option<smallvec::SmallVec<[i64; 4]>>, StoreError> {
+    use crate::types::{Primitive, PrimitivePredicate};
+    use smallvec::smallvec;
+
+    fn to_i64(v: &Primitive) -> Result<i64, StoreError> {
+        match v {
+            Primitive::Int64(n) => Ok(*n),
+            Primitive::Int32(n) => Ok(*n as i64),
+            other => {
+                Err(StoreError::UnexpectedDataType(format!("expect i32 or i64 type for vertex id, got {other:?}")))
+            }
+        }
+    }
+
+    match pred {
+        PrimitivePredicate::Eq(v) => Ok(Some(smallvec![to_i64(v)?])),
+        PrimitivePredicate::Within(vs) => {
+            let parsed: smallvec::SmallVec<[i64; 4]> = vs.iter().map(to_i64).collect::<Result<_, _>>()?;
+            Ok(if parsed.is_empty() { None } else { Some(parsed) })
+        }
+        _ => Ok(None),
+    }
+}

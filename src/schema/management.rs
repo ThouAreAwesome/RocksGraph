@@ -63,6 +63,31 @@ use crate::{
 /// # Ok(())
 /// # }
 /// ```
+///
+/// # Schema model
+///
+/// Three properties of this schema are easy to assume otherwise, so they're called out
+/// explicitly here:
+///
+/// 1. **A property key is global, with exactly one type, shared by every vertex label and every
+///    edge label.** `make_property_key("weight", DataType::Float64)` declares "weight" once for
+///    the *entire graph* — there is no per-vertex-label or per-edge-label property scoping. A
+///    `"person"` vertex, a `"software"` vertex, and a `"knows"` edge that all set a `"weight"`
+///    property are all writing to the *same* property key definition, and all of them must use
+///    `Float64`; declaring (or auto-inferring) `"weight"` as a second, incompatible type from any
+///    of them is a [`StoreError::SchemaConflict`]/[`StoreError::SchemaViolation`]. Every declared
+///    property key is implicitly legal on every label, vertex or edge alike — there's no way to
+///    restrict a key to specific labels.
+/// 2. **Edge multiplicity (`EdgeMode`) is one graph-wide setting, not per-edge-label.**
+///    [`set_edge_mode`](SchemaManagement::set_edge_mode) flips `Single`/`Multi` for *every* edge
+///    label at once — there's no way for one edge label (e.g. `"knows"`) to stay `Single` while
+///    another (e.g. `"created"`) is `Multi` in the same graph. `Multi` mode requires an explicit
+///    `"rank"` property to disambiguate otherwise-identical parallel edges.
+/// 3. **No vertex-label ↔ edge-label connection constraints.** Any edge label can connect any two
+///    vertices regardless of their labels — there's no way to declare "`knows` only connects
+///    `person` to `person`".
+///
+/// [`SchemaMode`] (`Auto`/`Strict`) is also a single graph-wide setting rather than per-label.
 pub struct SchemaManagement {
     store: Arc<RocksStorage>,
     schema: Arc<std::sync::RwLock<Schema>>,
@@ -75,7 +100,8 @@ pub struct SchemaManagement {
 }
 
 impl SchemaManagement {
-    pub fn new(store: Arc<RocksStorage>, schema: Arc<std::sync::RwLock<Schema>>) -> Self {
+    /// Crate-internal: obtain a `SchemaManagement` session via [`Graph::open_management`](crate::api::Graph::open_management).
+    pub(crate) fn new(store: Arc<RocksStorage>, schema: Arc<std::sync::RwLock<Schema>>) -> Self {
         let base_version = schema.read().unwrap().version;
         Self {
             store,
@@ -246,7 +272,10 @@ pub struct PropertyKeyMaker<'a> {
 }
 
 impl<'a> PropertyKeyMaker<'a> {
-    pub fn cardinality(mut self, cardinality: Cardinality) -> Self {
+    /// Crate-internal: `Cardinality` has only one variant (`Single`, already the default set by
+    /// `make_property_key()`), so there's no real choice to expose here yet.
+    #[cfg(test)]
+    pub(crate) fn cardinality(mut self, cardinality: Cardinality) -> Self {
         self.cardinality = cardinality;
         self
     }

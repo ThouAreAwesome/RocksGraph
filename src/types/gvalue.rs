@@ -80,6 +80,75 @@ impl PartialEq for Primitive {
 
 impl Eq for Primitive {}
 
+impl Primitive {
+    #[inline]
+    pub fn is_integer(&self) -> bool {
+        matches!(self, Self::Int32(_) | Self::Int64(_) | Self::UInt16(_))
+    }
+
+    #[inline]
+    pub fn is_numeric(&self) -> bool {
+        matches!(self, Self::Int32(_) | Self::Int64(_) | Self::UInt16(_) | Self::Float32(_) | Self::Float64(_))
+    }
+
+    #[inline]
+    pub fn to_i64(&self) -> Option<i64> {
+        match self {
+            Self::Int32(v) => Some(*v as i64),
+            Self::Int64(v) => Some(*v),
+            Self::UInt16(v) => Some(*v as i64),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn to_f64(&self) -> Option<f64> {
+        match self {
+            Self::Int32(v) => Some(*v as f64),
+            Self::Int64(v) => Some(*v as f64),
+            Self::UInt16(v) => Some(*v as f64),
+            Self::Float32(v) => Some(*v as f64),
+            Self::Float64(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    /// Equality that treats numeric values as equal across width/representation
+    /// (e.g. `Int32(2) loose_eq Int64(2)` is `true`), unlike derived `PartialEq` which only
+    /// matches identical variants. Mirrors the numeric normalization `partial_cmp` already
+    /// does for `Gt`/`Lt`/etc., so `Eq`/`Ne`/`Within`/`Without` predicates compare like-for-like
+    /// regardless of which integer width a caller's literal happened to use.
+    #[inline]
+    fn loose_eq(&self, other: &Self) -> bool {
+        if self.is_integer() && other.is_integer() {
+            return self.to_i64() == other.to_i64();
+        }
+        if self.is_numeric() && other.is_numeric() {
+            return self.to_f64() == other.to_f64();
+        }
+        self == other
+    }
+}
+
+impl PartialOrd for Primitive {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        if self.is_integer() && other.is_integer() {
+            return self.to_i64().unwrap().partial_cmp(&other.to_i64().unwrap());
+        }
+        if self.is_numeric() && other.is_numeric() {
+            return self.to_f64().unwrap().partial_cmp(&other.to_f64().unwrap());
+        }
+        match (self, other) {
+            (Self::Bool(a), Self::Bool(b)) => a.partial_cmp(b),
+            (Self::String(a), Self::String(b)) => a.partial_cmp(b),
+            (Self::Uuid(a), Self::Uuid(b)) => a.partial_cmp(b),
+            (Self::Null, Self::Null) => Some(std::cmp::Ordering::Equal),
+            _ => None,
+        }
+    }
+}
+
 impl Hash for Primitive {
     #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -224,6 +293,77 @@ impl Hash for GValue {
                     item.hash(state);
                 }
             }
+        }
+    }
+}
+
+// ── PrimitivePredicate ────────────────────────────────────────────────────────
+
+/// A low-level comparison predicate evaluated against `Primitive` values in the storage and execution engine layers.
+///
+/// Decouples engine filters and planner steps from the top-layer user-facing `Predicate`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PrimitivePredicate {
+    Eq(Primitive),
+    Ne(Primitive),
+    Gt(Primitive),
+    Gte(Primitive),
+    Lt(Primitive),
+    Lte(Primitive),
+    Between(Primitive, Primitive),
+    Within(Vec<Primitive>),
+    Without(Vec<Primitive>),
+}
+
+impl PrimitivePredicate {
+    pub fn evaluate(&self, val: &Primitive) -> bool {
+        match self {
+            Self::Eq(p) => val.loose_eq(p),
+            Self::Ne(p) => !val.loose_eq(p),
+            Self::Gt(p) => matches!(val.partial_cmp(p), Some(std::cmp::Ordering::Greater)),
+            Self::Gte(p) => matches!(val.partial_cmp(p), Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)),
+            Self::Lt(p) => matches!(val.partial_cmp(p), Some(std::cmp::Ordering::Less)),
+            Self::Lte(p) => matches!(val.partial_cmp(p), Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)),
+            Self::Between(lo, hi) => {
+                matches!(val.partial_cmp(lo), Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal))
+                    && matches!(val.partial_cmp(hi), Some(std::cmp::Ordering::Less))
+            }
+            Self::Within(vs) => vs.iter().any(|v| val.loose_eq(v)),
+            Self::Without(vs) => !vs.iter().any(|v| val.loose_eq(v)),
+        }
+    }
+
+    /// Applies `f` to every leaf [`Primitive`] this predicate carries, preserving its shape.
+    ///
+    /// Physical steps use this to normalize predicate literals into the exact runtime
+    /// representation they'll be compared against — once, at construction time — instead of
+    /// converting the runtime value to match the predicate's representation on every traverser.
+    /// E.g. `HasPropertyStep::new` maps a `rank` literal to its canonical `UInt16` form;
+    /// `PhysicalPlanBuilder` maps a label name to its interned `label_id`.
+    pub fn map(self, f: impl Fn(Primitive) -> Primitive) -> Self {
+        match self {
+            Self::Eq(v) => Self::Eq(f(v)),
+            Self::Ne(v) => Self::Ne(f(v)),
+            Self::Gt(v) => Self::Gt(f(v)),
+            Self::Gte(v) => Self::Gte(f(v)),
+            Self::Lt(v) => Self::Lt(f(v)),
+            Self::Lte(v) => Self::Lte(f(v)),
+            Self::Between(lo, hi) => Self::Between(f(lo), f(hi)),
+            Self::Within(vs) => Self::Within(vs.into_iter().map(f).collect()),
+            Self::Without(vs) => Self::Without(vs.into_iter().map(f).collect()),
+        }
+    }
+
+    /// Borrowing counterpart to [`map`](Self::map) — iterates every leaf [`Primitive`] this
+    /// predicate carries without transforming it. Used for read-only checks over a predicate's
+    /// values, e.g. validating that each one names a declared label.
+    pub fn values(&self) -> Box<dyn Iterator<Item = &Primitive> + '_> {
+        match self {
+            Self::Eq(v) | Self::Ne(v) | Self::Gt(v) | Self::Gte(v) | Self::Lt(v) | Self::Lte(v) => {
+                Box::new(std::iter::once(v))
+            }
+            Self::Between(lo, hi) => Box::new([lo, hi].into_iter()),
+            Self::Within(vs) | Self::Without(vs) => Box::new(vs.iter()),
         }
     }
 }

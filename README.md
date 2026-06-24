@@ -146,7 +146,7 @@ the traversal API. The `schema` module interns them to compact numeric IDs inter
 |------|--------|
 | `V(ids)` | `.V([id, ...])` |
 | `out(labels)` | `.out([label, ...])` |
-| `in_(labels)` | `.in_([label, ...])` |
+| `in(labels)` | `.r#in([label, ...])` — `in` is a Rust keyword, hence the raw identifier |
 | `both(labels)` | `.both([label, ...])` |
 | `outE(labels)` | `.outE([label, ...])` |
 | `inE(labels)` | `.inE([label, ...])` |
@@ -186,7 +186,7 @@ the traversal API. The `schema` module interns them to compact numeric IDs inter
 | `from(vertex_id)` | `.from(vertex_id)` |
 | `to(vertex_id)` | `.to(vertex_id)` |
 | `property(key, value)` | `.property(key, value)` — `"id"` sets the vertex/edge id |
-| `drop()` | `.drop()` |
+| `drop()` | `.drop()` — drops whatever the traverser carries: a vertex, an edge, or (after `.properties([..])`) a single property key |
 
 ### Composition
 
@@ -275,22 +275,71 @@ tx.g().addE("knows").from(1).to(2).property("weight", 0.9f64).next()?;
 tx.commit()?;
 ```
 
-### Predicate filtering
+### Deleting elements
+
+`drop()` deletes whatever the traverser carries — a vertex, an edge, or (after `.properties([..])`)
+a single property — and is a no-op if the traversal matched nothing:
 
 ```rust
-use rocksgraph::{gt, within, TraversalBuilder, Value};
+use rocksgraph::{Graph, StoreError, TraversalBuilder};
 
-// Scalar filter after values()
-let older = snap.g().V([]).values(["age"]).is(gt(30i32)).to_list()?;
+let graph = Graph::open("./path/to/db")?;
+let mut tx = graph.begin();
 
-// has() with explicit predicates
-let result = snap.g().V([]).has("age", gt(25i32)).values(["name"]).to_list()?;
+// Drop a single property; other properties on the same vertex/edge are untouched.
+tx.g().V([1]).properties(["age"]).drop().next()?;
 
-// within() for multi-value membership
-let result = snap.g().V([]).has("name", within(["alice", "bob"])).count().next()?.unwrap();
+// Drop an edge.
+tx.g().V([1]).outE(["knows"]).drop().next()?;
+
+// A vertex with incident edges can't be dropped directly — drop its edges first.
+match tx.g().V([1]).drop().next() {
+    Err(StoreError::IncidentEdges) => { /* drop remaining edges, then retry */ }
+    other => { other?; }
+}
+
+tx.commit()?;
+```
+
+### Predicate filtering
+
+`Predicate` has constructors for `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `between`, `within`, and
+`without`:
+
+- **User properties** (`has(key, pred)` where `key` is a `&str`, or `is(pred)` after `values()`):
+  every `Predicate` variant is supported.
+- **`Key::Id`**: every `Predicate` variant is supported.
+- **`Key::Label`**: `eq`, `ne`, `within`, and `without` are supported; range predicates (`gt`,
+  `gte`, `lt`, `lte`, `between`) return `StoreError::UnsupportedOperation` since labels have no
+  ordering.
+
+```rust
+use rocksgraph::{between, gt, TraversalBuilder};
+
+// Scalar filter after values() — a plain scalar is shorthand for Predicate::Eq
+let marko_age = snap.g().V([1]).values(["age"]).is(29i32).to_list()?;
+
+// has() with a plain scalar — also shorthand for Predicate::Eq
+let by_name = snap.g().V([]).has("name", "alice").to_list()?;
+
+// Range and membership predicates work on properties, ids, and (non-range) labels
+let adults = snap.g().V([]).has("age", gt(18i32)).to_list()?;
+let by_age_range = snap.g().V([]).has("age", between(20i32, 30i32)).to_list()?;
+
+// Multi-value membership (Predicate::Within) is supported on Key::Id / Key::Label —
+// hasId()/hasLabel() use it internally
+let result = snap.g().V([]).hasId([1, 2, 3]).count().next()?.unwrap();
 ```
 
 ### Idempotent upserts with coalesce
+
+`coalesce()` only evaluates its branches once per *incoming* traverser — it needs a seed step
+ahead of it to have anything to run against. A bare `tx.g().coalesce([...])` with nothing
+upstream gets zero traversers and silently does nothing (returns `None`), even if branch 2 would
+otherwise create something. `.V([id])` alone isn't a safe seed either: it filters out missing
+ids, so if `id` doesn't exist yet it *also* emits zero traversers. `.count()` always emits
+exactly one traverser (a count of `0` or `1`) regardless of whether `id` exists, which is what
+reliably drives `coalesce()` in the "may or may not exist yet" case:
 
 ```rust
 use rocksgraph::{Graph, TraversalBuilder, StoreError, __};
@@ -298,17 +347,21 @@ use rocksgraph::{Graph, TraversalBuilder, StoreError, __};
 let graph = Graph::open("./path/to/db")?;
 let mut tx = graph.begin();
 
-// Upsert vertex: return existing id or create new
+// Upsert vertex: return existing name or create new
 tx.g()
+    .V([42])
+    .count()                                          // seed: always exactly one traverser
     .coalesce([
-        __().V([42]).values(["name"]),              // branch 1: vertex exists → emit name
-        __().addV("person")                          // branch 2: create it
+        __().V([42]).values(["name"]),                // branch 1: vertex exists → emit name
+        __().addV("person")                           // branch 2: create it
             .property("id", 42i64)
             .property("name", "charlie"),
     ])
     .next()?;
 
-// Upsert edge: check for existing or create
+// Upsert edge: check for existing or create. No `.count()` seed needed here — vertex 42 now
+// exists (created above, visible via read-your-writes), so `.V([42])` alone already emits one
+// traverser.
 tx.g()
     .V([42])
     .coalesce([
@@ -331,8 +384,8 @@ snap.g().V([1]).outE(["knows"]).r#where(__().otherV().hasLabel(["person"])).coun
 // union: merge results from multiple branches
 snap.g().V([1]).union([__().outE(["knows"]), __().outE(["created"])]).count().next()?;
 
-// coalesce: first non-empty branch
-tx.g().coalesce([__().V([id]).values(["name"]), __().addV("person").property("name", "x")]).next()?;
+// coalesce: first non-empty branch (needs a `.count()` seed — see "Idempotent upserts" above)
+tx.g().V([id]).count().coalesce([__().V([id]).values(["name"]), __().addV("person").property("name", "x")]).next()?;
 ```
 
 ### Multiple queries per session
@@ -444,7 +497,7 @@ just build-release
 
 - **Embedded only:** no server/client mode; queries are executed in-process.
 - **Single-threaded per query:** each volcano pipeline runs single-threaded; multiple sessions can run concurrently against a shared `Graph`.
-- **Schema ID space limits:** up to 4096 distinct vertex labels and 4096 distinct edge labels (independent namespaces), and ~65k property keys per graph — registering past that fails with `StoreError::SchemaExhausted`.
+- **Schema ID space limits:** up to 32767 distinct vertex labels and 32767 distinct edge labels (independent namespaces), and 32767 property keys per graph — registering past that fails with `StoreError::SchemaExhausted`. (Ids are stored as `u16`; the high bit is reserved, unused for now, for a possible future tag.)
 - **Not TinkerPop-compatible:** RocksGraph is Gremlin-inspired but intentionally departs from the standard. See [docs/design_principles.md](docs/design_principles.md).
 - **No distributed backend:** placeholder exists but is not implemented.
 

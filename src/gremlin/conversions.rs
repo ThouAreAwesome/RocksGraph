@@ -21,18 +21,48 @@
 //! types and the internal [`Primitive`] / [`PropKey`] / [`LogicalStep`] types.
 //! Nothing here depends on the traversal builder or execution context.
 
-use smallvec::{smallvec, SmallVec};
 use smol_str::SmolStr;
 
 use crate::{
     gremlin::value::{Key, Predicate, Value},
     planner::logical_step::{HasIdStep, HasLabelStep, HasPropertyStep, LogicalStep},
     types::{
-        gvalue::Primitive,
+        gvalue::{Primitive, PrimitivePredicate},
         prop_key::{PropKey, ID, LABEL},
         StoreError,
     },
 };
+
+/// Convert a user-facing [`Predicate`] (which holds [`Value`]) to the internal [`PrimitivePredicate`] (which holds [`Primitive`]).
+pub(crate) fn predicate_to_primitive_predicate(pred: Predicate) -> Result<PrimitivePredicate, StoreError> {
+    let to_prim = |v: Value| -> Result<Primitive, StoreError> {
+        value_to_primitive(v.clone())
+            .ok_or_else(|| StoreError::UnexpectedDataType(format!("Expected scalar value for predicate, got: {:?}", v)))
+    };
+    match pred {
+        Predicate::Eq(v) => Ok(PrimitivePredicate::Eq(to_prim(v)?)),
+        Predicate::Ne(v) => Ok(PrimitivePredicate::Ne(to_prim(v)?)),
+        Predicate::Gt(v) => Ok(PrimitivePredicate::Gt(to_prim(v)?)),
+        Predicate::Gte(v) => Ok(PrimitivePredicate::Gte(to_prim(v)?)),
+        Predicate::Lt(v) => Ok(PrimitivePredicate::Lt(to_prim(v)?)),
+        Predicate::Lte(v) => Ok(PrimitivePredicate::Lte(to_prim(v)?)),
+        Predicate::Between(lo, hi) => Ok(PrimitivePredicate::Between(to_prim(lo)?, to_prim(hi)?)),
+        Predicate::Within(vs) => {
+            let mut prims = Vec::with_capacity(vs.len());
+            for v in vs {
+                prims.push(to_prim(v)?);
+            }
+            Ok(PrimitivePredicate::Within(prims))
+        }
+        Predicate::Without(vs) => {
+            let mut prims = Vec::with_capacity(vs.len());
+            for v in vs {
+                prims.push(to_prim(v)?);
+            }
+            Ok(PrimitivePredicate::Without(prims))
+        }
+    }
+}
 
 /// Convert a user-facing [`Value`] scalar to the internal [`Primitive`].
 ///
@@ -82,94 +112,114 @@ pub(crate) fn key_to_prop_key(k: Key) -> PropKey {
     }
 }
 
+fn validate_id_value(val: &Value) -> Result<(), StoreError> {
+    match val {
+        Value::Int64(_) | Value::Int32(_) => Ok(()),
+        other => Err(StoreError::UnexpectedDataType(format!("ID has-filter expects i32 or i64, got {:?}", other))),
+    }
+}
+
+fn validate_id_predicate(pred: &Predicate) -> Result<(), StoreError> {
+    match pred {
+        Predicate::Eq(v)
+        | Predicate::Ne(v)
+        | Predicate::Gt(v)
+        | Predicate::Gte(v)
+        | Predicate::Lt(v)
+        | Predicate::Lte(v) => {
+            validate_id_value(v)?;
+        }
+        Predicate::Between(lo, hi) => {
+            validate_id_value(lo)?;
+            validate_id_value(hi)?;
+        }
+        Predicate::Within(vs) | Predicate::Without(vs) => {
+            for v in vs {
+                validate_id_value(v)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_label_value(val: &Value) -> Result<(), StoreError> {
+    match val {
+        Value::String(_) => Ok(()),
+        other => Err(StoreError::UnexpectedDataType(format!("Label has-filter expects String, got {:?}", other))),
+    }
+}
+
+fn validate_label_predicate(pred: &Predicate) -> Result<(), StoreError> {
+    match pred {
+        Predicate::Eq(v) | Predicate::Ne(v) => {
+            validate_label_value(v)?;
+        }
+        Predicate::Within(vs) | Predicate::Without(vs) => {
+            for v in vs {
+                validate_label_value(v)?;
+            }
+        }
+        other => {
+            return Err(StoreError::UnsupportedOperation(format!(
+                "Unsupported predicate for Label has-filter, got: {:?}",
+                other
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_property_value(val: &Value) -> Result<(), StoreError> {
+    if value_to_primitive(val.clone()).is_none() {
+        return Err(StoreError::UnexpectedDataType(format!(
+            "Property has-filter expects scalar value, got complex type: {:?}",
+            val
+        )));
+    }
+    Ok(())
+}
+
+fn validate_property_predicate(pred: &Predicate) -> Result<(), StoreError> {
+    match pred {
+        Predicate::Eq(v)
+        | Predicate::Ne(v)
+        | Predicate::Gt(v)
+        | Predicate::Gte(v)
+        | Predicate::Lt(v)
+        | Predicate::Lte(v) => {
+            validate_property_value(v)?;
+        }
+        Predicate::Between(lo, hi) => {
+            validate_property_value(lo)?;
+            validate_property_value(hi)?;
+        }
+        Predicate::Within(vs) | Predicate::Without(vs) => {
+            for v in vs {
+                validate_property_value(v)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Push the appropriate [`LogicalStep`] for a `.has(key, pred)` call.
-///
-/// Routing:
-/// - `Key::Id`  + `Predicate::Eq(Int64)` or `Within([Int64…])` → `HasIdStep`
-/// - `Key::Label` + `Predicate::Eq(String|Int32|Int64)` or `Within` → `HasLabelStep` (the usual case is a string label
-///   name, e.g. `.has(Key::Label, "person")`)
-/// - `Key::Property(s)` + `Predicate::Eq(scalar)` → `HasPropertyStep`
-/// - Other combos → no-op (use dedicated step methods instead)
 pub(crate) fn push_has_step(steps: &mut Vec<LogicalStep>, key: Key, pred: Predicate) -> Result<(), StoreError> {
     match key {
         Key::Id => {
-            let ids: SmallVec<[i64; 4]> = match pred {
-                Predicate::Eq(Value::Int64(n)) => smallvec![n],
-                Predicate::Eq(Value::Int32(n)) => smallvec![n as i64],
-                Predicate::Within(vs) => {
-                    let mut parsed = SmallVec::new();
-                    for v in vs {
-                        match v {
-                            Value::Int64(n) => parsed.push(n),
-                            Value::Int32(n) => parsed.push(n as i64),
-                            other => {
-                                return Err(StoreError::UnexpectedDataType(format!(
-                                    "ID has-filter expects i32 or i64, got {:?}",
-                                    other
-                                )))
-                            }
-                        }
-                    }
-                    parsed
-                }
-                other => {
-                    return Err(StoreError::UnsupportedOperation(format!(
-                        "Unsupported predicate for ID has-filter, got: {:?}",
-                        other
-                    )))
-                }
-            };
-            steps.push(LogicalStep::HasId(HasIdStep { ids }));
+            validate_id_predicate(&pred)?;
+            let prim_pred = predicate_to_primitive_predicate(pred)?;
+            steps.push(LogicalStep::HasId(HasIdStep { pred: prim_pred }));
         }
         Key::Label => {
-            let labels: SmallVec<[SmolStr; 4]> = match pred {
-                Predicate::Eq(Value::String(s)) => smallvec![SmolStr::from(s)],
-                Predicate::Eq(Value::Int32(n)) => smallvec![SmolStr::from(n.to_string())],
-                Predicate::Eq(Value::Int64(n)) => smallvec![SmolStr::from(n.to_string())],
-                Predicate::Within(vs) => {
-                    let mut parsed = SmallVec::new();
-                    for v in vs {
-                        match v {
-                            Value::String(s) => parsed.push(SmolStr::from(s)),
-                            Value::Int32(n) => parsed.push(SmolStr::from(n.to_string())),
-                            Value::Int64(n) => parsed.push(SmolStr::from(n.to_string())),
-                            other => {
-                                return Err(StoreError::UnexpectedDataType(format!(
-                                    "Label has-filter expects String, i32 or i64, got {:?}",
-                                    other
-                                )))
-                            }
-                        }
-                    }
-                    parsed
-                }
-                other => {
-                    return Err(StoreError::UnsupportedOperation(format!(
-                        "Unsupported predicate for Label has-filter, got: {:?}",
-                        other
-                    )))
-                }
-            };
-            steps.push(LogicalStep::HasLabel(HasLabelStep { labels }));
+            validate_label_predicate(&pred)?;
+            let prim_pred = predicate_to_primitive_predicate(pred)?;
+            steps.push(LogicalStep::HasLabel(HasLabelStep { pred: prim_pred }));
         }
-        Key::Property(s) => match pred {
-            Predicate::Eq(v) => {
-                if let Some(p) = value_to_primitive(v.clone()) {
-                    steps.push(LogicalStep::HasProperty(HasPropertyStep { key: s, value: p }));
-                } else {
-                    return Err(StoreError::UnexpectedDataType(format!(
-                        "Property has-filter expects scalar value, got complex type: {:?}",
-                        v
-                    )));
-                }
-            }
-            other => {
-                return Err(StoreError::UnsupportedOperation(format!(
-                    "Non-equality filters on user properties are not yet supported, got: {:?}",
-                    other
-                )))
-            }
-        },
+        Key::Property(s) => {
+            validate_property_predicate(&pred)?;
+            let prim_pred = predicate_to_primitive_predicate(pred)?;
+            steps.push(LogicalStep::HasProperty(HasPropertyStep { key: s, pred: prim_pred }));
+        }
     }
     Ok(())
 }
@@ -177,7 +227,6 @@ pub(crate) fn push_has_step(steps: &mut Vec<LogicalStep>, key: Key, pred: Predic
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gremlin::value::ne;
 
     #[test]
     fn test_value_to_primitive() {
@@ -220,15 +269,20 @@ mod tests {
         let mut steps = Vec::new();
 
         // ID error cases
-        assert!(push_has_step(&mut steps, Key::Id, ne(10i32)).is_err());
+        assert!(push_has_step(&mut steps, Key::Id, Predicate::Eq(Value::Null)).is_err());
         assert!(push_has_step(&mut steps, Key::Id, Predicate::Within(vec![Value::Null])).is_err());
 
         // Label error cases
-        assert!(push_has_step(&mut steps, Key::Label, ne("person")).is_err());
+        assert!(push_has_step(&mut steps, Key::Label, Predicate::Gt(Value::String("person".to_string()))).is_err());
         assert!(push_has_step(&mut steps, Key::Label, Predicate::Within(vec![Value::Null])).is_err());
+        // Labels are string-only — a label is never meaningfully an Int32/Int64 (see
+        // `validate_label_value`).
+        assert!(push_has_step(&mut steps, Key::Label, Predicate::Eq(Value::Int32(1))).is_err());
+        assert!(push_has_step(&mut steps, Key::Label, Predicate::Eq(Value::Int64(1))).is_err());
+        assert!(push_has_step(&mut steps, Key::Label, Predicate::Within(vec![Value::Int32(1)])).is_err());
+        assert!(push_has_step(&mut steps, Key::Label, Predicate::Within(vec![Value::Int64(1)])).is_err());
 
         // Property error cases
-        assert!(push_has_step(&mut steps, Key::Property("age".into()), ne(10i32)).is_err());
         assert!(push_has_step(&mut steps, Key::Property("age".into()), Predicate::Eq(Value::List(vec![]))).is_err());
 
         // Success cases
@@ -238,13 +292,9 @@ mod tests {
         assert!(push_has_step(&mut steps, Key::Id, Predicate::Within(vec![Value::Int32(42)])).is_ok());
 
         assert!(push_has_step(&mut steps, Key::Label, Predicate::Eq(Value::String("person".to_string()))).is_ok());
-        assert!(push_has_step(&mut steps, Key::Label, Predicate::Eq(Value::Int32(1))).is_ok());
-        assert!(push_has_step(&mut steps, Key::Label, Predicate::Eq(Value::Int64(1))).is_ok());
         assert!(
             push_has_step(&mut steps, Key::Label, Predicate::Within(vec![Value::String("person".to_string())])).is_ok()
         );
-        assert!(push_has_step(&mut steps, Key::Label, Predicate::Within(vec![Value::Int32(1)])).is_ok());
-        assert!(push_has_step(&mut steps, Key::Label, Predicate::Within(vec![Value::Int64(1)])).is_ok());
 
         assert!(push_has_step(&mut steps, Key::Property("age".into()), Predicate::Eq(Value::Int32(42))).is_ok());
     }

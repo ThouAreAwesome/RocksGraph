@@ -17,9 +17,8 @@
 
 use crate::{
     planner::logical_step::{LogicalPlan, LogicalStep},
-    types::{gvalue::Primitive, prop_key::ID, StoreError},
+    types::{prop_key::ID, StoreError},
 };
-use smallvec::smallvec;
 
 /// Folds `V([]).hasId(N)` or `V([]).has("id", N)` into `V(N)`.
 ///
@@ -36,15 +35,13 @@ pub fn merge_v_id_filter(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
     let mut j = 1;
 
     while j < plan.steps.len() {
-        let v_ids = match (&plan.steps[i], &plan.steps[j]) {
+        let v_ids: Option<smallvec::SmallVec<[i64; 4]>> = match (&plan.steps[i], &plan.steps[j]) {
             (LogicalStep::V(v), LogicalStep::HasProperty(hp)) if hp.key.as_str() == ID && v.ids.is_empty() => {
-                match hp.value {
-                    Primitive::Int64(id) => Some(smallvec![id]),
-                    Primitive::Int32(id) => Some(smallvec![id as i64]),
-                    _ => return Err(StoreError::UnexpectedDataType("expect i32 or i64 type for vertex id".into())),
-                }
+                super::extract_ids_from_predicate(&hp.pred)?
             }
-            (LogicalStep::V(v), LogicalStep::HasId(hi)) if v.ids.is_empty() => Some(hi.ids.clone()),
+            (LogicalStep::V(v), LogicalStep::HasId(hi)) if v.ids.is_empty() => {
+                super::extract_ids_from_predicate(&hi.pred)?
+            }
             _ => None,
         };
         if let Some(ids) = v_ids {
@@ -78,6 +75,8 @@ mod tests {
     };
     use smallvec::smallvec;
 
+    use crate::types::gvalue::PrimitivePredicate;
+
     fn v_all() -> LogicalStep {
         LogicalStep::V(VStep { ids: smallvec![] })
     }
@@ -87,15 +86,16 @@ mod tests {
     }
 
     fn has_id(ids: Vec<VertexKey>) -> LogicalStep {
-        LogicalStep::HasId(HasIdStep { ids: ids.into_iter().collect() })
+        let pred = PrimitivePredicate::Within(ids.into_iter().map(Primitive::Int64).collect());
+        LogicalStep::HasId(HasIdStep { pred })
     }
 
     fn has_id_prop(value: Primitive) -> LogicalStep {
-        LogicalStep::HasProperty(HasPropertyStep { key: SmolStr::new("id"), value })
+        LogicalStep::HasProperty(HasPropertyStep { key: SmolStr::new("id"), pred: PrimitivePredicate::Eq(value) })
     }
 
     fn has_prop(key: &str, value: Primitive) -> LogicalStep {
-        LogicalStep::HasProperty(HasPropertyStep { key: SmolStr::new(key), value })
+        LogicalStep::HasProperty(HasPropertyStep { key: SmolStr::new(key), pred: PrimitivePredicate::Eq(value) })
     }
 
     // HasId path
@@ -122,8 +122,41 @@ mod tests {
         assert_eq!(plan.steps.len(), 2);
         let LogicalStep::V(v) = &plan.steps[0] else { panic!("expected VStep") };
         assert_eq!(&v.ids[..], &[1i64]);
-        let LogicalStep::HasId(HasIdStep { ids }) = &plan.steps[1] else { panic!("expected HasIdStep") };
+        let LogicalStep::HasId(hi) = &plan.steps[1] else { panic!("expected HasIdStep") };
+        let ids = super::super::extract_ids_from_predicate(&hi.pred).unwrap().unwrap();
         assert_eq!(&ids[..], &[2]);
+    }
+
+    // `V([]).hasId([])` must NOT fold into `V([])` — an empty `Within` means "match nothing",
+    // but an empty `VStep.ids` means "scan everything" (see `VStep::produce`). Folding here
+    // would silently turn "match nothing" into "match everything".
+    #[test]
+    fn test_hasid_empty_within_not_folded() {
+        let steps = vec![v_all(), has_id(vec![])];
+        let mut plan = LogicalPlan { steps };
+        let opt = merge_v_id_filter(&mut plan).unwrap();
+        assert!(!opt);
+        assert_eq!(plan.steps.len(), 2);
+        assert!(matches!(plan.steps[0], LogicalStep::V(_)));
+        assert!(matches!(plan.steps[1], LogicalStep::HasId(_)));
+    }
+
+    // Same hazard via `.has("id", within([]))`, which takes the HasProperty("id", …) path.
+    #[test]
+    fn test_id_prop_empty_within_not_folded() {
+        let steps = vec![
+            v_all(),
+            LogicalStep::HasProperty(HasPropertyStep {
+                key: SmolStr::new("id"),
+                pred: PrimitivePredicate::Within(vec![]),
+            }),
+        ];
+        let mut plan = LogicalPlan { steps };
+        let opt = merge_v_id_filter(&mut plan).unwrap();
+        assert!(!opt);
+        assert_eq!(plan.steps.len(), 2);
+        assert!(matches!(plan.steps[0], LogicalStep::V(_)));
+        assert!(matches!(plan.steps[1], LogicalStep::HasProperty(_)));
     }
 
     // HasProperty("id", …) path — produced by .has("id", N) where "id" is a &str
@@ -164,6 +197,24 @@ mod tests {
         let steps = vec![v_all(), has_id_prop(Primitive::String(SmolStr::new("abc")))];
         let mut plan = LogicalPlan { steps };
         assert!(merge_v_id_filter(&mut plan).is_err());
+    }
+
+    // `.has("id", gt(5))` is a valid, well-typed query that simply isn't an id-allowlist shape —
+    // it must be left unfolded (like the analogous `.hasId(gt(5))` already was), not hard-error
+    // the whole plan just because this rule can't fold it.
+    #[test]
+    fn test_id_prop_non_foldable_shape_not_folded_no_error() {
+        let steps = vec![
+            v_all(),
+            LogicalStep::HasProperty(HasPropertyStep {
+                key: SmolStr::new("id"),
+                pred: PrimitivePredicate::Gt(Primitive::Int64(5)),
+            }),
+        ];
+        let mut plan = LogicalPlan { steps };
+        let opt = merge_v_id_filter(&mut plan).unwrap();
+        assert!(!opt);
+        assert_eq!(plan.steps.len(), 2);
     }
 
     #[test]

@@ -148,6 +148,13 @@ pub fn without(vs: impl IntoIterator<Item = impl Into<Value>>) -> Predicate {
     Predicate::Without(vs.into_iter().map(Into::into).collect())
 }
 
+// Note: `Predicate` (this Value-based type) is never evaluated directly. The only evaluation
+// path is `types::gvalue::PrimitivePredicate::evaluate`, which the engine's physical steps
+// (has_id/has_label/has_property/scalar_filter) call exclusively — keeping `engine` free of any
+// dependency on `gremlin`. `gremlin::conversions::predicate_to_primitive_predicate` converts a
+// `Predicate` into a `PrimitivePredicate` once, at plan-build time, before it ever reaches the
+// engine.
+
 /// Any type that converts to [`Value`] also converts to [`Predicate::Eq`].
 ///
 /// This covers all scalar Rust types (`i32`, `i64`, `bool`, `&str`, `f64`, …)
@@ -200,6 +207,54 @@ pub enum Value {
     Map(Map),
     /// Traversal path with per-position step labels. Produced by `path()`.
     Path(Path),
+}
+
+impl Value {
+    pub fn is_integer(&self) -> bool {
+        matches!(self, Self::Int32(_) | Self::Int64(_) | Self::UInt16(_))
+    }
+
+    pub fn is_numeric(&self) -> bool {
+        matches!(self, Self::Int32(_) | Self::Int64(_) | Self::UInt16(_) | Self::Float32(_) | Self::Float64(_))
+    }
+
+    pub fn to_i64(&self) -> Option<i64> {
+        match self {
+            Self::Int32(v) => Some(*v as i64),
+            Self::Int64(v) => Some(*v),
+            Self::UInt16(v) => Some(*v as i64),
+            _ => None,
+        }
+    }
+
+    pub fn to_f64(&self) -> Option<f64> {
+        match self {
+            Self::Int32(v) => Some(*v as f64),
+            Self::Int64(v) => Some(*v as f64),
+            Self::UInt16(v) => Some(*v as f64),
+            Self::Float32(v) => Some(*v as f64),
+            Self::Float64(v) => Some(*v),
+            _ => None,
+        }
+    }
+}
+
+impl PartialOrd for Value {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        if self.is_integer() && other.is_integer() {
+            return self.to_i64().unwrap().partial_cmp(&other.to_i64().unwrap());
+        }
+        if self.is_numeric() && other.is_numeric() {
+            return self.to_f64().unwrap().partial_cmp(&other.to_f64().unwrap());
+        }
+        match (self, other) {
+            (Self::Bool(a), Self::Bool(b)) => a.partial_cmp(b),
+            (Self::String(a), Self::String(b)) => a.partial_cmp(b),
+            (Self::Uuid(a), Self::Uuid(b)) => a.partial_cmp(b),
+            (Self::Null, Self::Null) => Some(std::cmp::Ordering::Equal),
+            _ => None,
+        }
+    }
 }
 
 // ── From impls for scalar Rust types ─────────────────────────────────────────
@@ -259,9 +314,9 @@ impl From<u128> for Value {
 /// consistent with `Key::Label` / `.values([Key::Label])`.
 ///
 /// `label` and the `properties` keys are [`SmolStr`] rather than `String`: both are drawn
-/// from the schema's interned label/property-key registry
-/// ([`Schema`](crate::schema::definition::Schema)), so materializing a result can clone or
-/// move the existing `SmolStr` instead of heap-allocating a fresh `String` per element.
+/// from the schema's interned label/property-key registry (crate-internal), so materializing a
+/// result can clone or move the existing `SmolStr` instead of heap-allocating a fresh `String`
+/// per element.
 /// `SmolStr` derefs to `&str`, so lookups/comparisons against string literals are unaffected
 /// (e.g. `vertex.properties.get("name")`, `edge.label == "knows"`).
 ///

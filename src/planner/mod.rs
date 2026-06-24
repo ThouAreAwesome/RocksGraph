@@ -63,7 +63,8 @@ mod tests {
 
     use crate::{
         planner::logical_step::{BothEStep, HasIdStep, LogicalStep, OtherVStep, OutEStep, OutVStep, VStep, WhereStep},
-        types::{keys::VertexKey, Primitive},
+        planner::optimizer::extract_ids_from_predicate,
+        types::{keys::VertexKey, Primitive, PrimitivePredicate},
     };
     use smallvec::smallvec;
     use std::collections::HashMap;
@@ -73,7 +74,8 @@ mod tests {
     }
 
     fn has_id(ids: Vec<VertexKey>) -> LogicalStep {
-        LogicalStep::HasId(HasIdStep { ids: ids.into_iter().collect() })
+        let pred = PrimitivePredicate::Within(ids.into_iter().map(Primitive::Int64).collect());
+        LogicalStep::HasId(HasIdStep { pred })
     }
 
     fn out_e() -> LogicalStep {
@@ -101,9 +103,12 @@ mod tests {
     }
 
     fn has_id_prop(id: i32) -> LogicalStep {
-        use crate::{planner::logical_step::HasPropertyStep, types::gvalue::Primitive};
+        use crate::planner::logical_step::HasPropertyStep;
         use smol_str::SmolStr;
-        LogicalStep::HasProperty(HasPropertyStep { key: SmolStr::new("id"), value: Primitive::Int32(id) })
+        LogicalStep::HasProperty(HasPropertyStep {
+            key: SmolStr::new("id"),
+            pred: PrimitivePredicate::Eq(Primitive::Int32(id)),
+        })
     }
 
     fn prop(key: SmolStr, value: Primitive) -> LogicalStep {
@@ -225,7 +230,8 @@ mod tests {
         assert_eq!(plan.steps.len(), 5);
         assert!(matches!(plan.steps[0], LogicalStep::V(_)));
         if let LogicalStep::HasId(has_id) = &plan.steps[1] {
-            assert_eq!(&has_id.ids[..], &[3i64], "hasId(3) should be preserved");
+            let ids = extract_ids_from_predicate(&has_id.pred).unwrap().unwrap();
+            assert_eq!(&ids[..], &[3i64], "hasId(3) should be preserved");
         } else {
             panic!("expected HasId at step 1");
         }
@@ -347,15 +353,18 @@ mod tests {
             LogicalStep::Both(BothStep { labels: smallvec![], end_vertex_ids: None }),
             LogicalStep::BothE(BothEStep { labels: smallvec![], end_vertex_ids: None, rank: None }),
             LogicalStep::Count(CountStep {}),
-            LogicalStep::HasLabel(HasLabelStep { labels: smallvec![] }),
-            LogicalStep::HasProperty(HasPropertyStep { key: SmolStr::new("key"), value: Primitive::Int32(0) }),
+            LogicalStep::HasLabel(HasLabelStep { pred: PrimitivePredicate::Within(vec![]) }),
+            LogicalStep::HasProperty(HasPropertyStep {
+                key: SmolStr::new("key"),
+                pred: PrimitivePredicate::Eq(Primitive::Int32(0)),
+            }),
             LogicalStep::In(InStep { labels: smallvec![], end_vertex_ids: None }),
             LogicalStep::InE(InEStep { labels: smallvec![], end_vertex_ids: None, rank: None }),
             LogicalStep::Out(OutStep { labels: smallvec![], end_vertex_ids: None }),
             LogicalStep::InV(InVStep {}),
             LogicalStep::OtherV(OtherVStep {}),
             LogicalStep::OutV(OutVStep {}),
-            LogicalStep::ScalarFilter(ScalarFilterStep { value: Primitive::Int32(0) }),
+            LogicalStep::ScalarFilter(ScalarFilterStep { pred: PrimitivePredicate::Eq(Primitive::Int32(0)) }),
             LogicalStep::Values(ValuesStep { property_keys: smallvec![] }),
             LogicalStep::Properties(PropertiesStep { property_keys: smallvec![] }),
             LogicalStep::From(FromStep { vertex_id: 0 }),

@@ -25,7 +25,10 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{error::StoreError, gvalue::GValue, keys::VertexKey},
+    types::{
+        error::StoreError,
+        gvalue::{GValue, Primitive, PrimitivePredicate},
+    },
 };
 
 /// A physical step that filters traversers based on their vertex ID.
@@ -35,14 +38,14 @@ pub struct HasIdStep {
     upstream: Option<StepRef>,
 
     // ── Static/Fixed configuration ──
-    /// The list of target vertex keys to match.
-    target_ids: SmallVec<[VertexKey; 4]>,
+    /// The predicate to filter vertex keys.
+    pred: PrimitivePredicate,
 }
 
-/// Creates a new `HasIdStep` with a list of target vertex IDs.
+/// Creates a new `HasIdStep` with a predicate.
 impl HasIdStep {
-    pub fn new(target_ids: SmallVec<[VertexKey; 4]>) -> Self {
-        Self { upstream: None, target_ids }
+    pub fn new(pred: PrimitivePredicate) -> Self {
+        Self { upstream: None, pred }
     }
 }
 
@@ -53,12 +56,12 @@ impl CoreStep for HasIdStep {
     }
 
     fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
-        // Produces traversers whose vertex ID is present in the `target_ids` list.
+        // Produces traversers whose vertex ID matches the predicate.
         loop {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
             let Some(t) = upstream.next(ctx)? else { return Ok(None) };
             if let GValue::Vertex(vk) = &t.value {
-                if self.target_ids.contains(vk) {
+                if self.pred.evaluate(&Primitive::Int64(*vk)) {
                     return Ok(Some(smallvec![t]));
                 }
             }

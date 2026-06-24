@@ -197,6 +197,26 @@ mod type_tests {
     }
 
     #[test]
+    fn test_primitive_predicate_evaluate_numeric_width_insensitive() {
+        use crate::types::gvalue::PrimitivePredicate;
+
+        // Eq/Ne/Within/Without must match across Int32/Int64 literals, same as Gt/Lt/etc.
+        // already do via partial_cmp — a caller shouldn't see different results just because
+        // they wrote `1i32` instead of `1i64` (or vice versa).
+        assert!(PrimitivePredicate::Eq(Primitive::Int32(7)).evaluate(&Primitive::Int64(7)));
+        assert!(!PrimitivePredicate::Ne(Primitive::Int32(7)).evaluate(&Primitive::Int64(7)));
+        assert!(
+            PrimitivePredicate::Within(vec![Primitive::Int64(1), Primitive::Int32(2)]).evaluate(&Primitive::Int32(2))
+        );
+        assert!(
+            !PrimitivePredicate::Without(vec![Primitive::Int64(1), Primitive::Int32(2)]).evaluate(&Primitive::Int32(2))
+        );
+        assert!(
+            PrimitivePredicate::Without(vec![Primitive::Int64(1), Primitive::Int32(2)]).evaluate(&Primitive::Int32(3))
+        );
+    }
+
+    #[test]
     fn test_gvalue_variants_equality_and_hashing() {
         use crate::types::{keys::Direction, EdgeKey};
         use smallvec::smallvec;

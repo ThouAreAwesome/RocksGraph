@@ -612,9 +612,10 @@ mod integration_test {
         let res2 = tx.g().addV("person").property("complex", Value::List(vec![])).next();
         assert!(matches!(res2, Err(StoreError::UnexpectedDataType(_))));
 
-        // 3. is() with range predicate is unsupported on scalar filter
+        // 3. is() with range predicate is now fully supported on scalar filter
         let res3 = tx.g().V([]).values(["age"]).is(crate::gremlin::value::gt(30i32)).next();
-        assert!(matches!(res3, Err(StoreError::UnsupportedOperation(_))));
+        assert!(res3.is_ok());
+        assert_eq!(res3.unwrap(), None);
     }
 
     #[test]
@@ -818,6 +819,44 @@ mod integration_test {
         assert_eq!(prop_count, Value::Int64(2));
     }
 
+    /// `properties([key, ...]).drop()` deletes only the named property keys: other properties on
+    /// the same vertex/edge are untouched, and dropping a key that was never set is a graceful
+    /// no-op rather than an error (mirroring `drop()` on a `V()`/`E()` traversal that matched
+    /// nothing).
+    #[test]
+    fn test_drop_property_step() {
+        let dir = tempfile::tempdir().unwrap();
+        let graph = Graph::open(dir.path()).unwrap();
+
+        let mut tx = graph.begin();
+        tx.g().addV("person").property("id", 1i64).property("name", "marko").property("age", 29i32).next().unwrap();
+        tx.g().addV("person").property("id", 2i64).property("name", "vadas").next().unwrap();
+        tx.g().addE("knows").from(1).to(2).property("weight", 0.5f64).property("note", "first meeting").next().unwrap();
+        tx.commit().unwrap();
+
+        // Drop a single vertex property; other properties on the same vertex are untouched.
+        let mut tx = graph.begin();
+        tx.g().V([1]).properties(["age"]).drop().next().unwrap();
+        tx.commit().unwrap();
+        let mut tx = graph.begin();
+        assert_eq!(tx.g().V([1]).values(["age"]).next().unwrap(), None);
+        assert_eq!(tx.g().V([1]).values(["name"]).next().unwrap(), Some(Value::String("marko".to_string())));
+
+        // Drop a single edge property reached via a multi-step traversal; other properties on
+        // the same edge are untouched.
+        tx.g().V([1]).outE(["knows"]).r#where(__().otherV().hasId([2])).properties(["note"]).drop().next().unwrap();
+        tx.commit().unwrap();
+        let mut tx = graph.begin();
+        let note_after = tx.g().V([1]).outE(["knows"]).values(["note"]).next().unwrap();
+        let weight_after = tx.g().V([1]).outE(["knows"]).values(["weight"]).next().unwrap();
+        assert_eq!(note_after, None);
+        assert_eq!(weight_after, Some(Value::Float64(0.5)));
+
+        // Dropping a property key that was never set is a no-op, not an error.
+        tx.g().V([1]).properties(["never_set"]).drop().next().unwrap();
+        tx.commit().unwrap();
+    }
+
     #[test]
     fn test_invalid_and_overflow_values() {
         use crate::schema::DataType;
@@ -990,16 +1029,18 @@ mod integration_test {
         let label_within = read.g().V([]).has(Key::Label, within(["Item"])).count().next().unwrap().unwrap();
         assert_eq!(label_within, Value::Int64(2));
 
-        // Without is a different story: `push_has_step` has no `Predicate::Without` arm for
-        // either Key::Id or Key::Label (only Eq/Within), so it falls through to the generic
-        // "unsupported predicate" rejection — confirm that's a clean, detected error rather
-        // than a silent no-op or a panic.
+        // Without is now fully supported. Let's verify that we can filter out vertex 1
+        // and only get vertex 2 using without([1i64]).
         use crate::gremlin::value::without;
-        let id_without_res = read.g().V([]).has(Key::Id, without([1i64])).next();
-        assert!(matches!(id_without_res, Err(StoreError::UnsupportedOperation(_))));
+        let id_without = read.g().V([]).has(Key::Id, without([1i64])).count().next().unwrap().unwrap();
+        assert_eq!(id_without, Value::Int64(1));
 
-        let label_without_res = read.g().V([]).has(Key::Label, without(["Item"])).next();
-        assert!(matches!(label_without_res, Err(StoreError::UnsupportedOperation(_))));
+        let label_without = read.g().V([]).has(Key::Label, without(["Item"])).count().next().unwrap().unwrap();
+        assert_eq!(label_without, Value::Int64(0));
+
+        let label_without_other =
+            read.g().V([]).has(Key::Label, without(["OtherLabel"])).count().next().unwrap().unwrap();
+        assert_eq!(label_without_other, Value::Int64(2));
     }
 
     #[test]
@@ -1205,5 +1246,75 @@ mod integration_test {
             let e_count = read.g().V([15]).outE(["dup_name"]).count().next().unwrap().unwrap();
             assert_eq!(e_count, Value::Int64(1));
         }
+    }
+
+    #[test]
+    fn test_new_predicate_evaluation() {
+        use crate::gremlin::value::{between, eq, gt, gte, lt, lte, ne, within, without};
+
+        let dir = tempfile::tempdir().unwrap();
+        let graph = Graph::open(dir.path()).unwrap();
+
+        let mut tx = graph.begin();
+        tx.g().addV("person").property("id", 1i64).property("age", 20i32).property("name", "Alice").next().unwrap();
+        tx.g().addV("person").property("id", 2i64).property("age", 30i32).property("name", "Bob").next().unwrap();
+        tx.g().addV("person").property("id", 3i64).property("age", 40i32).property("name", "Charlie").next().unwrap();
+        tx.g().addV("animal").property("id", 4i64).property("age", 5i32).property("name", "Dog").next().unwrap();
+        tx.g().addV("software").property("id", 5i64).property("age", 3i32).property("name", "App").next().unwrap();
+        tx.commit().unwrap();
+
+        let mut read = graph.read();
+
+        // 1. Property checks with range predicates
+        assert_eq!(read.g().V([]).has("age", gt(25i32)).count().next().unwrap().unwrap(), Value::Int64(2));
+        assert_eq!(read.g().V([]).has("age", gte(30i32)).count().next().unwrap().unwrap(), Value::Int64(2));
+        assert_eq!(read.g().V([]).has("age", lt(10i32)).count().next().unwrap().unwrap(), Value::Int64(2));
+        assert_eq!(read.g().V([]).has("age", lte(20i32)).count().next().unwrap().unwrap(), Value::Int64(3));
+        assert_eq!(read.g().V([]).has("age", between(20i32, 40i32)).count().next().unwrap().unwrap(), Value::Int64(2));
+        assert_eq!(read.g().V([]).has("age", ne(30i32)).count().next().unwrap().unwrap(), Value::Int64(4));
+        assert_eq!(read.g().V([]).has("age", within([20i32, 40i32])).count().next().unwrap().unwrap(), Value::Int64(2));
+        assert_eq!(
+            read.g().V([]).has("age", without([20i32, 40i32])).count().next().unwrap().unwrap(),
+            Value::Int64(3)
+        );
+
+        // 2. Label checks with range rejections & equality/membership
+        // Range predicate must be rejected
+        let res_label_gt = read.g().V([]).has(Key::Label, gt("person")).next();
+        assert!(matches!(res_label_gt, Err(StoreError::UnsupportedOperation(_))));
+
+        let res_label_between = read.g().V([]).has(Key::Label, between("animal", "software")).next();
+        assert!(matches!(res_label_between, Err(StoreError::UnsupportedOperation(_))));
+
+        // Equality/membership succeeds
+        assert_eq!(read.g().V([]).has(Key::Label, eq("person")).count().next().unwrap().unwrap(), Value::Int64(3));
+        assert_eq!(read.g().V([]).has(Key::Label, ne("person")).count().next().unwrap().unwrap(), Value::Int64(2));
+        assert_eq!(
+            read.g().V([]).has(Key::Label, within(["person", "software"])).count().next().unwrap().unwrap(),
+            Value::Int64(4)
+        );
+        assert_eq!(
+            read.g().V([]).has(Key::Label, without(["person", "software"])).count().next().unwrap().unwrap(),
+            Value::Int64(1)
+        );
+
+        // 3. ID checks with various predicates
+        assert_eq!(read.g().V([]).has(Key::Id, gt(2i64)).count().next().unwrap().unwrap(), Value::Int64(3));
+        assert_eq!(read.g().V([]).has(Key::Id, between(2i64, 5i64)).count().next().unwrap().unwrap(), Value::Int64(3));
+        assert_eq!(read.g().V([]).has(Key::Id, ne(3i64)).count().next().unwrap().unwrap(), Value::Int64(4));
+        assert_eq!(
+            read.g().V([]).has(Key::Id, without([1i64, 5i64])).count().next().unwrap().unwrap(),
+            Value::Int64(3)
+        );
+
+        // 4. is() step evaluation
+        let ages_gt = read.g().V([]).values(["age"]).is(gt(25i32)).count().next().unwrap().unwrap();
+        assert_eq!(ages_gt, Value::Int64(2));
+
+        let ages_between = read.g().V([]).values(["age"]).is(between(10i32, 35i32)).count().next().unwrap().unwrap();
+        assert_eq!(ages_between, Value::Int64(2));
+
+        let ages_within = read.g().V([]).values(["age"]).is(within([5i32, 20i32])).count().next().unwrap().unwrap();
+        assert_eq!(ages_within, Value::Int64(2));
     }
 }

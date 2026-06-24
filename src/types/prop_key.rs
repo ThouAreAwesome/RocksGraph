@@ -48,6 +48,8 @@ pub const ID: PropKey = SmolStr::new_static("id");
 pub const LABEL: PropKey = SmolStr::new_static("label");
 pub const RANK: PropKey = SmolStr::new_static("rank");
 
-pub const ID_KEY_ID: u16 = 0;
-pub const LABEL_KEY_ID: u16 = 1;
-pub const RANK_KEY_ID: u16 = 2;
+// Property-key and label ids never assign 0 — it's reserved crate-internally to mean "no such
+// key/label" (see `schema::definition::MAX_PROP_KEYS`), so real ids start at 1.
+pub const ID_KEY_ID: u16 = 1;
+pub const LABEL_KEY_ID: u16 = 2;
+pub const RANK_KEY_ID: u16 = 3;

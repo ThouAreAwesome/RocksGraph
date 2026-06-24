@@ -25,8 +25,14 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{error::StoreError, keys::LabelId, prop_key::LABEL_KEY_ID, CanonicalKey, GValue, Primitive},
+    types::{error::StoreError, prop_key::LABEL_KEY_ID, CanonicalKey, GValue, Primitive, PrimitivePredicate},
 };
+
+/// Sentinel `label_id` an unregistered label name resolves to (see `PhysicalPlanBuilder`'s
+/// `LogicalStep::HasLabel` arm) — guaranteed to never equal a real one, since real ids are
+/// non-negative (`LabelId` is `u16`, cast up to `i32` here to share `Primitive::Int32` with the
+/// runtime value being compared against).
+pub(crate) const UNRESOLVED_LABEL_ID: i32 = -1;
 
 /// A physical step that filters traversers based on the label of the element they carry.
 #[derive(Debug)]
@@ -35,16 +41,20 @@ pub struct HasLabelStep {
     upstream: Option<StepRef>,
 
     // ── Static/Fixed configuration ──
-    /// The list of target vertex label IDs to match.
-    vertex_label_ids: SmallVec<[LabelId; 4]>,
-    /// The list of target edge label IDs to match.
-    edge_label_ids: SmallVec<[LabelId; 4]>,
+    /// Predicate over the element's label id in the *vertex* namespace — resolved from the
+    /// user's label name(s) once at build time (see `PhysicalPlanBuilder`), so `produce()` never
+    /// needs to touch the schema.
+    vertex_pred: PrimitivePredicate,
+    /// Predicate over the element's label id in the *edge* namespace. Separate from
+    /// `vertex_pred` because vertex and edge labels are independent id spaces — the same name
+    /// can resolve to different ids (or be registered in only one namespace).
+    edge_pred: PrimitivePredicate,
 }
 
-/// Creates a new `HasLabelStep` with target vertex and edge label IDs.
+/// Creates a new `HasLabelStep` with the vertex- and edge-namespace label-id predicates.
 impl HasLabelStep {
-    pub fn new(vertex_label_ids: SmallVec<[LabelId; 4]>, edge_label_ids: SmallVec<[LabelId; 4]>) -> Self {
-        Self { upstream: None, vertex_label_ids, edge_label_ids }
+    pub fn new(vertex_pred: PrimitivePredicate, edge_pred: PrimitivePredicate) -> Self {
+        Self { upstream: None, vertex_pred, edge_pred }
     }
 }
 
@@ -55,7 +65,8 @@ impl CoreStep for HasLabelStep {
     }
 
     fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
-        // Produces traversers whose element's label ID is present in the target list.
+        // Produces traversers whose element's label id matches the resolved predicate — a plain
+        // integer comparison, no schema lookup needed.
         loop {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
             let Some(t) = upstream.next(ctx)? else { return Ok(None) };
@@ -65,9 +76,9 @@ impl CoreStep for HasLabelStep {
                     else {
                         unreachable!("should alway find label id of a vertex")
                     };
-                    self.vertex_label_ids.contains(&(lb as u16))
+                    self.vertex_pred.evaluate(&Primitive::Int32(lb))
                 }
-                GValue::Edge(ek) => self.edge_label_ids.contains(&ek.label_id),
+                GValue::Edge(ek) => self.edge_pred.evaluate(&Primitive::Int32(ek.label_id as i32)),
                 _ => false,
             };
             if matched {

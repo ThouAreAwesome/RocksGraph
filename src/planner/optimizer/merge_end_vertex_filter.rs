@@ -15,6 +15,8 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
+#[cfg(test)]
+use crate::types::gvalue::{Primitive, PrimitivePredicate};
 use crate::{
     planner::{
         logical_step::{HasPropertyStep, LogicalPlan, LogicalStep},
@@ -23,15 +25,28 @@ use crate::{
     types::{
         keys::{Rank, VertexKey},
         prop_key::{ID, RANK},
-        Primitive, StoreError,
+        StoreError,
     },
 };
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 
 /// What a single end-vertex/rank filter contributed, applied to the anchor step in one shot.
 enum Merge {
     EndVertexIds(SmallVec<[VertexKey; 4]>),
     Rank(Rank),
+}
+
+/// Extracts a rank value to fold into a preceding `OutE`/`InE`/`BothE` step. Only `Eq` is ever
+/// foldable — every other shape (`Gt`, `Between`, `Within`, …) is left unfolded and returns
+/// `Ok(None)` without validating its literal, since an out-of-`u16`-range or wrong-typed literal
+/// there isn't a caller mistake worth failing the whole plan over: `HasPropertyStep` evaluates
+/// it correctly anyway (e.g. `rank > 100_000` is just always-false).
+fn extract_rank_from_predicate(pred: &crate::types::PrimitivePredicate) -> Result<Option<Rank>, StoreError> {
+    use crate::types::gvalue::PrimitivePredicate;
+    if let PrimitivePredicate::Eq(prim) = pred {
+        return Ok(Some(primitive_to_rank(prim)?));
+    }
+    Ok(None)
 }
 
 /// An optimizer rule that merges an `EndVertexFilter` / `HasId` / `HasProperty("id", …)` step,
@@ -54,24 +69,22 @@ pub fn merge_end_vertex_filter(plan: &mut LogicalPlan) -> Result<bool, StoreErro
             | (LogicalStep::BothE(_), LogicalStep::EndVertexFilter(ef)) => Some(Merge::EndVertexIds(ef.ids.clone())),
             (LogicalStep::Out(_), LogicalStep::HasId(ef))
             | (LogicalStep::In(_), LogicalStep::HasId(ef))
-            | (LogicalStep::Both(_), LogicalStep::HasId(ef)) => Some(Merge::EndVertexIds(ef.ids.clone())),
-            (LogicalStep::Out(_), LogicalStep::HasProperty(HasPropertyStep { key, value }))
-            | (LogicalStep::In(_), LogicalStep::HasProperty(HasPropertyStep { key, value }))
-            | (LogicalStep::Both(_), LogicalStep::HasProperty(HasPropertyStep { key, value }))
+            | (LogicalStep::Both(_), LogicalStep::HasId(ef)) => {
+                super::extract_ids_from_predicate(&ef.pred)?.map(Merge::EndVertexIds)
+            }
+            (LogicalStep::Out(_), LogicalStep::HasProperty(HasPropertyStep { key, pred }))
+            | (LogicalStep::In(_), LogicalStep::HasProperty(HasPropertyStep { key, pred }))
+            | (LogicalStep::Both(_), LogicalStep::HasProperty(HasPropertyStep { key, pred }))
                 if ID == *key =>
             {
-                match value {
-                    Primitive::Int32(id) => Some(Merge::EndVertexIds(smallvec![*id as i64])),
-                    Primitive::Int64(id) => Some(Merge::EndVertexIds(smallvec![*id])),
-                    _ => return Err(StoreError::UnexpectedDataType("only i32 and i64 can be vertex id".into())),
-                }
+                super::extract_ids_from_predicate(pred)?.map(Merge::EndVertexIds)
             }
-            (LogicalStep::OutE(_), LogicalStep::HasProperty(HasPropertyStep { key, value }))
-            | (LogicalStep::InE(_), LogicalStep::HasProperty(HasPropertyStep { key, value }))
-            | (LogicalStep::BothE(_), LogicalStep::HasProperty(HasPropertyStep { key, value }))
+            (LogicalStep::OutE(_), LogicalStep::HasProperty(HasPropertyStep { key, pred }))
+            | (LogicalStep::InE(_), LogicalStep::HasProperty(HasPropertyStep { key, pred }))
+            | (LogicalStep::BothE(_), LogicalStep::HasProperty(HasPropertyStep { key, pred }))
                 if RANK == *key =>
             {
-                Some(Merge::Rank(primitive_to_rank(value)?))
+                extract_rank_from_predicate(pred)?.map(Merge::Rank)
             }
             _ => None,
         };
@@ -229,13 +242,17 @@ mod tests {
 
     fn has_id(ids: Vec<VertexKey>) -> LogicalStep {
         use crate::planner::logical_step::HasIdStep;
-        LogicalStep::HasId(HasIdStep { ids: ids.into_iter().collect() })
+        let pred = PrimitivePredicate::Within(ids.into_iter().map(Primitive::Int64).collect());
+        LogicalStep::HasId(HasIdStep { pred })
     }
 
     fn has_prop_id(id: i32) -> LogicalStep {
         use crate::planner::logical_step::HasPropertyStep;
         use smol_str::SmolStr;
-        LogicalStep::HasProperty(HasPropertyStep { key: SmolStr::new("id"), value: crate::types::Primitive::Int32(id) })
+        LogicalStep::HasProperty(HasPropertyStep {
+            key: SmolStr::new("id"),
+            pred: PrimitivePredicate::Eq(Primitive::Int32(id)),
+        })
     }
 
     #[test]
@@ -348,7 +365,7 @@ mod tests {
         use smol_str::SmolStr;
         let bad_prop = LogicalStep::HasProperty(HasPropertyStep {
             key: SmolStr::new("id"),
-            value: crate::types::Primitive::String(SmolStr::new("oops")),
+            pred: PrimitivePredicate::Eq(Primitive::String(SmolStr::new("oops"))),
         });
         let mut plan = LogicalPlan { steps: vec![out_step(), bad_prop] };
         let res = merge_end_vertex_filter(&mut plan);
@@ -357,7 +374,7 @@ mod tests {
 
     fn has_rank(value: crate::types::Primitive) -> LogicalStep {
         use smol_str::SmolStr;
-        LogicalStep::HasProperty(HasPropertyStep { key: SmolStr::new("rank"), value })
+        LogicalStep::HasProperty(HasPropertyStep { key: SmolStr::new("rank"), pred: PrimitivePredicate::Eq(value) })
     }
 
     #[test]
@@ -443,5 +460,28 @@ mod tests {
             LogicalPlan { steps: vec![out_e(), has_rank(crate::types::Primitive::String(SmolStr::new("oops")))] };
         let res = merge_end_vertex_filter(&mut plan);
         assert!(res.is_err(), "non-integer rank type should return error");
+    }
+
+    // `.has("rank", gt(100_000))` isn't a foldable shape (only Eq folds into OutE.rank) and its
+    // literal is out of u16 range — but it's still a valid query that should just evaluate to
+    // always-false via HasPropertyStep, not abort the whole optimizer pass.
+    #[test]
+    fn test_out_e_rank_out_of_range_non_eq_not_folded_no_error() {
+        let mut plan = LogicalPlan {
+            steps: vec![out_e(), has_rank_pred(PrimitivePredicate::Gt(crate::types::Primitive::Int64(100_000)))],
+        };
+        let changed = merge_end_vertex_filter(&mut plan).unwrap();
+        assert!(!changed);
+        assert_eq!(plan.steps.len(), 2);
+        if let LogicalStep::OutE(oute) = &plan.steps[0] {
+            assert_eq!(oute.rank, None);
+        } else {
+            panic!("expected OutE");
+        }
+    }
+
+    fn has_rank_pred(pred: PrimitivePredicate) -> LogicalStep {
+        use smol_str::SmolStr;
+        LogicalStep::HasProperty(HasPropertyStep { key: SmolStr::new("rank"), pred })
     }
 }

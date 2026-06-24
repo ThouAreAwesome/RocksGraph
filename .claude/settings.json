@@ -20,7 +20,16 @@
       "Read(//Users/austinhan/.claude/**)",
       "Bash(xxd)",
       "Bash(echo \"exit code: $?\")",
-      "Bash(echo \"exit: $?\")"
+      "Bash(echo \"exit: $?\")",
+      "Bash(cargo publish *)",
+      "Bash(cargo doc *)",
+      "Bash(cargo package *)",
+      "Bash(git rm *)",
+      "Bash(python3 -c \"import yaml,sys; yaml.safe_load\\(open\\('.github/workflows/ci.yml'\\)\\); print\\('valid yaml'\\)\")",
+      "Bash(grep -v \"^--$\")",
+      "Bash(grep -n \"^mod scratch_probe\\\\|^#\\\\[cfg\\(test\\)\\\\]$\" /Users/austinhan/Workplace/RocksGraph/src/gremlin/tests.rs)",
+      "Bash(python3 -c \"print\\(2*32767 + 32767 + 1\\)\")",
+      "Bash(python3 -m json.tool)"
     ],
     "additionalDirectories": [
       "/Users/austinhan/Workplace/RocksGraph/src/schema"

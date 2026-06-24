@@ -50,6 +50,7 @@ use crate::{
         GraphCtx,
     },
     gremlin::{
+        conversions,
         conversions::{key_to_prop_key, primitive_to_value, push_has_step, value_to_primitive},
         value::{Edge as UserEdge, Key, Map, Path, Predicate, Property as UserProperty, Value, Vertex as UserVertex},
     },
@@ -387,35 +388,69 @@ pub trait TraversalBuilder: PlanAppender {
 
     #[allow(non_snake_case)]
     fn hasLabel(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
-        self.push_step(LogicalStep::HasLabel(HasLabelStep { labels: labels.into_iter().map(Into::into).collect() }));
+        let labels_vec: Vec<Value> = labels.into_iter().map(|l| Value::String(l.into().to_string())).collect();
+        let pred =
+            if labels_vec.len() == 1 { Predicate::Eq(labels_vec[0].clone()) } else { Predicate::Within(labels_vec) };
+        match conversions::predicate_to_primitive_predicate(pred) {
+            Ok(prim_pred) => self.push_step(LogicalStep::HasLabel(HasLabelStep { pred: prim_pred })),
+            Err(err) => self.record_error(err),
+        }
         self
     }
 
     #[allow(non_snake_case)]
     fn hasId(mut self, ids: impl IntoIterator<Item = i64>) -> Self {
-        self.push_step(LogicalStep::HasId(HasIdStep { ids: ids.into_iter().collect() }));
+        let ids_vec: Vec<Value> = ids.into_iter().map(Value::Int64).collect();
+        let pred = if ids_vec.len() == 1 { Predicate::Eq(ids_vec[0].clone()) } else { Predicate::Within(ids_vec) };
+        match conversions::predicate_to_primitive_predicate(pred) {
+            Ok(prim_pred) => self.push_step(LogicalStep::HasId(HasIdStep { pred: prim_pred })),
+            Err(err) => self.record_error(err),
+        }
         self
     }
 
-    /// Filter the current scalar to equal `pred`.
+    /// Filter the current scalar.
     fn is(mut self, pred: impl Into<Predicate>) -> Self {
-        match pred.into() {
-            Predicate::Eq(v) => {
-                if let Some(p) = value_to_primitive(v.clone()) {
-                    self.push_step(LogicalStep::ScalarFilter(ScalarFilterStep { value: p }));
-                } else {
+        let p = pred.into();
+        match &p {
+            Predicate::Eq(v)
+            | Predicate::Ne(v)
+            | Predicate::Gt(v)
+            | Predicate::Gte(v)
+            | Predicate::Lt(v)
+            | Predicate::Lte(v) => {
+                if value_to_primitive(v.clone()).is_none() {
                     self.record_error(StoreError::UnexpectedDataType(format!(
-                        "is() expects a scalar primitive value, got complex type: {:?}",
+                        "is() expects scalar values, got: {:?}",
                         v
                     )));
+                    return self;
                 }
             }
-            other => {
-                self.record_error(StoreError::UnsupportedOperation(format!(
-                    "is() only supports Eq predicate with scalar value, got: {:?}",
-                    other
-                )));
+            Predicate::Between(lo, hi) => {
+                if value_to_primitive(lo.clone()).is_none() || value_to_primitive(hi.clone()).is_none() {
+                    self.record_error(StoreError::UnexpectedDataType(format!(
+                        "is() expects scalar values, got: {:?}, {:?}",
+                        lo, hi
+                    )));
+                    return self;
+                }
             }
+            Predicate::Within(vs) | Predicate::Without(vs) => {
+                for v in vs {
+                    if value_to_primitive(v.clone()).is_none() {
+                        self.record_error(StoreError::UnexpectedDataType(format!(
+                            "is() expects scalar values, got: {:?}",
+                            v
+                        )));
+                        return self;
+                    }
+                }
+            }
+        }
+        match conversions::predicate_to_primitive_predicate(p) {
+            Ok(prim_pred) => self.push_step(LogicalStep::ScalarFilter(ScalarFilterStep { pred: prim_pred })),
+            Err(err) => self.record_error(err),
         }
         self
     }

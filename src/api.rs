@@ -48,13 +48,16 @@
 //! | `to_list()` | `Result<Vec<GValue>>` | `toList()` |
 //! | `iter()` | `Result<BuiltTraversal>` | iterate `Traversal` |
 
-use std::{path::Path, sync::Arc};
+use std::{
+    path::Path,
+    sync::{Arc, RwLock},
+};
 
 use crate::{
     engine::GraphCtx,
     graph::{LogicalGraph, LogicalSnapshot},
     gremlin::traversal::{ReadTraversal, WriteTraversal},
-    schema::{Schema, SchemaManagement},
+    schema::{GraphOptions, Schema, SchemaManagement},
     store::{traits::GraphStore, RocksStorage},
     types::{BatchScenario, StoreError},
 };
@@ -74,7 +77,7 @@ use crate::{
 /// ```
 pub struct Graph {
     store: Arc<RocksStorage>,
-    schema: Arc<std::sync::RwLock<crate::schema::Schema>>,
+    schema: Arc<RwLock<Schema>>,
 }
 
 impl Graph {
@@ -85,7 +88,7 @@ impl Graph {
     /// [`SchemaMode::Auto`]: crate::schema::SchemaMode::Auto
     /// [`EdgeMode::Single`]: crate::schema::EdgeMode::Single
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
-        Self::open_with_options(path, crate::schema::GraphOptions::default())
+        Self::open_with_options(path, GraphOptions::default())
     }
 
     /// Open (or create) the graph database at `path` with custom options.
@@ -93,18 +96,18 @@ impl Graph {
     /// `options.mode` controls how vertex labels, edge labels, and property keys used by
     /// traversals are registered:
     /// - [`SchemaMode::Auto`] (the default) — registered implicitly on first use.
-    /// - [`SchemaMode::Strict`] — must be declared first via [`open_management`](Self::open_management);
-    ///   see [`SchemaManagement`] for a worked example.
+    /// - [`SchemaMode::Strict`] — must be declared first via [`open_management`](Self::open_management); see
+    ///   [`SchemaManagement`] for a worked example.
     ///
     /// Options are only applied the first time a database is created; reopening an existing
     /// database always uses its persisted settings, ignoring `options`.
     ///
     /// [`SchemaMode::Auto`]: crate::schema::SchemaMode::Auto
     /// [`SchemaMode::Strict`]: crate::schema::SchemaMode::Strict
-    pub fn open_with_options(path: impl AsRef<Path>, options: crate::schema::GraphOptions) -> Result<Self, StoreError> {
+    pub fn open_with_options(path: impl AsRef<Path>, options: GraphOptions) -> Result<Self, StoreError> {
         let store = Arc::new(RocksStorage::open(path)?);
         let schema = store.load_schema(options)?;
-        Ok(Self { store, schema: Arc::new(std::sync::RwLock::new(schema)) })
+        Ok(Self { store, schema: Arc::new(RwLock::new(schema)) })
     }
 
     /// Open a schema management session for explicit, [`SchemaMode::Strict`]-style schema
@@ -115,8 +118,11 @@ impl Graph {
         SchemaManagement::new(Arc::clone(&self.store), Arc::clone(&self.schema))
     }
 
-    /// Access the thread-safe schema registry.
-    pub fn schema(&self) -> Arc<std::sync::RwLock<Schema>> {
+    /// Access the thread-safe schema registry directly, bypassing `SchemaManagement`. Test-only:
+    /// real callers declare schema via [`open_management`](Self::open_management) or implicit
+    /// auto-registration; this exists purely so test fixtures can seed a `Schema` in one step.
+    #[cfg(test)]
+    pub(crate) fn schema(&self) -> Arc<RwLock<Schema>> {
         Arc::clone(&self.schema)
     }
 

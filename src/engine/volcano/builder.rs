@@ -49,6 +49,7 @@ use crate::{
     schema::{DataType, EdgeMode, Schema, SchemaMode},
     types::{
         error::StoreError,
+        gvalue::Primitive,
         keys::Rank,
         prop_key::{ID, LABEL, RANK},
         Direction, LabelId,
@@ -69,17 +70,6 @@ fn primitive_data_type(val: &crate::types::gvalue::Primitive) -> DataType {
         Primitive::String(_) => DataType::String,
         Primitive::Uuid(_) => DataType::Uuid,
         Primitive::Null => DataType::String,
-    }
-}
-
-fn resolve_read_vertex_label(name: &str, schema: &Schema) -> Result<Option<LabelId>, StoreError> {
-    if let Some(id) = schema.vertex_label_id(name) {
-        Ok(Some(id))
-    } else {
-        match schema.mode {
-            SchemaMode::Strict => Err(StoreError::SchemaViolation(format!("Undeclared vertex label: '{}'", name))),
-            SchemaMode::Auto => Ok(None),
-        }
     }
 }
 
@@ -297,16 +287,38 @@ impl PhysicalPlanBuilder {
                 wire_required!(BufferedStep::new(steps::count::CountStep::default()), upstream, "CountStep")
             }
             LogicalStep::HasLabel(s) => {
-                let mut vertex_label_ids = SmallVec::new();
-                let mut edge_label_ids = SmallVec::new();
-                for l in &s.labels {
-                    let v_id = resolve_read_vertex_label(l, &schema)?;
-                    vertex_label_ids.push(v_id.unwrap_or(u16::MAX));
-                    let e_id = resolve_read_edge_label(l, &schema)?;
-                    edge_label_ids.push(e_id.unwrap_or(u16::MAX));
+                if schema.mode == SchemaMode::Strict {
+                    for v in s.pred.values() {
+                        if let Primitive::String(name) = v {
+                            if schema.vertex_label_id(name).is_none() && schema.edge_label_id(name).is_none() {
+                                return Err(StoreError::SchemaViolation(format!("Undeclared label: '{}'", name)));
+                            }
+                        }
+                    }
                 }
+                // Resolve each label name to its interned id once here — separately per
+                // namespace, since vertex and edge labels are independent id spaces — so
+                // `HasLabelStep::produce()` can compare raw ids with no schema lookup needed.
+                let vertex_pred = s.pred.clone().map(|v| match v {
+                    Primitive::String(name) => Primitive::Int32(
+                        schema
+                            .vertex_label_id(&name)
+                            .map(|id| id as i32)
+                            .unwrap_or(steps::has_label::UNRESOLVED_LABEL_ID),
+                    ),
+                    other => other,
+                });
+                let edge_pred = s.pred.clone().map(|v| match v {
+                    Primitive::String(name) => Primitive::Int32(
+                        schema
+                            .edge_label_id(&name)
+                            .map(|id| id as i32)
+                            .unwrap_or(steps::has_label::UNRESOLVED_LABEL_ID),
+                    ),
+                    other => other,
+                });
                 wire_required!(
-                    BufferedStep::new(steps::has_label::HasLabelStep::new(vertex_label_ids, edge_label_ids)),
+                    BufferedStep::new(steps::has_label::HasLabelStep::new(vertex_pred, edge_pred)),
                     upstream,
                     "HasLabelStep"
                 )
@@ -323,7 +335,7 @@ impl PhysicalPlanBuilder {
                     }
                 };
                 wire_required!(
-                    BufferedStep::new(steps::has_property::HasPropertyStep::new(prop_key_id, s.value.clone())),
+                    BufferedStep::new(steps::has_property::HasPropertyStep::new(prop_key_id, s.pred.clone())),
                     upstream,
                     "HasPropertyStep"
                 )
@@ -407,7 +419,7 @@ impl PhysicalPlanBuilder {
             }
             LogicalStep::ScalarFilter(s) => {
                 wire_required!(
-                    BufferedStep::new(steps::scalar_filter::ScalarFilterStep::new(s.value.clone())),
+                    BufferedStep::new(steps::scalar_filter::ScalarFilterStep::new(s.pred.clone())),
                     upstream,
                     "ScalarFilterStep"
                 )
@@ -547,7 +559,7 @@ impl PhysicalPlanBuilder {
                 wire_required!(BufferedStep::new(steps::limit::LimitStep::new(s.limit)), upstream, "LimitStep")
             }
             LogicalStep::HasId(s) => {
-                wire_required!(BufferedStep::new(steps::has_id::HasIdStep::new(s.ids.clone())), upstream, "HasIdStep")
+                wire_required!(BufferedStep::new(steps::has_id::HasIdStep::new(s.pred.clone())), upstream, "HasIdStep")
             }
             LogicalStep::Coalesce(s) => {
                 if s.plans.is_empty() {
@@ -589,16 +601,15 @@ impl PhysicalPlanBuilder {
 
 #[cfg(test)]
 mod tests {
-    use smallvec::smallvec;
-    use std::rc::Rc;
-
-    use super::PhysicalPlanBuilder;
+    use super::*;
     use crate::{
         engine::{context::NoopCtx, traverser::Traverser},
         planner::logical_step::{CountStep, LogicalPlan, LogicalStep, ScalarFilterStep, WhereStep},
         schema::Schema,
-        types::gvalue::{GValue, Primitive},
+        types::gvalue::{GValue, Primitive, PrimitivePredicate},
     };
+    use smallvec::smallvec;
+    use std::rc::Rc;
 
     fn gvalue(value: i64) -> GValue {
         GValue::Scalar(Primitive::Int64(value))
@@ -610,8 +621,11 @@ mod tests {
 
     #[test]
     fn test_simple_filter_plan() {
-        let plan =
-            LogicalPlan { steps: vec![LogicalStep::ScalarFilter(ScalarFilterStep { value: Primitive::Int64(2) })] };
+        let plan = LogicalPlan {
+            steps: vec![LogicalStep::ScalarFilter(ScalarFilterStep {
+                pred: PrimitivePredicate::Eq(Primitive::Int64(2)),
+            })],
+        };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
         let schema_lock = std::sync::RwLock::new(Schema::default());
@@ -648,8 +662,11 @@ mod tests {
 
     #[test]
     fn test_where_step_plan() {
-        let sub_plan =
-            LogicalPlan { steps: vec![LogicalStep::ScalarFilter(ScalarFilterStep { value: Primitive::Int64(2) })] };
+        let sub_plan = LogicalPlan {
+            steps: vec![LogicalStep::ScalarFilter(ScalarFilterStep {
+                pred: PrimitivePredicate::Eq(Primitive::Int64(2)),
+            })],
+        };
         let plan = LogicalPlan { steps: vec![LogicalStep::Where(WhereStep { plan: sub_plan })] };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
@@ -675,7 +692,10 @@ mod tests {
                     OtherVStep, OutEStep, OutStep, PropertiesStep, UnionStep, VStep, WhereStep,
                 },
             },
-            types::{gvalue::Primitive, prop_key::ID},
+            types::{
+                gvalue::{Primitive, PrimitivePredicate},
+                prop_key::ID,
+            },
         };
 
         fn assert_plan_contains_in_order(steps: Vec<LogicalStep>, expected_step_names: &[&str]) {
@@ -728,7 +748,10 @@ mod tests {
         #[test]
         fn test_print_v_hasid_oute_where_otherv_hasid() {
             let where_plan = LogicalPlan {
-                steps: vec![LogicalStep::OtherV(OtherVStep {}), LogicalStep::HasId(HasIdStep { ids: smallvec![2] })],
+                steps: vec![
+                    LogicalStep::OtherV(OtherVStep {}),
+                    LogicalStep::HasId(HasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(2)) }),
+                ],
             };
             let steps = vec![
                 LogicalStep::V(VStep { ids: smallvec![1] }),
@@ -741,7 +764,10 @@ mod tests {
         #[test]
         fn test_print_v_hasid_oute_label_where_otherv_hasid() {
             let where_plan = LogicalPlan {
-                steps: vec![LogicalStep::OtherV(OtherVStep {}), LogicalStep::HasId(HasIdStep { ids: smallvec![2] })],
+                steps: vec![
+                    LogicalStep::OtherV(OtherVStep {}),
+                    LogicalStep::HasId(HasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(2)) }),
+                ],
             };
             let steps = vec![
                 LogicalStep::V(VStep { ids: smallvec![1] }),
@@ -754,7 +780,10 @@ mod tests {
         #[test]
         fn test_print_v_hasid_ine_label_where_otherv_hasid() {
             let where_plan = LogicalPlan {
-                steps: vec![LogicalStep::OtherV(OtherVStep {}), LogicalStep::HasId(HasIdStep { ids: smallvec![2] })],
+                steps: vec![
+                    LogicalStep::OtherV(OtherVStep {}),
+                    LogicalStep::HasId(HasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(2)) }),
+                ],
             };
             let steps = vec![
                 LogicalStep::V(VStep { ids: smallvec![1] }),
@@ -768,10 +797,13 @@ mod tests {
         fn test_print_v_hasprop_id_ine_otherv_hasid() {
             let steps = vec![
                 LogicalStep::V(VStep { ids: smallvec![] }),
-                LogicalStep::HasProperty(HasPropertyStep { key: ID, value: Primitive::Int64(1) }),
+                LogicalStep::HasProperty(HasPropertyStep {
+                    key: ID,
+                    pred: PrimitivePredicate::Eq(Primitive::Int64(1)),
+                }),
                 LogicalStep::InE(InEStep { labels: smallvec![], end_vertex_ids: None, rank: None }),
                 LogicalStep::OtherV(OtherVStep {}),
-                LogicalStep::HasId(HasIdStep { ids: smallvec![2] }),
+                LogicalStep::HasId(HasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(2)) }),
             ];
             assert_plan_contains_in_order(steps, &["VStep", "InOutStep", "OtherVStep", "HasIdStep"]);
         }

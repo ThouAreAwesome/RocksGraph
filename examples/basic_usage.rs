@@ -40,28 +40,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut tx = graph.begin();
 
     // Add a vertex for Marko
-    tx.g()
-        .addV("person")
-        .property("id", 1i64)
-        .property("name", "marko")
-        .property("age", 29i32)
-        .next()?;
+    tx.g().addV("person").property("id", 1i64).property("name", "marko").property("age", 29i32).next()?;
 
     // Add a vertex for Vadas
-    tx.g()
-        .addV("person")
-        .property("id", 2i64)
-        .property("name", "vadas")
-        .property("age", 27i32)
-        .next()?;
+    tx.g().addV("person").property("id", 2i64).property("name", "vadas").property("age", 27i32).next()?;
 
     // Add a "knows" edge from Marko to Vadas
-    tx.g()
-        .addE("knows")
-        .from(1)
-        .to(2)
-        .property("weight", 0.5f64)
-        .next()?;
+    tx.g().addE("knows").from(1).to(2).property("weight", 0.5f64).next()?;
 
     // Commit the transaction to flush changes atomically to RocksDB.
     tx.commit()?;
@@ -73,20 +58,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut snap = graph.read();
 
     // Query: Get Marko's age
-    let marko_age = snap
-        .g()
-        .V([1])
-        .values(["age"])
-        .next()?;
+    let marko_age = snap.g().V([1]).values(["age"]).next()?;
     println!("Marko's age: {:?}", marko_age);
 
     // Query: Find all people Marko knows
-    let friends = snap
-        .g()
-        .V([1])
-        .out(["knows"])
-        .values(["name"])
-        .to_list()?;
+    let friends = snap.g().V([1]).out(["knows"]).values(["name"]).to_list()?;
     println!("People Marko knows: {:?}", friends);
 
     // 4. Handle OCC transaction conflicts with a retry loop
@@ -110,10 +86,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             })
             .unwrap_or(29);
 
-        tx.g()
-            .V([1])
-            .property("age", current_age + 1)
-            .next()?;
+        tx.g().V([1]).property("age", current_age + 1).next()?;
 
         // Attempt to commit
         match tx.commit() {

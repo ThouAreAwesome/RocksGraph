@@ -922,9 +922,9 @@ operation.
 | `set_edge_mode(EdgeMode::Multi)` commits after `Single`-mode data already exists | Existing on-disk edges are left as-is (all at `DEFAULT_RANK`, which remains valid); only new writes are checked against the new `edge_mode` (`design_multiple_edges.md` §1). The reverse direction is unreachable — see the one-way ratchet. |
 | A process opens an existing graph with `GraphOptions` that differ from the persisted metadata entry | `GraphOptions` is ignored; the persisted `mode`/`edge_mode` win, so every process sees the same values (§0). |
 
-The schema CF has at most `2 × MAX_LABELS + u16::MAX + 1` entries (vertex labels + edge
-labels + prop keys + the one metadata entry). At 4096 labels each and 65535 prop keys this
-is ~73k entries, well within RocksDB's efficient range.
+The schema CF has at most `2 × MAX_LABELS + MAX_PROP_KEYS + 1` entries (vertex labels + edge
+labels + prop keys + the one metadata entry). At 32767 labels each and 32767 prop keys this
+is ~98k entries, well within RocksDB's efficient range.
 
 ---
 

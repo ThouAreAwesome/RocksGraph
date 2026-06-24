@@ -28,7 +28,7 @@ use crate::{
     planner::optimizer::primitive_to_rank,
     types::{
         error::StoreError,
-        gvalue::Primitive,
+        gvalue::{Primitive, PrimitivePredicate},
         prop_key::{LABEL_KEY_ID, RANK_KEY_ID},
         CanonicalKey, GValue,
     },
@@ -43,32 +43,21 @@ pub struct HasPropertyStep {
     // ── Static/Fixed configuration ──
     /// The property key ID to filter by.
     prop_key_id: u16,
-    /// The expected value of the property.
-    expected_value: Primitive,
+    /// The predicate to filter property values.
+    pred: PrimitivePredicate,
 }
 
-/// Creates a new `HasPropertyStep` with the property key ID and expected value to filter by.
+/// Creates a new `HasPropertyStep` with the property key ID and predicate to filter by.
 impl HasPropertyStep {
-    /// Normalizes `expected_value` for reserved keys whose runtime representation doesn't
+    /// Normalizes predicate for reserved keys whose runtime representation doesn't
     /// match whatever literal type a caller wrote.
-    ///
-    /// This only matters for an *unmerged* `.has("rank", N)` — the common case
-    /// (`.outE(...).has("rank", N)`) gets folded into a dedicated physical step by
-    /// `merge_end_vertex_filter` before this step is ever built. But a `.has("rank", N)` that
-    /// doesn't immediately follow an edge-emitting step falls through to here, and
-    /// `Edge::get_value(RANK_KEY_ID)` always returns `Primitive::UInt16`. Without this, a
-    /// perfectly valid `.has("rank", 5i32)` would compare `Primitive::Int32` against
-    /// `Primitive::UInt16` and silently never match. Reuses `primitive_to_rank` — the same
-    /// Int32/Int64/UInt16-to-`u16` conversion the merge rules already apply — so a value that
-    /// isn't a valid rank (wrong type or out of range) is left as-is, which simply never
-    /// matches the `UInt16` runtime value rather than panicking.
-    pub fn new(prop_key_id: u16, expected_value: Primitive) -> Self {
-        let expected_value = if prop_key_id == RANK_KEY_ID {
-            primitive_to_rank(&expected_value).map(Primitive::UInt16).unwrap_or(expected_value)
+    pub fn new(prop_key_id: u16, pred: PrimitivePredicate) -> Self {
+        let pred = if prop_key_id == RANK_KEY_ID {
+            pred.map(|v| primitive_to_rank(&v).map(Primitive::UInt16).unwrap_or(v))
         } else {
-            expected_value
+            pred
         };
-        Self { upstream: None, prop_key_id, expected_value }
+        Self { upstream: None, prop_key_id, pred }
     }
 
     /// `ctx.get_value`/`get_property` return the element's label as a raw
@@ -90,7 +79,7 @@ impl CoreStep for HasPropertyStep {
     }
 
     fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
-        // Produces traversers whose element has the specified property with the expected value.
+        // Produces traversers whose element has the specified property matching the predicate.
         loop {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
             let Some(t) = upstream.next(ctx)? else { return Ok(None) };
@@ -99,7 +88,7 @@ impl CoreStep for HasPropertyStep {
                     let key = CanonicalKey::Vertex(*vk);
                     if let Some(vl) = ctx.get_value(&key, self.prop_key_id)? {
                         let vl = self.decode_if_label(ctx, &key, vl);
-                        if vl == self.expected_value {
+                        if self.pred.evaluate(&vl) {
                             return Ok(Some(smallvec![t]));
                         }
                     }
@@ -108,7 +97,7 @@ impl CoreStep for HasPropertyStep {
                     let key = CanonicalKey::Edge(ek.canonical_edge_key());
                     if let Some(et) = ctx.get_value(&key, self.prop_key_id)? {
                         let et = self.decode_if_label(ctx, &key, et);
-                        if et == self.expected_value {
+                        if self.pred.evaluate(&et) {
                             return Ok(Some(smallvec![t]));
                         }
                     }

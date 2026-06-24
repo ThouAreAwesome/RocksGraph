@@ -88,16 +88,20 @@ mod tests {
         LogicalStep::V(VStep { ids: smallvec![] })
     }
 
+    use crate::types::gvalue::PrimitivePredicate;
+
     fn has_prop(key: &str, value: Primitive) -> LogicalStep {
-        LogicalStep::HasProperty(HasPropertyStep { key: SmolStr::new(key), value })
+        LogicalStep::HasProperty(HasPropertyStep { key: SmolStr::new(key), pred: PrimitivePredicate::Eq(value) })
     }
 
     fn has_id(ids: Vec<VertexKey>) -> LogicalStep {
-        LogicalStep::HasId(HasIdStep { ids: ids.into_iter().collect() })
+        let pred = PrimitivePredicate::Within(ids.into_iter().map(Primitive::Int64).collect());
+        LogicalStep::HasId(HasIdStep { pred })
     }
 
     fn has_label(labels: Vec<&str>) -> LogicalStep {
-        LogicalStep::HasLabel(HasLabelStep { labels: labels.into_iter().map(SmolStr::new).collect() })
+        let pred = PrimitivePredicate::Within(labels.into_iter().map(|l| Primitive::String(SmolStr::new(l))).collect());
+        LogicalStep::HasLabel(HasLabelStep { pred })
     }
 
     fn whr(sub_steps: Vec<LogicalStep>) -> LogicalStep {

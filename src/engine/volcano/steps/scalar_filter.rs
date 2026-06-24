@@ -25,24 +25,24 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{error::StoreError, GValue, Primitive},
+    types::{error::StoreError, GValue, PrimitivePredicate},
 };
 
-/// A physical step that filters traversers based on whether their scalar value matches an expected primitive.
+/// A physical step that filters traversers based on whether their scalar value matches a predicate.
 #[derive(Debug)]
 pub struct ScalarFilterStep {
     // ── Upstream link ──
     upstream: Option<StepRef>,
 
     // ── Static/Fixed configuration ──
-    /// The expected scalar primitive value.
-    expected: Primitive,
+    /// The predicate to filter scalar values.
+    pred: PrimitivePredicate,
 }
 
-/// Creates a new `ScalarFilterStep` with the expected primitive value to filter by.
+/// Creates a new `ScalarFilterStep` with the predicate to filter by.
 impl ScalarFilterStep {
-    pub fn new(expected: Primitive) -> Self {
-        Self { upstream: None, expected }
+    pub fn new(pred: PrimitivePredicate) -> Self {
+        Self { upstream: None, pred }
     }
 }
 
@@ -53,12 +53,14 @@ impl CoreStep for ScalarFilterStep {
     }
 
     fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
-        // Produces traversers whose `GValue::Scalar` matches the `expected` primitive.
+        // Produces traversers whose `GValue::Scalar` matches the predicate.
         loop {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
             let Some(t) = upstream.next(ctx)? else { return Ok(None) };
-            if matches!(&t.value, GValue::Scalar(p) if p == &self.expected) {
-                return Ok(Some(smallvec![t]));
+            if let GValue::Scalar(p) = &t.value {
+                if self.pred.evaluate(p) {
+                    return Ok(Some(smallvec![t]));
+                }
             }
         }
     }

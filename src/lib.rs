@@ -20,14 +20,14 @@
 //! ## Quick start
 //!
 //! ```ignore
-//! use rocksgraph::{Graph, TraversalBuilder, GValue, Primitive, StoreError, __};
+//! use rocksgraph::{Graph, TraversalBuilder, Value, StoreError, __};
 //!
 //! let graph = Graph::open("/path/to/db")?;
 //!
 //! // Read-only snapshot query — three ways to consume results
 //! let mut snap = graph.read();
 //! let count = snap.g().V([1]).out(&["knows"]).count().next()?.unwrap(); // first result
-//! let names = snap.g().V([1]).out(&["knows"]).values(&["name"]).to_list()?; // Vec<GValue>
+//! let names = snap.g().V([1]).out(&["knows"]).values(&["name"]).to_list()?; // Vec<Value>
 //! for v in snap.g().V([]).out(&["knows"]).iter()? { println!("{:?}", v?); } // lazy
 //!
 //! // Read-write transaction

@@ -121,9 +121,13 @@ impl DataType {
 
 /// On-disk discriminant, pinned explicitly for the same reason as [`SchemaMode`];
 /// see [`Cardinality::to_u8`]/[`Cardinality::from_u8`].
+///
+/// Crate-internal: only `Single` exists today, so there's no real choice for
+/// `PropertyKeyMaker::cardinality()` to expose yet — see [docs/TODO.md](../../docs/TODO.md).
+/// Re-export this publicly once a `Multi` variant (or similar) actually lands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum Cardinality {
+pub(crate) enum Cardinality {
     Single = 0,
 }
 
@@ -141,7 +145,7 @@ impl Cardinality {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PropKeyConfig {
+pub(crate) struct PropKeyConfig {
     pub data_type: DataType,
     pub cardinality: Cardinality,
 }
@@ -158,8 +162,19 @@ impl Default for GraphOptions {
     }
 }
 
-/// Maximum number of distinct vertex or edge labels (12-bit label_id space).
-pub const MAX_LABELS: usize = 4096;
+/// Maximum number of distinct vertex or edge labels. `LabelId`/property-key ids are stored as
+/// `u16`, but only the low 15 bits are used (values 0..=32 767) — the high bit is reserved,
+/// unused for now, for a possible future tag (see [`MAX_PROP_KEYS`]). Within that 15-bit space,
+/// id `0` is further reserved crate-internally to mean "no such label" — real ids are allocated
+/// starting at `1` (see `register_vertex_label`/`register_edge_label`), so at most
+/// `(1 << 15) - 1` of them are assignable.
+pub(crate) const MAX_LABELS: usize = (1 << 15) - 1;
+
+/// Maximum number of distinct property keys — see [`MAX_LABELS`] for why this is one short of
+/// the full 15-bit range. Property-key ids additionally reserve `1..=3` for the built-in
+/// `id`/`label`/`rank` keys (see `prop_key::{ID_KEY_ID, LABEL_KEY_ID, RANK_KEY_ID}`); user keys
+/// registered via `register_prop_key` start at `4`.
+pub(crate) const MAX_PROP_KEYS: usize = (1 << 15) - 1;
 
 /// Process-wide label and property-key dictionary, shared across transactions.
 ///
@@ -167,8 +182,12 @@ pub const MAX_LABELS: usize = 4096;
 /// All three maps are append-only after initial load; IDs are never reused.
 ///
 /// Thread-safety: wrap in `Arc<RwLock<Schema>>` when shared across queries.
+///
+/// Crate-internal: external callers only ever interact with the schema through
+/// [`SchemaManagement`](crate::schema::SchemaManagement) (declaration) and the traversal API
+/// (implicit auto-registration) — never this registry directly.
 #[derive(Debug, Clone)]
-pub struct Schema {
+pub(crate) struct Schema {
     pub mode: SchemaMode,
     pub edge_mode: EdgeMode,
     pub version: u64,
@@ -177,7 +196,7 @@ pub struct Schema {
     pub vertex_labels: BiHashMap<LabelId, SmolStr>,
 
     /// Maps between `LabelId` and the edge label string (e.g. `"knows"`).
-    /// Uses the same 12-bit `LabelId` space, but vertex and edge labels are
+    /// Uses the same 15-bit `LabelId` space, but vertex and edge labels are
     /// independent namespaces — id 1 for vertices and id 1 for edges refer to
     /// different strings.
     pub edge_labels: BiHashMap<LabelId, SmolStr>,
@@ -263,10 +282,11 @@ impl Schema {
         if let Some(&id) = self.vertex_labels.get_by_right(&s) {
             return Some(id);
         }
-        let id = self.vertex_labels.len() as u16;
         if self.vertex_labels.len() >= MAX_LABELS {
             return None;
         }
+        // Ids start at 1 — 0 is reserved crate-internally to mean "no such label".
+        let id = self.vertex_labels.len() as u16 + 1;
         self.vertex_labels.insert(id, s);
         Some(id)
     }
@@ -289,10 +309,11 @@ impl Schema {
         if let Some(&id) = self.edge_labels.get_by_right(&s) {
             return Some(id);
         }
-        let id = self.edge_labels.len() as u16;
         if self.edge_labels.len() >= MAX_LABELS {
             return None;
         }
+        // Ids start at 1 — 0 is reserved crate-internally to mean "no such label".
+        let id = self.edge_labels.len() as u16 + 1;
         self.edge_labels.insert(id, s);
         Some(id)
     }
@@ -315,10 +336,13 @@ impl Schema {
         if let Some(&id) = self.prop_keys.get_by_right(&s) {
             return Some(id);
         }
-        let id = self.prop_keys.len() as u16;
-        if self.prop_keys.len() >= u16::MAX as usize {
+        if self.prop_keys.len() >= MAX_PROP_KEYS {
             return None;
         }
+        // Ids start at 1 — 0 is reserved crate-internally to mean "no such key". The built-in
+        // id/label/rank keys already occupy 1..=3 (see `prop_key::{ID_KEY_ID, LABEL_KEY_ID,
+        // RANK_KEY_ID}`), so the first user-registered key naturally lands on 4.
+        let id = self.prop_keys.len() as u16 + 1;
         self.prop_keys.insert(id, s);
         Some(id)
     }

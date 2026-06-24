@@ -16,10 +16,9 @@
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::{
-    planner::logical_step::{EndVertexFilter, HasIdStep, HasPropertyStep, LogicalPlan, LogicalStep},
-    types::{prop_key::ID, Primitive, StoreError},
+    planner::logical_step::{EndVertexFilter, LogicalPlan, LogicalStep},
+    types::{prop_key::ID, StoreError},
 };
-use smallvec::smallvec;
 
 /// An optimizer rule that extracts `where(__.otherV().hasId(…))` or `where(__.otherV().has("id", …))`
 /// patterns and replaces them with an `EndVertexFilter` step.
@@ -30,23 +29,16 @@ pub fn extract_end_vertex_filter(plan: &mut LogicalPlan) -> Result<bool, StoreEr
     for step in plan.steps.iter_mut() {
         if let LogicalStep::Where(wh) = step {
             match wh.plan.steps.as_slice() {
-                [LogicalStep::OtherV(_), LogicalStep::HasId(HasIdStep { ids })] => {
-                    *step = LogicalStep::EndVertexFilter(EndVertexFilter { ids: ids.clone() });
-                    changed = true;
+                [LogicalStep::OtherV(_), LogicalStep::HasId(hi)] => {
+                    if let Some(ids) = super::extract_ids_from_predicate(&hi.pred)? {
+                        *step = LogicalStep::EndVertexFilter(EndVertexFilter { ids });
+                        changed = true;
+                    }
                 }
-                [LogicalStep::OtherV(_), LogicalStep::HasProperty(HasPropertyStep { key, value })]
-                    if key.as_str() == ID =>
-                {
-                    match *value {
-                        Primitive::Int64(vl) => {
-                            *step = LogicalStep::EndVertexFilter(EndVertexFilter { ids: smallvec![vl] });
-                            changed = true;
-                        }
-                        Primitive::Int32(vl) => {
-                            *step = LogicalStep::EndVertexFilter(EndVertexFilter { ids: smallvec![vl as i64] });
-                            changed = true;
-                        }
-                        _ => return Err(StoreError::UnexpectedDataType("expect i32 or i64 type for vertex id".into())),
+                [LogicalStep::OtherV(_), LogicalStep::HasProperty(hp)] if hp.key.as_str() == ID => {
+                    if let Some(ids) = super::extract_ids_from_predicate(&hp.pred)? {
+                        *step = LogicalStep::EndVertexFilter(EndVertexFilter { ids });
+                        changed = true;
                     }
                 }
                 _ => {}
@@ -61,22 +53,22 @@ mod tests {
 
     use super::*;
     use crate::{
-        planner::logical_step::{OtherVStep, VStep, WhereStep},
-        types::keys::VertexKey,
+        planner::logical_step::{HasIdStep, HasPropertyStep, OtherVStep, VStep, WhereStep},
+        types::{
+            gvalue::{Primitive, PrimitivePredicate},
+            keys::VertexKey,
+        },
     };
-    use smallvec::smallvec;
 
     fn v_ids(ids: Vec<VertexKey>) -> LogicalStep {
         LogicalStep::V(VStep { ids: ids.into_iter().collect() })
     }
 
     fn whr_all() -> LogicalStep {
+        let pred = PrimitivePredicate::Within(vec![Primitive::Int64(1), Primitive::Int64(2), Primitive::Int64(3)]);
         LogicalStep::Where(WhereStep {
             plan: LogicalPlan {
-                steps: vec![
-                    LogicalStep::OtherV(OtherVStep {}),
-                    LogicalStep::HasId(HasIdStep { ids: smallvec![1, 2, 3] }),
-                ],
+                steps: vec![LogicalStep::OtherV(OtherVStep {}), LogicalStep::HasId(HasIdStep { pred })],
             },
         })
     }
@@ -86,7 +78,10 @@ mod tests {
             plan: LogicalPlan {
                 steps: vec![
                     LogicalStep::OtherV(OtherVStep {}),
-                    LogicalStep::HasProperty(HasPropertyStep { key: ID, value: Primitive::Int32(123) }),
+                    LogicalStep::HasProperty(HasPropertyStep {
+                        key: ID,
+                        pred: PrimitivePredicate::Eq(Primitive::Int32(123)),
+                    }),
                 ],
             },
         })
@@ -97,7 +92,10 @@ mod tests {
             plan: LogicalPlan {
                 steps: vec![
                     LogicalStep::OtherV(OtherVStep {}),
-                    LogicalStep::HasProperty(HasPropertyStep { key: "name".into(), value: Primitive::Int32(123) }),
+                    LogicalStep::HasProperty(HasPropertyStep {
+                        key: "name".into(),
+                        pred: PrimitivePredicate::Eq(Primitive::Int32(123)),
+                    }),
                 ],
             },
         })
@@ -164,7 +162,10 @@ mod tests {
             plan: LogicalPlan {
                 steps: vec![
                     LogicalStep::OtherV(OtherVStep {}),
-                    LogicalStep::HasProperty(HasPropertyStep { key: ID, value: Primitive::Int64(999) }),
+                    LogicalStep::HasProperty(HasPropertyStep {
+                        key: ID,
+                        pred: PrimitivePredicate::Eq(Primitive::Int64(999)),
+                    }),
                 ],
             },
         })];
@@ -180,14 +181,13 @@ mod tests {
 
     #[test]
     fn test_where_other_v_has_property_bad_type_errors() {
-        use smol_str::SmolStr;
         let steps = vec![LogicalStep::Where(WhereStep {
             plan: LogicalPlan {
                 steps: vec![
                     LogicalStep::OtherV(OtherVStep {}),
                     LogicalStep::HasProperty(HasPropertyStep {
                         key: ID,
-                        value: Primitive::String(SmolStr::new("bad")),
+                        pred: PrimitivePredicate::Eq(Primitive::String(smol_str::SmolStr::new("bad"))),
                     }),
                 ],
             },
@@ -205,8 +205,10 @@ mod tests {
             plan: LogicalPlan {
                 steps: vec![
                     LogicalStep::OtherV(OtherVStep {}),
-                    LogicalStep::HasId(HasIdStep { ids: smallvec![1] }),
-                    LogicalStep::HasLabel(HasLabelStep { labels: smallvec!["2".into()] }),
+                    LogicalStep::HasId(HasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(1)) }),
+                    LogicalStep::HasLabel(HasLabelStep {
+                        pred: PrimitivePredicate::Eq(Primitive::String(smol_str::SmolStr::new("2"))),
+                    }),
                 ],
             },
         })];
