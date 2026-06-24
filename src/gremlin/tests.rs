@@ -1317,4 +1317,163 @@ mod integration_test {
         let ages_within = read.g().V([]).values(["age"]).is(within([5i32, 20i32])).count().next().unwrap().unwrap();
         assert_eq!(ages_within, Value::Int64(2));
     }
+
+    // ── repeat / until / emit / emit_if tests ────────────────────────────────
+
+    #[test]
+    fn test_repeat_without_bound_is_error() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+
+        // repeat() without .times() or .until() must error at build time
+        let res = tx.g().V([1]).repeat(__().out(["knows", "created"])).next();
+        assert!(
+            matches!(res, Err(StoreError::RuntimeError(msg)) if msg.contains("Incomplete repeat()"))
+        );
+    }
+
+    #[test]
+    fn test_repeat_times_zero_is_error() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+
+        let res = tx.g().V([1]).repeat(__().out(["knows", "created"])).times(0).next();
+        assert!(
+            matches!(res, Err(StoreError::RuntimeError(msg)) if msg.contains("times(0)"))
+        );
+    }
+
+    #[test]
+    fn test_until_without_repeat_is_error() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+
+        let res = tx.g().V([1]).until(__().hasLabel(["software"])).next();
+        assert!(
+            matches!(res, Err(StoreError::RuntimeError(msg)) if msg.contains("until() must immediately follow repeat()"))
+        );
+    }
+
+    #[test]
+    fn test_emit_without_repeat_is_error() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+
+        let res = tx.g().V([1]).emit().next();
+        assert!(
+            matches!(res, Err(StoreError::RuntimeError(msg)) if msg.contains("emit() must immediately follow repeat()"))
+        );
+    }
+
+    #[test]
+    fn test_emit_if_without_repeat_is_error() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+
+        let res = tx.g().V([1]).emit_if(__().hasLabel(["person"])).next();
+        assert!(
+            matches!(res, Err(StoreError::RuntimeError(msg)) if msg.contains("emit_if() must immediately follow repeat()"))
+        );
+    }
+
+    #[test]
+    fn test_back_to_back_repeat() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+
+        // Two back-to-back repeat() calls: the first one is flushed when the second starts.
+        // V(1).repeat(out(["knows","created"])).times(1).repeat(out(["knows","created"])).times(1)
+        let res = tx
+            .g()
+            .V([1])
+            .repeat(__().out(["knows", "created"]))
+            .times(1)
+            .repeat(__().out(["knows", "created"]))
+            .times(1)
+            .dedup()
+            .count()
+            .next()
+            .unwrap()
+            .unwrap();
+        // 1st repeat → [vadas(2), lop(3), josh(4)]. 2nd repeat → [ripple(5), lop(3)]. dedup = 2
+        assert_eq!(res, Value::Int64(2));
+    }
+
+    #[test]
+    fn test_e2e_n_hop_query() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+
+        // V(1).repeat(out()).times(2).values("name") — find 2-hop neighbor names
+        let names = tx
+            .g()
+            .V([1])
+            .repeat(__().out(["knows", "created"]))
+            .times(2)
+            .values(["name"])
+            .to_list()
+            .unwrap();
+        assert_eq!(names.len(), 2);
+        let mut name_strs: Vec<String> =
+            names.iter().map(|v| if let Value::String(s) = v { s.clone() } else { panic!("expected string") }).collect();
+        name_strs.sort();
+        // 2-hop from marko: ripple (via josh→created), lop (via josh→created)
+        assert_eq!(name_strs, vec!["lop", "ripple"]);
+    }
+
+    #[test]
+    fn test_e2e_repeat_until_emit() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+
+        // V(1).repeat(out("knows")).until(hasLabel("software")).emit().values("name")
+        // Emit all intermediate people and stop at software.
+        // marko→vadas(person, emitted), josh(person, emitted).
+        // josh→ripple(software, until match), lop(software, until match).
+        // vadas→[] (no outgoing knows).
+        // Also lop(3) — wait, marko's out("knows") is [vadas, josh], NOT lop.
+        // So: vadas(person, emit), josh(person, emit), josh→ripple(software, until→emit), josh→... hmm
+        // Actually josh.out("knows") = [] (josh has no outgoing "knows" edges).
+        // So vadas(person, emit), josh(person, emit). Then vadas.out("knows")=[], josh.out("knows")=[].
+        // Total: vadas(2), josh(4) = 2.
+        let results = tx
+            .g()
+            .V([1])
+            .repeat(__().out(["knows"]))
+            .until(__().hasLabel(["software"]))
+            .emit()
+            .values(["name"])
+            .to_list()
+            .unwrap();
+        let mut name_strs: Vec<String> =
+            results.iter().map(|v| if let Value::String(s) = v { s.clone() } else { panic!("expected string") }).collect();
+        name_strs.sort();
+        assert_eq!(name_strs, vec!["josh", "vadas"]);
+    }
+
+    #[test]
+    fn test_e2e_repeat_path_tracking() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+
+        // V(1).repeat(out()).times(2).path()
+        let results = tx
+            .g()
+            .V([1])
+            .repeat(__().out(["knows", "created"]))
+            .times(2)
+            .path()
+            .to_list()
+            .unwrap();
+
+        // 2-hop paths: marko→josh→ripple, marko→josh→lop
+        assert_eq!(results.len(), 2);
+        for res in &results {
+            if let Value::Path(p) = res {
+                assert_eq!(p.len(), 3, "path should have 3 elements");
+            } else {
+                panic!("expected Path, got {:?}", res);
+            }
+        }
+    }
 }

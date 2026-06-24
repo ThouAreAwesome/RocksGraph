@@ -50,6 +50,7 @@ pub mod limit;
 pub mod other_v;
 pub mod path;
 pub mod property;
+pub mod repeat;
 pub mod scalar_filter;
 pub mod tests;
 pub mod traits;

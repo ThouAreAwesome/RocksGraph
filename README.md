@@ -505,12 +505,12 @@ just build-release
 
 ### Engine & Query
 
-- [ ] Improve TinkerPop Gremlin step coverage (lambdas, side-effects, additional aggregation steps)
+- [ ] Improve Gremlin step coverage (lambdas, side-effects, additional aggregation steps) — see [docs/TODO.md](docs/TODO.md) for the prioritized list
 - [ ] Support bulk-load mode: offline SST file generation + direct RocksDB SST ingestion for high-throughput initial loads
 - [x] `ReadSession` / `ReadTraversal` — read-only snapshot path with no OCC overhead
 - [x] `next(), to_list(), iter()` on `ReadTraversal` and `WriteTraversal`
 - [x] Support strict schema mode (see [Schema Modes](#schema-modes))
-- [ ] Range predicates in `HasPropertyStep` (`Gt`, `Lt`, `Between`, etc.)
+- [x] Range predicates in `HasPropertyStep` (`Gt`, `Lt`, `Between`, etc.)
 
 ### Storage & Distribution
 

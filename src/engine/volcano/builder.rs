@@ -594,6 +594,28 @@ impl PhysicalPlanBuilder {
             LogicalStep::Fold(_) => {
                 wire_required!(BufferedStep::new(steps::fold::FoldStep::default()), upstream, "FoldStep")
             }
+            LogicalStep::Repeat(s) => {
+                if s.until.is_none() && s.times.is_none() {
+                    return Err(StoreError::RuntimeError(
+                        "RepeatStep must have at least one stop condition: .times(n) or .until(cond).".to_string(),
+                    ));
+                }
+                drop(schema);
+                let body = self.build(&s.body, schema_lock)?;
+                let until = s.until.as_ref().map(|p| self.build(p, schema_lock)).transpose()?;
+                let emit = match &s.emit {
+                    crate::planner::logical_step::EmitSpec::Never => steps::repeat::PhysicalEmitMode::Never,
+                    crate::planner::logical_step::EmitSpec::Always => steps::repeat::PhysicalEmitMode::Always,
+                    crate::planner::logical_step::EmitSpec::If(plan) => {
+                        steps::repeat::PhysicalEmitMode::If(self.build(plan, schema_lock)?)
+                    }
+                };
+                wire_required!(
+                    BufferedStep::new(steps::repeat::RepeatStep::new(body, until, s.times, emit)),
+                    upstream,
+                    "RepeatStep"
+                )
+            }
             _ => unreachable!("unreachable"),
         }
     }
@@ -688,8 +710,10 @@ mod tests {
             planner::{
                 apply_rules,
                 logical_step::{
-                    CoalesceStep, CountStep, HasIdStep, HasPropertyStep, InEStep, InStep, LogicalPlan, LogicalStep,
-                    OtherVStep, OutEStep, OutStep, PropertiesStep, UnionStep, VStep, WhereStep,
+                    CoalesceStep, CountStep, EmitSpec, HasIdStep, HasPropertyStep, InEStep, InStep,
+                    LogicalPlan, LogicalStep,
+                    OtherVStep, OutEStep, OutStep, PropertiesStep, RepeatStep, UnionStep, VStep,
+                    WhereStep,
                 },
             },
             types::{
@@ -826,6 +850,23 @@ mod tests {
                 LogicalStep::Coalesce(CoalesceStep { plans: vec![out_plan, in_plan] }),
             ];
             assert_plan_contains_in_order(coalesce_steps, &["VStep", "CoalesceStep", "InOutStep", "InOutStep"]);
+        }
+
+        #[test]
+        fn test_print_repeat_with_times() {
+            let body = LogicalPlan {
+                steps: vec![LogicalStep::Out(OutStep { labels: smallvec![], end_vertex_ids: None })],
+            };
+            let steps = vec![
+                LogicalStep::V(VStep { ids: smallvec![1] }),
+                LogicalStep::Repeat(RepeatStep {
+                    body,
+                    until: None,
+                    times: Some(3),
+                    emit: EmitSpec::Never,
+                }),
+            ];
+            assert_plan_contains_in_order(steps, &["VStep", "RepeatStep", "InOutStep"]);
         }
     }
 }

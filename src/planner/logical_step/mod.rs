@@ -101,6 +101,38 @@ pub enum LogicalStep {
     Path(PathStep),
     Dedup(DedupStep),
     Fold(FoldStep),
+    Repeat(RepeatStep),
+}
+
+/// Specifies when a repeat step should emit intermediate results.
+#[derive(Clone)]
+pub enum EmitSpec {
+    Never,
+    Always,
+    If(LogicalPlan),
+}
+
+/// Represents a logical `repeat` step — a variable-length looping construct.
+#[derive(Clone)]
+pub struct RepeatStep {
+    pub body: LogicalPlan,
+    pub until: Option<LogicalPlan>,
+    pub times: Option<u32>,
+    pub emit: EmitSpec,
+}
+
+impl Optimizer for RepeatStep {
+    fn optimize(&mut self, optimizer_rule: &OptimizerRule) -> Result<bool, StoreError> {
+        let mut changed = false;
+        changed |= optimizer_rule(&mut self.body)?;
+        if let Some(ref mut until) = self.until {
+            changed |= optimizer_rule(until)?;
+        }
+        if let EmitSpec::If(ref mut plan) = self.emit {
+            changed |= optimizer_rule(plan)?;
+        }
+        Ok(changed)
+    }
 }
 
 /// Represents a logical `drop` step in a query plan.
@@ -134,6 +166,7 @@ impl Optimizer for LogicalStep {
             LogicalStep::Where(wh) => changed |= wh.optimize(optimizer_rule)?,
             LogicalStep::Union(u) => changed |= u.optimize(optimizer_rule)?,
             LogicalStep::Coalesce(c) => changed |= c.optimize(optimizer_rule)?,
+            LogicalStep::Repeat(r) => changed |= r.optimize(optimizer_rule)?,
             _ => {}
         }
         Ok(changed)
