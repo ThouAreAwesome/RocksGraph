@@ -32,6 +32,8 @@
 // ── Physical step submodules ───────────────────────────────────────────────────
 pub mod add_e;
 pub mod add_v;
+pub mod and_or;
+pub mod as_select;
 pub mod both;
 pub mod coalesce;
 pub mod count;
@@ -47,6 +49,8 @@ pub mod has_property;
 pub mod in_out;
 pub mod in_v_out_v;
 pub mod limit;
+pub mod not;
+pub mod numeric_reducers;
 pub mod other_v;
 pub mod path;
 pub mod property;
@@ -54,6 +58,7 @@ pub mod repeat;
 pub mod scalar_filter;
 pub mod tests;
 pub mod traits;
+pub mod unfold;
 pub mod union;
 pub mod v;
 pub mod values;

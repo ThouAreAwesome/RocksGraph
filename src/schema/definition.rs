@@ -269,6 +269,12 @@ impl Schema {
         self.vertex_labels.get_by_left(&id)
     }
 
+    /// Returns the number of registered vertex labels.
+    /// Label IDs are 1-based and sequential, so this value equals `max(label_id)`.
+    pub fn vertex_labels_count(&self) -> usize {
+        self.vertex_labels.len()
+    }
+
     /// Look up the `LabelId` for a vertex label string.
     pub fn vertex_label_id(&self, name: &str) -> Option<LabelId> {
         self.vertex_labels.get_by_right(name).copied()
@@ -296,6 +302,12 @@ impl Schema {
     /// Look up the string for an edge `LabelId`.
     pub fn edge_label_str(&self, id: LabelId) -> Option<&SmolStr> {
         self.edge_labels.get_by_left(&id)
+    }
+
+    /// Returns the number of registered edge labels.
+    /// Label IDs are 1-based and sequential, so this value equals `max(label_id)`.
+    pub fn edge_labels_count(&self) -> usize {
+        self.edge_labels.len()
     }
 
     /// Look up the `LabelId` for an edge label string.

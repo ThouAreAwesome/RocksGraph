@@ -102,6 +102,16 @@ pub enum LogicalStep {
     Dedup(DedupStep),
     Fold(FoldStep),
     Repeat(RepeatStep),
+    Not(NotStep),
+    And(AndStep),
+    Or(OrStep),
+    Sum(SumStep),
+    Mean(MeanStep),
+    Max(MaxStep),
+    Min(MinStep),
+    Unfold(UnfoldStep),
+    As(AsStep),
+    Select(SelectStep),
 }
 
 /// Specifies when a repeat step should emit intermediate results.
@@ -158,6 +168,97 @@ impl Optimizer for DedupStep {}
 pub struct FoldStep {}
 
 impl Optimizer for FoldStep {}
+
+/// Negates a sub-traversal filter: passes the traverser if the sub-plan yields nothing.
+#[derive(Clone)]
+pub struct NotStep {
+    pub plan: LogicalPlan,
+}
+
+impl Optimizer for NotStep {
+    fn optimize(&mut self, optimizer_rule: &OptimizerRule) -> Result<bool, StoreError> {
+        optimizer_rule(&mut self.plan)
+    }
+}
+
+/// Passes the traverser if all sub-plans yield results (short-circuit on first failure).
+#[derive(Clone)]
+pub struct AndStep {
+    pub plans: Vec<LogicalPlan>,
+}
+
+impl Optimizer for AndStep {
+    fn optimize(&mut self, optimizer_rule: &OptimizerRule) -> Result<bool, StoreError> {
+        let mut changed = false;
+        for plan in self.plans.iter_mut() {
+            changed |= optimizer_rule(plan)?;
+        }
+        Ok(changed)
+    }
+}
+
+/// Passes the traverser if any sub-plan yields results (short-circuit on first success).
+#[derive(Clone)]
+pub struct OrStep {
+    pub plans: Vec<LogicalPlan>,
+}
+
+impl Optimizer for OrStep {
+    fn optimize(&mut self, optimizer_rule: &OptimizerRule) -> Result<bool, StoreError> {
+        let mut changed = false;
+        for plan in self.plans.iter_mut() {
+            changed |= optimizer_rule(plan)?;
+        }
+        Ok(changed)
+    }
+}
+
+/// Sums all numeric traverser values into a single scalar (Gremlin `sum()` step).
+#[derive(Clone, Debug)]
+pub struct SumStep {}
+
+impl Optimizer for SumStep {}
+
+/// Averages all numeric traverser values, always returning `Float64`.
+#[derive(Clone, Debug)]
+pub struct MeanStep {}
+
+impl Optimizer for MeanStep {}
+
+/// Finds the maximum numeric traverser value.
+#[derive(Clone, Debug)]
+pub struct MaxStep {}
+
+impl Optimizer for MaxStep {}
+
+/// Finds the minimum numeric traverser value.
+#[derive(Clone, Debug)]
+pub struct MinStep {}
+
+impl Optimizer for MinStep {}
+
+/// Unfolds a `GValue::List` into individual traversers (inverse of `fold()`).
+#[derive(Clone, Debug)]
+pub struct UnfoldStep {}
+
+impl Optimizer for UnfoldStep {}
+
+/// Labels the current traverser for later retrieval via `select()`.
+#[derive(Clone, Debug)]
+pub struct AsStep {
+    pub labels: SmallVec<[SmolStr; 2]>,
+}
+
+impl Optimizer for AsStep {}
+
+/// Retrieves traversers previously labeled with `as()`.
+#[derive(Clone, Debug)]
+pub struct SelectStep {
+    pub labels: SmallVec<[SmolStr; 2]>,
+}
+
+impl Optimizer for SelectStep {}
+
 /// Implements the `Optimizer` trait for `LogicalStep`, allowing optimization rules to be applied to individual steps.
 impl Optimizer for LogicalStep {
     fn optimize(&mut self, optimizer_rule: &OptimizerRule) -> Result<bool, StoreError> {
@@ -167,6 +268,9 @@ impl Optimizer for LogicalStep {
             LogicalStep::Union(u) => changed |= u.optimize(optimizer_rule)?,
             LogicalStep::Coalesce(c) => changed |= c.optimize(optimizer_rule)?,
             LogicalStep::Repeat(r) => changed |= r.optimize(optimizer_rule)?,
+            LogicalStep::Not(n) => changed |= n.optimize(optimizer_rule)?,
+            LogicalStep::And(a) => changed |= a.optimize(optimizer_rule)?,
+            LogicalStep::Or(o) => changed |= o.optimize(optimizer_rule)?,
             _ => {}
         }
         Ok(changed)

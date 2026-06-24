@@ -18,9 +18,21 @@
 //! [`StoreError`] — the unified error type for storage and runtime failures.
 //!
 //! All fallible operations in the store and traversal engine return
-//! `Result<_, StoreError>`.  The variants cover both expected, recoverable
-//! conditions (e.g. [`Conflict`](StoreError::Conflict) — retry the transaction)
-//! and hard failures (e.g. [`RocksDb`](StoreError::RocksDb) — underlying I/O error).
+//! `Result<_, StoreError>`.  Variants are organised into five layers
+//! so callers can match at the appropriate granularity, and helper
+//! methods ([`is_retryable`](StoreError::is_retryable),
+//! [`category`](StoreError::category), etc.) provide coarse-grained
+//! classification without exhaustive matching.
+//!
+//! # Variant layers
+//!
+//! | Layer            | Variants                                                       | Recoverable? |
+//! |------------------|----------------------------------------------------------------|:------------:|
+//! | **Storage**      | `RocksDb`, `Io`, `CorruptData`, `MissingColumnFamily`         | No           |
+//! | **Transaction**  | `Conflict`, `LockError`                                       | Yes          |
+//! | **Schema**       | `SchemaViolation`, `SchemaConflict`, `SchemaExhausted`        | No           |
+//! | **Integrity**    | `NotFound`, `DuplicateVertex`, `DuplicateEdge`, `Tombstoned`, `IncidentEdges`, `ReadOnly` | No |
+//! | **Query**        | `UnexpectedDataType`, `UnsupportedOperation`, `TraversalError` | No          |
 //!
 //! # Retryable errors
 //!
@@ -35,88 +47,187 @@ use crate::types::{CanonicalEdgeKey, VertexKey};
 
 #[derive(Debug)]
 pub enum StoreError {
+    // ═══════════════════════════════════════════════════════════════════
+    // STORAGE LAYER — UNRECOVERABLE
+    //
+    // The storage engine itself is unhealthy.  The current operation
+    // cannot succeed and retrying with the same inputs will also fail.
+    // ═══════════════════════════════════════════════════════════════════
+    /// A RocksDB internal error (corruption, I/O, misconfiguration).
+    RocksDb(rocksdb::Error),
+
+    /// A filesystem-level I/O error outside RocksDB (e.g. temp-file exhaustion).
+    Io(std::io::Error),
+
+    /// A stored byte sequence could not be decoded. The carried string names
+    /// the field that failed (e.g. `"vertex value"`, `"edge key"`).
+    CorruptData(&'static str),
+
+    /// A required RocksDB column-family handle was not found. Indicates a
+    /// database schema mismatch or misconfiguration.
+    MissingColumnFamily(&'static str),
+
+    // ═══════════════════════════════════════════════════════════════════
+    // TRANSACTION LAYER — RECOVERABLE
+    //
+    // The current transaction cannot commit because of concurrent access,
+    // but retrying the entire transaction from scratch may succeed.
+    // ═══════════════════════════════════════════════════════════════════
+    /// OCC commit failed because a key in the read-set was modified by a
+    /// concurrent transaction.  Callers should retry from scratch.
+    Conflict,
+
+    /// A lock was poisoned or otherwise could not be acquired. Happens when
+    /// several traversals mutate properties of the same vertex/edge in parallel.
+    LockError,
+
+    // ═══════════════════════════════════════════════════════════════════
+    // SCHEMA LAYER
+    //
+    // A label, property key, or type declaration is missing or misused.
+    // ═══════════════════════════════════════════════════════════════════
+    /// A schema definition or strictness rule was violated
+    /// (e.g. undeclared label in Strict mode, type mismatch on a property).
+    SchemaViolation(String),
+
+    /// A schema version mismatch or concurrency conflict occurred.
+    SchemaConflict(String),
+
+    /// The ID space or limit for schema labels/keys was exhausted.
+    SchemaExhausted(String),
+
+    // ═══════════════════════════════════════════════════════════════════
+    // QUERY LAYER — DATA INTEGRITY
+    //
+    // The query is well-formed but violates a data constraint.
+    // ═══════════════════════════════════════════════════════════════════
     /// A required key was not found.
     ///
     /// Not emitted by the storage layer itself (absent keys return `Ok(None)`);
     /// reserved for higher-level callers that treat absence as a hard error
     /// (e.g. a mutation step that requires a vertex to exist).
     NotFound,
-    /// OCC commit failed because a key in the read-set was modified by a
-    /// concurrent transaction.  Callers should retry from scratch.
-    Conflict,
-    /// A lock was poisoned or otherwise could not be acquired. Happens when several traversals mutate the properties
-    /// of the same vertex/edge in parallel.
-    LockError,
+
+    /// Attempted to create a vertex with an ID that already exists.
     DuplicateVertex(VertexKey),
+
+    /// Attempted to create an edge that already exists (same src, label, dst, rank).
     DuplicateEdge(CanonicalEdgeKey),
+
     /// The element has already been deleted in this transaction's overlay.
     Tombstoned,
-    /// A vertex cannot be deleted because it still has one or more incident edges.
+
+    /// A vertex cannot be dropped because it still has incident edges.
     IncidentEdges,
+
     /// A write operation was attempted on a read-only snapshot context.
     ReadOnly,
-    /// A stored byte sequence could not be decoded. The carried string names the
-    /// field that failed (e.g. `"vertex value"`, `"edge key"`).
-    CorruptData(&'static str),
-    /// A required RocksDB column-family handle was not found. Indicates a
-    /// database schema mismatch or misconfiguration.
-    MissingColumnFamily(&'static str),
-    /// An error returned directly by the RocksDB storage engine.
-    RocksDb(rocksdb::Error),
-    Io(std::io::Error),
-    /// A schema definition or strictness rule was violated.
-    SchemaViolation(String),
-    /// A schema version mismatch or concurrency conflict occurred.
-    SchemaConflict(String),
-    /// The ID space or limit for schema labels/keys was exhausted.
-    SchemaExhausted(String),
-    /// A traversal step or feature that is not yet implemented.
-    UnsupportedOperation(String),
-    /// A value in the pipeline had a type that the current step cannot handle.
+
+    // ═══════════════════════════════════════════════════════════════════
+    // QUERY LAYER — SEMANTIC / TYPE ERRORS
+    //
+    // The query itself is invalid: unsupported construct, type mismatch,
+    // or malformed traversal.
+    // ═══════════════════════════════════════════════════════════════════
+    /// A value in the pipeline had a type that the current step cannot handle
+    /// (e.g. passing a List where a scalar is required).
     UnexpectedDataType(String),
-    /// A generic runtime error from the traversal engine.
-    RuntimeError(String),
-    /// Catch-all for errors that don't fit any other variant.
-    Other(String),
+
+    /// A traversal step or feature that is not yet implemented
+    /// (e.g. range predicates on Label filters).
+    UnsupportedOperation(String),
+
+    /// A traversal is syntactically or semantically invalid:
+    /// - DSL layer: `times(0)`, `until()` without `repeat()`, etc.
+    /// - Builder layer: missing required sub-plan, empty union, etc.
+    /// - Engine layer: impossible state reached in valid queries.
+    TraversalError(String),
 }
+
+// ── Classification helpers ──────────────────────────────────────────────────
+
+impl StoreError {
+    /// True if retrying the entire transaction may succeed.
+    ///
+    /// Currently covers [`Conflict`](StoreError::Conflict) and
+    /// [`LockError`](StoreError::LockError).
+    pub fn is_retryable(&self) -> bool {
+        matches!(self, Self::Conflict | Self::LockError)
+    }
+
+    /// True if the storage engine itself is unhealthy — retrying will not help.
+    pub fn is_storage_failure(&self) -> bool {
+        matches!(self, Self::RocksDb(_) | Self::Io(_) | Self::CorruptData(_) | Self::MissingColumnFamily(_))
+    }
+
+    /// True for schema-layer errors.
+    pub fn is_schema_error(&self) -> bool {
+        matches!(self, Self::SchemaViolation(_) | Self::SchemaConflict(_) | Self::SchemaExhausted(_))
+    }
+
+    /// True if the query itself is invalid (type mismatch, unsupported construct,
+    /// or malformed traversal).
+    pub fn is_query_error(&self) -> bool {
+        matches!(self, Self::TraversalError(_) | Self::UnsupportedOperation(_) | Self::UnexpectedDataType(_))
+    }
+
+    /// Human-readable category name for logging, metrics, or error-reporting.
+    pub fn category(&self) -> &'static str {
+        match self {
+            Self::RocksDb(_) | Self::Io(_) | Self::CorruptData(_) | Self::MissingColumnFamily(_) => "storage",
+            Self::Conflict | Self::LockError => "transaction",
+            Self::SchemaViolation(_) | Self::SchemaConflict(_) | Self::SchemaExhausted(_) => "schema",
+            Self::NotFound
+            | Self::DuplicateVertex(_)
+            | Self::DuplicateEdge(_)
+            | Self::Tombstoned
+            | Self::IncidentEdges
+            | Self::ReadOnly => "integrity",
+            Self::UnexpectedDataType(_) | Self::UnsupportedOperation(_) | Self::TraversalError(_) => "query",
+        }
+    }
+}
+
+// ── Display ─────────────────────────────────────────────────────────────────
 
 impl fmt::Display for StoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            StoreError::NotFound => write!(f, "key not found"),
+            StoreError::RocksDb(e) => write!(f, "storage engine error: {e}"),
+            StoreError::Io(e) => write!(f, "I/O error: {e}"),
+            StoreError::CorruptData(ctx) => write!(f, "corrupt data: {ctx}"),
+            StoreError::MissingColumnFamily(name) => write!(f, "missing column family: {name}"),
             StoreError::Conflict => write!(f, "transaction conflict; retry"),
             StoreError::LockError => write!(f, "lock error"),
+            StoreError::SchemaViolation(msg) => write!(f, "schema violation: {msg}"),
+            StoreError::SchemaConflict(msg) => write!(f, "schema conflict: {msg}"),
+            StoreError::SchemaExhausted(msg) => write!(f, "schema exhausted: {msg}"),
+            StoreError::NotFound => write!(f, "key not found"),
             StoreError::DuplicateVertex(key) => write!(f, "duplicate vertex: {key}"),
             StoreError::DuplicateEdge(key) => write!(f, "duplicate edge: {key}"),
             StoreError::Tombstoned => write!(f, "element is tombstoned"),
             StoreError::IncidentEdges => write!(f, "cannot drop vertex with incident edges"),
             StoreError::ReadOnly => write!(f, "write operation on read-only snapshot"),
-            StoreError::CorruptData(ctx) => write!(f, "corrupt data: {ctx}"),
-            StoreError::MissingColumnFamily(name) => write!(f, "missing column family: {name}"),
-            StoreError::RocksDb(e) => write!(f, "storage engine error: {e}"),
-            StoreError::Io(e) => write!(f, "I/O error: {e}"),
-            StoreError::SchemaViolation(msg) => write!(f, "schema violation: {msg}"),
-            StoreError::SchemaConflict(msg) => write!(f, "schema conflict: {msg}"),
-            StoreError::SchemaExhausted(msg) => write!(f, "schema exhausted: {msg}"),
-            StoreError::UnsupportedOperation(msg) => write!(f, "unsupported operation: {msg}"),
-            StoreError::RuntimeError(msg) => write!(f, "runtime error: {msg}"),
             StoreError::UnexpectedDataType(msg) => write!(f, "unexpected datatype: {msg}"),
-            StoreError::Other(msg) => write!(f, "{msg}"),
+            StoreError::UnsupportedOperation(msg) => write!(f, "unsupported operation: {msg}"),
+            StoreError::TraversalError(msg) => write!(f, "traversal error: {msg}"),
         }
     }
 }
+
+// ── Error trait ──────────────────────────────────────────────────────────────
 
 impl std::error::Error for StoreError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             StoreError::RocksDb(e) => Some(e),
             StoreError::Io(e) => Some(e),
-            StoreError::RuntimeError(_) => None,
-            StoreError::UnsupportedOperation(_) => None,
             _ => None,
         }
     }
 }
+
+// ── From impls ──────────────────────────────────────────────────────────────
 
 impl From<rocksdb::Error> for StoreError {
     fn from(e: rocksdb::Error) -> Self {

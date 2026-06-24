@@ -19,22 +19,24 @@
 //!
 //! ## Quick start
 //!
-//! ```ignore
-//! use rocksgraph::{Graph, TraversalBuilder, Value, StoreError, __};
+//! ```no_run
+//! use rocksgraph::{Graph, TraversalBuilder, Value};
 //!
-//! let graph = Graph::open("/path/to/db")?;
+//! # let dir = tempfile::tempdir().unwrap();
+//! # let graph = Graph::open(dir.path()).unwrap();
 //!
-//! // Read-only snapshot query — three ways to consume results
+//! // Read-only snapshot query
 //! let mut snap = graph.read();
-//! let count = snap.g().V([1]).out(&["knows"]).count().next()?.unwrap(); // first result
-//! let names = snap.g().V([1]).out(&["knows"]).values(&["name"]).to_list()?; // Vec<Value>
-//! for v in snap.g().V([]).out(&["knows"]).iter()? { println!("{:?}", v?); } // lazy
+//! let count = snap.g().V([1]).out(["knows"]).count().next().unwrap().unwrap();
+//! let names = snap.g().V([1]).out(["knows"]).values(["name"]).to_list().unwrap();
+//! for v in snap.g().V([]).out(["knows"]).iter().unwrap() { println!("{:?}", v.unwrap()); }
 //!
 //! // Read-write transaction
 //! let mut tx = graph.begin();
-//! tx.g().addV("person").property("name", "alice").next()?;
-//! tx.g().addE("knows").from(1).to(2).property("weight", 0.9f64).next()?;
-//! tx.commit()?;
+//! tx.g().addV("person").property("name", "alice").next().unwrap();
+//! tx.g().addE("knows").from(1).to(2).property("weight", 0.9f64).next().unwrap();
+//! tx.commit().unwrap();
+//! # graph.close().unwrap();
 //! ```
 //!
 //! ## Architecture

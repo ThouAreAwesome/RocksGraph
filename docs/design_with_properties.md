@@ -3,118 +3,141 @@
 ## Problem
 
 `materialize()` always calls `get_all_props()` for every `Vertex`/`Edge` in the terminal
-result, fetching all properties via a RocksDB prefix scan. When the caller only needs id +
-label, or a small subset of properties, this is wasteful — especially for traversals like
-`outE().otherV().path()` that return many elements.
+result, fetching all properties from the store. When the caller only needs id + label — or
+when no element reaches the terminal at all (count, dedup, fold) — this is pure waste.
+Traversals like `outE().otherV().path()` amplify it: every position in the path triggers a
+full property fetch.
 
-## Proposed API
+## Design
+
+Change the default: do NOT fetch properties unless explicitly asked. The API mirrors the
+existing `[] = all` convention used by `V([])`, `outE([])`, `values([])`, `properties([])`.
 
 ```rust
-// Return vertices with no properties — zero extra reads for edges, label-only read for vertices
-g.V([1]).out([KNOWS]).withProperties([]).to_list()
+// Default: no withProperties() → return id + label only, zero property reads
+snap.g().V([1]).out(["knows"]).to_list()?;
 
-// Return vertices with selected properties only
-g.V([1]).out([KNOWS]).withProperties(["name", "age"]).to_list()
+// Explicit: return all properties ([] = all convention)
+snap.g().withProperties([]).V([1]).out(["knows"]).to_list()?;
 
-// Default: no withProperties() call = current behavior, all properties fetched
-g.V([1]).out([KNOWS]).to_list()
+// Explicit: return named properties only
+snap.g().withProperties(["name", "age"]).V([1]).out(["knows"]).to_list()?;
 ```
 
-`withProperties()` is a trailing step (not a per-preceding-step modulator). It applies
-uniformly to all terminal `Vertex`/`Edge` values produced by the traversal.
+`withProperties()` is a **source-level configuration** placed after `g()` (matching
+TinkerPop's `with()` convention).
 
-## PropHint
+## Why the default change is safe
+
+Property reads during traversal are **read-through cached** by the `LogicalGraph` /
+`LogicalSnapshot` overlay: the first access to any vertex or edge loads it from the store
+and caches it; all subsequent accesses within the same traversal are O(1) HashMap lookups.
+
+Whether that first access happens at `has("age", gt(18))` or at `materialize()` time makes
+no difference to I/O cost — it's the same read against the same cache. The overlay
+guarantees no double-reads regardless of fetch timing.
+
+| Scenario | Store reads per terminal element |
+|---|---|
+| Default (no hint), element not filtered | 0 (label from in-memory schema lookup) |
+| Default, element already loaded by `has(…)` / `values(…)` | 0 (overlay cache hit) |
+| `withProperties([])` | 1 if not yet in overlay; 0 if already cached by a prior step |
+| `withProperties(["name"])` | 1 (first `get_property` loads full record; subsequent calls cache-hit) |
+
+## Implementation
+
+One optional field on `BuiltTraversal`. No new types, no `GValue` change, no plan step.
 
 ```rust
-enum PropHint {
-    All,                          // default — existing get_all_props() behavior
-    None,                         // id + label only, no property reads
-    Keys(SmallVec<[SmolStr; 4]>), // fetch only named properties
+// gremlin/traversal/built.rs
+pub struct BuiltTraversal<'g> {
+    graph:     &'g mut dyn GraphCtx,
+    plan:      PhysicalPlan,
+    prop_keys: Option<Vec<SmolStr>>,  // None = default (no properties)
 }
 ```
 
-## Design: PropHint embedded in GValue (per-element)
-
-Preferred over a plan-level hint because path results mix vertices and edges independently.
-
 ```rust
-// GValue variants gain an inline PropHint
-GValue::Vertex(VertexKey, PropHint)
-GValue::Edge(EdgeKey, PropHint)
-```
-
-`withProperties()` is a `LogicalStep::WithProperties { keys }`. The planner does NOT execute
-it as a pipeline step; instead, when building the physical plan, it extracts the hint and
-stamps every upstream `GValue::Vertex` / `GValue::Edge` produced in that plan with it.
-
-Alternatively (simpler first cut): store `PropHint` on `BuiltTraversal` and pass it into
-`materialize()` — avoids touching `GValue` but cannot support per-element hints inside
-`path()` or `union()`. Upgrade to per-element later if needed.
-
-## materialize() changes
-
-```rust
-fn materialize(gv: GValue, ctx: &mut dyn GraphCtx) -> Result<Value, StoreError> {
+// Same file — materialize() gains one parameter
+fn materialize(
+    gv: GValue,
+    ctx: &mut dyn GraphCtx,
+    prop_keys: Option<&[SmolStr]>,
+) -> Result<Value, StoreError> {
     match gv {
-        GValue::Vertex(vk, hint) => match hint {
-            PropHint::All  => { /* current get_all_props() path */ }
-            PropHint::None => Ok(Value::Vertex(Vertex { id: vk, label: None, properties: HashMap::new() }))
-            PropHint::Keys(keys) => { /* get_label() + per-key get_value() */ }
+        GValue::Vertex(vk) => {
+            match prop_keys {
+                None => {
+                    // label only, no property read
+                    let label = /* schema vertex_label_str from overlay label_id */;
+                    Ok(Value::Vertex(Vertex { id: vk, label, properties: HashMap::new() }))
+                }
+                Some(keys) if keys.is_empty() => {
+                    // all properties (existing get_all_props path)
+                    let (label_id, props) = ctx.get_all_props(&CanonicalKey::Vertex(vk))?;
+                    // ... materialize label + all props ...
+                }
+                Some(keys) => {
+                    // named properties via existing get_property()
+                    for key in keys { ctx.get_property(...); }
+                    // ... materialize label + selected props ...
+                }
+            }
         }
-        GValue::Edge(ek, hint) => match hint {
-            PropHint::All  => { /* current get_all_props() path */ }
-            PropHint::None => Ok(Value::Edge(Edge { out_v, in_v, label: Some(schema.edge_label_str(ek.label_id)...), rank: ek.rank, properties: HashMap::new() }))
-            PropHint::Keys(keys) => { /* per-key get_value(); label_id still free from ek.label_id, but resolving it to a string now needs the in-memory schema lookup */ }
+        GValue::Edge(ek) => {
+            // Same three-way match. Edge label_id is already in ek — in-memory schema
+            // lookup for label string, zero I/O. Only property reads vary by hint.
+            match prop_keys { ... }
         }
-        _ => { /* unchanged */ }
+        _ => { /* Scalars, Lists, Maps, Paths — unchanged */ }
     }
 }
 ```
 
-Note: `PropHint::None` on edges costs zero extra *RocksDB* reads — `label_id` is already in
-`EdgeKey`, and resolving it to the `label` string is an in-memory schema lookup, not a store
-read. `PropHint::None` on vertices still needs a label read unless Option B from
-`design_vertex_label.md` is implemented first.
-
-## New GraphCtx methods needed
+`ReadTraversal`/`WriteTraversal` store the hint and forward it:
 
 ```rust
-// For PropHint::Keys — fetch specific properties
-fn get_selected_props(
-    &mut self,
-    key: &CanonicalKey,
-    props: &[SmolStr],
-) -> Result<Option<(LabelId, Vec<(PropKey, Primitive)>)>, StoreError>;
-
-// For PropHint::None on vertices — label-only read (skip if vertex label is in key)
-fn get_label(&mut self, key: &CanonicalKey) -> Result<Option<LabelId>, StoreError>;
+// gremlin/traversal/mod.rs
+impl ReadTraversal<'_> {
+    pub fn withProperties(mut self, keys: impl Into<Vec<SmolStr>>) -> Self {
+        self.pending_hint = Some(keys.into());
+        self
+    }
+}
 ```
 
-Both can be omitted until `PropHint::Keys` is implemented; `PropHint::None` is the
-valuable first milestone.
+The hint transfers to `BuiltTraversal.prop_keys` when any terminal method is called.
 
-## Value::Vertex label change (prerequisite)
+## Write path consistency
 
-`PropHint::None` requires `label: Option<SmolStr>` in `Value::Vertex` (see
-`design_vertex_label.md` Option A). Without this, we cannot return a vertex without
-fetching the label.
+```rust
+// A vertex created in this transaction; no property auto-materialized
+tx.g().addV("person").property("id", 1i64).property("name", "alice").next()?;
+
+// Explicitly ask for properties after creation
+tx.g().withProperties([]).addV("person").property("id", 1i64).property("name", "alice").next()?;
+
+// Read-your-writes still works — addV flushes to LogicalGraph overlay;
+// subsequent steps in the same tx see properties regardless of hint
+tx.g().addV("person").property("id", 1i64).property("name", "alice")
+      .withProperties([]).next()?;
+// Wait — withProperties is source-level, after g(), so it can't appear mid-chain.
+// The terminal call determines the hint.
+```
+
+The write path uses the same convention: default returns no properties, `withProperties([])`
+returns all. This is consistent and minimal — the caller always controls what they pay for.
 
 ## Implementation order
 
-1. Change `Value::Vertex.label` to `Option<SmolStr>` (prerequisite, low effort)
-2. Add `PropHint` enum
-3. Add `withProperties()` to `TraversalBuilder` / `GraphTraversal` → `LogicalStep::WithProperties`
-4. Thread hint into `BuiltTraversal` (plan-level, simpler first cut)
-5. Update `materialize()` for `PropHint::None` — zero reads for edges, label-only for vertices
-6. (Follow-on) Implement `PropHint::Keys` with `get_selected_props()`
-7. (Follow-on) Move hint into `GValue::Vertex` / `GValue::Edge` for per-element control
+1. Add `prop_keys: Option<Vec<SmolStr>>` to `BuiltTraversal`
+2. Add `withProperties()` to `ReadTraversal`/`WriteTraversal`
+3. Thread `prop_keys` into `materialize()` calls from `BuiltTraversal::next()`
+4. Implement three-way `match` in `materialize()` — `None` / `Some([])` / `Some(keys)`
+5. Update existing callers that relied on eager property materialization (add
+   `.withProperties([])` where tests/examples need full properties back)
 
-## Affected Files
+## Affected files
 
-- `src/gremlin/value.rs` — `Vertex.label: Option<SmolStr>`
-- `src/gremlin/traversal.rs` — `materialize()`, `BuiltTraversal`, `withProperties()` step
-- `src/planner/logical_step.rs` — `LogicalStep::WithProperties`
-- `src/engine/volcano/builder.rs` — extract hint during physical plan build
-- `src/engine/context.rs` — `GraphCtx` new methods (step 6+)
-- `src/graph.rs` — implement new `GraphCtx` methods
-- `src/store/rocks/snapshot.rs`, `transaction.rs` — store-level selected prop fetch
+- `src/gremlin/traversal/mod.rs` — `withProperties()` on `ReadTraversal`/`WriteTraversal`
+- `src/gremlin/traversal/built.rs` — `BuiltTraversal.prop_keys`, `materialize()` signature + logic

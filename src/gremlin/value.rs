@@ -28,11 +28,16 @@
 //! property names.  This lets the same key be used symmetrically in input
 //! steps and output extraction:
 //!
-//! ```ignore
+//! ```no_run
+//! # use rocksgraph::{Graph, Key, TraversalBuilder};
+//! # let dir = tempfile::tempdir().unwrap();
+//! # let graph = Graph::open(dir.path()).unwrap();
+//! # let mut snap = graph.read();
 //! // filter by id
-//! snap.g().V([]).has(Key::Id, 42i64).next()?
+//! snap.g().V([]).has(Key::Id, 42i64).next().unwrap();
 //! // extract id as a scalar
-//! snap.g().V([42]).values([Key::Id]).next()?  // → Some(Value::Int64(42))
+//! snap.g().V([42]).values([Key::Id]).next().unwrap();  // → Some(Value::Int64(42))
+//! # graph.close().unwrap();
 //! ```
 //!
 //! # Predicate
@@ -151,7 +156,7 @@ pub fn without(vs: impl IntoIterator<Item = impl Into<Value>>) -> Predicate {
 // Note: `Predicate` (this Value-based type) is never evaluated directly. The only evaluation
 // path is `types::gvalue::PrimitivePredicate::evaluate`, which the engine's physical steps
 // (has_id/has_label/has_property/scalar_filter) call exclusively — keeping `engine` free of any
-// dependency on `gremlin`. `gremlin::conversions::predicate_to_primitive_predicate` converts a
+// dependency on `gremlin`. `gremlin::type_bridge::predicate_to_primitive_predicate` converts a
 // `Predicate` into a `PrimitivePredicate` once, at plan-build time, before it ever reaches the
 // engine.
 

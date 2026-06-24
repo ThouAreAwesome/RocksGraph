@@ -45,129 +45,28 @@ use std::collections::HashMap;
 use smol_str::SmolStr;
 
 use crate::{
-    engine::{
-        volcano::builder::{PhysicalPlan, PhysicalPlanBuilder},
-        GraphCtx,
-    },
+    engine::{volcano::builder::PhysicalPlanBuilder, GraphCtx},
     gremlin::{
-        conversions,
-        conversions::{key_to_prop_key, primitive_to_value, push_has_step, value_to_primitive},
-        value::{Edge as UserEdge, Key, Map, Path, Predicate, Property as UserProperty, Value, Vertex as UserVertex},
+        type_bridge,
+        type_bridge::{key_to_prop_key, push_has_step, value_to_primitive},
+        value::{Key, Predicate, Value},
     },
     planner::{
         apply_rules,
         logical_step::{
-            AddEStep, AddVStep, BothEStep, BothStep, CoalesceStep, CountStep, DedupStep, DropStep, EmitSpec, EStep,
-            FoldStep, FromStep, HasIdStep, HasLabelStep, InEStep, InStep, InVStep, LimitStep, LogicalPlan, LogicalStep,
-            OtherVStep, OutEStep, OutStep, OutVStep, PathStep, PropertiesStep, PropertyStep, RepeatStep,
-            ScalarFilterStep, ToStep, UnionStep, ValuesStep, WhereStep,
+            AddEStep, AddVStep, AndStep, AsStep, BothEStep, BothStep, CoalesceStep, CountStep, DedupStep, DropStep,
+            EStep, EmitSpec, FoldStep, FromStep, HasIdStep, HasLabelStep, InEStep, InStep, InVStep, LimitStep,
+            LogicalPlan, LogicalStep, MaxStep, MeanStep, MinStep, NotStep, OrStep, OtherVStep, OutEStep, OutStep,
+            OutVStep, PathStep, PropertiesStep, PropertyStep, RepeatStep, ScalarFilterStep, SelectStep, SumStep,
+            ToStep, UnfoldStep, UnionStep, ValuesStep, WhereStep,
         },
     },
-    types::{
-        gvalue::GValue,
-        keys::{CanonicalKey, EdgeKey},
-        prop_key::LABEL,
-        StoreError,
-    },
+    types::{keys::EdgeKey, prop_key::LABEL, StoreError},
 };
 
-/// Materialize an internal [`GValue`] into a user-facing [`Value`].
-///
-/// For `Vertex` and `Edge`, fetches the full record (label + all props) from ctx.
-/// For scalars and containers, the conversion is direct.
-pub(crate) fn materialize(gv: GValue, ctx: &mut dyn GraphCtx) -> Result<Value, StoreError> {
-    match gv {
-        GValue::Scalar(p) => Ok(primitive_to_value(p)),
-        GValue::Vertex(vk) => match ctx.get_all_props(&CanonicalKey::Vertex(vk))? {
-            None => Err(StoreError::NotFound),
-            Some((label_id, props)) => {
-                let schema_guard = ctx.schema();
-                let schema = schema_guard.read().unwrap();
-                let label = schema
-                    .vertex_label_str(label_id)
-                    .cloned()
-                    .unwrap_or_else(|| SmolStr::from(format!("vertex_{}", label_id)));
-                let mut properties: HashMap<SmolStr, Vec<Value>> = HashMap::new();
-                for (key, prim) in props {
-                    properties.entry(key).or_default().push(primitive_to_value(prim));
-                }
-                Ok(Value::Vertex(UserVertex { id: vk, label, properties }))
-            }
-        },
-        GValue::Edge(ek) => match ctx.get_all_props(&CanonicalKey::Edge(ek.canonical_edge_key()))? {
-            None => Err(StoreError::NotFound),
-            Some((label_id, props)) => {
-                let cek = ek.canonical_edge_key();
-                let schema_guard = ctx.schema();
-                let schema = schema_guard.read().unwrap();
-                let label = schema
-                    .edge_label_str(label_id)
-                    .cloned()
-                    .unwrap_or_else(|| SmolStr::from(format!("edge_{}", label_id)));
-                let mut properties: HashMap<SmolStr, Value> = HashMap::new();
-                for (key, prim) in props {
-                    properties.insert(key, primitive_to_value(prim));
-                }
-                Ok(Value::Edge(UserEdge { out_v: cek.src_id, in_v: cek.dst_id, label, rank: cek.rank, properties }))
-            }
-        },
-        GValue::Property(p) => {
-            let schema_guard = ctx.schema();
-            let schema = schema_guard.read().unwrap();
-            let key = schema.prop_key_str(p.key).cloned().unwrap_or_else(|| SmolStr::from(format!("key_{}", p.key)));
-            Ok(Value::Property(UserProperty { key, value: Box::new(primitive_to_value(p.value)) }))
-        }
-        GValue::List(list) => {
-            let mut out = Vec::with_capacity(list.len());
-            for item in list {
-                out.push(materialize(item, ctx)?);
-            }
-            Ok(Value::List(out))
-        }
-        GValue::Map(map) => {
-            let mut out = Map::new();
-            for (k, v) in map {
-                out.entries.push((materialize(k, ctx)?, materialize(v, ctx)?));
-            }
-            Ok(Value::Map(out))
-        }
-        GValue::Path(path) => {
-            let mut objects = Vec::with_capacity(path.len());
-            let mut labels: Vec<Vec<String>> = Vec::with_capacity(path.len());
-            for (val, step_labels) in path {
-                objects.push(materialize(val, ctx)?);
-                labels.push(match step_labels {
-                    Some(ls) => ls.iter().map(|s| s.to_string()).collect(),
-                    None => vec![],
-                });
-            }
-            Ok(Value::Path(Path { objects, labels }))
-        }
-    }
-}
+pub(crate) mod built;
 
-// ── BuiltTraversal ────────────────────────────────────────────────────────────
-
-/// The result of building a traversal — a pull-based lazy iterator over results.
-///
-/// Obtained from [`ReadTraversal::iter`] or [`WriteTraversal::iter`].
-/// Implements `Iterator<Item = Result<Value, StoreError>>`.
-pub struct BuiltTraversal<'g> {
-    graph: &'g mut dyn GraphCtx,
-    plan: PhysicalPlan,
-}
-
-impl<'g> Iterator for BuiltTraversal<'g> {
-    type Item = Result<Value, StoreError>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self.plan.next(self.graph) {
-            Err(e) => Some(Err(e)),
-            Ok(None) => None,
-            Ok(Some(t)) => Some(materialize(t.value.clone(), self.graph)),
-        }
-    }
-}
+pub use built::BuiltTraversal;
 
 // ── RepeatBuilder ──────────────────────────────────────────────────────────────
 
@@ -194,7 +93,7 @@ pub trait PlanAppender: Sized {
     fn flush_pending_repeat(&mut self) {
         if let Some(rb) = self.pending_repeat_mut().take() {
             if rb.until.is_none() && rb.times.is_none() {
-                self.record_error(StoreError::RuntimeError(
+                self.record_error(StoreError::TraversalError(
                     "repeat() must have at least one stop condition: .times(n) or .until(cond).".to_string(),
                 ));
                 return;
@@ -239,7 +138,11 @@ pub fn __() -> GraphTraversal {
 
 #[allow(non_snake_case)]
 impl GraphTraversal {
-    pub(crate) fn build(self, graph: &mut dyn GraphCtx) -> Result<BuiltTraversal<'_>, StoreError> {
+    pub(crate) fn build(
+        self,
+        graph: &mut dyn GraphCtx,
+        prop_keys: Option<Vec<SmolStr>>,
+    ) -> Result<BuiltTraversal<'_>, StoreError> {
         if let Some(err) = self.error {
             return Err(err);
         }
@@ -248,14 +151,16 @@ impl GraphTraversal {
         // (We can't call flush_pending_repeat() on self because it's already moved; instead
         // we check inline — the pending_repeat is moved into this method and dropped.)
         if self.pending_repeat.is_some() {
-            return Err(StoreError::RuntimeError(
-                "Incomplete repeat(): must call .times(n) or .until(cond) or .emit() before building.".to_string(),
+            return Err(StoreError::TraversalError(
+                "repeat() requires at least one stop condition — call .times(n) or .until(cond).".to_string(),
             ));
         }
         apply_rules(&mut logical)?;
+        let schema_lock = graph.schema();
+        let plan = PhysicalPlanBuilder {}.build(&logical, &schema_lock)?;
         let schema = graph.schema();
-        let plan = PhysicalPlanBuilder {}.build(&logical, &schema)?;
-        Ok(BuiltTraversal { graph, plan })
+        let cache = built::LabelCache::from_schema(&schema.read().unwrap());
+        Ok(BuiltTraversal { graph, plan, cache, schema, prop_keys })
     }
 
     pub(crate) fn into_plan(self) -> LogicalPlan {
@@ -325,6 +230,7 @@ impl GraphTraversal {
     }
 }
 
+#[allow(private_interfaces)]
 impl PlanAppender for GraphTraversal {
     fn plan_mut(&mut self) -> &mut LogicalPlan {
         &mut self.plan
@@ -445,7 +351,7 @@ pub trait TraversalBuilder: PlanAppender {
         let labels_vec: Vec<Value> = labels.into_iter().map(|l| Value::String(l.into().to_string())).collect();
         let pred =
             if labels_vec.len() == 1 { Predicate::Eq(labels_vec[0].clone()) } else { Predicate::Within(labels_vec) };
-        match conversions::predicate_to_primitive_predicate(pred) {
+        match type_bridge::predicate_to_primitive_predicate(pred) {
             Ok(prim_pred) => self.push_step(LogicalStep::HasLabel(HasLabelStep { pred: prim_pred })),
             Err(err) => self.record_error(err),
         }
@@ -456,7 +362,7 @@ pub trait TraversalBuilder: PlanAppender {
     fn hasId(mut self, ids: impl IntoIterator<Item = i64>) -> Self {
         let ids_vec: Vec<Value> = ids.into_iter().map(Value::Int64).collect();
         let pred = if ids_vec.len() == 1 { Predicate::Eq(ids_vec[0].clone()) } else { Predicate::Within(ids_vec) };
-        match conversions::predicate_to_primitive_predicate(pred) {
+        match type_bridge::predicate_to_primitive_predicate(pred) {
             Ok(prim_pred) => self.push_step(LogicalStep::HasId(HasIdStep { pred: prim_pred })),
             Err(err) => self.record_error(err),
         }
@@ -502,7 +408,7 @@ pub trait TraversalBuilder: PlanAppender {
                 }
             }
         }
-        match conversions::predicate_to_primitive_predicate(p) {
+        match type_bridge::predicate_to_primitive_predicate(p) {
             Ok(prim_pred) => self.push_step(LogicalStep::ScalarFilter(ScalarFilterStep { pred: prim_pred })),
             Err(err) => self.record_error(err),
         }
@@ -542,6 +448,16 @@ pub trait TraversalBuilder: PlanAppender {
         self
     }
 
+    fn as_(mut self, label: impl Into<SmolStr>) -> Self {
+        self.push_step(LogicalStep::As(AsStep { labels: smallvec::smallvec![label.into()] }));
+        self
+    }
+
+    fn select(mut self, label: impl Into<SmolStr>) -> Self {
+        self.push_step(LogicalStep::Select(SelectStep { labels: smallvec::smallvec![label.into()] }));
+        self
+    }
+
     fn dedup(mut self) -> Self {
         self.push_step(LogicalStep::Dedup(DedupStep {}));
         self
@@ -552,11 +468,68 @@ pub trait TraversalBuilder: PlanAppender {
         self
     }
 
+    fn sum(mut self) -> Self {
+        self.push_step(LogicalStep::Sum(SumStep {}));
+        self
+    }
+
+    fn mean(mut self) -> Self {
+        self.push_step(LogicalStep::Mean(MeanStep {}));
+        self
+    }
+
+    fn max(mut self) -> Self {
+        self.push_step(LogicalStep::Max(MaxStep {}));
+        self
+    }
+
+    fn min(mut self) -> Self {
+        self.push_step(LogicalStep::Min(MinStep {}));
+        self
+    }
+
+    fn unfold(mut self) -> Self {
+        self.push_step(LogicalStep::Unfold(UnfoldStep {}));
+        self
+    }
+
     fn r#where(mut self, mut sub: GraphTraversal) -> Self {
         if let Some(err) = sub.error.take() {
             self.record_error(err);
         }
         self.push_step(LogicalStep::Where(WhereStep { plan: sub.into_plan() }));
+        self
+    }
+
+    fn not(mut self, mut sub: GraphTraversal) -> Self {
+        if let Some(err) = sub.error.take() {
+            self.record_error(err);
+        }
+        self.push_step(LogicalStep::Not(NotStep { plan: sub.into_plan() }));
+        self
+    }
+
+    fn and(mut self, subs: impl IntoIterator<Item = GraphTraversal>) -> Self {
+        let mut plans = Vec::new();
+        for mut sub in subs {
+            if let Some(err) = sub.error.take() {
+                self.record_error(err);
+            }
+            plans.push(sub.into_plan());
+        }
+        self.push_step(LogicalStep::And(AndStep { plans }));
+        self
+    }
+
+    fn or(mut self, subs: impl IntoIterator<Item = GraphTraversal>) -> Self {
+        let mut plans = Vec::new();
+        for mut sub in subs {
+            if let Some(err) = sub.error.take() {
+                self.record_error(err);
+            }
+            plans.push(sub.into_plan());
+        }
+        self.push_step(LogicalStep::Or(OrStep { plans }));
         self
     }
 
@@ -590,25 +563,23 @@ pub trait TraversalBuilder: PlanAppender {
         if let Some(err) = body.error.take() {
             self.record_error(err);
         }
-        *self.pending_repeat_mut() = Some(RepeatBuilder {
-            body: body.into_plan(),
-            until: None,
-            times: None,
-            emit: EmitSpec::Never,
-        });
+        *self.pending_repeat_mut() =
+            Some(RepeatBuilder { body: body.into_plan(), until: None, times: None, emit: EmitSpec::Never });
         self
     }
 
     fn times(mut self, n: u32) -> Self {
         if n == 0 {
-            self.record_error(StoreError::RuntimeError("times(0) is invalid: a repeat body must run at least once.".to_string()));
+            self.record_error(StoreError::TraversalError(
+                "times(0) is invalid: a repeat body must run at least once.".to_string(),
+            ));
             return self;
         }
         match self.pending_repeat_mut() {
             Some(ref mut rb) => rb.times = Some(n),
-            None => self.record_error(StoreError::RuntimeError(
-                "times() must immediately follow repeat().".to_string(),
-            )),
+            None => {
+                self.record_error(StoreError::TraversalError("times() must immediately follow repeat().".to_string()))
+            }
         }
         self
     }
@@ -620,9 +591,9 @@ pub trait TraversalBuilder: PlanAppender {
         }
         match self.pending_repeat_mut() {
             Some(ref mut rb) => rb.until = Some(cond.into_plan()),
-            None => self.record_error(StoreError::RuntimeError(
-                "until() must immediately follow repeat().".to_string(),
-            )),
+            None => {
+                self.record_error(StoreError::TraversalError("until() must immediately follow repeat().".to_string()))
+            }
         }
         self
     }
@@ -630,9 +601,9 @@ pub trait TraversalBuilder: PlanAppender {
     fn emit(mut self) -> Self {
         match self.pending_repeat_mut() {
             Some(ref mut rb) => rb.emit = EmitSpec::Always,
-            None => self.record_error(StoreError::RuntimeError(
-                "emit() must immediately follow repeat().".to_string(),
-            )),
+            None => {
+                self.record_error(StoreError::TraversalError("emit() must immediately follow repeat().".to_string()))
+            }
         }
         self
     }
@@ -644,9 +615,9 @@ pub trait TraversalBuilder: PlanAppender {
         }
         match self.pending_repeat_mut() {
             Some(ref mut rb) => rb.emit = EmitSpec::If(cond.into_plan()),
-            None => self.record_error(StoreError::RuntimeError(
-                "emit_if() must immediately follow repeat().".to_string(),
-            )),
+            None => {
+                self.record_error(StoreError::TraversalError("emit_if() must immediately follow repeat().".to_string()))
+            }
         }
         self
     }
@@ -662,11 +633,23 @@ pub struct ReadTraversal<'s> {
     ctx: &'s mut dyn GraphCtx,
     pub(crate) error: Option<StoreError>,
     pending_repeat: Option<RepeatBuilder>,
+    prop_keys: Option<Vec<SmolStr>>,
 }
 
 impl<'s> ReadTraversal<'s> {
     pub(crate) fn new(ctx: &'s mut dyn GraphCtx) -> Self {
-        Self { plan: LogicalPlan { steps: vec![] }, ctx, error: None, pending_repeat: None }
+        Self { plan: LogicalPlan { steps: vec![] }, ctx, error: None, pending_repeat: None, prop_keys: None }
+    }
+
+    /// Configure property fetching for this traversal.
+    ///
+    /// With no arguments, all properties are fetched (matching the pre-0.2.0 behavior).
+    /// With a list of keys, only those named properties are returned.
+    /// Without this call, elements are returned with id + label only.
+    #[allow(non_snake_case)]
+    pub fn withProperties(mut self, keys: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
+        self.prop_keys = Some(keys.into_iter().map(Into::into).collect());
+        self
     }
 
     /// Build the physical plan and return a lazy iterator over all results.
@@ -675,11 +658,11 @@ impl<'s> ReadTraversal<'s> {
             return Err(err);
         }
         if self.pending_repeat.is_some() {
-            return Err(StoreError::RuntimeError(
-                "Incomplete repeat(): must call .times(n) or .until(cond) or .emit() before building.".to_string(),
+            return Err(StoreError::TraversalError(
+                "repeat() requires at least one stop condition — call .times(n) or .until(cond).".to_string(),
             ));
         }
-        GraphTraversal { plan: self.plan, error: None, pending_repeat: None }.build(self.ctx)
+        GraphTraversal { plan: self.plan, error: None, pending_repeat: None }.build(self.ctx, self.prop_keys)
     }
 
     /// Execute and return the first result (`tryNext()` in Gremlin).
@@ -693,6 +676,7 @@ impl<'s> ReadTraversal<'s> {
     }
 }
 
+#[allow(private_interfaces)]
 impl PlanAppender for ReadTraversal<'_> {
     fn plan_mut(&mut self) -> &mut LogicalPlan {
         &mut self.plan
@@ -715,11 +699,19 @@ pub struct WriteTraversal<'s> {
     ctx: &'s mut dyn GraphCtx,
     pub(crate) error: Option<StoreError>,
     pending_repeat: Option<RepeatBuilder>,
+    prop_keys: Option<Vec<SmolStr>>,
 }
 
 impl<'s> WriteTraversal<'s> {
     pub(crate) fn new(ctx: &'s mut dyn GraphCtx) -> Self {
-        Self { plan: LogicalPlan { steps: vec![] }, ctx, error: None, pending_repeat: None }
+        Self { plan: LogicalPlan { steps: vec![] }, ctx, error: None, pending_repeat: None, prop_keys: None }
+    }
+
+    /// Configure property fetching for this traversal (see [`ReadTraversal::withProperties`]).
+    #[allow(non_snake_case)]
+    pub fn withProperties(mut self, keys: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
+        self.prop_keys = Some(keys.into_iter().map(Into::into).collect());
+        self
     }
 
     // ── Concrete mutating methods ─────────────────────────────────────────────
@@ -789,11 +781,11 @@ impl<'s> WriteTraversal<'s> {
             return Err(err);
         }
         if self.pending_repeat.is_some() {
-            return Err(StoreError::RuntimeError(
-                "Incomplete repeat(): must call .times(n) or .until(cond) or .emit() before building.".to_string(),
+            return Err(StoreError::TraversalError(
+                "repeat() requires at least one stop condition — call .times(n) or .until(cond).".to_string(),
             ));
         }
-        GraphTraversal { plan: self.plan, error: None, pending_repeat: None }.build(self.ctx)
+        GraphTraversal { plan: self.plan, error: None, pending_repeat: None }.build(self.ctx, self.prop_keys)
     }
 
     /// Execute and return the first result.
@@ -807,6 +799,7 @@ impl<'s> WriteTraversal<'s> {
     }
 }
 
+#[allow(private_interfaces)]
 impl PlanAppender for WriteTraversal<'_> {
     fn plan_mut(&mut self) -> &mut LogicalPlan {
         &mut self.plan

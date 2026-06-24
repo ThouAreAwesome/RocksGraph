@@ -58,7 +58,7 @@ impl CoreStep for VecSourceStep {
     fn produce(&mut self, _ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
         // Emits all currently held `Traverser` items and then clears its internal buffer.
         if !self.items.is_empty() {
-            Ok(Some(self.items.drain(..).collect()))
+            Ok(Some(std::mem::take(&mut self.items)))
         } else {
             Ok(None)
         }

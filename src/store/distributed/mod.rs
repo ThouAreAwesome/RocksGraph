@@ -15,6 +15,12 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
-pub mod batch;
-pub mod router;
-pub mod rpc;
+//! Placeholder for a future distributed / multi-node storage backend.
+//!
+//! Not yet implemented — RocksGraph is currently single-node (RocksDB only).
+//! See [`rocks`](super::rocks) for the production storage implementation.
+
+// When this module is populated, uncomment the relevant sub-modules:
+// pub mod batch;
+// pub mod router;
+// pub mod rpc;

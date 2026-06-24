@@ -260,7 +260,7 @@ mod tests {
     impl GraphSnapshot for MockSnapshot {
         fn get_vertex(&mut self, key: VertexKey) -> Result<Option<Vertex>, StoreError> {
             if key == 999 {
-                return Err(StoreError::Other("test vertex error".to_string()));
+                return Err(StoreError::TraversalError("test vertex error".to_string()));
             }
             if key == 1 {
                 Ok(Some(Vertex::with_props(1, 2, vec![])))
@@ -270,7 +270,7 @@ mod tests {
         }
         fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<Edge>, StoreError> {
             if key.primary_id == 999 {
-                return Err(StoreError::Other("test edge error".to_string()));
+                return Err(StoreError::TraversalError("test edge error".to_string()));
             }
             if key.primary_id == 1 {
                 Ok(Some(Edge::with_props(1, 2, 3, 0, vec![])))
@@ -293,7 +293,7 @@ mod tests {
     impl GraphTransaction for MockTxn {
         fn get_vertex(&mut self, key: VertexKey) -> Result<Option<Vertex>, StoreError> {
             if key == 999 {
-                return Err(StoreError::Other("test vertex error".to_string()));
+                return Err(StoreError::TraversalError("test vertex error".to_string()));
             }
             if key == 1 {
                 Ok(Some(Vertex::with_props(1, 2, vec![])))
@@ -306,7 +306,7 @@ mod tests {
         }
         fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<Edge>, StoreError> {
             if key.primary_id == 999 {
-                return Err(StoreError::Other("test edge error".to_string()));
+                return Err(StoreError::TraversalError("test edge error".to_string()));
             }
             if key.primary_id == 1 {
                 Ok(Some(Edge::with_props(1, 2, 3, 0, vec![])))

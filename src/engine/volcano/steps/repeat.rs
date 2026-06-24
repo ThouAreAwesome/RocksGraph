@@ -68,12 +68,7 @@ pub struct RepeatStep {
 }
 
 impl RepeatStep {
-    pub fn new(
-        body: PhysicalPlan,
-        until: Option<PhysicalPlan>,
-        times: Option<u32>,
-        emit: PhysicalEmitMode,
-    ) -> Self {
+    pub fn new(body: PhysicalPlan, until: Option<PhysicalPlan>, times: Option<u32>, emit: PhysicalEmitMode) -> Self {
         Self {
             upstream: None,
             body,
@@ -117,11 +112,7 @@ impl RepeatStep {
 }
 
 /// Helper: reset `plan`, inject `t`, then return whether `plan.next()` yields something.
-fn sub_plan_matches(
-    plan: &PhysicalPlan,
-    t: &Rc<Traverser>,
-    ctx: &mut dyn GraphCtx,
-) -> Result<bool, StoreError> {
+fn sub_plan_matches(plan: &PhysicalPlan, t: &Rc<Traverser>, ctx: &mut dyn GraphCtx) -> Result<bool, StoreError> {
     plan.reset();
     plan.inject(smallvec![Rc::clone(t)]);
     Ok(plan.next(ctx)?.is_some())
@@ -132,10 +123,7 @@ impl CoreStep for RepeatStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(
-        &mut self,
-        ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
         loop {
             // ── Drain ready queue first ──
             if let Some(t) = self.ready.pop_front() {

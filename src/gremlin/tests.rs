@@ -26,6 +26,7 @@ mod integration_test {
         },
         types::{BatchScenario, StoreError},
     };
+    use smol_str::SmolStr;
 
     /// Populate the TinkerPop Modern Graph into an open transaction.
     /// Caller is responsible for committing.
@@ -701,9 +702,9 @@ mod integration_test {
 
         tx.commit().unwrap();
 
-        // Read and verify Vertex properties
+        // Read and verify Vertex properties (withProperties requests all)
         let mut read = graph.read();
-        let val_v = read.g().V([1]).next().unwrap().unwrap();
+        let val_v = read.g().withProperties([] as [&str; 0]).V([1]).next().unwrap().unwrap();
         if let Value::Vertex(v) = val_v {
             assert_eq!(v.properties.get("p_bool").unwrap()[0], Value::Bool(true));
             assert_eq!(v.properties.get("p_i32").unwrap()[0], Value::Int32(42));
@@ -717,8 +718,8 @@ mod integration_test {
             panic!("Expected Vertex");
         }
 
-        // Read and verify Edge properties
-        let val_e = read.g().V([1]).outE(["AllTypesE"]).next().unwrap().unwrap();
+        // Read and verify Edge properties (withProperties requests all)
+        let val_e = read.g().withProperties([] as [&str; 0]).V([1]).outE(["AllTypesE"]).next().unwrap().unwrap();
         if let Value::Edge(e) = val_e {
             assert_eq!(*e.properties.get("p_bool").unwrap(), Value::Bool(false));
             assert_eq!(*e.properties.get("p_i32").unwrap(), Value::Int32(100));
@@ -1328,7 +1329,7 @@ mod integration_test {
         // repeat() without .times() or .until() must error at build time
         let res = tx.g().V([1]).repeat(__().out(["knows", "created"])).next();
         assert!(
-            matches!(res, Err(StoreError::RuntimeError(msg)) if msg.contains("Incomplete repeat()"))
+            matches!(res, Err(StoreError::TraversalError(msg)) if msg.contains("repeat() requires at least one stop condition"))
         );
     }
 
@@ -1338,9 +1339,7 @@ mod integration_test {
         let mut tx = graph.begin();
 
         let res = tx.g().V([1]).repeat(__().out(["knows", "created"])).times(0).next();
-        assert!(
-            matches!(res, Err(StoreError::RuntimeError(msg)) if msg.contains("times(0)"))
-        );
+        assert!(matches!(res, Err(StoreError::TraversalError(msg)) if msg.contains("times(0)")));
     }
 
     #[test]
@@ -1350,7 +1349,7 @@ mod integration_test {
 
         let res = tx.g().V([1]).until(__().hasLabel(["software"])).next();
         assert!(
-            matches!(res, Err(StoreError::RuntimeError(msg)) if msg.contains("until() must immediately follow repeat()"))
+            matches!(res, Err(StoreError::TraversalError(msg)) if msg.contains("until() must immediately follow repeat()"))
         );
     }
 
@@ -1361,7 +1360,7 @@ mod integration_test {
 
         let res = tx.g().V([1]).emit().next();
         assert!(
-            matches!(res, Err(StoreError::RuntimeError(msg)) if msg.contains("emit() must immediately follow repeat()"))
+            matches!(res, Err(StoreError::TraversalError(msg)) if msg.contains("emit() must immediately follow repeat()"))
         );
     }
 
@@ -1372,7 +1371,7 @@ mod integration_test {
 
         let res = tx.g().V([1]).emit_if(__().hasLabel(["person"])).next();
         assert!(
-            matches!(res, Err(StoreError::RuntimeError(msg)) if msg.contains("emit_if() must immediately follow repeat()"))
+            matches!(res, Err(StoreError::TraversalError(msg)) if msg.contains("emit_if() must immediately follow repeat()"))
         );
     }
 
@@ -1405,17 +1404,12 @@ mod integration_test {
         let mut tx = graph.begin();
 
         // V(1).repeat(out()).times(2).values("name") — find 2-hop neighbor names
-        let names = tx
-            .g()
-            .V([1])
-            .repeat(__().out(["knows", "created"]))
-            .times(2)
-            .values(["name"])
-            .to_list()
-            .unwrap();
+        let names = tx.g().V([1]).repeat(__().out(["knows", "created"])).times(2).values(["name"]).to_list().unwrap();
         assert_eq!(names.len(), 2);
-        let mut name_strs: Vec<String> =
-            names.iter().map(|v| if let Value::String(s) = v { s.clone() } else { panic!("expected string") }).collect();
+        let mut name_strs: Vec<String> = names
+            .iter()
+            .map(|v| if let Value::String(s) = v { s.clone() } else { panic!("expected string") })
+            .collect();
         name_strs.sort();
         // 2-hop from marko: ripple (via josh→created), lop (via josh→created)
         assert_eq!(name_strs, vec!["lop", "ripple"]);
@@ -1445,35 +1439,261 @@ mod integration_test {
             .values(["name"])
             .to_list()
             .unwrap();
-        let mut name_strs: Vec<String> =
-            results.iter().map(|v| if let Value::String(s) = v { s.clone() } else { panic!("expected string") }).collect();
+        let mut name_strs: Vec<String> = results
+            .iter()
+            .map(|v| if let Value::String(s) = v { s.clone() } else { panic!("expected string") })
+            .collect();
         name_strs.sort();
         assert_eq!(name_strs, vec!["josh", "vadas"]);
     }
 
     #[test]
-    fn test_e2e_repeat_path_tracking() {
+    fn test_with_properties_default_no_properties() {
+        let graph = setup_modern_graph();
+        let mut read = graph.read();
+
+        // Default: no withProperties() → id and label only, no properties.
+        let val = read.g().V([1]).next().unwrap().unwrap();
+        if let Value::Vertex(v) = val {
+            assert_eq!(v.id, 1);
+            assert_eq!(v.label, SmolStr::from("person"));
+            assert!(v.properties.is_empty(), "default should return empty properties");
+        } else {
+            panic!("Expected Vertex");
+        }
+    }
+
+    #[test]
+    fn test_with_properties_empty_returns_all() {
+        let graph = setup_modern_graph();
+        let mut read = graph.read();
+
+        // Empty keys → all properties (matching `[] = all` convention).
+        let val = read.g().withProperties([] as [&str; 0]).V([1]).next().unwrap().unwrap();
+        if let Value::Vertex(v) = val {
+            assert_eq!(v.id, 1);
+            assert_eq!(v.label, SmolStr::from("person"));
+            assert_eq!(v.properties.get("name").unwrap()[0], Value::String("marko".to_string()));
+            assert_eq!(v.properties.get("age").unwrap()[0], Value::Int32(29));
+        } else {
+            panic!("Expected Vertex");
+        }
+    }
+
+    #[test]
+    fn test_with_properties_named_keys() {
+        let graph = setup_modern_graph();
+        let mut read = graph.read();
+
+        // Named keys → only requested properties.
+        let val = read.g().withProperties(["age"]).V([1]).next().unwrap().unwrap();
+        if let Value::Vertex(v) = val {
+            assert_eq!(v.id, 1);
+            assert_eq!(v.label, SmolStr::from("person"));
+            assert!(v.properties.contains_key("age"), "age should be present");
+            assert!(!v.properties.contains_key("name"), "name should NOT be present");
+            assert_eq!(v.properties.get("age").unwrap()[0], Value::Int32(29));
+        } else {
+            panic!("Expected Vertex");
+        }
+    }
+
+    #[test]
+    fn test_with_properties_edge_default_no_properties() {
+        let graph = setup_modern_graph();
+        let mut read = graph.read();
+
+        // Default on edge: id/label only, no properties, zero store reads.
+        let val = read.g().V([1]).outE(["knows"]).next().unwrap().unwrap();
+        if let Value::Edge(e) = val {
+            assert_eq!(e.out_v, 1);
+            assert_eq!(e.label, SmolStr::from("knows"));
+            assert!(e.properties.is_empty(), "default should return empty edge properties");
+        } else {
+            panic!("Expected Edge");
+        }
+    }
+
+    #[test]
+    fn test_with_properties_edge_all() {
+        let graph = setup_modern_graph();
+        let mut read = graph.read();
+
+        // Empty keys on edge → all properties.
+        let val = read.g().withProperties([] as [&str; 0]).V([1]).outE(["knows"]).next().unwrap().unwrap();
+        if let Value::Edge(e) = val {
+            assert_eq!(e.out_v, 1);
+            assert_eq!(e.label, SmolStr::from("knows"));
+            assert_eq!(*e.properties.get("weight").unwrap(), Value::Float64(0.5));
+        } else {
+            panic!("Expected Edge");
+        }
+    }
+
+    #[test]
+    fn test_with_properties_edge_named_keys() {
+        let graph = setup_modern_graph();
+        let mut read = graph.read();
+
+        // Named keys on edge → only requested properties.
+        let val = read.g().withProperties(["weight"]).V([1]).outE(["knows"]).next().unwrap().unwrap();
+        if let Value::Edge(e) = val {
+            assert_eq!(e.out_v, 1);
+            assert_eq!(e.label, SmolStr::from("knows"));
+            assert!(e.properties.contains_key("weight"), "weight should be present");
+            assert_eq!(e.properties.len(), 1, "only weight should be returned");
+        } else {
+            panic!("Expected Edge");
+        }
+    }
+
+    #[test]
+    fn test_with_properties_unaffected_by_count() {
+        let graph = setup_modern_graph();
+        let mut read = graph.read();
+
+        // count() returns a Scalar, unaffected by withProperties.
+        let count = read.g().withProperties([] as [&str; 0]).V([]).count().next().unwrap().unwrap();
+        assert_eq!(count, Value::Int64(6));
+    }
+
+    // ── not / and / or / sum / mean / max / min / unfold ────────────────────
+
+    #[test]
+    fn test_not_filter() {
         let graph = setup_modern_graph();
         let mut tx = graph.begin();
 
-        // V(1).repeat(out()).times(2).path()
-        let results = tx
+        // V([]).not(__().hasLabel("person")).values("name") → software vertices only
+        let names =
+            tx.g().V([]).hasId([1, 2, 3, 4, 5, 6]).not(__().hasLabel(["person"])).values(["name"]).to_list().unwrap();
+        let mut s: Vec<String> =
+            names.iter().map(|v| if let Value::String(s) = v { s.clone() } else { panic!() }).collect();
+        s.sort();
+        assert_eq!(s, vec!["lop", "ripple"]);
+    }
+
+    #[test]
+    fn test_and_filter() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+
+        // V([]).and([__.hasLabel("person"), __.has("age", gt(30))]).values("name") → josh, peter
+        let names = tx
             .g()
-            .V([1])
-            .repeat(__().out(["knows", "created"]))
-            .times(2)
-            .path()
+            .V([])
+            .hasId([1, 2, 3, 4, 5, 6])
+            .and([__().hasLabel(["person"]), __().has("age", crate::gremlin::value::gt(30i32))])
+            .values(["name"])
             .to_list()
             .unwrap();
+        let mut s: Vec<String> =
+            names.iter().map(|v| if let Value::String(s) = v { s.clone() } else { panic!() }).collect();
+        s.sort();
+        assert_eq!(s, vec!["josh", "peter"]);
+    }
 
-        // 2-hop paths: marko→josh→ripple, marko→josh→lop
-        assert_eq!(results.len(), 2);
+    #[test]
+    fn test_or_filter() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+
+        // V([]).or([__.has("name", "marko"), __.has("name", "lop")]).values("name")
+        let names = tx
+            .g()
+            .V([])
+            .hasId([1, 2, 3, 4, 5, 6])
+            .or([__().has("name", "marko"), __().has("name", "lop")])
+            .values(["name"])
+            .to_list()
+            .unwrap();
+        let mut s: Vec<String> =
+            names.iter().map(|v| if let Value::String(s) = v { s.clone() } else { panic!() }).collect();
+        s.sort();
+        assert_eq!(s, vec!["lop", "marko"]);
+    }
+
+    #[test]
+    fn test_sum_mean_max_min() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+
+        // Sum of ages: marko(29) + vadas(27) + josh(32) + peter(35) = 123
+        let sum_val = tx.g().V([]).hasLabel(["person"]).values(["age"]).sum().next().unwrap().unwrap();
+        assert_eq!(sum_val, Value::Int64(123));
+
+        // Mean: 123 / 4 = 30.75
+        let mean_val = tx.g().V([]).hasLabel(["person"]).values(["age"]).mean().next().unwrap().unwrap();
+        assert_eq!(mean_val, Value::Float64(30.75));
+
+        // Max: 35
+        let max_val = tx.g().V([]).hasLabel(["person"]).values(["age"]).max().next().unwrap().unwrap();
+        assert_eq!(max_val, Value::Int64(35));
+
+        // Min: 27
+        let min_val = tx.g().V([]).hasLabel(["person"]).values(["age"]).min().next().unwrap().unwrap();
+        assert_eq!(min_val, Value::Int64(27));
+    }
+
+    #[test]
+    fn test_unfold() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+
+        // fold then unfold: round-trip
+        let names = tx.g().V([1]).values(["name", "age"]).fold().unfold().to_list().unwrap();
+        assert_eq!(names.len(), 2);
+        let s: Vec<String> = names.iter().map(|v| format!("{:?}", v)).collect();
+        // Check both expected values are present (order is preserved from the list)
+        let joined = s.join(",");
+        assert!(joined.contains("marko"), "expected 'marko' in: {}", joined);
+        assert!(joined.contains("29"), "expected '29' in: {}", joined);
+    }
+
+    // ── as / select ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_as_select_round_trip() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+
+        // V(1).as_("start").out("knows").as_("friend").select("start").values("name") → marko (the start vertex)
+        let names =
+            tx.g().V([1]).as_("start").out(["knows"]).as_("friend").select("start").values(["name"]).to_list().unwrap();
+
+        // select("start") returns the traverser labeled "start" = vertex 1 (marko), for each outgoing edge
+        assert!(!names.is_empty());
+        for n in &names {
+            assert_eq!(n, &Value::String("marko".to_string()));
+        }
+    }
+
+    #[test]
+    fn test_as_select_with_path() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+
+        // V(1).as_("a").out("knows").as_("b").select("b").values("name").path() → paths ending at the friend
+        let results =
+            tx.g().V([1]).as_("a").out(["knows"]).as_("b").select("b").values(["name"]).path().to_list().unwrap();
+
+        // select("b") picks up the friend, then values("name") extracts their name
+        assert!(!results.is_empty());
         for res in &results {
             if let Value::Path(p) = res {
-                assert_eq!(p.len(), 3, "path should have 3 elements");
-            } else {
-                panic!("expected Path, got {:?}", res);
+                // Path should include: V(1), outE, friend vertex, name scalar
+                assert!(p.len() >= 2, "path should have at least 2 elements");
             }
         }
+    }
+
+    #[test]
+    fn test_select_without_matching_label_filters_out() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+
+        // V(1).out("knows").select("nonexistent") → nothing, since no label matches
+        let results = tx.g().V([1]).out(["knows"]).select("nonexistent").to_list().unwrap();
+        assert!(results.is_empty());
     }
 }

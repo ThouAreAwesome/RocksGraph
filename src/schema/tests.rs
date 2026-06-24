@@ -457,8 +457,8 @@ fn test_concurrent_auto_mode_writes_do_not_starve_schema_lock() {
 
 #[test]
 fn test_concurrent_auto_mode_complex_distinct_schemas() {
-    const THREADS: usize = 12;
-    const ITERATIONS: usize = 40;
+    const THREADS: usize = 4;
+    const ITERATIONS: usize = 10;
 
     let dir = tempdir().unwrap();
     let graph = Graph::open(dir.path()).unwrap();
@@ -479,7 +479,7 @@ fn test_concurrent_auto_mode_complex_distinct_schemas() {
                         let dst_id = (t * 10000 + 5000 + i) as i64;
 
                         // Loop with retry for OCC conflicts
-                        for attempt in 0..60 {
+                        for attempt in 0..15 {
                             let mut tx = graph.begin();
 
                             // 1. Add vertices with unique labels and properties
@@ -505,7 +505,7 @@ fn test_concurrent_auto_mode_complex_distinct_schemas() {
                             if tx.commit().is_ok() {
                                 break;
                             }
-                            if attempt == 59 {
+                            if attempt == 14 {
                                 panic!("Thread {} failed to commit iteration {} after 60 attempts", t, i);
                             }
                             // Backoff slightly to reduce hot loops

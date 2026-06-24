@@ -546,7 +546,7 @@ impl<S: GraphStore> LogicalGraph<S> {
                 }
                 Ok(self.edges.get_mut(&ek).unwrap().get_property(prop_key_id))
             }
-            CanonicalKey::Empty => Err(StoreError::RuntimeError("Property owner cannot be empty".to_string())),
+            CanonicalKey::Empty => Err(StoreError::TraversalError("Property owner cannot be empty".to_string())),
         }
     }
 
@@ -628,7 +628,7 @@ impl<S: GraphStore> LogicalGraph<S> {
                     .collect();
                 Ok(Some((label_id, props)))
             }
-            CanonicalKey::Empty => Err(StoreError::RuntimeError("Element key cannot be empty".to_string())),
+            CanonicalKey::Empty => Err(StoreError::TraversalError("Element key cannot be empty".to_string())),
         }
     }
 
@@ -840,7 +840,7 @@ impl<S: GraphStore> LogicalGraph<S> {
                 self.mark_dirty(key, Existence::Modified);
             }
             CanonicalKey::Empty => {
-                return Err(StoreError::RuntimeError("Property owner cannot be empty".to_string()));
+                return Err(StoreError::TraversalError("Property owner cannot be empty".to_string()));
             }
         }
         Ok(())
@@ -888,7 +888,7 @@ impl<S: GraphStore> LogicalGraph<S> {
                 self.mark_dirty(key, Existence::Modified);
             }
             CanonicalKey::Empty => {
-                return Err(StoreError::RuntimeError("Property owner cannot be empty".to_string()));
+                return Err(StoreError::TraversalError("Property owner cannot be empty".to_string()));
             }
         }
         Ok(())
@@ -968,7 +968,7 @@ impl<S: GraphStore> LogicalGraph<S> {
                 }
             }
             CanonicalKey::Empty => {
-                return Err(StoreError::RuntimeError("Element key cannot be empty".to_string()));
+                return Err(StoreError::TraversalError("Element key cannot be empty".to_string()));
             }
         }
         Ok(())
@@ -1023,7 +1023,7 @@ impl<S: GraphStore> LogicalGraph<S> {
                     self.store.delete_edge(&cek.in_key())?;
                 }
                 (CanonicalKey::Empty, _) => {
-                    return Err(StoreError::RuntimeError("Element key cannot be empty".to_string()));
+                    return Err(StoreError::TraversalError("Element key cannot be empty".to_string()));
                 }
             }
         }
@@ -1282,7 +1282,7 @@ impl<S: GraphStore> LogicalSnapshot<S> {
                 }
             }
             CanonicalKey::Edge(ek) => Ok(self.edges.get_mut(&ek).and_then(|eg| eg.get_property(prop_key_id))),
-            CanonicalKey::Empty => Err(StoreError::RuntimeError("Property owner cannot be empty".to_string())),
+            CanonicalKey::Empty => Err(StoreError::TraversalError("Property owner cannot be empty".to_string())),
         }
     }
 
@@ -1348,7 +1348,7 @@ impl<S: GraphStore> LogicalSnapshot<S> {
                     .collect();
                 Ok(Some((label_id, props)))
             }
-            CanonicalKey::Empty => Err(StoreError::RuntimeError("Element key cannot be empty".to_string())),
+            CanonicalKey::Empty => Err(StoreError::TraversalError("Element key cannot be empty".to_string())),
         }
     }
 }

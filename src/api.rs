@@ -23,7 +23,7 @@
 //!   │               └── .g() → ReadTraversal
 //!   │                           .V([1]).out(&["knows"]).next()?       // Option<GValue>
 //!   │                           .V([]).values(&["name"]).to_list()? // Vec<GValue>
-//!   │                           .V([]).out([]).iter()?             // BuiltTraversal (Iterator)
+//!   │                           .V([]).out([]).iter().unwrap()             // BuiltTraversal (Iterator)
 //!   └── .begin() → TxSession     (OCC transaction, read-write)
 //!                   ├── .g() → WriteTraversal
 //!                   │           .addV(label).property(…).next()?
@@ -69,11 +69,14 @@ use crate::{
 /// Cheap to clone — wraps an `Arc` internally.
 ///
 /// # Example
-/// ```ignore
-/// let graph = Graph::open("./my_graph")?;
+/// ```no_run
+/// # use rocksgraph::{Graph, TraversalBuilder};
+/// # let dir = tempfile::tempdir().unwrap();
+/// # let graph = Graph::open(dir.path()).unwrap();
 /// let mut snap = graph.read();
-/// let person  = snap.g().V([1]).out(&["knows"]).next()?;            // Option<GValue>
-/// let names   = snap.g().V([1]).out(&["knows"]).values(&["name"]).to_list()?; // Vec<GValue>
+/// let person = snap.g().V([1]).out(["knows"]).next().unwrap();
+/// let names  = snap.g().V([1]).out(["knows"]).values(["name"]).to_list().unwrap();
+/// # graph.close().unwrap();
 /// ```
 pub struct Graph {
     store: Arc<RocksStorage>,
@@ -135,6 +138,25 @@ impl Graph {
     pub fn begin(&self) -> TxSession {
         TxSession { ctx: LogicalGraph::new(self.store.begin(), Arc::clone(&self.schema)), committed: false }
     }
+
+    /// Close the database, releasing all RocksDB resources.
+    ///
+    /// After calling this, no further sessions or queries can be created
+    /// from this `Graph` handle or any clone.  In tests, call this before
+    /// the temporary directory is dropped so RocksDB can flush and close
+    /// its files cleanly.
+    pub fn close(self) -> Result<(), StoreError> {
+        // Dropping the Arc will close RocksDB if this is the last reference.
+        match Arc::try_unwrap(self.store) {
+            Ok(_store) => Ok(()),
+            Err(arc) => {
+                // Other references exist (e.g. open snapshots). The DB will
+                // close when the last reference drops — this is a best-effort.
+                drop(arc);
+                Ok(())
+            }
+        }
+    }
 }
 
 impl Clone for Graph {
@@ -158,14 +180,18 @@ impl Graph {
 /// Dropped automatically with no side effects.
 ///
 /// # Example
-/// ```ignore
+/// ```no_run
+/// # use rocksgraph::{Graph, TraversalBuilder};
+/// # let dir = tempfile::tempdir().unwrap();
+/// # let graph = Graph::open(dir.path()).unwrap();
 /// let mut snap = graph.read();
-/// let names = snap.g().V([1]).out([KNOWS]).values(["name"]).to_list()?;  // Vec<GValue>
+/// let names = snap.g().V([1]).out(["knows"]).values(["name"]).to_list().unwrap();
 ///
 /// // Lazy iteration
-/// for item in snap.g().V([]).out([KNOWS]).iter()? {
-///     println!("{:?}", item?);
+/// for item in snap.g().V([]).out(["knows"]).iter().unwrap() {
+///     println!("{:?}", item.unwrap());
 /// }
+/// # graph.close().unwrap();
 /// ```
 pub struct ReadSession {
     ctx: LogicalSnapshot<RocksStorage>,
@@ -205,11 +231,15 @@ impl ReadSession {
 /// Dropped without `commit()` / `rollback()` → automatic rollback.
 ///
 /// # Example
-/// ```ignore
+/// ```no_run
+/// # use rocksgraph::{Graph, TraversalBuilder};
+/// # let dir = tempfile::tempdir().unwrap();
+/// # let graph = Graph::open(dir.path()).unwrap();
 /// let mut tx = graph.begin();
-/// tx.g().addV(PERSON).property("id", 1i64).property("name", "Alice").next()?;
-/// let names = tx.g().V([1]).out([KNOWS]).values(["name"]).to_list()?;
-/// tx.commit()?;
+/// tx.g().addV("person").property("id", 1i64).property("name", "Alice").next().unwrap();
+/// let names = tx.g().V([1]).out(["knows"]).values(["name"]).to_list().unwrap();
+/// tx.commit().unwrap();
+/// # graph.close().unwrap();
 /// ```
 pub struct TxSession {
     ctx: LogicalGraph<RocksStorage>,

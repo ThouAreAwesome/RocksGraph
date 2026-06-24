@@ -32,8 +32,7 @@ use crate::{
 
 /// Rewrites a `LogicalPlan` into a more efficient equivalent before physical planning.
 pub fn apply_rules(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
-    // all the optimizers we want to apply to the logical plan.
-    let optimizers: Vec<OptimizerRule> = vec![
+    const OPTIMIZERS: &[OptimizerRule] = &[
         reorder_filter::reorder_filters,
         merge_v_id_filter::merge_v_id_filter,
         merge_addv_id::merge_addv_id,
@@ -44,11 +43,9 @@ pub fn apply_rules(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
         merge_end_vertex_filter::merge_end_vertex_filter,
     ];
     let mut plan_changed = true;
-    // apply optimizers to each step first, then to the whole plan. this allows optimizers to terget specific patterns
-    // in steps, which is common for most optimizations.
     while plan_changed {
         plan_changed = false;
-        for opt in &optimizers {
+        for opt in OPTIMIZERS {
             plan_changed |= plan.optimize(opt)?;
         }
     }

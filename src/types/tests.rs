@@ -140,9 +140,8 @@ mod type_tests {
             StoreError::SchemaConflict("sc".to_string()),
             StoreError::SchemaExhausted("se".to_string()),
             StoreError::UnsupportedOperation("uo".to_string()),
-            StoreError::RuntimeError("re".to_string()),
+            StoreError::TraversalError("re".to_string()),
             StoreError::UnexpectedDataType("ud".to_string()),
-            StoreError::Other("other".to_string()),
         ];
 
         for e in &errs {
@@ -152,12 +151,38 @@ mod type_tests {
             let _ = e.source();
         }
 
+        let rocks_err2 = rocks_err.clone();
         let from_rocks: StoreError = rocks_err.into();
         assert!(matches!(from_rocks, StoreError::RocksDb(_)));
 
         let io_err = IoError::other("err");
         let from_io: StoreError = io_err.into();
         assert!(matches!(from_io, StoreError::Io(_)));
+
+        // Classification helpers
+        assert!(StoreError::Conflict.is_retryable());
+        assert!(StoreError::LockError.is_retryable());
+        assert!(!StoreError::NotFound.is_retryable());
+
+        assert!(StoreError::RocksDb(rocks_err2.clone()).is_storage_failure());
+        assert!(StoreError::Io(IoError::other("io")).is_storage_failure());
+        assert!(StoreError::CorruptData("x").is_storage_failure());
+        assert!(StoreError::MissingColumnFamily("x").is_storage_failure());
+        assert!(!StoreError::Conflict.is_storage_failure());
+
+        assert!(StoreError::SchemaViolation("x".into()).is_schema_error());
+        assert!(!StoreError::Conflict.is_schema_error());
+
+        assert!(StoreError::TraversalError("x".into()).is_query_error());
+        assert!(StoreError::UnsupportedOperation("x".into()).is_query_error());
+        assert!(StoreError::UnexpectedDataType("x".into()).is_query_error());
+        assert!(!StoreError::Conflict.is_query_error());
+
+        assert_eq!(StoreError::RocksDb(rocks_err2.clone()).category(), "storage");
+        assert_eq!(StoreError::Conflict.category(), "transaction");
+        assert_eq!(StoreError::SchemaViolation("x".into()).category(), "schema");
+        assert_eq!(StoreError::NotFound.category(), "integrity");
+        assert_eq!(StoreError::TraversalError("x".into()).category(), "query");
     }
 
     #[test]
