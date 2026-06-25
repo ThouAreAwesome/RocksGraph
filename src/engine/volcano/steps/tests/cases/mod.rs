@@ -2526,5 +2526,6 @@ mod range_skip_tail_tests;
 mod order_tests;
 mod simple_cyclic_path_tests;
 mod group_tests;
+mod choose_tests;
 mod repeat;
 mod unfold_tests;

@@ -93,3 +93,23 @@ fn test_group_count_upper() {
     step.add_upper(src.clone() as StepRef);
     assert!(step.upper().is_some());
 }
+
+#[test]
+fn test_group_upper() {
+    let mut step = GroupStep::default();
+    assert!(step.upper().is_none());
+    let src = BufferedStep::new(VecSourceStep::empty());
+    step.add_upper(src.clone() as StepRef);
+    assert!(step.upper().is_some());
+}
+
+#[test]
+fn test_group_count_done_flag() {
+    let src = BufferedStep::new(VecSourceStep::empty());
+    src.inner.borrow_mut().core.inject(smallvec![t(1)]);
+    let mut step = GroupCountStep::default();
+    step.add_upper(src.clone() as StepRef);
+    let mut ctx = NoopCtx;
+    assert!(step.produce(&mut ctx).unwrap().is_some());
+    assert!(step.produce(&mut ctx).unwrap().is_none());
+}

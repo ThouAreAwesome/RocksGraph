@@ -103,3 +103,28 @@ fn test_cyclic_path_reset() {
     src.inner.borrow_mut().core.inject(smallvec![cycle]);
     assert!(step.produce(&mut ctx).unwrap().is_some()); // cycle after reset
 }
+
+#[test]
+fn test_cyclic_path_upper() {
+    let mut step = CyclicPathStep::default();
+    assert!(step.upper().is_none());
+    let src = BufferedStep::new(VecSourceStep::empty());
+    step.add_upper(src.clone() as StepRef);
+    assert!(step.upper().is_some());
+}
+
+#[test]
+fn test_simple_path_reset() {
+    let src = BufferedStep::new(VecSourceStep::empty());
+    src.inner.borrow_mut().core.inject(smallvec![chain()]);
+    let mut step = SimplePathStep::default();
+    step.add_upper(src.clone() as StepRef);
+    let mut ctx = NoopCtx;
+    assert!(step.produce(&mut ctx).unwrap().is_some());
+    step.reset();
+    let v1 = vertex_t(1);
+    let v2 = Rc::new(Traverser { value: GValue::Vertex(2), parent: Some(Rc::clone(&v1)), labels: None });
+    let cycle = Rc::new(Traverser { value: GValue::Vertex(1), parent: Some(v2), labels: None });
+    src.inner.borrow_mut().core.inject(smallvec![cycle]);
+    assert!(step.produce(&mut ctx).unwrap().is_none());
+}

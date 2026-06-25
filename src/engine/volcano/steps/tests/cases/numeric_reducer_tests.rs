@@ -16,6 +16,8 @@ use crate::{
 use smallvec::smallvec;
 use std::rc::Rc;
 
+fn t(v: i64) -> Rc<Traverser> { Traverser::new_rc(GValue::Scalar(Primitive::Int64(v))) }
+
 fn int_t(v: i64) -> Rc<Traverser> {
     Traverser::new_rc(GValue::Scalar(Primitive::Int64(v)))
 }
@@ -231,4 +233,85 @@ fn test_mean_reset() {
     src.inner.borrow_mut().core.inject(smallvec![int_t(100)]);
     let r2 = step.produce(&mut ctx).unwrap().unwrap();
     assert_eq!(r2[0].value, GValue::Scalar(Primitive::Float64(100.0)));
+}
+
+#[test]
+fn test_sum_no_upstream() {
+    let mut step = SumStep::default();
+    let mut ctx = NoopCtx;
+    assert!(step.produce(&mut ctx).unwrap().is_none());
+}
+
+#[test]
+fn test_sum_upper() {
+    let mut step = SumStep::default();
+    assert!(step.upper().is_none());
+    let src = BufferedStep::new(VecSourceStep::empty());
+    step.add_upper(src.clone() as StepRef);
+    assert!(step.upper().is_some());
+}
+
+#[test]
+fn test_mean_no_upstream() {
+    let mut step = MeanStep::default();
+    let mut ctx = NoopCtx;
+    assert!(step.produce(&mut ctx).unwrap().is_none());
+}
+
+#[test]
+fn test_max_no_upstream() {
+    let mut step = MaxStep::default();
+    let mut ctx = NoopCtx;
+    assert!(step.produce(&mut ctx).unwrap().is_none());
+}
+
+#[test]
+fn test_min_no_upstream() {
+    let mut step = MinStep::default();
+    let mut ctx = NoopCtx;
+    assert!(step.produce(&mut ctx).unwrap().is_none());
+}
+
+#[test]
+fn test_sum_done_flag() {
+    let src = BufferedStep::new(VecSourceStep::empty());
+    src.inner.borrow_mut().core.inject(smallvec![t(1)]);
+    let mut step = SumStep::default();
+    step.add_upper(src.clone() as StepRef);
+    let mut ctx = NoopCtx;
+    assert!(step.produce(&mut ctx).unwrap().is_some());
+    assert!(step.produce(&mut ctx).unwrap().is_none());
+}
+
+#[test]
+fn test_mean_done_flag() {
+    let src = BufferedStep::new(VecSourceStep::empty());
+    src.inner.borrow_mut().core.inject(smallvec![t(10)]);
+    let mut step = MeanStep::default();
+    step.add_upper(src.clone() as StepRef);
+    let mut ctx = NoopCtx;
+    assert!(step.produce(&mut ctx).unwrap().is_some());
+    assert!(step.produce(&mut ctx).unwrap().is_none());
+}
+
+#[test]
+fn test_max_done_flag() {
+    let src = BufferedStep::new(VecSourceStep::empty());
+    src.inner.borrow_mut().core.inject(smallvec![t(5)]);
+    let mut step = MaxStep::default();
+    step.add_upper(src.clone() as StepRef);
+    let mut ctx = NoopCtx;
+    assert!(step.produce(&mut ctx).unwrap().is_some());
+    assert!(step.produce(&mut ctx).unwrap().is_none());
+}
+
+#[test]
+fn test_min_done_flag() {
+    let src = BufferedStep::new(VecSourceStep::empty());
+    src.inner.borrow_mut().core.inject(smallvec![t(5)]);
+    let mut step = MinStep::default();
+    step.add_upper(src.clone() as StepRef);
+    let mut ctx = NoopCtx;
+    assert!(step.produce(&mut ctx).unwrap().is_some());
+    assert!(step.produce(&mut ctx).unwrap().is_none());
 }
