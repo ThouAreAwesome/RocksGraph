@@ -65,7 +65,10 @@ impl CoreStep for HasLabelStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
+    fn produce(
+        &mut self,
+        ctx: &mut dyn GraphCtx,
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
         // Produces traversers whose element's label id matches the resolved predicate — a plain
         // integer comparison, no schema lookup needed.
         loop {

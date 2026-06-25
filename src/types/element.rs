@@ -170,10 +170,8 @@ pub struct Edge {
     pub rank: Rank,
     /// Label of the source vertex, when known from the edge's value prefix
     /// (IN-direction reads give this the src label; OUT-direction reads give this the dst label).
-    #[allow(dead_code)] // consumed in Phase 3 (vertex cache)
     pub src_label: Option<LabelId>,
     /// Label of the destination vertex, when known from the edge's value prefix.
-    #[allow(dead_code)] // consumed in Phase 3 (vertex cache)
     pub dst_label: Option<LabelId>,
     /// Raw property blob from the store. `Some` until first decode, then `None`.
     raw_props: Option<(Box<[u8]>, PropDecoder)>,

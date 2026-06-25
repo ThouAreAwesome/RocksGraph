@@ -1,16 +1,23 @@
 // Physical tests: group(), groupCount()
 use crate::engine::volcano::steps::traits::CoreStep;
 use crate::{
-    engine::{context::NoopCtx, traverser::Traverser, volcano::steps::{
-        group::{GroupCountStep, GroupStep},
-        traits::{BufferedStep, StepRef}, vec_source::VecSourceStep,
-    }},
+    engine::{
+        context::NoopCtx,
+        traverser::Traverser,
+        volcano::steps::{
+            group::{GroupCountStep, GroupStep},
+            traits::{BufferedStep, StepRef},
+            vec_source::VecSourceStep,
+        },
+    },
     types::gvalue::{GValue, Primitive},
 };
-use std::rc::Rc;
 use smallvec::smallvec;
+use std::rc::Rc;
 
-fn t(v: i64) -> Rc<Traverser> { Traverser::new_rc(GValue::Scalar(Primitive::Int64(v))) }
+fn t(v: i64) -> Rc<Traverser> {
+    Traverser::new_rc(GValue::Scalar(Primitive::Int64(v)))
+}
 
 #[test]
 fn test_group_step() {
@@ -23,7 +30,9 @@ fn test_group_step() {
     assert_eq!(res.len(), 1);
     if let GValue::Map(entries) = &res[0].value {
         assert_eq!(entries.len(), 3); // keys: 1, 2, 3
-    } else { panic!("expected Map"); }
+    } else {
+        panic!("expected Map");
+    }
 }
 
 #[test]
@@ -39,7 +48,9 @@ fn test_group_count_step() {
         assert_eq!(entries.len(), 3); // keys: 1, 2, 3
         let cnt_1 = entries.iter().find(|(k, _)| k == &GValue::Scalar(Primitive::Int64(1))).unwrap();
         assert_eq!(cnt_1.1, GValue::Scalar(Primitive::Int64(3)));
-    } else { panic!("expected Map"); }
+    } else {
+        panic!("expected Map");
+    }
 }
 
 #[test]

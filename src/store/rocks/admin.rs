@@ -156,7 +156,7 @@ impl RocksStorage {
         let mut batch = WriteBatchWithTransaction::<true>::default();
         for vv in vertices {
             let val = VertexValue { label_id: vv.label_id, property_blob: encode_props(vv.all_props()) };
-            let degree = VertexDegree { vertex_label_id: 0, out_e_cnt: 0, in_e_cnt: 0 };
+            let degree = VertexDegree { vertex_label_id: vv.label_id, out_e_cnt: 0, in_e_cnt: 0 };
             batch.put_cf(&cf_vertices, encode_vertex_key(vv.id), val.encode());
             batch.put_cf(&cf_degree, encode_vertex_key(vv.id), degree.encode());
         }

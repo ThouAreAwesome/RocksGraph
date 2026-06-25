@@ -45,7 +45,10 @@ impl CoreStep for DedupStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
+    fn produce(
+        &mut self,
+        ctx: &mut dyn GraphCtx,
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
         let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
 
         while let Some(t) = upstream.next(ctx)? {

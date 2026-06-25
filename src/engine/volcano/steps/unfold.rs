@@ -51,7 +51,10 @@ impl CoreStep for UnfoldStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
+    fn produce(
+        &mut self,
+        ctx: &mut dyn GraphCtx,
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
         loop {
             if let Some(t) = self.buffer.pop_front() {
                 return Ok(Some(smallvec![t]));

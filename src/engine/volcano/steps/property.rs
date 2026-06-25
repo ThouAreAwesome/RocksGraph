@@ -54,7 +54,10 @@ impl CoreStep for PropertyStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
+    fn produce(
+        &mut self,
+        ctx: &mut dyn GraphCtx,
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
         // Sets the property on the element carried by the upstream traverser and then re-emits the traverser.
         loop {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };

@@ -1,12 +1,16 @@
 // Physical steps: range(), skip(), tail()
 
 use crate::types::PIPELINE_BATCH_INLINE;
-use std::rc::Rc;
-use smallvec::{smallvec, SmallVec};
 use crate::{
-    engine::{context::GraphCtx, traverser::Traverser, volcano::steps::traits::{CoreStep, StepRef}},
+    engine::{
+        context::GraphCtx,
+        traverser::Traverser,
+        volcano::steps::traits::{CoreStep, StepRef},
+    },
     types::error::StoreError,
 };
+use smallvec::{smallvec, SmallVec};
+use std::rc::Rc;
 
 /// Emits traversers in the half-open range [lo, hi).
 #[derive(Debug)]
@@ -18,22 +22,40 @@ pub struct RangeStep {
 }
 
 impl RangeStep {
-    pub fn new(lo: u64, hi: u64) -> Self { Self { upstream: None, lo, hi, index: 0 } }
+    pub fn new(lo: u64, hi: u64) -> Self {
+        Self { upstream: None, lo, hi, index: 0 }
+    }
 }
 
 impl CoreStep for RangeStep {
-    fn add_upper(&mut self, upstream: StepRef) { self.upstream = Some(upstream); }
-    fn reset(&mut self) { self.index = 0; if let Some(u) = &self.upstream { u.reset(); } }
-    fn upper(&self) -> Option<StepRef> { self.upstream.clone() }
+    fn add_upper(&mut self, upstream: StepRef) {
+        self.upstream = Some(upstream);
+    }
+    fn reset(&mut self) {
+        self.index = 0;
+        if let Some(u) = &self.upstream {
+            u.reset();
+        }
+    }
+    fn upper(&self) -> Option<StepRef> {
+        self.upstream.clone()
+    }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
+    fn produce(
+        &mut self,
+        ctx: &mut dyn GraphCtx,
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
         loop {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
             let Some(t) = upstream.next(ctx)? else { return Ok(None) };
-            if self.index >= self.hi { return Ok(None); }
+            if self.index >= self.hi {
+                return Ok(None);
+            }
             let emit = self.index >= self.lo;
             self.index += 1;
-            if emit { return Ok(Some(smallvec![t])); }
+            if emit {
+                return Ok(Some(smallvec![t]));
+            }
         }
     }
 }
@@ -47,19 +69,35 @@ pub struct SkipStep {
 }
 
 impl SkipStep {
-    pub fn new(n: u64) -> Self { Self { upstream: None, n, skipped: 0 } }
+    pub fn new(n: u64) -> Self {
+        Self { upstream: None, n, skipped: 0 }
+    }
 }
 
 impl CoreStep for SkipStep {
-    fn add_upper(&mut self, upstream: StepRef) { self.upstream = Some(upstream); }
-    fn reset(&mut self) { self.skipped = 0; if let Some(u) = &self.upstream { u.reset(); } }
-    fn upper(&self) -> Option<StepRef> { self.upstream.clone() }
+    fn add_upper(&mut self, upstream: StepRef) {
+        self.upstream = Some(upstream);
+    }
+    fn reset(&mut self) {
+        self.skipped = 0;
+        if let Some(u) = &self.upstream {
+            u.reset();
+        }
+    }
+    fn upper(&self) -> Option<StepRef> {
+        self.upstream.clone()
+    }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
+    fn produce(
+        &mut self,
+        ctx: &mut dyn GraphCtx,
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
         loop {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
             let Some(t) = upstream.next(ctx)? else { return Ok(None) };
-            if self.skipped >= self.n { return Ok(Some(smallvec![t])); }
+            if self.skipped >= self.n {
+                return Ok(Some(smallvec![t]));
+            }
             self.skipped += 1;
         }
     }
@@ -76,18 +114,36 @@ pub struct TailStep {
 }
 
 impl TailStep {
-    pub fn new(n: u64) -> Self { Self { upstream: None, n, buffer: Vec::new(), cursor: 0, done: false } }
+    pub fn new(n: u64) -> Self {
+        Self { upstream: None, n, buffer: Vec::new(), cursor: 0, done: false }
+    }
 }
 
 impl CoreStep for TailStep {
-    fn add_upper(&mut self, upstream: StepRef) { self.upstream = Some(upstream); }
-    fn reset(&mut self) { self.buffer.clear(); self.cursor = 0; self.done = false; if let Some(u) = &self.upstream { u.reset(); } }
-    fn upper(&self) -> Option<StepRef> { self.upstream.clone() }
+    fn add_upper(&mut self, upstream: StepRef) {
+        self.upstream = Some(upstream);
+    }
+    fn reset(&mut self) {
+        self.buffer.clear();
+        self.cursor = 0;
+        self.done = false;
+        if let Some(u) = &self.upstream {
+            u.reset();
+        }
+    }
+    fn upper(&self) -> Option<StepRef> {
+        self.upstream.clone()
+    }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
+    fn produce(
+        &mut self,
+        ctx: &mut dyn GraphCtx,
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
         if !self.done {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
-            while let Some(t) = upstream.next(ctx)? { self.buffer.push(t); }
+            while let Some(t) = upstream.next(ctx)? {
+                self.buffer.push(t);
+            }
             self.done = true;
             let start = if self.buffer.len() as u64 >= self.n { self.buffer.len() - self.n as usize } else { 0 };
             self.cursor = start;

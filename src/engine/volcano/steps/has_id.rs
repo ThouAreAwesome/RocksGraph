@@ -56,7 +56,10 @@ impl CoreStep for HasIdStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
+    fn produce(
+        &mut self,
+        ctx: &mut dyn GraphCtx,
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
         // Produces traversers whose vertex ID matches the predicate.
         loop {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };

@@ -56,7 +56,10 @@ impl CoreStep for VecSourceStep {
         panic!("VecSourceStep is a source step and cannot have an upstream");
     }
 
-    fn produce(&mut self, _ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
+    fn produce(
+        &mut self,
+        _ctx: &mut dyn GraphCtx,
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
         // Emits all currently held `Traverser` items and then clears its internal buffer.
         if !self.items.is_empty() {
             Ok(Some(std::mem::take(&mut self.items)))

@@ -153,8 +153,8 @@ impl GraphTransaction for Transaction {
         }
     }
 
-    /// Retrieves the degree (in-edges, out-edges) of a vertex, enrolling it in the OCC read-set.
-    fn get_vertex_degree(&mut self, key: VertexKey) -> Result<Option<(u32, u32)>, StoreError> {
+    /// Retrieves the degree (in-edges, out-edges) and label of a vertex, enrolling it in the OCC read-set.
+    fn get_vertex_degree(&mut self, key: VertexKey) -> Result<Option<(u32, u32, LabelId)>, StoreError> {
         let cf_degree = self.db.cf_handle(CF_VERTEX_DEGREE).ok_or(StoreError::MissingColumnFamily("vertex_degree"))?;
         let vd_raw = self
             .db_txn
@@ -165,7 +165,7 @@ impl GraphTransaction for Transaction {
         match vd_raw {
             Some(vd_bytes) => {
                 let vd = VertexDegree::decode(&vd_bytes).ok_or(StoreError::CorruptData("vertex degree"))?;
-                Ok(Some((vd.out_e_cnt, vd.in_e_cnt)))
+                Ok(Some((vd.out_e_cnt, vd.in_e_cnt, vd.vertex_label_id)))
             }
             _ => Ok(None),
         }
@@ -433,16 +433,24 @@ impl GraphTransaction for Transaction {
         txn.put_cf(&cf_vertices, encode_vertex_key(key), vv.encode()).map_err(StoreError::RocksDb)
     }
 
-    /// Inserts or updates the degree counts for a vertex.
-    fn put_vertex_degree(&mut self, key: VertexKey, out_e_cnt: u32, in_e_cnt: u32) -> Result<(), StoreError> {
+    /// Inserts or updates the degree counts and label for a vertex.
+    fn put_vertex_degree(
+        &mut self,
+        key: VertexKey,
+        out_e_cnt: u32,
+        in_e_cnt: u32,
+        vertex_label_id: LabelId,
+    ) -> Result<(), StoreError> {
         let txn = self.db_txn.as_ref().expect("no active transaction");
         let cf_degree = self.db.cf_handle(CF_VERTEX_DEGREE).ok_or(StoreError::MissingColumnFamily("vertex_degree"))?;
-        let vd = VertexDegree { vertex_label_id: 0, out_e_cnt, in_e_cnt };
+        let vd = VertexDegree { vertex_label_id, out_e_cnt, in_e_cnt };
         txn.put_cf(&cf_degree, encode_vertex_key(key), vd.encode()).map_err(StoreError::RocksDb)
     }
 
     /// Inserts or updates a single edge record (either `edges_out` or `edges_in`).
-    fn put_edge(&mut self, key: &EdgeKey, props: &[Property]) -> Result<(), StoreError> {
+    /// `end_vertex_label` is the label of the vertex at the *other* end of the
+    /// physical row: `dst_label` for `edges_out`, `src_label` for `edges_in`.
+    fn put_edge(&mut self, key: &EdgeKey, end_vertex_label: LabelId, props: &[Property]) -> Result<(), StoreError> {
         let txn = self.db_txn.as_ref().expect("no active transaction");
         let cf_name = match key.direction {
             Direction::OUT => CF_EDGES_OUT,
@@ -450,7 +458,7 @@ impl GraphTransaction for Transaction {
         };
         let key_bytes = encode_edge_key(key);
         let cf = self.db.cf_handle(cf_name).ok_or(StoreError::MissingColumnFamily(cf_name))?;
-        let ev_bytes = EdgeValue { end_vertex_label: 0, property_blob: encode_props(props) }.encode();
+        let ev_bytes = EdgeValue { end_vertex_label, property_blob: encode_props(props) }.encode();
         txn.put_cf(&cf, key_bytes, &ev_bytes).map_err(StoreError::RocksDb)
     }
 
@@ -698,14 +706,14 @@ mod tests {
         let (store, _dir) = open_temp_store();
         let mut txn = ctx(&store);
         // Test with positive ID
-        txn.put_vertex_degree(1, 5, 10).unwrap();
-        let (out_pos, in_pos) = txn.get_vertex_degree(1).unwrap().unwrap();
+        txn.put_vertex_degree(1, 5, 10, 0).unwrap();
+        let (out_pos, in_pos, _label) = txn.get_vertex_degree(1).unwrap().unwrap();
         assert_eq!(out_pos, 5);
         assert_eq!(in_pos, 10);
 
         // Test with negative ID
-        txn.put_vertex_degree(-2, 15, 20).unwrap();
-        let (out_neg, in_neg) = txn.get_vertex_degree(-2).unwrap().unwrap();
+        txn.put_vertex_degree(-2, 15, 20, 0).unwrap();
+        let (out_neg, in_neg, _label) = txn.get_vertex_degree(-2).unwrap().unwrap();
         assert_eq!(out_neg, 15);
         assert_eq!(in_neg, 20);
 
@@ -738,7 +746,7 @@ mod tests {
         // Test with positive IDs
         let ek_pos = EdgeKey::out_e(1, 100, 2, 0);
         let mut e_pos = create_test_edge(1, 100, 2, Direction::OUT);
-        txn.put_edge(&ek_pos, e_pos.all_props()).unwrap();
+        txn.put_edge(&ek_pos, 0, e_pos.all_props()).unwrap();
         let fetched_e_pos = txn.get_edge(&ek_pos).unwrap().unwrap();
         assert_eq!(fetched_e_pos.src_id, ek_pos.primary_id);
         assert_eq!(fetched_e_pos.dst_id, ek_pos.secondary_id);
@@ -746,7 +754,7 @@ mod tests {
         // Test with negative IDs
         let ek_neg = EdgeKey::in_e(-3, 200, -4, 0);
         let mut e_neg = create_test_edge(-3, 200, -4, Direction::IN);
-        txn.put_edge(&ek_neg, e_neg.all_props()).unwrap();
+        txn.put_edge(&ek_neg, 0, e_neg.all_props()).unwrap();
         let fetched_e_neg = txn.get_edge(&ek_neg).unwrap().unwrap();
         assert_eq!(fetched_e_neg.src_id, ek_neg.secondary_id); // For IN edge, primary_id is dst, secondary_id is src
         assert_eq!(fetched_e_neg.dst_id, ek_neg.primary_id);
@@ -768,12 +776,12 @@ mod tests {
         txn.put_vertex(-2, 1, &[]).unwrap();
 
         // Add some edges
-        txn.put_edge(&EdgeKey::out_e(1, 10, 2, 0), &[]).unwrap(); // 1 --10--> 2
-        txn.put_edge(&EdgeKey::out_e(1, 10, 3, 0), &[]).unwrap(); // 1 --10--> 3
-        txn.put_edge(&EdgeKey::out_e(1, 20, 2, 0), &[]).unwrap(); // 1 --20--> 2
-        txn.put_edge(&EdgeKey::in_e(1, 10, 2, 0), &[]).unwrap(); // 1 --10--> 2 (in-direction for 2)
-        txn.put_edge(&EdgeKey::in_e(1, 20, 2, 0), &[]).unwrap(); // 1 --20--> 2 (in-direction for 2)
-        txn.put_edge(&EdgeKey::out_e(-1, 30, -2, 0), &[]).unwrap(); // -1 --30--> -2
+        txn.put_edge(&EdgeKey::out_e(1, 10, 2, 0), 0, &[]).unwrap(); // 1 --10--> 2
+        txn.put_edge(&EdgeKey::out_e(1, 10, 3, 0), 0, &[]).unwrap(); // 1 --10--> 3
+        txn.put_edge(&EdgeKey::out_e(1, 20, 2, 0), 0, &[]).unwrap(); // 1 --20--> 2
+        txn.put_edge(&EdgeKey::in_e(1, 10, 2, 0), 0, &[]).unwrap(); // 1 --10--> 2 (in-direction for 2)
+        txn.put_edge(&EdgeKey::in_e(1, 20, 2, 0), 0, &[]).unwrap(); // 1 --20--> 2 (in-direction for 2)
+        txn.put_edge(&EdgeKey::out_e(-1, 30, -2, 0), 0, &[]).unwrap(); // -1 --30--> -2
 
         // Test get_edges with positive vertex ID, OUT direction, no filters
         let edges = get_adjacent_edges_test(&mut txn, 1, Direction::OUT, None, None, None);
@@ -810,7 +818,7 @@ mod tests {
         // Add and delete positive ID vertex
         let mut v_pos = create_test_vertex(1, 100);
         txn.put_vertex(v_pos.id, v_pos.label_id, v_pos.all_props()).unwrap();
-        txn.put_vertex_degree(v_pos.id, 0, 0).unwrap();
+        txn.put_vertex_degree(v_pos.id, 0, 0, 0).unwrap();
         assert!(txn.get_vertex(v_pos.id).unwrap().is_some());
         txn.delete_vertex(v_pos.id).unwrap();
         txn.delete_vertex_degree(v_pos.id).unwrap();
@@ -820,7 +828,7 @@ mod tests {
         // Add and delete negative ID vertex
         let mut v_neg = create_test_vertex(-2, 200);
         txn.put_vertex(v_neg.id, v_neg.label_id, v_neg.all_props()).unwrap();
-        txn.put_vertex_degree(v_neg.id, 0, 0).unwrap();
+        txn.put_vertex_degree(v_neg.id, 0, 0, 0).unwrap();
         assert!(txn.get_vertex(v_neg.id).unwrap().is_some());
         txn.delete_vertex(v_neg.id).unwrap();
         txn.delete_vertex_degree(v_neg.id).unwrap();
@@ -835,7 +843,7 @@ mod tests {
         // Add and delete positive ID edge
         let ek_pos = EdgeKey::out_e(1, 100, 2, 0);
         let mut e_pos = create_test_edge(1, 100, 2, Direction::OUT);
-        txn.put_edge(&ek_pos, e_pos.all_props()).unwrap();
+        txn.put_edge(&ek_pos, 0, e_pos.all_props()).unwrap();
         assert!(txn.get_edge(&ek_pos).unwrap().is_some());
         txn.delete_edge(&ek_pos).unwrap();
         assert!(txn.get_edge(&ek_pos).unwrap().is_none());
@@ -843,7 +851,7 @@ mod tests {
         // Add and delete negative ID edge
         let ek_neg = EdgeKey::in_e(-3, 200, -4, 0);
         let mut e_neg = create_test_edge(-3, 200, -4, Direction::IN);
-        txn.put_edge(&ek_neg, e_neg.all_props()).unwrap();
+        txn.put_edge(&ek_neg, 0, e_neg.all_props()).unwrap();
         assert!(txn.get_edge(&ek_neg).unwrap().is_some());
         txn.delete_edge(&ek_neg).unwrap();
         assert!(txn.get_edge(&ek_neg).unwrap().is_none());
@@ -907,9 +915,9 @@ mod tests {
         let mut txn = ctx(&store);
 
         // Store in-edges for vertex 5: two with label 10, one with label 20
-        txn.put_edge(&EdgeKey::in_e(1, 10, 5, 0), &[]).unwrap(); // 1 --10--> 5
-        txn.put_edge(&EdgeKey::in_e(2, 10, 5, 0), &[]).unwrap(); // 2 --10--> 5
-        txn.put_edge(&EdgeKey::in_e(3, 20, 5, 0), &[]).unwrap(); // 3 --20--> 5
+        txn.put_edge(&EdgeKey::in_e(1, 10, 5, 0), 0, &[]).unwrap(); // 1 --10--> 5
+        txn.put_edge(&EdgeKey::in_e(2, 10, 5, 0), 0, &[]).unwrap(); // 2 --10--> 5
+        txn.put_edge(&EdgeKey::in_e(3, 20, 5, 0), 0, &[]).unwrap(); // 3 --20--> 5
 
         // Label filter on IN direction
         let by_label = get_adjacent_edges_test(&mut txn, 5, Direction::IN, Some(10), None, None);
@@ -975,7 +983,7 @@ mod tests {
         let mut txn = ctx(&store);
 
         let ek = EdgeKey::out_e(1, 10, 2, 0);
-        txn.put_edge(&ek, &[]).unwrap();
+        txn.put_edge(&ek, 0, &[]).unwrap();
         let mut first = txn.get_edge(&ek).unwrap().unwrap();
         assert_eq!(first.all_props().len(), 0);
 
@@ -984,7 +992,7 @@ mod tests {
             key: 1,
             value: Primitive::Int32(7),
         }];
-        txn.put_edge(&ek, &props).unwrap();
+        txn.put_edge(&ek, 0, &props).unwrap();
         let mut second = txn.get_edge(&ek).unwrap().unwrap();
         let second_props = second.all_props();
         assert_eq!(second_props.len(), 1);
@@ -999,8 +1007,8 @@ mod tests {
         // Two parallel edges between the same vertices — differ only by rank
         let ek0 = EdgeKey::out_e(1, 10, 2, 0);
         let ek1 = EdgeKey::out_e(1, 10, 2, 1);
-        txn.put_edge(&ek0, &[]).unwrap();
-        txn.put_edge(&ek1, &[]).unwrap();
+        txn.put_edge(&ek0, 0, &[]).unwrap();
+        txn.put_edge(&ek1, 0, &[]).unwrap();
 
         // Both are distinct keys and are independently readable
         assert!(txn.get_edge(&ek0).unwrap().is_some());
@@ -1027,7 +1035,7 @@ mod tests {
             Property { owner: CanonicalKey::Edge(ek.canonical_edge_key()), key: 2, value: Primitive::Int64(12345) },
         ];
 
-        txn.put_edge(&ek, &props).unwrap();
+        txn.put_edge(&ek, 0, &props).unwrap();
         let mut fetched_e = txn.get_edge(&ek).unwrap().unwrap();
 
         assert_eq!(fetched_e.src_id, ek.primary_id);
@@ -1047,9 +1055,9 @@ mod tests {
         let mut seed = ctx(&store);
         seed.put_vertex(1, 1, &[]).unwrap();
         seed.put_vertex(2, 1, &[]).unwrap();
-        seed.put_vertex_degree(1, 1, 0).unwrap();
+        seed.put_vertex_degree(1, 1, 0, 0).unwrap();
         let ek_seed = EdgeKey::out_e(1, 10, 2, 0);
-        seed.put_edge(&ek_seed, &[]).unwrap();
+        seed.put_edge(&ek_seed, 0, &[]).unwrap();
         seed.commit().unwrap();
 
         // 2. Start Transaction 1 (captures snapshot)
@@ -1062,10 +1070,10 @@ mod tests {
         // Update existing vertex 1's label
         txn2.put_vertex(1, 99, &[]).unwrap();
         // Update vertex 1's degree
-        txn2.put_vertex_degree(1, 1, 1).unwrap();
+        txn2.put_vertex_degree(1, 1, 1, 0).unwrap();
         // Insert new edge 1 --20--> 3
         let ek_new = EdgeKey::out_e(1, 20, 3, 0);
-        txn2.put_edge(&ek_new, &[]).unwrap();
+        txn2.put_edge(&ek_new, 0, &[]).unwrap();
         txn2.commit().unwrap();
 
         // 4. In Transaction 1, verify strict snapshot isolation (repeatable reads)
@@ -1083,7 +1091,7 @@ mod tests {
         assert_eq!(batch_v[0].label_id, 1);
 
         // B. Vertex Degree Point Read (get_vertex_degree)
-        let (deg_out, deg_in) = txn1.get_vertex_degree(1).unwrap().unwrap();
+        let (deg_out, deg_in, _label) = txn1.get_vertex_degree(1).unwrap().unwrap();
         assert_eq!(deg_out, 1);
         assert_eq!(deg_in, 0); // Should see original degree (1, 0), not (1, 1)
 
@@ -1144,7 +1152,7 @@ mod tests {
 
         for src in [1i64, 2, 3, 4, 5] {
             let mut txn = ctx(&store);
-            txn.put_edge(&EdgeKey::out_e(src, 10, 100, 0), &[]).unwrap();
+            txn.put_edge(&EdgeKey::out_e(src, 10, 100, 0), 0, &[]).unwrap();
             txn.commit().unwrap();
             store.db.flush_cf(&cf).unwrap();
         }

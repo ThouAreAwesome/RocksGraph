@@ -1,16 +1,27 @@
 // Physical tests: choose()
 use crate::engine::volcano::steps::traits::CoreStep;
 use crate::{
-    engine::{context::NoopCtx, traverser::Traverser, volcano::{
-        builder::PhysicalPlan,
-        steps::{choose::ChooseStep, scalar_filter::ScalarFilterStep, traits::{BufferedStep, StepRef}, vec_source::VecSourceStep},
-    }},
+    engine::{
+        context::NoopCtx,
+        traverser::Traverser,
+        volcano::{
+            builder::PhysicalPlan,
+            steps::{
+                choose::ChooseStep,
+                scalar_filter::ScalarFilterStep,
+                traits::{BufferedStep, StepRef},
+                vec_source::VecSourceStep,
+            },
+        },
+    },
     types::gvalue::{GValue, Primitive, PrimitivePredicate},
 };
 use smallvec::smallvec;
 use std::rc::Rc;
 
-fn t(v: i64) -> Rc<Traverser> { Traverser::new_rc(GValue::Scalar(Primitive::Int64(v))) }
+fn t(v: i64) -> Rc<Traverser> {
+    Traverser::new_rc(GValue::Scalar(Primitive::Int64(v)))
+}
 
 fn eq_plan(v: i64) -> PhysicalPlan {
     let src = BufferedStep::new(VecSourceStep::empty());

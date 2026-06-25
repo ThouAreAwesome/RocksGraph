@@ -148,9 +148,9 @@ pub trait GraphTransaction {
         Ok(out)
     }
 
-    /// Fetch a committed vertex's out-degree and in-degree; `None` if absent.
+    /// Fetch a committed vertex's out-degree, in-degree, and label; `None` if absent.
     /// Implementations should register the key in an OCC read-set.
-    fn get_vertex_degree(&mut self, key: VertexKey) -> Result<Option<(u32, u32)>, StoreError>;
+    fn get_vertex_degree(&mut self, key: VertexKey) -> Result<Option<(u32, u32, LabelId)>, StoreError>;
 
     /// Fetch a single committed edge record; `None` if absent.
     fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<Edge>, StoreError>;
@@ -199,10 +199,18 @@ pub trait GraphTransaction {
 
     /// Upsert a vertex record with explicit key, label, and full property list.
     fn put_vertex(&mut self, key: VertexKey, label_id: LabelId, props: &[Property]) -> Result<(), StoreError>;
-    /// Upsert the vertex degree record (out-degree and in-degree).
-    fn put_vertex_degree(&mut self, key: VertexKey, out_e_cnt: u32, in_e_cnt: u32) -> Result<(), StoreError>;
+    /// Upsert the vertex degree record (label, out-degree, and in-degree).
+    fn put_vertex_degree(
+        &mut self,
+        key: VertexKey,
+        out_e_cnt: u32,
+        in_e_cnt: u32,
+        vertex_label_id: LabelId,
+    ) -> Result<(), StoreError>;
     /// Upsert a single edge record in the specified physical direction index.
-    fn put_edge(&mut self, key: &EdgeKey, props: &[Property]) -> Result<(), StoreError>;
+    /// `end_vertex_label` is the label of the vertex at the *other* end of the
+    /// physical row — `dst_label` for `edges_out`, `src_label` for `edges_in`.
+    fn put_edge(&mut self, key: &EdgeKey, end_vertex_label: LabelId, props: &[Property]) -> Result<(), StoreError>;
     /// Delete a vertex metadata record.
     fn delete_vertex(&mut self, key: VertexKey) -> Result<(), StoreError>;
     /// Delete the vertex degree record.
@@ -301,7 +309,7 @@ mod tests {
                 Ok(None)
             }
         }
-        fn get_vertex_degree(&mut self, _key: VertexKey) -> Result<Option<(u32, u32)>, StoreError> {
+        fn get_vertex_degree(&mut self, _key: VertexKey) -> Result<Option<(u32, u32, LabelId)>, StoreError> {
             Ok(None)
         }
         fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<Edge>, StoreError> {
@@ -326,10 +334,21 @@ mod tests {
         fn put_vertex(&mut self, _key: VertexKey, _label_id: LabelId, _props: &[Property]) -> Result<(), StoreError> {
             Ok(())
         }
-        fn put_vertex_degree(&mut self, _key: VertexKey, _out_e_cnt: u32, _in_e_cnt: u32) -> Result<(), StoreError> {
+        fn put_vertex_degree(
+            &mut self,
+            _key: VertexKey,
+            _out_e_cnt: u32,
+            _in_e_cnt: u32,
+            _vertex_label_id: LabelId,
+        ) -> Result<(), StoreError> {
             Ok(())
         }
-        fn put_edge(&mut self, _key: &EdgeKey, _props: &[Property]) -> Result<(), StoreError> {
+        fn put_edge(
+            &mut self,
+            _key: &EdgeKey,
+            _end_vertex_label: LabelId,
+            _props: &[Property],
+        ) -> Result<(), StoreError> {
             Ok(())
         }
         fn delete_vertex(&mut self, _key: VertexKey) -> Result<(), StoreError> {
@@ -422,8 +441,8 @@ mod tests {
             .is_ok());
         assert!(txn.get_vertex_degree(1).is_ok());
         assert!(txn.put_vertex(1, 1, &[]).is_ok());
-        assert!(txn.put_vertex_degree(1, 0, 0).is_ok());
-        assert!(txn.put_edge(&ek1, &[]).is_ok());
+        assert!(txn.put_vertex_degree(1, 0, 0, 0).is_ok());
+        assert!(txn.put_edge(&ek1, 0, &[]).is_ok());
         assert!(txn.delete_vertex(1).is_ok());
         assert!(txn.delete_vertex_degree(1).is_ok());
         assert!(txn.delete_edge(&ek1).is_ok());

@@ -1,16 +1,23 @@
 // Physical tests: simplePath(), cyclicPath()
 use crate::engine::volcano::steps::traits::CoreStep;
 use crate::{
-    engine::{context::NoopCtx, traverser::Traverser, volcano::steps::{
-        simple_cyclic_path::{CyclicPathStep, SimplePathStep},
-        traits::{BufferedStep, StepRef}, vec_source::VecSourceStep,
-    }},
+    engine::{
+        context::NoopCtx,
+        traverser::Traverser,
+        volcano::steps::{
+            simple_cyclic_path::{CyclicPathStep, SimplePathStep},
+            traits::{BufferedStep, StepRef},
+            vec_source::VecSourceStep,
+        },
+    },
     types::GValue,
 };
 use smallvec::smallvec;
 use std::rc::Rc;
 
-fn vertex_t(id: i64) -> Rc<Traverser> { Traverser::new_rc(GValue::Vertex(id)) }
+fn vertex_t(id: i64) -> Rc<Traverser> {
+    Traverser::new_rc(GValue::Vertex(id))
+}
 
 // Build a traverser with parent chain: [v1] → [v2] → [v3]
 fn chain() -> Rc<Traverser> {

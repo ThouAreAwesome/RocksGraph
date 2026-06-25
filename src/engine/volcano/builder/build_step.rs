@@ -467,9 +467,7 @@ impl PhysicalPlanBuilder {
                     resolved_props.insert(id, v.clone());
                 }
                 wire!(
-                    BufferedStep::new(
-                        steps::add_e::AddEStep::new(label_id, out_v_id, in_v_id, resolved_props, s.rank)
-                    ),
+                    BufferedStep::new(steps::add_e::AddEStep::new(label_id, out_v_id, in_v_id, resolved_props, s.rank)),
                     None::<StepRef>
                 )
             }
@@ -616,7 +614,11 @@ impl PhysicalPlanBuilder {
             }
             LogicalStep::Range(s) => {
                 drop(schema);
-                wire_required!(BufferedStep::new(steps::range_skip_tail::RangeStep::new(s.lo, s.hi)), upstream, "RangeStep")
+                wire_required!(
+                    BufferedStep::new(steps::range_skip_tail::RangeStep::new(s.lo, s.hi)),
+                    upstream,
+                    "RangeStep"
+                )
             }
             LogicalStep::Skip(s) => {
                 drop(schema);
@@ -632,11 +634,19 @@ impl PhysicalPlanBuilder {
             }
             LogicalStep::SimplePath(_) => {
                 drop(schema);
-                wire_required!(BufferedStep::new(steps::simple_cyclic_path::SimplePathStep::default()), upstream, "SimplePathStep")
+                wire_required!(
+                    BufferedStep::new(steps::simple_cyclic_path::SimplePathStep::default()),
+                    upstream,
+                    "SimplePathStep"
+                )
             }
             LogicalStep::CyclicPath(_) => {
                 drop(schema);
-                wire_required!(BufferedStep::new(steps::simple_cyclic_path::CyclicPathStep::default()), upstream, "CyclicPathStep")
+                wire_required!(
+                    BufferedStep::new(steps::simple_cyclic_path::CyclicPathStep::default()),
+                    upstream,
+                    "CyclicPathStep"
+                )
             }
             LogicalStep::Group(_) => {
                 drop(schema);
@@ -650,17 +660,17 @@ impl PhysicalPlanBuilder {
                 drop(schema);
                 let predicate = self.build(&s.predicate, schema_lock)?;
                 let true_choice = self.build(&s.true_choice, schema_lock)?;
-                let false_choice = if let Some(ref fc) = s.false_choice { Some(self.build(fc, schema_lock)?) } else { None };
+                let false_choice =
+                    if let Some(ref fc) = s.false_choice { Some(self.build(fc, schema_lock)?) } else { None };
                 wire_required!(
                     BufferedStep::new(steps::choose::ChooseStep::new(predicate, true_choice, false_choice)),
                     upstream,
                     "ChooseStep"
                 )
             }
-            LogicalStep::From(_) | LogicalStep::To(_) => {
-                Err(StoreError::UnsupportedOperation(
-                    "From/To steps are optimizer-internal and should be eliminated before physical build.".to_string()))
-            }
+            LogicalStep::From(_) | LogicalStep::To(_) => Err(StoreError::UnsupportedOperation(
+                "From/To steps are optimizer-internal and should be eliminated before physical build.".to_string(),
+            )),
         }
     }
 }

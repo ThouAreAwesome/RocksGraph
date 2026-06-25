@@ -2520,12 +2520,12 @@ fn test_additional_physical_steps_coverage() {
 }
 
 mod as_select_tests;
+mod choose_tests;
+mod group_tests;
 mod not_and_or_tests;
 mod numeric_reducer_tests;
-mod range_skip_tail_tests;
 mod order_tests;
-mod simple_cyclic_path_tests;
-mod group_tests;
-mod choose_tests;
+mod range_skip_tail_tests;
 mod repeat;
+mod simple_cyclic_path_tests;
 mod unfold_tests;

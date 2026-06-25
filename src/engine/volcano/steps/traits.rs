@@ -50,7 +50,10 @@ pub trait CoreStep: std::fmt::Debug {
 
     /// Pull the next batch of results. Returns `Ok(None)` when exhausted,
     /// `Err` on storage or runtime failure.
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError>;
+    fn produce(
+        &mut self,
+        ctx: &mut dyn GraphCtx,
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError>;
 
     /// Reset all mutable state and propagate to upstreams.
     fn reset(&mut self); // Resets the internal state of the step.

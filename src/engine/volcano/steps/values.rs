@@ -48,7 +48,11 @@ pub struct ValuesStep {
 
 /// Creates a new `ValuesStep` to extract specified property values.
 impl ValuesStep {
-    pub fn new(property_keys: SmallVec<[(SmolStr, u16); PIPELINE_BATCH_INLINE]>, emit_property: bool, track_path: bool) -> Self {
+    pub fn new(
+        property_keys: SmallVec<[(SmolStr, u16); PIPELINE_BATCH_INLINE]>,
+        emit_property: bool,
+        track_path: bool,
+    ) -> Self {
         Self { upstream: None, property_keys, emit_property, track_path }
     }
 }
@@ -59,7 +63,10 @@ impl CoreStep for ValuesStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
+    fn produce(
+        &mut self,
+        ctx: &mut dyn GraphCtx,
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
         // Produces traversers carrying the extracted property values (either as `GValue::Scalar` or
         // `GValue::Property`).
         loop {

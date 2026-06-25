@@ -56,7 +56,10 @@ impl CoreStep for WhereStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
+    fn produce(
+        &mut self,
+        ctx: &mut dyn GraphCtx,
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
         // Produces traversers from its upstream if the sub-plan yields any results for that traverser.
         loop {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };

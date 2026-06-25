@@ -55,11 +55,11 @@ use crate::{
         apply_rules,
         logical_step::{
             AddEStep, AddVStep, AndStep, AsStep, BothEStep, BothStep, ChooseStep, CoalesceStep, CountStep,
-            CyclicPathStep, DedupStep, DropStep, EStep, EmitSpec, FoldStep, FromStep, GroupCountStep, HasIdStep, HasLabelStep,
-            InEStep, InStep, InVStep, LimitStep, LogicalPlan, LogicalStep, MaxStep, MeanStep, MinStep, NotStep,
-            OrStep, Order, OrderKey, OrderKeySpec, OrderStep, OtherVStep, OutEStep, OutStep, OutVStep, PathStep,
-            PropertiesStep, PropertyStep, RangeStep, RepeatStep, ScalarFilterStep, SelectStep, SimplePathStep,
-            SkipStep, SumStep, TailStep, ToStep, UnfoldStep, UnionStep, ValuesStep, WhereStep,
+            CyclicPathStep, DedupStep, DropStep, EStep, EmitSpec, FoldStep, FromStep, GroupCountStep, HasIdStep,
+            HasLabelStep, InEStep, InStep, InVStep, LimitStep, LogicalPlan, LogicalStep, MaxStep, MeanStep, MinStep,
+            NotStep, OrStep, Order, OrderKey, OrderKeySpec, OrderStep, OtherVStep, OutEStep, OutStep, OutVStep,
+            PathStep, PropertiesStep, PropertyStep, RangeStep, RepeatStep, ScalarFilterStep, SelectStep,
+            SimplePathStep, SkipStep, SumStep, TailStep, ToStep, UnfoldStep, UnionStep, ValuesStep, WhereStep,
         },
     },
     types::{keys::EdgeKey, prop_key::LABEL, StoreError},
@@ -475,8 +475,12 @@ pub trait TraversalBuilder: PlanAppender {
         self
     }
 
-    fn by(self, _key: impl Into<SmolStr>) -> Self { self }
-    fn order_by(self, _key: impl Into<SmolStr>, _order: Order) -> Self { self }
+    fn by(self, _key: impl Into<SmolStr>) -> Self {
+        self
+    }
+    fn order_by(self, _key: impl Into<SmolStr>, _order: Order) -> Self {
+        self
+    }
 
     fn simple_path(mut self) -> Self {
         self.push_step(LogicalStep::SimplePath(SimplePathStep {}));
@@ -488,10 +492,24 @@ pub trait TraversalBuilder: PlanAppender {
         self
     }
 
-    fn choose(mut self, mut predicate: GraphTraversal, mut true_choice: GraphTraversal, false_choice: Option<GraphTraversal>) -> Self {
-        if let Some(err) = predicate.error.take() { self.record_error(err); }
-        if let Some(err) = true_choice.error.take() { self.record_error(err); }
-        let fc = false_choice.map(|mut f| { if let Some(err) = f.error.take() { self.record_error(err); } f.into_plan() });
+    fn choose(
+        mut self,
+        mut predicate: GraphTraversal,
+        mut true_choice: GraphTraversal,
+        false_choice: Option<GraphTraversal>,
+    ) -> Self {
+        if let Some(err) = predicate.error.take() {
+            self.record_error(err);
+        }
+        if let Some(err) = true_choice.error.take() {
+            self.record_error(err);
+        }
+        let fc = false_choice.map(|mut f| {
+            if let Some(err) = f.error.take() {
+                self.record_error(err);
+            }
+            f.into_plan()
+        });
         self.push_step(LogicalStep::Choose(ChooseStep {
             predicate: predicate.into_plan(),
             true_choice: true_choice.into_plan(),

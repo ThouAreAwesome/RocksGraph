@@ -16,7 +16,9 @@ use crate::{
 use smallvec::smallvec;
 use std::rc::Rc;
 
-fn t(v: i64) -> Rc<Traverser> { Traverser::new_rc(GValue::Scalar(Primitive::Int64(v))) }
+fn t(v: i64) -> Rc<Traverser> {
+    Traverser::new_rc(GValue::Scalar(Primitive::Int64(v)))
+}
 
 fn int_t(v: i64) -> Rc<Traverser> {
     Traverser::new_rc(GValue::Scalar(Primitive::Int64(v)))

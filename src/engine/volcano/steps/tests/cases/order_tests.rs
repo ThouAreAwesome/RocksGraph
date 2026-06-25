@@ -2,18 +2,24 @@
 
 use crate::engine::volcano::steps::traits::CoreStep;
 use crate::{
-    engine::{context::NoopCtx, traverser::Traverser, volcano::steps::{
-        order::OrderStep,
-        traits::{BufferedStep, StepRef},
-        vec_source::VecSourceStep,
-    }},
+    engine::{
+        context::NoopCtx,
+        traverser::Traverser,
+        volcano::steps::{
+            order::OrderStep,
+            traits::{BufferedStep, StepRef},
+            vec_source::VecSourceStep,
+        },
+    },
     planner::logical_step::{Order, OrderKey, OrderKeySpec},
     types::gvalue::{GValue, Primitive},
 };
 use smallvec::smallvec;
 use std::rc::Rc;
 
-fn t(v: i64) -> Rc<Traverser> { Traverser::new_rc(GValue::Scalar(Primitive::Int64(v))) }
+fn t(v: i64) -> Rc<Traverser> {
+    Traverser::new_rc(GValue::Scalar(Primitive::Int64(v)))
+}
 
 #[test]
 fn test_order_asc() {

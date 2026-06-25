@@ -53,7 +53,10 @@ impl CoreStep for EndVertexFilter {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
+    fn produce(
+        &mut self,
+        ctx: &mut dyn GraphCtx,
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
         // Produces traversers whose edge's secondary vertex ID is present in the `ids` list.
         loop {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };

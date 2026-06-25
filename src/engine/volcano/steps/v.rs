@@ -71,7 +71,10 @@ impl CoreStep for VStep {
         panic!("VStep is a source step, it does not have an upstream.");
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
+    fn produce(
+        &mut self,
+        ctx: &mut dyn GraphCtx,
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
         if !self.vertex_ids.is_empty() {
             if self.buffer.is_empty() && self.current_idx == 0 {
                 let fetched = ctx.get_vertices(&self.vertex_ids)?;

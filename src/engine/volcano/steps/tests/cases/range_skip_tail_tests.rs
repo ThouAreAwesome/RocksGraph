@@ -2,11 +2,15 @@
 
 use crate::engine::volcano::steps::traits::CoreStep;
 use crate::{
-    engine::{context::NoopCtx, traverser::Traverser, volcano::steps::{
-        range_skip_tail::{RangeStep, SkipStep, TailStep},
-        traits::{BufferedStep, StepRef},
-        vec_source::VecSourceStep,
-    }},
+    engine::{
+        context::NoopCtx,
+        traverser::Traverser,
+        volcano::steps::{
+            range_skip_tail::{RangeStep, SkipStep, TailStep},
+            traits::{BufferedStep, StepRef},
+            vec_source::VecSourceStep,
+        },
+    },
     types::gvalue::GValue,
 };
 use smallvec::smallvec;
@@ -25,9 +29,18 @@ fn test_range_keep_middle() {
     let mut step = RangeStep::new(1, 4);
     step.add_upper(src.clone() as StepRef);
     let mut ctx = NoopCtx;
-    assert_eq!(step.produce(&mut ctx).unwrap().unwrap()[0].value, GValue::Scalar(crate::types::gvalue::Primitive::Int64(2)));
-    assert_eq!(step.produce(&mut ctx).unwrap().unwrap()[0].value, GValue::Scalar(crate::types::gvalue::Primitive::Int64(3)));
-    assert_eq!(step.produce(&mut ctx).unwrap().unwrap()[0].value, GValue::Scalar(crate::types::gvalue::Primitive::Int64(4)));
+    assert_eq!(
+        step.produce(&mut ctx).unwrap().unwrap()[0].value,
+        GValue::Scalar(crate::types::gvalue::Primitive::Int64(2))
+    );
+    assert_eq!(
+        step.produce(&mut ctx).unwrap().unwrap()[0].value,
+        GValue::Scalar(crate::types::gvalue::Primitive::Int64(3))
+    );
+    assert_eq!(
+        step.produce(&mut ctx).unwrap().unwrap()[0].value,
+        GValue::Scalar(crate::types::gvalue::Primitive::Int64(4))
+    );
     assert!(step.produce(&mut ctx).unwrap().is_none());
 }
 
@@ -38,7 +51,10 @@ fn test_range_lo_zero() {
     let mut step = RangeStep::new(0, 1);
     step.add_upper(src.clone() as StepRef);
     let mut ctx = NoopCtx;
-    assert_eq!(step.produce(&mut ctx).unwrap().unwrap()[0].value, GValue::Scalar(crate::types::gvalue::Primitive::Int64(10)));
+    assert_eq!(
+        step.produce(&mut ctx).unwrap().unwrap()[0].value,
+        GValue::Scalar(crate::types::gvalue::Primitive::Int64(10))
+    );
     assert!(step.produce(&mut ctx).unwrap().is_none());
 }
 
@@ -73,7 +89,10 @@ fn test_skip() {
     let mut step = SkipStep::new(2);
     step.add_upper(src.clone() as StepRef);
     let mut ctx = NoopCtx;
-    assert_eq!(step.produce(&mut ctx).unwrap().unwrap()[0].value, GValue::Scalar(crate::types::gvalue::Primitive::Int64(3)));
+    assert_eq!(
+        step.produce(&mut ctx).unwrap().unwrap()[0].value,
+        GValue::Scalar(crate::types::gvalue::Primitive::Int64(3))
+    );
     assert!(step.produce(&mut ctx).unwrap().is_none());
 }
 
@@ -106,8 +125,14 @@ fn test_tail() {
     let mut step = TailStep::new(2);
     step.add_upper(src.clone() as StepRef);
     let mut ctx = NoopCtx;
-    assert_eq!(step.produce(&mut ctx).unwrap().unwrap()[0].value, GValue::Scalar(crate::types::gvalue::Primitive::Int64(4)));
-    assert_eq!(step.produce(&mut ctx).unwrap().unwrap()[0].value, GValue::Scalar(crate::types::gvalue::Primitive::Int64(5)));
+    assert_eq!(
+        step.produce(&mut ctx).unwrap().unwrap()[0].value,
+        GValue::Scalar(crate::types::gvalue::Primitive::Int64(4))
+    );
+    assert_eq!(
+        step.produce(&mut ctx).unwrap().unwrap()[0].value,
+        GValue::Scalar(crate::types::gvalue::Primitive::Int64(5))
+    );
     assert!(step.produce(&mut ctx).unwrap().is_none());
 }
 
@@ -118,8 +143,14 @@ fn test_tail_more_than_input() {
     let mut step = TailStep::new(10);
     step.add_upper(src.clone() as StepRef);
     let mut ctx = NoopCtx;
-    assert_eq!(step.produce(&mut ctx).unwrap().unwrap()[0].value, GValue::Scalar(crate::types::gvalue::Primitive::Int64(1)));
-    assert_eq!(step.produce(&mut ctx).unwrap().unwrap()[0].value, GValue::Scalar(crate::types::gvalue::Primitive::Int64(2)));
+    assert_eq!(
+        step.produce(&mut ctx).unwrap().unwrap()[0].value,
+        GValue::Scalar(crate::types::gvalue::Primitive::Int64(1))
+    );
+    assert_eq!(
+        step.produce(&mut ctx).unwrap().unwrap()[0].value,
+        GValue::Scalar(crate::types::gvalue::Primitive::Int64(2))
+    );
     assert!(step.produce(&mut ctx).unwrap().is_none());
 }
 

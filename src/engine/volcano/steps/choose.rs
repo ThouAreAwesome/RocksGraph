@@ -1,15 +1,19 @@
 // Physical step: choose()
 
 use crate::types::PIPELINE_BATCH_INLINE;
-use std::rc::Rc;
-use smallvec::{smallvec, SmallVec};
 use crate::{
-    engine::{context::GraphCtx, traverser::Traverser, volcano::{
-        builder::PhysicalPlan,
-        steps::traits::{CoreStep, StepRef},
-    }},
+    engine::{
+        context::GraphCtx,
+        traverser::Traverser,
+        volcano::{
+            builder::PhysicalPlan,
+            steps::traits::{CoreStep, StepRef},
+        },
+    },
     types::error::StoreError,
 };
+use smallvec::{smallvec, SmallVec};
+use std::rc::Rc;
 
 /// Conditional branching: if predicate matches, inject into true_choice;
 /// otherwise inject into false_choice (or pass through).
@@ -19,7 +23,7 @@ pub struct ChooseStep {
     predicate: PhysicalPlan,
     true_choice: PhysicalPlan,
     false_choice: Option<PhysicalPlan>,
-    active_plan: Option<PhysicalPlan>,  // currently running branch
+    active_plan: Option<PhysicalPlan>, // currently running branch
 }
 
 impl ChooseStep {
@@ -29,16 +33,27 @@ impl ChooseStep {
 }
 
 impl CoreStep for ChooseStep {
-    fn add_upper(&mut self, upstream: StepRef) { self.upstream = Some(upstream); }
+    fn add_upper(&mut self, upstream: StepRef) {
+        self.upstream = Some(upstream);
+    }
     fn reset(&mut self) {
-        if let Some(u) = &self.upstream { u.reset(); }
+        if let Some(u) = &self.upstream {
+            u.reset();
+        }
         self.predicate.reset();
         self.true_choice.reset();
-        if let Some(ref fc) = self.false_choice { fc.reset(); }
+        if let Some(ref fc) = self.false_choice {
+            fc.reset();
+        }
     }
-    fn upper(&self) -> Option<StepRef> { self.upstream.clone() }
+    fn upper(&self) -> Option<StepRef> {
+        self.upstream.clone()
+    }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
+    fn produce(
+        &mut self,
+        ctx: &mut dyn GraphCtx,
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
         loop {
             // Drain active sub-plan first
             if let Some(ref plan) = self.active_plan {

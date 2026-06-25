@@ -75,7 +75,10 @@ impl CoreStep for EStep {
         panic!("EStep is a source step, it does not have an upstream.");
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
+    fn produce(
+        &mut self,
+        ctx: &mut dyn GraphCtx,
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
         if !self.keys.is_empty() {
             if self.buffer.is_empty() && self.current_idx == 0 {
                 let fetched = ctx.get_edges(&self.keys)?;

@@ -56,7 +56,10 @@ impl CoreStep for InVOutVStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
+    fn produce(
+        &mut self,
+        ctx: &mut dyn GraphCtx,
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
         // Produces a traverser carrying the extracted vertex (either source or destination) from an edge.
         loop {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };

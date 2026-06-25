@@ -1,13 +1,21 @@
 // Physical step: order()
 
 use crate::types::PIPELINE_BATCH_INLINE;
-use std::rc::Rc;
-use smallvec::{smallvec, SmallVec};
 use crate::{
-    engine::{context::GraphCtx, traverser::Traverser, volcano::steps::traits::{CoreStep, StepRef}},
+    engine::{
+        context::GraphCtx,
+        traverser::Traverser,
+        volcano::steps::traits::{CoreStep, StepRef},
+    },
     planner::logical_step::{Order, OrderKey, OrderKeySpec},
-    types::{error::StoreError, gvalue::{GValue, Primitive}, ORDER_KEY_INLINE},
+    types::{
+        error::StoreError,
+        gvalue::{GValue, Primitive},
+        ORDER_KEY_INLINE,
+    },
 };
+use smallvec::{smallvec, SmallVec};
+use std::rc::Rc;
 
 /// Sorts all upstream traversers and emits them in order.
 #[derive(Debug)]
@@ -42,17 +50,30 @@ fn extract_key(value: &GValue, spec: &OrderKeySpec) -> Option<Primitive> {
 }
 
 impl CoreStep for OrderStep {
-    fn add_upper(&mut self, upstream: StepRef) { self.upstream = Some(upstream); }
-    fn reset(&mut self) { self.buffer.clear(); self.cursor = 0; self.drained = false; if let Some(u) = &self.upstream { u.reset(); } }
-    fn upper(&self) -> Option<StepRef> { self.upstream.clone() }
+    fn add_upper(&mut self, upstream: StepRef) {
+        self.upstream = Some(upstream);
+    }
+    fn reset(&mut self) {
+        self.buffer.clear();
+        self.cursor = 0;
+        self.drained = false;
+        if let Some(u) = &self.upstream {
+            u.reset();
+        }
+    }
+    fn upper(&self) -> Option<StepRef> {
+        self.upstream.clone()
+    }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
+    fn produce(
+        &mut self,
+        ctx: &mut dyn GraphCtx,
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
         if !self.drained {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
             while let Some(t) = upstream.next(ctx)? {
-                let key_values: SmallVec<[Primitive; ORDER_KEY_INLINE]> = self.keys.iter().map(|k| {
-                    extract_key(&t.value, &k.spec).unwrap_or(Primitive::Null)
-                }).collect();
+                let key_values: SmallVec<[Primitive; ORDER_KEY_INLINE]> =
+                    self.keys.iter().map(|k| extract_key(&t.value, &k.spec).unwrap_or(Primitive::Null)).collect();
                 self.buffer.push((t, key_values));
             }
             self.drained = true;

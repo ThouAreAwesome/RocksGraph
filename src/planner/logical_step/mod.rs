@@ -327,17 +327,24 @@ impl Optimizer for SelectStep {}
 
 /// Keeps traversers in the half-open range `[lo, hi)`.
 #[derive(Clone, Debug)]
-pub struct RangeStep { pub lo: u64, pub hi: u64 }
+pub struct RangeStep {
+    pub lo: u64,
+    pub hi: u64,
+}
 impl Optimizer for RangeStep {}
 
 /// Skips the first `n` traversers, emitting the rest.
 #[derive(Clone, Debug)]
-pub struct SkipStep { pub n: u64 }
+pub struct SkipStep {
+    pub n: u64,
+}
 impl Optimizer for SkipStep {}
 
 /// Collects all traversers and emits only the last `n`.
 #[derive(Clone, Debug)]
-pub struct TailStep { pub n: u64 }
+pub struct TailStep {
+    pub n: u64,
+}
 impl Optimizer for TailStep {}
 
 /// Sorting direction.
@@ -365,7 +372,9 @@ pub struct OrderKey {
 
 /// Sorts traversers using the given key specifications.
 #[derive(Clone, Debug)]
-pub struct OrderStep { pub keys: SmallVec<[OrderKey; ORDER_KEY_INLINE]> }
+pub struct OrderStep {
+    pub keys: SmallVec<[OrderKey; ORDER_KEY_INLINE]>,
+}
 impl Optimizer for OrderStep {}
 
 /// Filters out traversers whose path contains duplicate vertices (keeps simple paths).
@@ -398,12 +407,16 @@ impl Optimizer for ChooseStep {
 
 /// Collects traversers into a map, grouped by key. If no key is specified, groups by value.
 #[derive(Clone, Debug)]
-pub struct GroupStep { pub key: Option<SmolStr> }
+pub struct GroupStep {
+    pub key: Option<SmolStr>,
+}
 impl Optimizer for GroupStep {}
 
 /// Collects traversers and counts occurrences per key. If no key is specified, counts by value.
 #[derive(Clone, Debug)]
-pub struct GroupCountStep { pub key: Option<SmolStr> }
+pub struct GroupCountStep {
+    pub key: Option<SmolStr>,
+}
 impl Optimizer for GroupCountStep {}
 
 /// Implements the `Optimizer` trait for `LogicalStep`, allowing optimization rules to be applied to individual steps.
