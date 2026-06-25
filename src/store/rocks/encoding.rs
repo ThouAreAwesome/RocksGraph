@@ -53,8 +53,11 @@
 //! | `vertex_id`     | 8     | all incident edges (`bothE`)          |
 //! | `vertex_id \| label_id` | 10 | `outE(label)` / `inE(label)`    |
 
+use smallvec::SmallVec;
+
 use crate::types::{
     CanonicalKey, Direction, Edge, EdgeKey, LabelId, Primitive, Property, Rank, StoreError, Vertex, VertexKey,
+    SCAN_PREFIX_INLINE,
 };
 
 // ── Scan helpers ──────────────────────────────────────────────────────────────
@@ -63,8 +66,12 @@ pub(crate) const EDGE_PREFIX_LENGTH: usize = 8;
 
 /// Builds the prefix for an edge Column Family (CF) scan.
 /// `vertex_id` (8 B), optionally followed by `label_id` (2 B).
-pub fn edge_scan_prefix(vertex: VertexKey, label: Option<LabelId>) -> Vec<u8> {
-    let mut prefix = Vec::with_capacity(10);
+///
+/// Returns an inline [`SmallVec`] — no heap allocation for the typical
+/// 8–10 byte prefix. The caller can pass the result directly to
+/// [`prefix_upper_bound`] or clone it into a `Vec<u8>` for RocksDB keys.
+pub fn edge_scan_prefix(vertex: VertexKey, label: Option<LabelId>) -> SmallVec<[u8; SCAN_PREFIX_INLINE]> {
+    let mut prefix = SmallVec::<[u8; SCAN_PREFIX_INLINE]>::new();
     prefix.extend_from_slice(&(vertex ^ (1 << 63)).to_be_bytes());
     if let Some(lbl) = label {
         prefix.extend_from_slice(&lbl.to_be_bytes());
@@ -73,10 +80,13 @@ pub fn edge_scan_prefix(vertex: VertexKey, label: Option<LabelId>) -> Vec<u8> {
 }
 
 /// Computes the exclusive upper-bound for a prefix scan.
-/// This is done by incrementing the last non-`0xFF` byte. Returns `None` when all bytes are `0xFF` (indicating a scan
-/// to end of CF instead).
-pub fn prefix_upper_bound(prefix: &[u8]) -> Option<Vec<u8>> {
-    let mut upper = prefix.to_vec();
+///
+/// Copies `prefix` into an inline [`SmallVec`], then increments the last
+/// non-`0xFF` byte. Returns `None` when every byte is `0xFF` (meaning a
+/// scan-to-end should be used instead).
+pub fn prefix_upper_bound(prefix: &[u8]) -> Option<SmallVec<[u8; SCAN_PREFIX_INLINE]>> {
+    let mut upper = SmallVec::<[u8; SCAN_PREFIX_INLINE]>::new();
+    upper.extend_from_slice(prefix);
     for byte in upper.iter_mut().rev() {
         if *byte < 0xFF {
             *byte += 1;

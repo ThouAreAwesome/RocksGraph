@@ -15,6 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::types::PIPELINE_BATCH_INLINE;
 use std::{collections::HashMap, rc::Rc};
 
 use smallvec::{smallvec, SmallVec};
@@ -30,7 +31,7 @@ use crate::{
         error::StoreError,
         gvalue::Primitive,
         keys::{CanonicalKey, LabelId, VertexKey},
-        GValue,
+        GValue, VERTEX_PROPS_INLINE,
     },
 };
 
@@ -43,7 +44,7 @@ pub struct AddVStep {
     /// The designated vertex key.
     vertex_id: VertexKey,
     /// The property list to initialize the new vertex with.
-    properties: SmallVec<[Property; 8]>,
+    properties: SmallVec<[Property; VERTEX_PROPS_INLINE]>,
 
     // ── Dynamic/Runtime execution state ──
     /// Whether the vertex has been successfully created and emitted in this run.
@@ -67,7 +68,7 @@ impl CoreStep for AddVStep {
         panic!("AddVStep is a source step and cannot have an upstream");
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
         // Emits the newly created vertex as a traverser.
         if self.emitted {
             return Ok(None);

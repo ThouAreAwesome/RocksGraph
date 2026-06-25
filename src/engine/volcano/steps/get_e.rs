@@ -15,6 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::types::PIPELINE_BATCH_INLINE;
 use std::rc::Rc;
 
 use smallvec::{smallvec, SmallVec};
@@ -28,7 +29,7 @@ use crate::{
     types::{
         error::StoreError,
         keys::{Rank, DEFAULT_RANK},
-        Direction, EdgeKey, GValue, LabelId, VertexKey,
+        Direction, EdgeKey, GValue, LabelId, VertexKey, DIRECTION_INLINE,
     },
 };
 
@@ -70,14 +71,14 @@ impl GetEStep {
     /// the label is known to be single-edge, and the same assumption this step already made
     /// before rank filters could be folded in.
     pub fn new(
-        label_ids: SmallVec<[LabelId; 4]>,
-        end_vertex_ids: SmallVec<[VertexKey; 4]>,
+        label_ids: SmallVec<[LabelId; PIPELINE_BATCH_INLINE]>,
+        end_vertex_ids: SmallVec<[VertexKey; PIPELINE_BATCH_INLINE]>,
         direction: Option<Direction>,
         rank: Option<Rank>,
         output_edges: bool,
         track_path: bool,
     ) -> Self {
-        let directions: SmallVec<[Direction; 2]> = match direction {
+        let directions: SmallVec<[Direction; DIRECTION_INLINE]> = match direction {
             Some(d) => smallvec![d],
             None => smallvec![Direction::OUT, Direction::IN],
         };
@@ -104,7 +105,7 @@ impl CoreStep for GetEStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
         // Produces traversers for edges that match the specified criteria.
         loop {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
@@ -115,7 +116,7 @@ impl CoreStep for GetEStep {
                 _ => return Err(StoreError::UnexpectedDataType("expected Vertex before outE".into())),
             };
 
-            let mut results: SmallVec<[_; 4]> = smallvec![];
+            let mut results: SmallVec<[_; PIPELINE_BATCH_INLINE]> = smallvec![];
             let output_edges = self.output_edges;
             let to_gvalue = move |edge_key: EdgeKey| {
                 if output_edges {

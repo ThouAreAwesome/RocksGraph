@@ -81,5 +81,28 @@ pub use keys::{
 };
 pub use prop_key::PropKey;
 
+// ── SmallVec inline capacities ──────────────────────────────────────────────
+
+/// Inline capacity for step labels assigned via `as("x")`.
+/// Gremlin convention is 1–2 labels per step position.
+pub(crate) const STEP_LABEL_INLINE: usize = 2;
+
+/// Inline capacity for direction lists (`OUT` / `IN` in `bothE` / `both`).
+/// Always exactly two directions.
+pub(crate) const DIRECTION_INLINE: usize = 2;
+
+/// Inline capacity for order-by keys.  Most `order().by(...)` chains use 1–2 keys.
+pub(crate) const ORDER_KEY_INLINE: usize = 2;
+
+/// Default inline capacity for the Volcano pipeline batch buffer and for
+/// small collections of vertex IDs, edge labels, property keys, and sub-plans.
+pub(crate) const PIPELINE_BATCH_INLINE: usize = 4;
+
+/// Inline capacity for vertex property lists in `addV()`.
+pub(crate) const VERTEX_PROPS_INLINE: usize = 8;
+
+/// Inline capacity for RocksDB key-prefix buffers (vertex ID + optional label ID).
+pub(crate) const SCAN_PREFIX_INLINE: usize = 10;
+
 #[cfg(test)]
 pub mod tests;

@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
-//! RocksGraph — a Gremlin-compatible graph database engine.
+//! RocksGraph — a Gremlin-inspired property graph database engine backed by RocksDB.
 //!
 //! ## Quick start
 //!

@@ -183,7 +183,7 @@ impl GraphSnapshot for Snapshot {
         let mut read_opts = self.read_opts();
         read_opts.set_prefix_same_as_start(true);
         if let Some(upper) = prefix_upper_bound(&prefix) {
-            read_opts.set_iterate_upper_bound(upper);
+            read_opts.set_iterate_upper_bound(upper.to_vec());
         }
 
         let seek_key = if let Some(cursor) = opts.start_from {
@@ -194,7 +194,7 @@ impl GraphSnapshot for Snapshot {
             key.extend_from_slice(&cursor.rank.to_be_bytes());
             key
         } else {
-            prefix.clone()
+            prefix.clone().into_vec()
         };
 
         let dst_set: Option<HashSet<VertexKey>> = opts.dst.map(|k| k.iter().copied().collect());

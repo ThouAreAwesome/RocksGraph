@@ -8,7 +8,7 @@ version = "0.1.0"
 readme = "README.md"
 repository = "https://github.com/austinhan/rocksgraph"
 keywords = ["graph", "gremlin", "rocksdb", "database"]
-categories = ["database-implementations", "data-structures"]
+categories = ["database-implementations"]
 
 [features]
 # Enable RocksDB statistics collection. Adds ~5-10% overhead on every storage

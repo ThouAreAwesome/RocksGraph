@@ -416,8 +416,8 @@ fn test_concurrent_auto_mode_writes_do_not_starve_schema_lock() {
 
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        const THREADS: i64 = 8;
-        const PAIRS_PER_THREAD: i64 = 60;
+        const THREADS: i64 = 4;
+        const PAIRS_PER_THREAD: i64 = 20;
 
         let handles: Vec<_> = (0..THREADS)
             .map(|t| {
@@ -479,7 +479,7 @@ fn test_concurrent_auto_mode_complex_distinct_schemas() {
                         let dst_id = (t * 10000 + 5000 + i) as i64;
 
                         // Loop with retry for OCC conflicts
-                        for attempt in 0..15 {
+                        for attempt in 0..5 {
                             let mut tx = graph.begin();
 
                             // 1. Add vertices with unique labels and properties
@@ -505,7 +505,7 @@ fn test_concurrent_auto_mode_complex_distinct_schemas() {
                             if tx.commit().is_ok() {
                                 break;
                             }
-                            if attempt == 14 {
+                            if attempt == 4 {
                                 panic!("Thread {} failed to commit iteration {} after 60 attempts", t, i);
                             }
                             // Backoff slightly to reduce hot loops

@@ -15,6 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::types::PIPELINE_BATCH_INLINE;
 use std::rc::Rc;
 
 use smallvec::{smallvec, SmallVec};
@@ -35,11 +36,11 @@ use crate::{
 #[derive(Debug)]
 pub struct AndStep {
     upstream: Option<StepRef>,
-    physical_plans: SmallVec<[PhysicalPlan; 4]>,
+    physical_plans: SmallVec<[PhysicalPlan; PIPELINE_BATCH_INLINE]>,
 }
 
 impl AndStep {
-    pub fn new(physical_plans: SmallVec<[PhysicalPlan; 4]>) -> Self {
+    pub fn new(physical_plans: SmallVec<[PhysicalPlan; PIPELINE_BATCH_INLINE]>) -> Self {
         Self { upstream: None, physical_plans }
     }
 }
@@ -49,7 +50,7 @@ impl CoreStep for AndStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
         loop {
             let Some(upstream) = self.upstream.as_ref() else {
                 return Ok(None);
@@ -92,11 +93,11 @@ impl CoreStep for AndStep {
 #[derive(Debug)]
 pub struct OrStep {
     upstream: Option<StepRef>,
-    physical_plans: SmallVec<[PhysicalPlan; 4]>,
+    physical_plans: SmallVec<[PhysicalPlan; PIPELINE_BATCH_INLINE]>,
 }
 
 impl OrStep {
-    pub fn new(physical_plans: SmallVec<[PhysicalPlan; 4]>) -> Self {
+    pub fn new(physical_plans: SmallVec<[PhysicalPlan; PIPELINE_BATCH_INLINE]>) -> Self {
         Self { upstream: None, physical_plans }
     }
 }
@@ -106,7 +107,7 @@ impl CoreStep for OrStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
         loop {
             let Some(upstream) = self.upstream.as_ref() else {
                 return Ok(None);

@@ -15,6 +15,8 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::types::PIPELINE_BATCH_INLINE;
+use crate::types::STEP_LABEL_INLINE;
 use std::rc::Rc;
 
 use smallvec::SmallVec;
@@ -51,7 +53,7 @@ impl CoreStep for PathStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
         if self.emitted {
             return Ok(None);
         }
@@ -60,7 +62,7 @@ impl CoreStep for PathStep {
 
         let mut paths = SmallVec::new();
         while let Some(t) = upstream.next(ctx)? {
-            let path_gvalues: Vec<(GValue, Option<SmallVec<[SmolStr; 2]>>)> = t.collect_path();
+            let path_gvalues: Vec<(GValue, Option<SmallVec<[SmolStr; STEP_LABEL_INLINE]>>)> = t.collect_path();
             paths.push(Traverser::new_rc(GValue::Path(path_gvalues)));
         }
 

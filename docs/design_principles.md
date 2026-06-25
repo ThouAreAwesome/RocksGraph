@@ -63,7 +63,59 @@ and managed by the caller.
 This eliminates string allocation on every traversal step, enables schema enforcement at
 registration time, and makes traversal hot paths allocation-free.
 
-### `withProperties()` fetch hint *(planned)*
+### Single-threaded per query, multi-threaded across queries *(implemented)*
+
+**Within a single traversal, everything is single-threaded.** The Volcano pipeline uses
+`Rc<dyn GremlinStep>` for step references, `Rc<Traverser>` for traverser trees, and
+`RefCell` for interior mutability inside `BufferedStep`. There are no thread pools, no
+work-stealing queues, no intra-query parallelism.
+
+**Across queries, concurrency is at the session boundary.** A `Graph` handle is cheaply
+cloneable (`Arc` internally) and safe to share across threads. Each thread creates its
+own `ReadSession` (pinned to a RocksDB snapshot) or `TxSession` (an OCC transaction) and
+drives it independently. Multiple sessions can read or write concurrently against the
+same `RocksStorage`; RocksDB handles the I/O concurrency internally.
+
+This split is deliberate:
+
+- **It keeps the hot path allocation-free for synchronisation.** `Rc` instead of `Arc`
+  means no atomic reference counting on every traverser produced. `RefCell` instead of
+  `Mutex` means no lock acquisition on every `next()` call into the pipeline.
+- **It eliminates a whole class of bugs.** No data races, no deadlocks, no
+  non-deterministic ordering between steps in the same query. The traversal engine is
+  a deterministic function from (plan, snapshot) → results.
+- **It matches how graph databases are used in practice.** Most applications issue many
+  small, independent queries (e.g. one per HTTP request). Session-per-request maps
+  naturally onto this pattern without forcing the query engine itself to be
+  thread-safe.
+
+TinkerPop's `Traversal` interface implies the same model (single-threaded iteration via
+`hasNext()`/`next()`), so this is consistent with Gremlin semantics — RocksGraph just
+encodes it in the type system rather than leaving it as a runtime convention.
+
+```
+┌─── Thread pool (N workers) ──────────────────────────────────────────┐
+│                                                                      │
+│  ┌─ Thread A ──────────────┐  ┌─ Thread B ──────────────┐           │
+│  │ ReadSession              │  │ TxSession                │           │
+│  │  Rc<PhysicalPlan>        │  │  Rc<PhysicalPlan>        │           │
+│  │  Rc<Traverser> tree      │  │  Rc<Traverser> tree      │           │
+│  │  RefCell<BufferedStep>   │  │  RefCell<BufferedStep>   │           │
+│  │  overlay: HashMap caches │  │  overlay: dirty HashMap  │           │
+│  └──────────┬───────────────┘  └──────────┬───────────────┘           │
+│             │ RocksDB snapshot             │ OCC txn                  │
+│             ▼                              ▼                          │
+│  ┌────────────────────────────────────────────────────────────────┐  │
+│  │  RocksStorage (Arc<OptimisticTransactionDB>)                    │  │
+│  │  Schema (Arc<RwLock<Schema>>)                                   │  │
+│  └────────────────────────────────────────────────────────────────┘  │
+│                                                                      │
+│  Per-query:  Rc / RefCell / HashMap   — single-threaded, no sync    │
+│  Cross-query: Arc / RwLock             — shared, concurrent safe    │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+### `withProperties()` fetch hint *(implemented)*
 
 A trailing step that controls which properties are fetched during materialization:
 - `.withProperties([])` — return `Vertex`/`Edge` with id and label only; zero extra reads
@@ -72,6 +124,19 @@ A trailing step that controls which properties are fetched during materializatio
 - No `.withProperties()` — default behavior, all properties fetched
 
 This fills the gap TinkerPop cannot fill: a typed result with selective property loading.
+
+#### Why no `valueMap()` / `elementMap()`
+
+These TinkerPop steps extract properties into an unstructured `Map`, losing the typed
+`Vertex`/`Edge` wrapper. They exist in Gremlin because TinkerPop cannot return a `Vertex`
+with partial properties — the only choices are the full `Vertex` (all properties) or
+`valueMap()` (untyped map of values).
+
+`withProperties()` is the principled RocksGraph alternative: the result stays typed, and
+the caller picks which properties to fetch. The mid-pipeline use case (extract properties
+then continue traversing on them) is rare enough that supporting two overlapping APIs is
+not justified. Skip `valueMap()` and `elementMap()` — they are TinkerPop workarounds that
+`withProperties()` renders unnecessary.
 
 ### Vertex label as an optional concern *(under consideration)*
 

@@ -15,6 +15,8 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::types::PIPELINE_BATCH_INLINE;
+use crate::types::VERTEX_PROPS_INLINE;
 use std::{collections::HashMap, rc::Rc};
 
 use smallvec::{smallvec, SmallVec};
@@ -44,7 +46,7 @@ pub struct AddEStep {
     /// The destination vertex key of the edge.
     in_v_id: VertexKey,
     /// The property list to initialize the new edge with.
-    properties: SmallVec<[Property; 8]>,
+    properties: SmallVec<[Property; VERTEX_PROPS_INLINE]>,
     /// The rank of the edge to be created.
     rank: Rank,
 
@@ -75,7 +77,7 @@ impl AddEStep {
                 key,
                 value,
             })
-            .collect::<SmallVec<[Property; 8]>>();
+            .collect::<SmallVec<[Property; VERTEX_PROPS_INLINE]>>();
         Self { label_id, out_v_id, in_v_id, properties, rank: final_rank, emitted: false }
     }
 }
@@ -85,7 +87,7 @@ impl CoreStep for AddEStep {
         panic!("AddEStep is a source step and cannot have an upstream");
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
         // Emits the newly created edge as a traverser.
         if self.emitted {
             return Ok(None);

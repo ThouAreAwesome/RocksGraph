@@ -29,7 +29,7 @@ use crate::types::{
     gvalue::{Primitive, PrimitivePredicate},
     keys::{EdgeKey, Rank, VertexKey},
     prop_key::PropKey,
-    StoreError,
+    StoreError, ORDER_KEY_INLINE, PIPELINE_BATCH_INLINE, STEP_LABEL_INLINE,
 };
 use smallvec::SmallVec;
 use smol_str::SmolStr;
@@ -169,6 +169,15 @@ pub enum LogicalStep {
     Unfold(UnfoldStep),
     As(AsStep),
     Select(SelectStep),
+    Range(RangeStep),
+    Skip(SkipStep),
+    Tail(TailStep),
+    Order(OrderStep),
+    SimplePath(SimplePathStep),
+    CyclicPath(CyclicPathStep),
+    Choose(ChooseStep),
+    Group(GroupStep),
+    GroupCount(GroupCountStep),
 }
 
 /// Specifies when a repeat step should emit intermediate results.
@@ -303,7 +312,7 @@ impl Optimizer for UnfoldStep {}
 /// Labels the current traverser for later retrieval via `select()`.
 #[derive(Clone, Debug)]
 pub struct AsStep {
-    pub labels: SmallVec<[SmolStr; 2]>,
+    pub labels: SmallVec<[SmolStr; STEP_LABEL_INLINE]>,
 }
 
 impl Optimizer for AsStep {}
@@ -311,10 +320,91 @@ impl Optimizer for AsStep {}
 /// Retrieves traversers previously labeled with `as()`.
 #[derive(Clone, Debug)]
 pub struct SelectStep {
-    pub labels: SmallVec<[SmolStr; 2]>,
+    pub labels: SmallVec<[SmolStr; STEP_LABEL_INLINE]>,
 }
 
 impl Optimizer for SelectStep {}
+
+/// Keeps traversers in the half-open range `[lo, hi)`.
+#[derive(Clone, Debug)]
+pub struct RangeStep { pub lo: u64, pub hi: u64 }
+impl Optimizer for RangeStep {}
+
+/// Skips the first `n` traversers, emitting the rest.
+#[derive(Clone, Debug)]
+pub struct SkipStep { pub n: u64 }
+impl Optimizer for SkipStep {}
+
+/// Collects all traversers and emits only the last `n`.
+#[derive(Clone, Debug)]
+pub struct TailStep { pub n: u64 }
+impl Optimizer for TailStep {}
+
+/// Sorting direction.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Order {
+    Asc,
+    Desc,
+}
+
+/// Specifies what to compare when sorting.
+#[derive(Clone, Debug)]
+pub enum OrderKeySpec {
+    /// Compare by the traverser value itself.
+    Value,
+    /// Compare by a property value (resolved at build time).
+    Property(SmolStr),
+}
+
+/// A single sort key with direction.
+#[derive(Clone, Debug)]
+pub struct OrderKey {
+    pub spec: OrderKeySpec,
+    pub order: Order,
+}
+
+/// Sorts traversers using the given key specifications.
+#[derive(Clone, Debug)]
+pub struct OrderStep { pub keys: SmallVec<[OrderKey; ORDER_KEY_INLINE]> }
+impl Optimizer for OrderStep {}
+
+/// Filters out traversers whose path contains duplicate vertices (keeps simple paths).
+#[derive(Clone, Debug)]
+pub struct SimplePathStep {}
+impl Optimizer for SimplePathStep {}
+
+/// Filters out traversers whose path does NOT contain duplicates (keeps cyclic paths).
+#[derive(Clone, Debug)]
+pub struct CyclicPathStep {}
+impl Optimizer for CyclicPathStep {}
+
+/// Conditional branching: if predicate matches, take true_choice; else take false_choice (or pass-through).
+#[derive(Clone)]
+pub struct ChooseStep {
+    pub predicate: LogicalPlan,
+    pub true_choice: LogicalPlan,
+    pub false_choice: Option<LogicalPlan>,
+}
+impl Optimizer for ChooseStep {
+    fn optimize(&mut self, optimizer_rule: &OptimizerRule) -> Result<bool, StoreError> {
+        let mut changed = optimizer_rule(&mut self.predicate)?;
+        changed |= optimizer_rule(&mut self.true_choice)?;
+        if let Some(ref mut fc) = self.false_choice {
+            changed |= optimizer_rule(fc)?;
+        }
+        Ok(changed)
+    }
+}
+
+/// Collects traversers into a map, grouped by key. If no key is specified, groups by value.
+#[derive(Clone, Debug)]
+pub struct GroupStep { pub key: Option<SmolStr> }
+impl Optimizer for GroupStep {}
+
+/// Collects traversers and counts occurrences per key. If no key is specified, counts by value.
+#[derive(Clone, Debug)]
+pub struct GroupCountStep { pub key: Option<SmolStr> }
+impl Optimizer for GroupCountStep {}
 
 /// Implements the `Optimizer` trait for `LogicalStep`, allowing optimization rules to be applied to individual steps.
 impl Optimizer for LogicalStep {
@@ -328,6 +418,7 @@ impl Optimizer for LogicalStep {
             LogicalStep::Not(n) => changed |= n.optimize(optimizer_rule)?,
             LogicalStep::And(a) => changed |= a.optimize(optimizer_rule)?,
             LogicalStep::Or(o) => changed |= o.optimize(optimizer_rule)?,
+            LogicalStep::Choose(c) => changed |= c.optimize(optimizer_rule)?,
             _ => {}
         }
         Ok(changed)
@@ -499,7 +590,7 @@ impl Optimizer for WhereStep {
 #[derive(Clone)]
 /// Represents a logical `union` step, combining results from multiple sub-plans.
 pub struct UnionStep {
-    pub plans: SmallVec<[LogicalPlan; 0]>,
+    pub plans: SmallVec<[LogicalPlan; PIPELINE_BATCH_INLINE]>,
 }
 
 /// Implements the `Optimizer` trait for `UnionStep`, optimizing its sub-plans.

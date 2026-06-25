@@ -54,11 +54,12 @@ use crate::{
     planner::{
         apply_rules,
         logical_step::{
-            AddEStep, AddVStep, AndStep, AsStep, BothEStep, BothStep, CoalesceStep, CountStep, DedupStep, DropStep,
-            EStep, EmitSpec, FoldStep, FromStep, HasIdStep, HasLabelStep, InEStep, InStep, InVStep, LimitStep,
-            LogicalPlan, LogicalStep, MaxStep, MeanStep, MinStep, NotStep, OrStep, OtherVStep, OutEStep, OutStep,
-            OutVStep, PathStep, PropertiesStep, PropertyStep, RepeatStep, ScalarFilterStep, SelectStep, SumStep,
-            ToStep, UnfoldStep, UnionStep, ValuesStep, WhereStep,
+            AddEStep, AddVStep, AndStep, AsStep, BothEStep, BothStep, ChooseStep, CoalesceStep, CountStep,
+            CyclicPathStep, DedupStep, DropStep, EStep, EmitSpec, FoldStep, FromStep, GroupCountStep, HasIdStep, HasLabelStep,
+            InEStep, InStep, InVStep, LimitStep, LogicalPlan, LogicalStep, MaxStep, MeanStep, MinStep, NotStep,
+            OrStep, Order, OrderKey, OrderKeySpec, OrderStep, OtherVStep, OutEStep, OutStep, OutVStep, PathStep,
+            PropertiesStep, PropertyStep, RangeStep, RepeatStep, ScalarFilterStep, SelectStep, SimplePathStep,
+            SkipStep, SumStep, TailStep, ToStep, UnfoldStep, UnionStep, ValuesStep, WhereStep,
         },
     },
     types::{keys::EdgeKey, prop_key::LABEL, StoreError},
@@ -453,6 +454,52 @@ pub trait TraversalBuilder: PlanAppender {
         self
     }
 
+    fn range(mut self, lo: u64, hi: u64) -> Self {
+        self.push_step(LogicalStep::Range(RangeStep { lo, hi }));
+        self
+    }
+
+    fn skip(mut self, n: u64) -> Self {
+        self.push_step(LogicalStep::Skip(SkipStep { n }));
+        self
+    }
+
+    fn tail(mut self, n: u64) -> Self {
+        self.push_step(LogicalStep::Tail(TailStep { n }));
+        self
+    }
+
+    fn order(mut self) -> Self {
+        let keys = smallvec::smallvec![OrderKey { spec: OrderKeySpec::Value, order: Order::Asc }];
+        self.push_step(LogicalStep::Order(OrderStep { keys }));
+        self
+    }
+
+    fn by(self, _key: impl Into<SmolStr>) -> Self { self }
+    fn order_by(self, _key: impl Into<SmolStr>, _order: Order) -> Self { self }
+
+    fn simple_path(mut self) -> Self {
+        self.push_step(LogicalStep::SimplePath(SimplePathStep {}));
+        self
+    }
+
+    fn cyclic_path(mut self) -> Self {
+        self.push_step(LogicalStep::CyclicPath(CyclicPathStep {}));
+        self
+    }
+
+    fn choose(mut self, mut predicate: GraphTraversal, mut true_choice: GraphTraversal, false_choice: Option<GraphTraversal>) -> Self {
+        if let Some(err) = predicate.error.take() { self.record_error(err); }
+        if let Some(err) = true_choice.error.take() { self.record_error(err); }
+        let fc = false_choice.map(|mut f| { if let Some(err) = f.error.take() { self.record_error(err); } f.into_plan() });
+        self.push_step(LogicalStep::Choose(ChooseStep {
+            predicate: predicate.into_plan(),
+            true_choice: true_choice.into_plan(),
+            false_choice: fc,
+        }));
+        self
+    }
+
     fn select(mut self, label: impl Into<SmolStr>) -> Self {
         self.push_step(LogicalStep::Select(SelectStep { labels: smallvec::smallvec![label.into()] }));
         self
@@ -460,6 +507,11 @@ pub trait TraversalBuilder: PlanAppender {
 
     fn dedup(mut self) -> Self {
         self.push_step(LogicalStep::Dedup(DedupStep {}));
+        self
+    }
+
+    fn group_count(mut self) -> Self {
+        self.push_step(LogicalStep::GroupCount(GroupCountStep { key: None }));
         self
     }
 

@@ -1758,4 +1758,48 @@ mod integration_test {
             assert_eq!(n, &Value::String("marko".to_string()));
         }
     }
+
+    // ── range / skip / tail / order / simplePath / choose ──
+
+    #[test]
+    fn test_range_skip_tail_e2e() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+        let ages: Vec<i64> = tx.g().V([]).hasLabel(["person"]).values(["age"]).order().range(1, 3)
+            .to_list().unwrap().iter().map(|v| match v { Value::Int32(i) => *i as i64, Value::Int64(i) => *i, _ => panic!() }).collect();
+        assert_eq!(ages.len(), 2);
+        let last = tx.g().V([]).hasLabel(["person"]).values(["name"]).order().tail(1)
+            .to_list().unwrap();
+        assert_eq!(last.len(), 1);
+    }
+
+    #[test]
+    fn test_order_asc_e2e() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+        let ages: Vec<i64> = tx.g().V([]).hasLabel(["person"]).values(["age"]).order()
+            .to_list().unwrap().iter().map(|v| match v { Value::Int32(i) => *i as i64, Value::Int64(i) => *i, _ => panic!() }).collect();
+        let mut sorted = ages.clone();
+        sorted.sort();
+        assert_eq!(ages, sorted);
+    }
+
+    #[test]
+    fn test_simple_path_e2e() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+        // V(1).out().simplePath() — from marko, out knows → vadas, josh, no cycles expected
+        let results = tx.g().V([1]).out(["knows"]).simple_path().to_list().unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_choose_e2e() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+        let results = tx.g().V([]).hasLabel(["person"]).choose(__().has("age", 32i32), __().values(["name"]), None)
+            .to_list().unwrap();
+        assert!(!results.is_empty());
+    }
+
 }

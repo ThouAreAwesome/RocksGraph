@@ -15,6 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::types::PIPELINE_BATCH_INLINE;
 use std::rc::Rc;
 
 use smallvec::{smallvec, SmallVec};
@@ -37,7 +38,7 @@ use crate::{
 pub struct EStep {
     // ── Static/Fixed configuration ──
     /// Specific edge keys to look up. If empty, scans all edges in the database.
-    keys: SmallVec<[EdgeKey; 4]>,
+    keys: SmallVec<[EdgeKey; PIPELINE_BATCH_INLINE]>,
 
     // ── Dynamic/Runtime execution state ──
     /// The index of the current key being processed in `keys` (only used when lookup keys are specified).
@@ -56,7 +57,7 @@ pub struct EStep {
 
 /// Creates a new `EStep` with a list of edge keys to emit or scan.
 impl EStep {
-    pub fn new(keys: SmallVec<[EdgeKey; 4]>) -> Self {
+    pub fn new(keys: SmallVec<[EdgeKey; PIPELINE_BATCH_INLINE]>) -> Self {
         Self {
             keys,
             current_idx: 0,
@@ -74,7 +75,7 @@ impl CoreStep for EStep {
         panic!("EStep is a source step, it does not have an upstream.");
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
         if !self.keys.is_empty() {
             if self.buffer.is_empty() && self.current_idx == 0 {
                 let fetched = ctx.get_edges(&self.keys)?;

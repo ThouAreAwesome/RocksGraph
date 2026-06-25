@@ -15,6 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::types::PIPELINE_BATCH_INLINE;
 use std::rc::Rc;
 
 use smallvec::SmallVec;
@@ -40,11 +41,11 @@ pub struct BothStep {
 
     // ── Static/Fixed configuration ──
     /// The edge labels to filter by during traversal (empty means all labels).
-    label_ids: SmallVec<[LabelId; 4]>,
+    label_ids: SmallVec<[LabelId; PIPELINE_BATCH_INLINE]>,
     /// Maximum number of results to produce per input vertex.
     limit: Option<u32>,
     /// Optional target vertex IDs to filter the destination vertices of the traversed edges.
-    end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
+    end_vertex_ids: Option<SmallVec<[VertexKey; PIPELINE_BATCH_INLINE]>>,
     /// Optional edge rank to filter by, folded in from a `.has("rank", N)` filter.
     rank: Option<Rank>,
     /// Whether to return the traversed edges themselves (true) or the adjacent vertices (false).
@@ -67,8 +68,8 @@ pub struct BothStep {
 impl BothStep {
     /// Creates a new `BothStep` for traversing incident vertices or edges in both directions.
     pub fn new(
-        label_ids: SmallVec<[LabelId; 4]>,
-        end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
+        label_ids: SmallVec<[LabelId; PIPELINE_BATCH_INLINE]>,
+        end_vertex_ids: Option<SmallVec<[VertexKey; PIPELINE_BATCH_INLINE]>>,
         rank: Option<Rank>,
         output_edges: bool,
         track_path: bool,
@@ -94,7 +95,7 @@ impl CoreStep for BothStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
         loop {
             if self.current_input.is_none() {
                 let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };

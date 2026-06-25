@@ -20,7 +20,7 @@ use std::rc::Rc;
 use smallvec::SmallVec;
 use smol_str::SmolStr;
 
-use crate::types::GValue;
+use crate::types::{GValue, STEP_LABEL_INLINE};
 
 /// The unit of work that flows between steps in a traversal pipeline.
 ///
@@ -39,7 +39,7 @@ pub struct Traverser {
     pub parent: Option<Rc<Traverser>>,
     /// Labels assigned to the current step via `as(…)`.  `None` = no labels.
     #[allow(dead_code)]
-    pub labels: Option<SmallVec<[SmolStr; 2]>>,
+    pub labels: Option<SmallVec<[SmolStr; STEP_LABEL_INLINE]>>,
 }
 
 impl Traverser {
@@ -68,8 +68,8 @@ impl Traverser {
 
     /// Collect the full traversal history as `(value, labels)` pairs,
     /// oldest entry first (including the current traverser).
-    pub fn collect_path(&self) -> Vec<(GValue, Option<SmallVec<[SmolStr; 2]>>)> {
-        let mut entries: Vec<(GValue, Option<SmallVec<[SmolStr; 2]>>)> =
+    pub fn collect_path(&self) -> Vec<(GValue, Option<SmallVec<[SmolStr; STEP_LABEL_INLINE]>>)> {
+        let mut entries: Vec<(GValue, Option<SmallVec<[SmolStr; STEP_LABEL_INLINE]>>)> =
             vec![(self.value.clone(), self.labels.clone())];
         let mut cur = self.parent.as_deref();
         while let Some(ancestor) = cur {

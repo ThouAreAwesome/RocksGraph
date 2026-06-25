@@ -15,6 +15,8 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::types::PIPELINE_BATCH_INLINE;
+use crate::types::STEP_LABEL_INLINE;
 use std::rc::Rc;
 
 use smallvec::{smallvec, SmallVec};
@@ -34,11 +36,11 @@ use crate::{
 #[derive(Debug)]
 pub struct AsStep {
     upstream: Option<StepRef>,
-    labels: SmallVec<[SmolStr; 2]>,
+    labels: SmallVec<[SmolStr; STEP_LABEL_INLINE]>,
 }
 
 impl AsStep {
-    pub fn new(labels: SmallVec<[SmolStr; 2]>) -> Self {
+    pub fn new(labels: SmallVec<[SmolStr; STEP_LABEL_INLINE]>) -> Self {
         Self { upstream: None, labels }
     }
 }
@@ -48,7 +50,7 @@ impl CoreStep for AsStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
         let Some(upstream) = self.upstream.as_ref() else {
             return Ok(None);
         };
@@ -78,11 +80,11 @@ impl CoreStep for AsStep {
 #[derive(Debug)]
 pub struct SelectStep {
     upstream: Option<StepRef>,
-    labels: SmallVec<[SmolStr; 2]>,
+    labels: SmallVec<[SmolStr; STEP_LABEL_INLINE]>,
 }
 
 impl SelectStep {
-    pub fn new(labels: SmallVec<[SmolStr; 2]>) -> Self {
+    pub fn new(labels: SmallVec<[SmolStr; STEP_LABEL_INLINE]>) -> Self {
         Self { upstream: None, labels }
     }
 }
@@ -92,7 +94,7 @@ impl CoreStep for SelectStep {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
         loop {
             let Some(upstream) = self.upstream.as_ref() else {
                 return Ok(None);
@@ -122,7 +124,7 @@ impl CoreStep for SelectStep {
 
 /// Walk the parent chain to find the first traverser whose `labels`
 /// contains any of the target labels. Returns that traverser if found.
-fn find_labeled(t: &Rc<Traverser>, targets: &SmallVec<[SmolStr; 2]>) -> Option<Rc<Traverser>> {
+fn find_labeled(t: &Rc<Traverser>, targets: &SmallVec<[SmolStr; STEP_LABEL_INLINE]>) -> Option<Rc<Traverser>> {
     let mut cur = Some(Rc::clone(t));
     while let Some(node) = cur {
         if let Some(ref labels) = node.labels {

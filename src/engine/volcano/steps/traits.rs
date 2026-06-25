@@ -15,6 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::types::PIPELINE_BATCH_INLINE;
 use crate::{
     engine::{context::GraphCtx, traverser::Traverser},
     types::error::StoreError,
@@ -49,7 +50,7 @@ pub trait CoreStep: std::fmt::Debug {
 
     /// Pull the next batch of results. Returns `Ok(None)` when exhausted,
     /// `Err` on storage or runtime failure.
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError>;
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError>;
 
     /// Reset all mutable state and propagate to upstreams.
     fn reset(&mut self); // Resets the internal state of the step.
@@ -82,8 +83,11 @@ pub struct BufferedStep<T: CoreStep> {
 
 /// Implements `BufferedStep` for any `CoreStep`.
 impl<T: CoreStep + 'static> BufferedStep<T> {
+    /// Pre-allocates the output buffer to 4 slots — matching the inline
+    /// capacity of the [`SmallVec`] that [`CoreStep::produce`] returns.
+    /// Avoids the 0→4 reallocation chain on the first `produce()` call.
     pub fn new(core: T) -> Rc<Self> {
-        Rc::new(Self { inner: RefCell::new(StepInner { core, buffer: VecDeque::new() }) })
+        Rc::new(Self { inner: RefCell::new(StepInner { core, buffer: VecDeque::with_capacity(4) }) })
     }
 }
 

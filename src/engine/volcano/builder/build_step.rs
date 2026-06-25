@@ -156,10 +156,9 @@ impl PhysicalPlanBuilder {
         // (`GetEStep`) instead of an adjacency scan (`InOutStep`/`BothStep`) — but only when
         // the rank to look up is actually known.
         macro_rules! get_e_or_scan {
-            ($s:expr, $label_ids:expr, $direction:expr, $rank:expr, $output_edges:expr, $scan:expr, $name:literal) => {{
+            ($s:expr, $label_ids:expr, $direction:expr, $rank:expr, $output_edges:expr, $scan:expr, $edge_mode:ident, $name:literal) => {{
                 if let Some(end_ids) = &$s.end_vertex_ids {
-                    let schema_read = schema_lock.read().unwrap();
-                    let rank_safe = $rank.is_some() || schema_read.edge_mode == EdgeMode::Single;
+                    let rank_safe = $rank.is_some() || $edge_mode == EdgeMode::Single;
                     if !$label_ids.is_empty() && !end_ids.is_empty() && rank_safe {
                         return wire_required!(
                             BufferedStep::new(steps::get_e::GetEStep::new(
@@ -180,6 +179,9 @@ impl PhysicalPlanBuilder {
         }
 
         let schema = schema_lock.read().unwrap();
+        // Captured once here so the `get_e_or_scan!` macro below can check
+        // edge_mode without re-acquiring the RwLock inside the macro body.
+        let edge_mode = schema.edge_mode;
 
         match step {
             LogicalStep::Both(s) => {
@@ -195,7 +197,7 @@ impl PhysicalPlanBuilder {
                     false,
                     track_path,
                 );
-                get_e_or_scan!(s, label_ids, None, None::<Rank>, false, scan_step, "BothStep")
+                get_e_or_scan!(s, label_ids, None, None::<Rank>, false, scan_step, edge_mode, "BothStep")
             }
             LogicalStep::BothE(s) => {
                 let label_ids = s
@@ -205,7 +207,7 @@ impl PhysicalPlanBuilder {
                     .collect::<Result<SmallVec<[LabelId; 4]>, _>>()?;
                 let scan_step =
                     steps::both::BothStep::new(label_ids.clone(), s.end_vertex_ids.clone(), s.rank, true, track_path);
-                get_e_or_scan!(s, label_ids, None, s.rank, true, scan_step, "BothEStep")
+                get_e_or_scan!(s, label_ids, None, s.rank, true, scan_step, edge_mode, "BothEStep")
             }
             LogicalStep::V(s) => {
                 wire!(BufferedStep::new(steps::v::VStep::new(s.ids.clone())), None::<StepRef>)
@@ -281,7 +283,7 @@ impl PhysicalPlanBuilder {
                     false,
                     track_path,
                 );
-                get_e_or_scan!(s, label_ids, Some(Direction::IN), None::<Rank>, false, scan_step, "InStep")
+                get_e_or_scan!(s, label_ids, Some(Direction::IN), None::<Rank>, false, scan_step, edge_mode, "InStep")
             }
             LogicalStep::InE(s) => {
                 let label_ids = s
@@ -297,7 +299,7 @@ impl PhysicalPlanBuilder {
                     true,
                     track_path,
                 );
-                get_e_or_scan!(s, label_ids, Some(Direction::IN), s.rank, true, scan_step, "InEStep")
+                get_e_or_scan!(s, label_ids, Some(Direction::IN), s.rank, true, scan_step, edge_mode, "InEStep")
             }
             LogicalStep::Out(s) => {
                 let label_ids = s
@@ -313,7 +315,7 @@ impl PhysicalPlanBuilder {
                     false,
                     track_path,
                 );
-                get_e_or_scan!(s, label_ids, Some(Direction::OUT), None::<Rank>, false, scan_step, "OutStep")
+                get_e_or_scan!(s, label_ids, Some(Direction::OUT), None::<Rank>, false, scan_step, edge_mode, "OutStep")
             }
             LogicalStep::OutE(s) => {
                 let label_ids = s
@@ -329,7 +331,7 @@ impl PhysicalPlanBuilder {
                     true,
                     track_path,
                 );
-                get_e_or_scan!(s, label_ids, Some(Direction::OUT), s.rank, true, scan_step, "OutEStep")
+                get_e_or_scan!(s, label_ids, Some(Direction::OUT), s.rank, true, scan_step, edge_mode, "OutEStep")
             }
             LogicalStep::InV(_) => {
                 wire_required!(
@@ -466,7 +468,7 @@ impl PhysicalPlanBuilder {
                 }
                 wire!(
                     BufferedStep::new(
-                        steps::add_e::AddEStep::new(label_id, out_v_id, in_v_id, resolved_props, s.rank,)
+                        steps::add_e::AddEStep::new(label_id, out_v_id, in_v_id, resolved_props, s.rank)
                     ),
                     None::<StepRef>
                 )
@@ -612,7 +614,53 @@ impl PhysicalPlanBuilder {
                     "SelectStep"
                 )
             }
-            _ => unreachable!("unreachable"),
+            LogicalStep::Range(s) => {
+                drop(schema);
+                wire_required!(BufferedStep::new(steps::range_skip_tail::RangeStep::new(s.lo, s.hi)), upstream, "RangeStep")
+            }
+            LogicalStep::Skip(s) => {
+                drop(schema);
+                wire_required!(BufferedStep::new(steps::range_skip_tail::SkipStep::new(s.n)), upstream, "SkipStep")
+            }
+            LogicalStep::Tail(s) => {
+                drop(schema);
+                wire_required!(BufferedStep::new(steps::range_skip_tail::TailStep::new(s.n)), upstream, "TailStep")
+            }
+            LogicalStep::Order(s) => {
+                drop(schema);
+                wire_required!(BufferedStep::new(steps::order::OrderStep::new(s.keys.clone())), upstream, "OrderStep")
+            }
+            LogicalStep::SimplePath(_) => {
+                drop(schema);
+                wire_required!(BufferedStep::new(steps::simple_cyclic_path::SimplePathStep::default()), upstream, "SimplePathStep")
+            }
+            LogicalStep::CyclicPath(_) => {
+                drop(schema);
+                wire_required!(BufferedStep::new(steps::simple_cyclic_path::CyclicPathStep::default()), upstream, "CyclicPathStep")
+            }
+            LogicalStep::Group(_) => {
+                drop(schema);
+                wire_required!(BufferedStep::new(steps::group::GroupStep::default()), upstream, "GroupStep")
+            }
+            LogicalStep::GroupCount(_) => {
+                drop(schema);
+                wire_required!(BufferedStep::new(steps::group::GroupCountStep::default()), upstream, "GroupCountStep")
+            }
+            LogicalStep::Choose(s) => {
+                drop(schema);
+                let predicate = self.build(&s.predicate, schema_lock)?;
+                let true_choice = self.build(&s.true_choice, schema_lock)?;
+                let false_choice = if let Some(ref fc) = s.false_choice { Some(self.build(fc, schema_lock)?) } else { None };
+                wire_required!(
+                    BufferedStep::new(steps::choose::ChooseStep::new(predicate, true_choice, false_choice)),
+                    upstream,
+                    "ChooseStep"
+                )
+            }
+            LogicalStep::From(_) | LogicalStep::To(_) => {
+                Err(StoreError::UnsupportedOperation(
+                    "From/To steps are optimizer-internal and should be eliminated before physical build.".to_string()))
+            }
         }
     }
 }

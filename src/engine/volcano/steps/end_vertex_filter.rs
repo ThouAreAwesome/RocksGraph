@@ -15,6 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::types::PIPELINE_BATCH_INLINE;
 use std::rc::Rc;
 
 use smallvec::{smallvec, SmallVec};
@@ -36,12 +37,12 @@ pub struct EndVertexFilter {
 
     // ── Static/Fixed configuration ──
     /// The list of target vertex keys to filter matching edges.
-    ids: SmallVec<[VertexKey; 4]>,
+    ids: SmallVec<[VertexKey; PIPELINE_BATCH_INLINE]>,
 }
 
 /// Creates a new `EndVertexFilter` with a list of target vertex IDs.
 impl EndVertexFilter {
-    pub fn new(ids: SmallVec<[VertexKey; 4]>) -> Self {
+    pub fn new(ids: SmallVec<[VertexKey; PIPELINE_BATCH_INLINE]>) -> Self {
         Self { upstream: None, ids }
     }
 }
@@ -52,7 +53,7 @@ impl CoreStep for EndVertexFilter {
         self.upstream = Some(upstream);
     }
 
-    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; 4]>>, StoreError> {
+    fn produce(&mut self, ctx: &mut dyn GraphCtx) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
         // Produces traversers whose edge's secondary vertex ID is present in the `ids` list.
         loop {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };

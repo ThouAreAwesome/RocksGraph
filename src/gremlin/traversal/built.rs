@@ -262,6 +262,13 @@ impl<'g> Iterator for BuiltTraversal<'g> {
             Err(e) => Some(Err(e)),
             Ok(None) => None,
             Ok(Some(t)) => {
+                // Scalar values (from count(), values(), is(), etc.) carry no
+                // label-id or property-key-id that needs schema decoding — skip
+                // the RwLock read-acquire to avoid atomic + fence overhead on
+                // the hottest path.
+                if let GValue::Scalar(ref p) = &t.value {
+                    return Some(Ok(primitive_to_value(p.clone())));
+                }
                 let schema = self.schema.read().unwrap();
                 Some(materialize(&t.value, self.graph, &schema, &self.cache, self.prop_keys.as_deref()))
             }

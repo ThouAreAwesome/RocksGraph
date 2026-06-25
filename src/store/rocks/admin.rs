@@ -113,7 +113,7 @@ impl RocksStorage {
         let prefix = edge_scan_prefix(vertex, label);
         let mut read_opts = ReadOptions::default();
         if let Some(upper) = prefix_upper_bound(&prefix) {
-            read_opts.set_iterate_upper_bound(upper);
+            read_opts.set_iterate_upper_bound(upper.to_vec());
         }
 
         let dst_set: Option<HashSet<VertexKey>> = dst.map(|k| k.iter().copied().collect());
