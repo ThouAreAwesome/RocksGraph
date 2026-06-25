@@ -259,53 +259,74 @@ impl VertexValue {
 
 // ── VertexDegree ──────────────────────────────────────────────────────────────
 
-/// `[ out_e_cnt:u32 | in_e_cnt:u32 ]` — value in the `vertex_degree` CF.
+/// `[ vertex_label_id:u16 | out_e_cnt:u32 | in_e_cnt:u32 ]` — value in the `vertex_degree` CF.
 ///
-/// Stores the out-degree and in-degree for a vertex, used to enforce the
-/// invariant that a vertex cannot be dropped while it has incident edges.
+/// Stores the vertex label together with out-degree and in-degree for a vertex.
+/// The label is written once at `add_vertex` time and never updated again (no
+/// "change vertex label" operation exists).  Both counters track incident edges
+/// to enforce the invariant that a vertex cannot be dropped while it still has
+/// incident edges.
 #[derive(Debug, Clone)]
 pub struct VertexDegree {
+    pub vertex_label_id: LabelId,
     pub out_e_cnt: u32,
     pub in_e_cnt: u32,
 }
 
 impl VertexDegree {
-    /// Encodes the `VertexDegree` into an 8-byte array.
-    pub fn encode(&self) -> [u8; 8] {
-        let mut buf = [0u8; 8];
-        buf[0..4].copy_from_slice(&self.out_e_cnt.to_be_bytes());
-        buf[4..8].copy_from_slice(&self.in_e_cnt.to_be_bytes());
+    /// Encodes the `VertexDegree` into a 10-byte array.
+    pub fn encode(&self) -> [u8; 10] {
+        let mut buf = [0u8; 10];
+        buf[0..2].copy_from_slice(&self.vertex_label_id.to_be_bytes());
+        buf[2..6].copy_from_slice(&self.out_e_cnt.to_be_bytes());
+        buf[6..10].copy_from_slice(&self.in_e_cnt.to_be_bytes());
         buf
     }
 
     /// Decodes a byte slice into a `VertexDegree`.
     pub fn decode(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() != 8 {
+        if bytes.len() != 10 {
             return None;
         }
-        let out_e_cnt = u32::from_be_bytes(bytes[0..4].try_into().ok()?);
-        let in_e_cnt = u32::from_be_bytes(bytes[4..8].try_into().ok()?);
-        Some(Self { out_e_cnt, in_e_cnt })
+        let vertex_label_id = u16::from_be_bytes(bytes[0..2].try_into().ok()?);
+        let out_e_cnt = u32::from_be_bytes(bytes[2..6].try_into().ok()?);
+        let in_e_cnt = u32::from_be_bytes(bytes[6..10].try_into().ok()?);
+        Some(Self { vertex_label_id, out_e_cnt, in_e_cnt })
     }
 }
 
 // ── EdgeValue ─────────────────────────────────────────────────────────────────
 
-/// `[ property_blob ]` — value in both `edges_out` and `edges_in` CFs.
+/// `[ end_vertex_label:u16 | property_blob ]` — value in both `edges_out` and `edges_in` CFs.
+///
+/// The 2-byte `end_vertex_label` prefix stores the label of the *other* vertex for
+/// free at edge-scan time. For an `edges_out` row this is `dst_label`; for an
+/// `edges_in` row this is `src_label`. The direction-aware builders
+/// (`build_lazy_edge` / `build_full_edge`) attribute it correctly.
 #[derive(Debug, Clone)]
 pub struct EdgeValue {
+    pub end_vertex_label: LabelId,
     pub property_blob: Vec<u8>,
 }
 
 impl EdgeValue {
-    /// Encodes the `EdgeValue` into a byte slice (which is just the property blob).
-    pub fn encode(&self) -> &[u8] {
-        &self.property_blob
+    /// Encodes the `EdgeValue` into a byte vector, prefixing the
+    /// `end_vertex_label` as a 2-byte big-endian `u16`.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(2 + self.property_blob.len());
+        buf.extend_from_slice(&self.end_vertex_label.to_be_bytes());
+        buf.extend_from_slice(&self.property_blob);
+        buf
     }
 
     /// Decodes a byte slice into an `EdgeValue`.
-    pub fn decode(bytes: &[u8]) -> Self {
-        Self { property_blob: bytes.to_vec() }
+    /// Returns `None` if the slice is fewer than 2 bytes.
+    pub fn decode(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() < 2 {
+            return None;
+        }
+        let end_vertex_label = u16::from_be_bytes(bytes[0..2].try_into().ok()?);
+        Some(Self { end_vertex_label, property_blob: bytes[2..].to_vec() })
     }
 }
 
@@ -388,11 +409,17 @@ pub(super) fn build_full_vertex(id: VertexKey, vv: &VertexValue) -> Result<Verte
 /// Eagerly decode an `EdgeValue` from storage into a fully-materialized `Edge`.
 ///
 /// Used by the admin / test path.  Returns an error on a corrupt property blob.
+/// The `ek.direction` determines whether the `EdgeValue`'s `end_vertex_label`
+/// prefix belongs to `dst_label` (OUT) or `src_label` (IN).
 pub(super) fn build_full_edge(ek: &EdgeKey, ev: &EdgeValue) -> Result<Edge, StoreError> {
     let cek = ek.canonical_edge_key();
     let owner = CanonicalKey::Edge(cek);
     let props = decode_props(&ev.property_blob, owner).ok_or(StoreError::CorruptData("edge property blob"))?;
-    Ok(Edge::with_props(cek.src_id, cek.label_id, cek.dst_id, cek.rank, props))
+    let (src_label, dst_label) = match ek.direction {
+        Direction::OUT => (None, Some(ev.end_vertex_label)),
+        Direction::IN => (Some(ev.end_vertex_label), None),
+    };
+    Ok(Edge::with_props(cek.src_id, cek.label_id, cek.dst_id, cek.rank, props, src_label, dst_label))
 }
 
 /// Build a lazy `Vertex` from storage bytes — properties are not decoded yet.
@@ -407,8 +434,14 @@ pub(super) fn build_lazy_vertex(id: VertexKey, vv: &VertexValue) -> Vertex {
 /// Build a lazy `Edge` from storage bytes — properties are not decoded yet.
 ///
 /// Used by `GraphTransaction::get_edge` / `get_edges` and the snapshot equivalents.
+/// The `ek.direction` determines whether `EdgeValue::end_vertex_label` becomes
+/// `dst_label` (OUT) or `src_label` (IN).
 pub(super) fn build_lazy_edge(ek: &EdgeKey, ev: &EdgeValue) -> Edge {
     let cek = ek.canonical_edge_key();
+    let (src_label, dst_label) = match ek.direction {
+        Direction::OUT => (None, Some(ev.end_vertex_label)),
+        Direction::IN => (Some(ev.end_vertex_label), None),
+    };
     Edge::from_raw(
         cek.src_id,
         cek.label_id,
@@ -416,6 +449,8 @@ pub(super) fn build_lazy_edge(ek: &EdgeKey, ev: &EdgeValue) -> Edge {
         cek.rank,
         ev.property_blob.clone().into_boxed_slice(),
         decode_props,
+        src_label,
+        dst_label,
     )
 }
 
@@ -655,7 +690,7 @@ mod tests {
     fn make_edge(cek: CanonicalEdgeKey, raw: &[(u16, Primitive)]) -> Edge {
         let owner = CanonicalKey::Edge(cek);
         let props = raw.iter().map(|(k, v)| Property { owner, key: *k, value: v.clone() }).collect();
-        Edge::with_props(cek.src_id, cek.label_id, cek.dst_id, cek.rank, props)
+        Edge::with_props(cek.src_id, cek.label_id, cek.dst_id, cek.rank, props, None, None)
     }
 
     /// Encodes an edge key in the OUT direction.
@@ -764,10 +799,11 @@ mod tests {
 
     #[test]
     fn vertex_degree_encode_decode() {
-        let vd = VertexDegree { out_e_cnt: 10, in_e_cnt: 20 };
+        let vd = VertexDegree { vertex_label_id: 7, out_e_cnt: 10, in_e_cnt: 20 };
         let bytes = vd.encode();
-        assert_eq!(bytes.len(), 8);
+        assert_eq!(bytes.len(), 10);
         let dec = VertexDegree::decode(&bytes).unwrap();
+        assert_eq!(dec.vertex_label_id, 7);
         assert_eq!(dec.out_e_cnt, 10);
         assert_eq!(dec.in_e_cnt, 20);
     }
@@ -776,6 +812,7 @@ mod tests {
     fn vertex_degree_decode_bad_length() {
         assert!(VertexDegree::decode(&[0u8; 7]).is_none());
         assert!(VertexDegree::decode(&[0u8; 9]).is_none());
+        assert!(VertexDegree::decode(&[0u8; 11]).is_none());
     }
 
     // ── Full roundtrips ───────────────────────────────────────────────────────
@@ -804,9 +841,9 @@ mod tests {
         let raw =
             vec![(1u16, Primitive::Float64(std::f64::consts::PI)), (2u16, Primitive::String(SmolStr::new("friend")))];
         let key_bytes = encode_edge_key_out(cek);
-        let val_bytes = EdgeValue { property_blob: encode_props(&raw) }.encode().to_vec();
+        let val_bytes = EdgeValue { end_vertex_label: 7, property_blob: encode_props(&raw) }.encode();
         let dec_cek = decode_edge_key_out(&key_bytes).unwrap();
-        let ev = EdgeValue::decode(&val_bytes);
+        let ev = EdgeValue::decode(&val_bytes).unwrap();
         assert_eq!(dec_cek, cek);
         let dec_props = decode_props(&ev.property_blob);
         let mut fe = make_edge(dec_cek, &dec_props);

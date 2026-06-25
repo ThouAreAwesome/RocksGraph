@@ -168,6 +168,13 @@ pub struct Edge {
     pub label_id: LabelId,
     pub dst_id: VertexKey,
     pub rank: Rank,
+    /// Label of the source vertex, when known from the edge's value prefix
+    /// (IN-direction reads give this the src label; OUT-direction reads give this the dst label).
+    #[allow(dead_code)] // consumed in Phase 3 (vertex cache)
+    pub src_label: Option<LabelId>,
+    /// Label of the destination vertex, when known from the edge's value prefix.
+    #[allow(dead_code)] // consumed in Phase 3 (vertex cache)
+    pub dst_label: Option<LabelId>,
     /// Raw property blob from the store. `Some` until first decode, then `None`.
     raw_props: Option<(Box<[u8]>, PropDecoder)>,
     /// Decoded properties. Empty until decoded on first property accessor call.
@@ -183,14 +190,17 @@ impl Edge {
         dst_id: VertexKey,
         rank: Rank,
         props: Vec<Property>,
+        src_label: Option<LabelId>,
+        dst_label: Option<LabelId>,
     ) -> Self {
-        Edge { src_id, label_id, dst_id, raw_props: None, props, rank }
+        Edge { src_id, label_id, dst_id, rank, src_label, dst_label, raw_props: None, props }
     }
 
     /// Construct an edge from raw store bytes (lazy-decode path).
     ///
     /// `props` starts empty and is decoded lazily on first property access.
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     pub fn from_raw(
         src_id: VertexKey,
         label_id: LabelId,
@@ -198,8 +208,19 @@ impl Edge {
         rank: Rank,
         raw: Box<[u8]>,
         decoder: PropDecoder,
+        src_label: Option<LabelId>,
+        dst_label: Option<LabelId>,
     ) -> Self {
-        Edge { src_id, label_id, dst_id, raw_props: Some((raw, decoder)), props: Vec::new(), rank }
+        Edge {
+            src_id,
+            label_id,
+            dst_id,
+            rank,
+            src_label,
+            dst_label,
+            raw_props: Some((raw, decoder)),
+            props: Vec::new(),
+        }
     }
 
     #[inline]

@@ -91,7 +91,10 @@ impl RocksStorage {
         let cf = self.db.cf_handle(cf_name).ok_or(StoreError::MissingColumnFamily(cf_name))?;
         match self.db.get_cf(&cf, key_bytes).map_err(StoreError::RocksDb)? {
             None => Ok(None),
-            Some(raw) => Ok(Some(build_full_edge(key, &EdgeValue::decode(&raw))?)),
+            Some(raw) => {
+                let ev = EdgeValue::decode(&raw).ok_or(StoreError::CorruptData("edge value"))?;
+                Ok(Some(build_full_edge(key, &ev)?))
+            }
         }
     }
 
@@ -131,7 +134,8 @@ impl RocksStorage {
                     continue;
                 }
             }
-            result.push(build_full_edge(&ek, &EdgeValue::decode(&val_bytes))?);
+            let ev = EdgeValue::decode(&val_bytes).ok_or(StoreError::CorruptData("edge value"))?;
+            result.push(build_full_edge(&ek, &ev)?);
             if let Some(max) = limit {
                 if result.len() >= max as usize {
                     break;
@@ -152,7 +156,7 @@ impl RocksStorage {
         let mut batch = WriteBatchWithTransaction::<true>::default();
         for vv in vertices {
             let val = VertexValue { label_id: vv.label_id, property_blob: encode_props(vv.all_props()) };
-            let degree = VertexDegree { out_e_cnt: 0, in_e_cnt: 0 };
+            let degree = VertexDegree { vertex_label_id: 0, out_e_cnt: 0, in_e_cnt: 0 };
             batch.put_cf(&cf_vertices, encode_vertex_key(vv.id), val.encode());
             batch.put_cf(&cf_degree, encode_vertex_key(vv.id), degree.encode());
         }
@@ -171,7 +175,7 @@ impl RocksStorage {
                 Direction::OUT => encode_edge_key(&ev.edge_key_out()),
                 Direction::IN => encode_edge_key(&ev.edge_key_in()),
             };
-            let bytes = EdgeValue { property_blob: encode_props(ev.all_props()) }.encode().to_vec();
+            let bytes = EdgeValue { end_vertex_label: 0, property_blob: encode_props(ev.all_props()) }.encode();
             batch.put_cf(&cf, key_bytes, &bytes);
         }
         self.db.write(batch).map_err(StoreError::RocksDb)
@@ -235,6 +239,8 @@ mod tests {
             cek.dst_id,
             cek.rank,
             props.into_iter().map(|(k, v)| Property { owner, key: k, value: v }).collect(),
+            None,
+            None,
         )
     }
 

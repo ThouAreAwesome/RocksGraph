@@ -59,6 +59,8 @@ mod type_tests {
             3,
             0,
             vec![Property { owner: CanonicalKey::Edge(cek), key: 10, value: Primitive::Int32(42) }],
+            None,
+            None,
         );
 
         let e2 = Edge::with_props(
@@ -67,9 +69,11 @@ mod type_tests {
             3,
             0,
             vec![Property { owner: CanonicalKey::Edge(cek), key: 10, value: Primitive::String("different".into()) }],
+            None,
+            None,
         );
 
-        let e3 = Edge::from_raw(1, 2, 3, 0, vec![42].into_boxed_slice(), mock_decoder);
+        let e3 = Edge::from_raw(1, 2, 3, 0, vec![42].into_boxed_slice(), mock_decoder, None, None);
 
         // Equality is identity-only by design (see `PartialEq for Edge` doc comment): e1/e2
         // share the full identity tuple but disagree on the "key 10" property's value, and e3

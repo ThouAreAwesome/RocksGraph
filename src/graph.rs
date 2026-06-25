@@ -774,7 +774,7 @@ impl<S: GraphStore> LogicalGraph<S> {
         self.mark_dirty(CanonicalKey::Vertex(cek.dst_id), Existence::CounterOnly);
 
         // 2. insert new edge into overlay and mark dirty.  The store is not touched until commit.
-        self.edges.insert(cek, Edge::with_props(cek.src_id, cek.label_id, cek.dst_id, cek.rank, Vec::new()));
+        self.edges.insert(cek, Edge::with_props(cek.src_id, cek.label_id, cek.dst_id, cek.rank, Vec::new(), None, None));
         self.mark_dirty(CanonicalKey::Edge(cek), Existence::New);
         Ok(cek.out_key())
     }

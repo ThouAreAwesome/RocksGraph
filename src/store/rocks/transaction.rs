@@ -188,7 +188,10 @@ impl GraphTransaction for Transaction {
 
         match raw_opt {
             None => Ok(None),
-            Some(raw) => Ok(Some(build_lazy_edge(key, &EdgeValue::decode(&raw)))),
+            Some(raw) => {
+                let ev = EdgeValue::decode(&raw).ok_or(StoreError::CorruptData("edge value"))?;
+                Ok(Some(build_lazy_edge(key, &ev)))
+            }
         }
     }
 
@@ -222,7 +225,8 @@ impl GraphTransaction for Transaction {
                 .get_for_update_cf_opt(cf, encode_edge_key(key), false, &self.read_opts())
                 .map_err(StoreError::RocksDb)?;
             if let Some(bytes) = raw {
-                out.push(build_lazy_edge(key, &EdgeValue::decode(&bytes)));
+                let ev = EdgeValue::decode(&bytes).ok_or(StoreError::CorruptData("edge value"))?;
+                out.push(build_lazy_edge(key, &ev));
             }
         }
         Ok(out)
@@ -296,7 +300,8 @@ impl GraphTransaction for Transaction {
                 }
             }
 
-            result.push(build_lazy_edge(&ek, &EdgeValue::decode(&val_bytes)));
+            let ev = EdgeValue::decode(&val_bytes).ok_or(StoreError::CorruptData("edge value"))?;
+            result.push(build_lazy_edge(&ek, &ev));
             if let Some(max) = limit {
                 if result.len() >= max as usize {
                     break;
@@ -408,7 +413,8 @@ impl GraphTransaction for Transaction {
                 }
             }
 
-            result.push(build_lazy_edge(&ek, &EdgeValue::decode(&val_bytes)));
+            let ev = EdgeValue::decode(&val_bytes).ok_or(StoreError::CorruptData("edge value"))?;
+            result.push(build_lazy_edge(&ek, &ev));
             if result.len() >= limit as usize {
                 break;
             }
@@ -431,7 +437,7 @@ impl GraphTransaction for Transaction {
     fn put_vertex_degree(&mut self, key: VertexKey, out_e_cnt: u32, in_e_cnt: u32) -> Result<(), StoreError> {
         let txn = self.db_txn.as_ref().expect("no active transaction");
         let cf_degree = self.db.cf_handle(CF_VERTEX_DEGREE).ok_or(StoreError::MissingColumnFamily("vertex_degree"))?;
-        let vd = VertexDegree { out_e_cnt, in_e_cnt };
+        let vd = VertexDegree { vertex_label_id: 0, out_e_cnt, in_e_cnt };
         txn.put_cf(&cf_degree, encode_vertex_key(key), vd.encode()).map_err(StoreError::RocksDb)
     }
 
@@ -444,7 +450,7 @@ impl GraphTransaction for Transaction {
         };
         let key_bytes = encode_edge_key(key);
         let cf = self.db.cf_handle(cf_name).ok_or(StoreError::MissingColumnFamily(cf_name))?;
-        let ev_bytes = EdgeValue { property_blob: encode_props(props) }.encode().to_vec();
+        let ev_bytes = EdgeValue { end_vertex_label: 0, property_blob: encode_props(props) }.encode();
         txn.put_cf(&cf, key_bytes, &ev_bytes).map_err(StoreError::RocksDb)
     }
 
@@ -662,7 +668,7 @@ mod tests {
 
     // Helper to create a simple edge
     fn create_test_edge(src: i64, label: u16, dst: i64, _dir: Direction) -> Edge {
-        Edge::with_props(src, label, dst, 0, vec![])
+        Edge::with_props(src, label, dst, 0, vec![], None, None)
     }
 
     #[test]

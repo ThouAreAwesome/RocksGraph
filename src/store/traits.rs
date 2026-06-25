@@ -273,7 +273,7 @@ mod tests {
                 return Err(StoreError::TraversalError("test edge error".to_string()));
             }
             if key.primary_id == 1 {
-                Ok(Some(Edge::with_props(1, 2, 3, 0, vec![])))
+                Ok(Some(Edge::with_props(1, 2, 3, 0, vec![], None, None)))
             } else {
                 Ok(None)
             }
@@ -309,7 +309,7 @@ mod tests {
                 return Err(StoreError::TraversalError("test edge error".to_string()));
             }
             if key.primary_id == 1 {
-                Ok(Some(Edge::with_props(1, 2, 3, 0, vec![])))
+                Ok(Some(Edge::with_props(1, 2, 3, 0, vec![], None, None)))
             } else {
                 Ok(None)
             }

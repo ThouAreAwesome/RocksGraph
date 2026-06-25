@@ -136,7 +136,10 @@ impl GraphSnapshot for Snapshot {
         let raw = self.db.get_cf_opt(&cf, encode_edge_key(key), &self.read_opts()).map_err(StoreError::RocksDb)?;
         match raw {
             None => Ok(None),
-            Some(bytes) => Ok(Some(build_lazy_edge(key, &EdgeValue::decode(&bytes)))),
+            Some(bytes) => {
+                let ev = EdgeValue::decode(&bytes).ok_or(StoreError::CorruptData("edge value"))?;
+                Ok(Some(build_lazy_edge(key, &ev)))
+            }
         }
     }
 
@@ -160,7 +163,8 @@ impl GraphSnapshot for Snapshot {
         for (i, res) in results.into_iter().enumerate() {
             let bytes = res.map_err(StoreError::RocksDb)?;
             if let Some(bytes) = bytes {
-                out.push(build_lazy_edge(&keys[i], &EdgeValue::decode(&bytes)));
+                let ev = EdgeValue::decode(&bytes).ok_or(StoreError::CorruptData("edge value"))?;
+                out.push(build_lazy_edge(&keys[i], &ev));
             }
         }
         Ok(out)
@@ -234,7 +238,8 @@ impl GraphSnapshot for Snapshot {
                 }
             }
 
-            result.push(build_lazy_edge(&ek, &EdgeValue::decode(&val_bytes)));
+            let ev = EdgeValue::decode(&val_bytes).ok_or(StoreError::CorruptData("edge value"))?;
+            result.push(build_lazy_edge(&ek, &ev));
             if let Some(max) = limit {
                 if result.len() >= max as usize {
                     break;
@@ -344,7 +349,8 @@ impl GraphSnapshot for Snapshot {
                 }
             }
 
-            result.push(build_lazy_edge(&ek, &EdgeValue::decode(&val_bytes)));
+            let ev = EdgeValue::decode(&val_bytes).ok_or(StoreError::CorruptData("edge value"))?;
+            result.push(build_lazy_edge(&ek, &ev));
             if result.len() >= limit as usize {
                 break;
             }
