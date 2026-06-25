@@ -54,15 +54,72 @@ pub struct LogicalPlan {
 impl Optimizer for LogicalPlan {
     fn optimize(&mut self, rule: &OptimizerRule) -> Result<bool, StoreError> {
         let mut changed = false;
-        // apply the rule to each step first, which allows rules to target patterns in sub plans of steps.
-        // for most optimizations.
         for step in self.steps.iter_mut() {
             changed |= step.optimize(rule)?;
         }
-        // apply the rule to the whole plan.
-        // in the whole plan.
         changed |= rule(self)?;
         Ok(changed)
+    }
+}
+
+impl LogicalPlan {
+    /// Returns `true` if any step in this plan depends on path tracking
+    /// (`as()`, `select()`, `path()`). When false, the builder can skip
+    /// parent-chain construction, eliminating Rc::clone overhead.
+    pub fn has_path_consumer(&self) -> bool {
+        fn scan(steps: &[LogicalStep]) -> bool {
+            use LogicalStep::*;
+            for s in steps {
+                match s {
+                    As(_) | Select(_) | Path(_) => return true,
+                    Not(NotStep { plan }) if scan(&plan.steps) => {
+                        return true;
+                    }
+                    And(AndStep { plans }) | Or(OrStep { plans }) => {
+                        for p in plans {
+                            if scan(&p.steps) {
+                                return true;
+                            }
+                        }
+                    }
+                    Union(UnionStep { plans }) => {
+                        for p in plans {
+                            if scan(&p.steps) {
+                                return true;
+                            }
+                        }
+                    }
+                    Coalesce(CoalesceStep { plans }) => {
+                        for p in plans {
+                            if scan(&p.steps) {
+                                return true;
+                            }
+                        }
+                    }
+                    Where(WhereStep { plan }) if scan(&plan.steps) => {
+                        return true;
+                    }
+                    Repeat(RepeatStep { body, until, emit, .. }) => {
+                        if scan(&body.steps) {
+                            return true;
+                        }
+                        if let Some(p) = until {
+                            if scan(&p.steps) {
+                                return true;
+                            }
+                        }
+                        if let EmitSpec::If(p) = emit {
+                            if scan(&p.steps) {
+                                return true;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            false
+        }
+        scan(&self.steps)
     }
 }
 

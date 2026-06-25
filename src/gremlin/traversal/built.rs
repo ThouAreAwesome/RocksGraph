@@ -38,38 +38,44 @@ use crate::{
     },
 };
 
-/// Pre-built lookup table: label_id → SmolStr, avoiding per-result HashMap lookups.
-/// Label IDs are 1-based; index 0 is a placeholder (unused).
+/// Pre-built lookup table: label_id → SmolStr, avoiding per-result BiHashMap lookups.
 pub(crate) struct LabelCache {
-    vertex_labels: Vec<SmolStr>,
-    edge_labels: Vec<SmolStr>,
+    vertex_labels: HashMap<u16, SmolStr>,
+    edge_labels: HashMap<u16, SmolStr>,
 }
 
 impl LabelCache {
     pub(crate) fn from_schema(schema: &Schema) -> Self {
-        let v_count = schema.vertex_labels_count();
-        let e_count = schema.edge_labels_count();
-        let mut vertex_labels = Vec::with_capacity(v_count + 1);
-        let mut edge_labels = Vec::with_capacity(e_count + 1);
-        vertex_labels.push(SmolStr::from("")); // placeholder for id 0
-        for id in 1..=v_count {
-            vertex_labels.push(resolve_vertex_label(schema, id as u16));
+        // Iterate all known vertex label ids and resolve eagerly.
+        let mut vertex_labels = HashMap::new();
+        for id in 1..=schema.vertex_labels_count() as u16 {
+            if let Some(name) = schema.vertex_label_str(id) {
+                vertex_labels.insert(id, name.clone());
+            }
         }
-        edge_labels.push(SmolStr::from("")); // placeholder for id 0
-        for id in 1..=e_count {
-            edge_labels.push(resolve_edge_label(schema, id as u16));
+        let mut edge_labels = HashMap::new();
+        for id in 1..=schema.edge_labels_count() as u16 {
+            if let Some(name) = schema.edge_label_str(id) {
+                edge_labels.insert(id, name.clone());
+            }
         }
         Self { vertex_labels, edge_labels }
     }
 
     #[inline]
     fn vertex_label(&self, label_id: u16) -> &SmolStr {
-        self.vertex_labels.get(label_id as usize).unwrap_or(&self.vertex_labels[0])
+        self.vertex_labels.get(&label_id).unwrap_or_else(|| {
+            static EMPTY: SmolStr = SmolStr::new_inline("");
+            &EMPTY
+        })
     }
 
     #[inline]
     fn edge_label(&self, label_id: u16) -> &SmolStr {
-        self.edge_labels.get(label_id as usize).unwrap_or(&self.edge_labels[0])
+        self.edge_labels.get(&label_id).unwrap_or_else(|| {
+            static EMPTY: SmolStr = SmolStr::new_inline("");
+            &EMPTY
+        })
     }
 }
 
@@ -107,7 +113,10 @@ pub(crate) fn materialize(
         GValue::Map(ref map) => {
             let mut out = Map::new();
             for (k, v) in map {
-                out.entries.push((materialize(k, ctx, schema, cache, prop_keys)?, materialize(v, ctx, schema, cache, prop_keys)?));
+                out.entries.push((
+                    materialize(k, ctx, schema, cache, prop_keys)?,
+                    materialize(v, ctx, schema, cache, prop_keys)?,
+                ));
             }
             Ok(Value::Map(out))
         }
@@ -126,23 +135,11 @@ pub(crate) fn materialize(
     }
 }
 
-/// Resolve a vertex label_id to its human-readable string name.
-#[inline]
-fn resolve_vertex_label(schema: &Schema, label_id: u16) -> SmolStr {
-    schema.vertex_label_str(label_id).cloned().unwrap_or_else(|| SmolStr::from(format!("vertex_{}", label_id)))
-}
-
-/// Resolve an edge label_id to its human-readable string name.
-#[inline]
-fn resolve_edge_label(schema: &Schema, label_id: u16) -> SmolStr {
-    schema.edge_label_str(label_id).cloned().unwrap_or_else(|| SmolStr::from(format!("edge_{}", label_id)))
-}
-
 /// Materialize a vertex, respecting the property fetch hint.
 fn materialize_vertex(
     vk: VertexKey,
     ctx: &mut dyn crate::engine::GraphCtx,
-    schema: &Schema,
+    _schema: &Schema,
     cache: &LabelCache,
     prop_keys: Option<&[SmolStr]>,
 ) -> Result<Value, StoreError> {
@@ -150,9 +147,11 @@ fn materialize_vertex(
         // Default: id + label only, skip properties.
         None => match ctx.get_all_props(&CanonicalKey::Vertex(vk))? {
             None => Err(StoreError::NotFound),
-            Some((label_id, _props)) => {
-                Ok(Value::Vertex(UserVertex { id: vk, label: cache.vertex_label(label_id).clone(), properties: HashMap::new() }))
-            }
+            Some((label_id, _props)) => Ok(Value::Vertex(UserVertex {
+                id: vk,
+                label: cache.vertex_label(label_id).clone(),
+                properties: HashMap::new(),
+            })),
         },
         // All properties — existing behavior.
         Some([]) => match ctx.get_all_props(&CanonicalKey::Vertex(vk))? {
@@ -187,7 +186,7 @@ fn materialize_vertex(
 fn materialize_edge(
     ek: crate::types::keys::EdgeKey,
     ctx: &mut dyn crate::engine::GraphCtx,
-    schema: &Schema,
+    _schema: &Schema,
     cache: &LabelCache,
     prop_keys: Option<&[SmolStr]>,
 ) -> Result<Value, StoreError> {

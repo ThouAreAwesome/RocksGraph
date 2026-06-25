@@ -49,6 +49,9 @@ pub struct BothStep {
     rank: Option<Rank>,
     /// Whether to return the traversed edges themselves (true) or the adjacent vertices (false).
     output_edges: bool,
+    /// Whether to link the parent chain on emitted traversers (`false` skips the `Rc::clone`
+    /// when the plan has no `as()`/`select()`/`path()` anywhere in it).
+    track_path: bool,
 
     // ── Dynamic/Runtime execution state ──
     /// The parent traverser currently being expanded.
@@ -68,6 +71,7 @@ impl BothStep {
         end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
         rank: Option<Rank>,
         output_edges: bool,
+        track_path: bool,
     ) -> Self {
         Self {
             upstream: None,
@@ -80,6 +84,7 @@ impl BothStep {
             current_direction: Direction::OUT,
             cursor: None,
             output_edges,
+            track_path,
         }
     }
 }
@@ -127,7 +132,7 @@ impl CoreStep for BothStep {
                     for edge in edges {
                         let val =
                             if self.output_edges { GValue::Edge(edge) } else { GValue::Vertex(edge.secondary_id) };
-                        results.push(Traverser::new_rc_with_parent(val, Rc::clone(&t)));
+                        results.push(Traverser::new_rc_conditional(val, &t, self.track_path));
                     }
                     if self.cursor.is_none() {
                         self.current_direction = Direction::IN;
@@ -155,7 +160,7 @@ impl CoreStep for BothStep {
                     for edge in edges {
                         let val =
                             if self.output_edges { GValue::Edge(edge) } else { GValue::Vertex(edge.secondary_id) };
-                        results.push(Traverser::new_rc_with_parent(val, Rc::clone(&t)));
+                        results.push(Traverser::new_rc_conditional(val, &t, self.track_path));
                     }
                     if self.cursor.is_none() {
                         self.current_direction = Direction::OUT;

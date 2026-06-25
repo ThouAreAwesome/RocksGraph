@@ -49,6 +49,9 @@ pub struct GetEStep {
     // ── Static/Fixed configuration ──
     /// Whether to return the matched edges themselves (true) or the adjacent vertices (false).
     output_edges: bool,
+    /// Whether to link the parent chain on emitted traversers (`false` skips the `Rc::clone`
+    /// when the plan has no `as()`/`select()`/`path()` anywhere in it).
+    track_path: bool,
 
     // ── Dynamic/Runtime execution state ──
     /// Pre-allocated template EdgeKeys populated with 0 as placeholder for the upstream vertex.
@@ -72,6 +75,7 @@ impl GetEStep {
         direction: Option<Direction>,
         rank: Option<Rank>,
         output_edges: bool,
+        track_path: bool,
     ) -> Self {
         let directions: SmallVec<[Direction; 2]> = match direction {
             Some(d) => smallvec![d],
@@ -90,7 +94,7 @@ impl GetEStep {
                 }
             }
         }
-        Self { upstream: None, output_edges, keys_buffer }
+        Self { upstream: None, output_edges, track_path, keys_buffer }
     }
 }
 
@@ -125,7 +129,7 @@ impl CoreStep for GetEStep {
                 let edge_key = &mut self.keys_buffer[0];
                 edge_key.primary_id = src;
                 if ctx.get_edge(edge_key)?.is_some() {
-                    results.push(Traverser::new_rc_with_parent(to_gvalue(*edge_key), Rc::clone(&t)));
+                    results.push(Traverser::new_rc_conditional(to_gvalue(*edge_key), &t, self.track_path));
                 }
             } else {
                 for edge_key in &mut self.keys_buffer {
@@ -133,7 +137,7 @@ impl CoreStep for GetEStep {
                 }
                 let fetched = ctx.get_edges(&self.keys_buffer)?;
                 for edge_key in fetched {
-                    results.push(Traverser::new_rc_with_parent(to_gvalue(edge_key), Rc::clone(&t)));
+                    results.push(Traverser::new_rc_conditional(to_gvalue(edge_key), &t, self.track_path));
                 }
             }
 

@@ -30,10 +30,19 @@ use crate::{
 
 /// Physical step for `unfold()`: emits each element of a `GValue::List` individually.
 /// Non-list values pass through unchanged.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct UnfoldStep {
     upstream: Option<StepRef>,
+    /// Whether to link the parent chain on emitted traversers (`false` skips the `Rc::clone`
+    /// when the plan has no `as()`/`select()`/`path()` anywhere in it).
+    track_path: bool,
     buffer: VecDeque<Rc<Traverser>>,
+}
+
+impl UnfoldStep {
+    pub fn new(track_path: bool) -> Self {
+        Self { upstream: None, track_path, buffer: VecDeque::new() }
+    }
 }
 
 impl CoreStep for UnfoldStep {
@@ -56,7 +65,7 @@ impl CoreStep for UnfoldStep {
 
             if let GValue::List(items) = &t.value {
                 for item in items.iter().rev() {
-                    self.buffer.push_front(Traverser::new_rc_with_parent(item.clone(), Rc::clone(&t)));
+                    self.buffer.push_front(Traverser::new_rc_conditional(item.clone(), &t, self.track_path));
                 }
             } else {
                 return Ok(Some(smallvec![t]));

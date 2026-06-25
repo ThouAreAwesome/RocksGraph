@@ -40,12 +40,15 @@ pub struct ValuesStep {
     property_keys: SmallVec<[(SmolStr, u16); 4]>,
     /// Whether to emit properties as `GValue::Property` (true) or their raw scalar values (false).
     emit_property: bool,
+    /// Whether to link the parent chain on emitted traversers (`false` skips the `Rc::clone`
+    /// when the plan has no `as()`/`select()`/`path()` anywhere in it).
+    track_path: bool,
 }
 
 /// Creates a new `ValuesStep` to extract specified property values.
 impl ValuesStep {
-    pub fn new(property_keys: SmallVec<[(SmolStr, u16); 4]>, emit_property: bool) -> Self {
-        Self { upstream: None, property_keys, emit_property }
+    pub fn new(property_keys: SmallVec<[(SmolStr, u16); 4]>, emit_property: bool, track_path: bool) -> Self {
+        Self { upstream: None, property_keys, emit_property, track_path }
     }
 }
 
@@ -80,7 +83,7 @@ impl CoreStep for ValuesStep {
                             let schema_guard = ctx.schema();
                             value.value = schema_guard.read().unwrap().decode_label_value(&canonical_key, value.value);
                         }
-                        results.push(Traverser::new_rc_with_parent(GValue::Property(value), t.clone()));
+                        results.push(Traverser::new_rc_conditional(GValue::Property(value), &t, self.track_path));
                     }
                 }
             } else {
@@ -90,7 +93,7 @@ impl CoreStep for ValuesStep {
                             let schema_guard = ctx.schema();
                             value = schema_guard.read().unwrap().decode_label_value(&canonical_key, value);
                         }
-                        results.push(Traverser::new_rc_with_parent(GValue::Scalar(value), t.clone()));
+                        results.push(Traverser::new_rc_conditional(GValue::Scalar(value), &t, self.track_path));
                     }
                 }
             }

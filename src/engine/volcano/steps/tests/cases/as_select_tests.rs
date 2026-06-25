@@ -1,17 +1,13 @@
 //! Physical step tests for `as` and `select`.
 
 use crate::engine::volcano::steps::traits::CoreStep;
-use crate::{
-    engine::{
-        context::NoopCtx,
-        traverser::Traverser,
-        volcano::{
-            steps::{
-                as_select::{AsStep, SelectStep},
-                traits::{BufferedStep, StepRef},
-                vec_source::VecSourceStep,
-            },
-        },
+use crate::engine::{
+    context::NoopCtx,
+    traverser::Traverser,
+    volcano::steps::{
+        as_select::{AsStep, SelectStep},
+        traits::{BufferedStep, StepRef},
+        vec_source::VecSourceStep,
     },
 };
 use smallvec::smallvec;
@@ -19,19 +15,16 @@ use smol_str::SmolStr;
 use std::rc::Rc;
 
 fn labeled(label: &str, value: crate::types::GValue) -> Rc<Traverser> {
-    Rc::new(Traverser {
-        value,
-        parent: None,
-        labels: Some(smallvec![SmolStr::from(label)]),
-    })
+    Rc::new(Traverser { value, parent: None, labels: Some(smallvec![SmolStr::from(label)]) })
 }
 
 #[test]
 fn test_as_step_attaches_label() {
     let src = BufferedStep::new(VecSourceStep::empty());
-    src.inner.borrow_mut().core.inject(smallvec![Traverser::new_rc(
-        crate::types::GValue::Scalar(crate::types::gvalue::Primitive::Int64(42))
-    )]);
+    src.inner
+        .borrow_mut()
+        .core
+        .inject(smallvec![Traverser::new_rc(crate::types::GValue::Scalar(crate::types::gvalue::Primitive::Int64(42)))]);
     let mut step = AsStep::new(smallvec![SmolStr::from("x")]);
     step.add_upper(src.clone() as StepRef);
     let mut ctx = NoopCtx;
@@ -50,17 +43,19 @@ fn test_as_no_upstream() {
 #[test]
 fn test_as_reset() {
     let src = BufferedStep::new(VecSourceStep::empty());
-    src.inner.borrow_mut().core.inject(smallvec![Traverser::new_rc(
-        crate::types::GValue::Scalar(crate::types::gvalue::Primitive::Int64(1))
-    )]);
+    src.inner
+        .borrow_mut()
+        .core
+        .inject(smallvec![Traverser::new_rc(crate::types::GValue::Scalar(crate::types::gvalue::Primitive::Int64(1)))]);
     let mut step = AsStep::new(smallvec![SmolStr::from("x")]);
     step.add_upper(src.clone() as StepRef);
     let mut ctx = NoopCtx;
     assert!(step.produce(&mut ctx).unwrap().is_some());
     step.reset();
-    src.inner.borrow_mut().core.inject(smallvec![Traverser::new_rc(
-        crate::types::GValue::Scalar(crate::types::gvalue::Primitive::Int64(2))
-    )]);
+    src.inner
+        .borrow_mut()
+        .core
+        .inject(smallvec![Traverser::new_rc(crate::types::GValue::Scalar(crate::types::gvalue::Primitive::Int64(2)))]);
     assert!(step.produce(&mut ctx).unwrap().is_some());
 }
 
@@ -103,7 +98,7 @@ fn test_select_no_match_filters_out() {
 
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![t1]);
-    let mut step = SelectStep::new(smallvec![SmolStr::from("y")]);  // looking for "y", but has "x"
+    let mut step = SelectStep::new(smallvec![SmolStr::from("y")]); // looking for "y", but has "x"
     step.add_upper(src.clone() as StepRef);
     let mut ctx = NoopCtx;
     // No matching label → filtered out → upstream exhausted → None

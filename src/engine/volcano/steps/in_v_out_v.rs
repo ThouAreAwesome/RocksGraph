@@ -37,12 +37,15 @@ pub struct InVOutVStep {
     // ── Static/Fixed configuration ──
     /// The direction of the vertex to extract (incoming or outgoing).
     direction: Direction,
+    /// Whether to link the parent chain on emitted traversers (`false` skips the `Rc::clone`
+    /// when the plan has no `as()`/`select()`/`path()` anywhere in it).
+    track_path: bool,
 }
 
 /// Creates a new `InVOutVStep` for extracting a vertex from an edge based on the specified direction.
 impl InVOutVStep {
-    pub fn new(direction: Direction) -> Self {
-        Self { upstream: None, direction }
+    pub fn new(direction: Direction, track_path: bool) -> Self {
+        Self { upstream: None, direction, track_path }
     }
 }
 
@@ -60,14 +63,16 @@ impl CoreStep for InVOutVStep {
             if let GValue::Edge(ek) = &t.value {
                 let cek = ek.canonical_edge_key();
                 if self.direction == Direction::OUT {
-                    return Ok(Some(smallvec![Traverser::new_rc_with_parent(
+                    return Ok(Some(smallvec![Traverser::new_rc_conditional(
                         GValue::Vertex(cek.src_id),
-                        Rc::clone(&t)
+                        &t,
+                        self.track_path
                     )]));
                 } else {
-                    return Ok(Some(smallvec![Traverser::new_rc_with_parent(
+                    return Ok(Some(smallvec![Traverser::new_rc_conditional(
                         GValue::Vertex(cek.dst_id),
-                        Rc::clone(&t)
+                        &t,
+                        self.track_path
                     )]));
                 }
             }

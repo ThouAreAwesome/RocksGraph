@@ -5,12 +5,10 @@ use crate::{
     engine::{
         context::NoopCtx,
         traverser::Traverser,
-        volcano::{
-            steps::{
-                numeric_reducers::{MaxStep, MeanStep, MinStep, SumStep},
-                traits::{BufferedStep, StepRef},
-                vec_source::VecSourceStep,
-            },
+        volcano::steps::{
+            numeric_reducers::{MaxStep, MeanStep, MinStep, SumStep},
+            traits::{BufferedStep, StepRef},
+            vec_source::VecSourceStep,
         },
     },
     types::gvalue::{GValue, Primitive},
@@ -170,11 +168,7 @@ fn test_mean_empty() {
 #[test]
 fn test_skip_non_numeric() {
     let src = BufferedStep::new(VecSourceStep::empty());
-    src.inner.borrow_mut().core.inject(smallvec![
-        int_t(10),
-        Traverser::new_rc(GValue::Vertex(1)),
-        int_t(20),
-    ]);
+    src.inner.borrow_mut().core.inject(smallvec![int_t(10), Traverser::new_rc(GValue::Vertex(1)), int_t(20),]);
     let mut step = SumStep::default();
     step.add_upper(src.clone() as StepRef);
     let mut ctx = NoopCtx;

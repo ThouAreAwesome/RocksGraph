@@ -96,10 +96,30 @@ impl PhysicalPlan {
 pub struct PhysicalPlanBuilder;
 
 impl PhysicalPlanBuilder {
+    /// Compiles a top-level [`LogicalPlan`] (or a self-contained sub-plan being compiled in
+    /// isolation, e.g. in tests). Computes `track_path` once, comprehensively, from the plan's
+    /// own shape — see [`LogicalPlan::has_path_consumer`].
+    ///
+    /// Internal recursive compilation of nested sub-plans (`where`/`union`/`coalesce`/`repeat`/
+    /// etc., in [`build_step`](mod@build_step)) must call [`build_steps`](Self::build_steps)
+    /// directly with the *inherited* `track_path` value instead of this method — recomputing it
+    /// from just the sub-plan's shape would miss a path consumer that lives outside the
+    /// sub-plan (e.g. a `repeat()` body has no `as()`/`select()`/`path()` of its own, but its
+    /// output is what a `.path()` after the loop walks).
     pub fn build(
         &mut self,
         plan: &LogicalPlan,
         schema_lock: &std::sync::RwLock<Schema>,
+    ) -> Result<PhysicalPlan, StoreError> {
+        let track_path = plan.has_path_consumer();
+        self.build_steps(plan, schema_lock, track_path)
+    }
+
+    fn build_steps(
+        &mut self,
+        plan: &LogicalPlan,
+        schema_lock: &std::sync::RwLock<Schema>,
+        track_path: bool,
     ) -> Result<PhysicalPlan, StoreError> {
         let source = BufferedStep::new(VecSourceStep::empty());
 
@@ -110,7 +130,7 @@ impl PhysicalPlanBuilder {
 
         let mut upstream: Option<StepRef> = Some(source.clone());
         for step in &plan.steps {
-            upstream = self.build_step(step, upstream, schema_lock)?;
+            upstream = self.build_step(step, upstream, schema_lock, track_path)?;
         }
 
         Ok(PhysicalPlan { source, tail: upstream.expect("plan must have at least one step") })

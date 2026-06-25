@@ -52,6 +52,9 @@ pub struct InOutStep {
     rank: Option<Rank>,
     /// Whether to return the traversed edges themselves (true) or the adjacent vertices (false).
     output_edges: bool,
+    /// Whether to link the parent chain on emitted traversers (`false` skips the `Rc::clone`
+    /// when the plan has no `as()`/`select()`/`path()` anywhere in it).
+    track_path: bool,
 
     // ── Dynamic/Runtime execution state ──
     /// The parent traverser currently being expanded.
@@ -70,6 +73,7 @@ impl InOutStep {
         end_vertex_ids: Option<SmallVec<[VertexKey; 4]>>,
         rank: Option<Rank>,
         output_edges: bool,
+        track_path: bool,
     ) -> Self {
         Self {
             upstream: None,
@@ -82,6 +86,7 @@ impl InOutStep {
             current_label_idx: 0,
             cursor: None,
             output_edges,
+            track_path,
         }
     }
 }
@@ -136,7 +141,7 @@ impl CoreStep for InOutStep {
                         .map(|e| {
                             let value =
                                 if self.output_edges { GValue::Edge(e) } else { GValue::Vertex(e.secondary_id) };
-                            Traverser::new_rc_with_parent(value, Rc::clone(&t))
+                            Traverser::new_rc_conditional(value, &t, self.track_path)
                         })
                         .collect();
                     return Ok(Some(results));

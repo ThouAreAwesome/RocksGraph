@@ -29,10 +29,21 @@ use crate::{
 };
 
 /// A physical step that extracts the "other" vertex from an edge traverser.
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct OtherVStep {
     // ── Upstream link ──
     upstream: Option<StepRef>,
+
+    // ── Static/Fixed configuration ──
+    /// Whether to link the parent chain on emitted traversers (`false` skips the `Rc::clone`
+    /// when the plan has no `as()`/`select()`/`path()` anywhere in it).
+    track_path: bool,
+}
+
+impl OtherVStep {
+    pub fn new(track_path: bool) -> Self {
+        Self { upstream: None, track_path }
+    }
 }
 
 /// Implements the `CoreStep` trait for `OtherVStep`.
@@ -49,7 +60,11 @@ impl CoreStep for OtherVStep {
             // If the traverser carries an edge, extract its secondary ID (the "other" vertex) and emit it as a new
             // traverser.
             if let GValue::Edge(ek) = &t.value {
-                return Ok(Some(smallvec![Traverser::new_rc_with_parent(GValue::Vertex(ek.secondary_id), t.clone())]));
+                return Ok(Some(smallvec![Traverser::new_rc_conditional(
+                    GValue::Vertex(ek.secondary_id),
+                    &t,
+                    self.track_path
+                )]));
             }
         }
     }

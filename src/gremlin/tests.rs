@@ -1696,4 +1696,66 @@ mod integration_test {
         let results = tx.g().V([1]).out(["knows"]).select("nonexistent").to_list().unwrap();
         assert!(results.is_empty());
     }
+
+    #[test]
+    fn test_where_filter_does_not_disrupt_path_tracking_for_later_select() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+
+        // V(1).as_("start").where(has("age", 29)).out("knows").select("start").values("name")
+        //
+        // The where() sub-plan has no as()/select()/path() of its own, so its physical sub-plan
+        // is built with track_path=false in isolation — but out() runs *after* the where() filter
+        // in the *outer* pipeline, which does need path tracking (for select("start")). This
+        // guards against track_path being computed independently per sub-plan instead of
+        // inherited from the top-level plan: if out() incorrectly read the where() sub-plan's
+        // track_path instead of the outer plan's, it would build a parentless traverser and
+        // select("start") would find nothing.
+        let names = tx
+            .g()
+            .V([1])
+            .as_("start")
+            .r#where(__().has("age", 29i32))
+            .out(["knows"])
+            .select("start")
+            .values(["name"])
+            .to_list()
+            .unwrap();
+
+        assert!(!names.is_empty());
+        for n in &names {
+            assert_eq!(n, &Value::String("marko".to_string()));
+        }
+    }
+
+    #[test]
+    fn test_repeat_body_inherits_path_tracking_from_outer_select() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+
+        // V(1).as_("start").repeat(out("knows")).times(1).select("start").values("name")
+        //
+        // The repeat() body (out("knows")) has no as()/select()/path() of its own — computed in
+        // isolation its sub-plan would not need path tracking. But the body's output *is* the
+        // traverser that flows back into the outer pipeline on each iteration, and the outer
+        // pipeline needs path tracking (for select("start") after the loop). track_path must be
+        // computed once on the whole top-level plan and inherited into the repeat body, not
+        // recomputed independently from the body's own (narrower) shape — otherwise the body
+        // would build parentless traversers and select("start") would find nothing.
+        let names = tx
+            .g()
+            .V([1])
+            .as_("start")
+            .repeat(__().out(["knows"]))
+            .times(1)
+            .select("start")
+            .values(["name"])
+            .to_list()
+            .unwrap();
+
+        assert!(!names.is_empty());
+        for n in &names {
+            assert_eq!(n, &Value::String("marko".to_string()));
+        }
+    }
 }

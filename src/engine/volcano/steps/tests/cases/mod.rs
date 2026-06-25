@@ -2015,7 +2015,7 @@ fn test_step_edge_cases_with_graph() {
     {
         let src = BufferedStep::new(VecSourceStep::empty());
         src.inner.borrow_mut().core.inject(smallvec![Rc::new(Traverser::new(GValue::Scalar(Primitive::Int32(42))))]);
-        let mut step = InVOutVStep::new(Direction::OUT);
+        let mut step = InVOutVStep::new(Direction::OUT, true);
         step.add_upper(src.clone() as StepRef);
         assert!(step.produce(&mut graph).unwrap().is_none());
     }
@@ -2024,7 +2024,7 @@ fn test_step_edge_cases_with_graph() {
     {
         let src = BufferedStep::new(VecSourceStep::empty());
         src.inner.borrow_mut().core.inject(smallvec![Rc::new(Traverser::new(GValue::Scalar(Primitive::Int32(42))))]);
-        let mut step = OtherVStep::default();
+        let mut step = OtherVStep::new(true);
         step.add_upper(src.clone() as StepRef);
         assert!(step.produce(&mut graph).unwrap().is_none());
     }
@@ -2130,7 +2130,7 @@ fn test_step_edge_cases_with_graph() {
     {
         let src = BufferedStep::new(VecSourceStep::empty());
         src.inner.borrow_mut().core.inject(smallvec![Rc::new(Traverser::new(GValue::Scalar(Primitive::Int32(42)))),]);
-        let mut step = BothStep::new(smallvec![], None, None, false);
+        let mut step = BothStep::new(smallvec![], None, None, false, true);
         step.add_upper(src.clone() as StepRef);
         assert!(step.produce(&mut graph).unwrap().is_none());
     }
@@ -2184,7 +2184,7 @@ fn test_additional_physical_steps_coverage() {
     {
         let src = BufferedStep::new(VecSourceStep::empty());
         src.inner.borrow_mut().core.inject(smallvec![Rc::new(Traverser::new(GValue::Vertex(1))),]);
-        let mut step = BothStep::new(smallvec![1u16], None, None, true);
+        let mut step = BothStep::new(smallvec![1u16], None, None, true, true);
         step.add_upper(src.clone() as StepRef);
 
         let _ = step.produce(&mut graph);
@@ -2357,7 +2357,7 @@ fn test_additional_physical_steps_coverage() {
 
     // 10. InVOutVStep IN and OUT direction
     {
-        let mut step = InVOutVStep::new(Direction::IN);
+        let mut step = InVOutVStep::new(Direction::IN, true);
         assert!(step.produce(&mut graph).unwrap().is_none());
 
         let src = BufferedStep::new(VecSourceStep::empty());
@@ -2368,7 +2368,7 @@ fn test_additional_physical_steps_coverage() {
             secondary_id: 3,
             rank: 0,
         })))]);
-        let mut step = InVOutVStep::new(Direction::IN);
+        let mut step = InVOutVStep::new(Direction::IN, true);
         step.add_upper(src.clone() as StepRef);
         let res = step.produce(&mut graph).unwrap().unwrap();
         assert_eq!(res.len(), 1);
@@ -2382,7 +2382,7 @@ fn test_additional_physical_steps_coverage() {
             secondary_id: 3,
             rank: 0,
         })))]);
-        let mut step_out = InVOutVStep::new(Direction::OUT);
+        let mut step_out = InVOutVStep::new(Direction::OUT, true);
         step_out.add_upper(src_out.clone() as StepRef);
         let res_out = step_out.produce(&mut graph).unwrap().unwrap();
         assert_eq!(res_out.len(), 1);
@@ -2409,12 +2409,12 @@ fn test_additional_physical_steps_coverage() {
 
     // 12. OtherVStep non-edge values filtering
     {
-        let mut step = OtherVStep::default();
+        let mut step = OtherVStep::new(true);
         assert!(step.produce(&mut graph).unwrap().is_none());
 
         let src = BufferedStep::new(VecSourceStep::empty());
         src.inner.borrow_mut().core.inject(smallvec![Rc::new(Traverser::new(GValue::Scalar(Primitive::Int32(10)))),]);
-        let mut step = OtherVStep::default();
+        let mut step = OtherVStep::new(true);
         step.add_upper(src.clone() as StepRef);
         assert!(step.produce(&mut graph).unwrap().is_none());
 
@@ -2519,8 +2519,8 @@ fn test_additional_physical_steps_coverage() {
     }
 }
 
+mod as_select_tests;
 mod not_and_or_tests;
 mod numeric_reducer_tests;
 mod repeat;
 mod unfold_tests;
-mod as_select_tests;

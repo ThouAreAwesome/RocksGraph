@@ -44,23 +44,30 @@ pub struct Traverser {
 
 impl Traverser {
     /// Creates a new `Traverser` with a given value and no parent or labels.
+    #[inline]
     pub fn new(value: GValue) -> Self {
         Self { value, labels: None, parent: None }
     }
 
     /// Creates a new `Traverser` wrapped in an `Rc` with a given value.
+    #[inline]
     pub fn new_rc(value: GValue) -> Rc<Self> {
         Rc::new(Self::new(value))
     }
 
-    /// Creates a new traverser with a new value, inheriting the path of the parent traverser.
-    pub fn new_rc_with_parent(value: GValue, parent: Rc<Traverser>) -> Rc<Self> {
-        Rc::new(Self { value, labels: None, parent: Some(parent) })
+    /// Creates a new traverser. When `track_path` is true, inherits the parent
+    /// chain; when false, creates a standalone traverser with no parent back-link
+    #[inline]
+    pub fn new_rc_conditional(value: GValue, parent: &Rc<Traverser>, track_path: bool) -> Rc<Self> {
+        if track_path {
+            Rc::new(Self { value, labels: None, parent: Some(Rc::clone(parent)) })
+        } else {
+            Rc::new(Self { value, labels: None, parent: None })
+        }
     }
 
     /// Collect the full traversal history as `(value, labels)` pairs,
     /// oldest entry first (including the current traverser).
-    #[allow(dead_code)]
     pub fn collect_path(&self) -> Vec<(GValue, Option<SmallVec<[SmolStr; 2]>>)> {
         let mut entries: Vec<(GValue, Option<SmallVec<[SmolStr; 2]>>)> =
             vec![(self.value.clone(), self.labels.clone())];

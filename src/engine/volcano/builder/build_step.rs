@@ -125,6 +125,7 @@ impl PhysicalPlanBuilder {
         step: &LogicalStep,
         upstream: Option<steps::traits::StepRef>,
         schema_lock: &std::sync::RwLock<Schema>,
+        track_path: bool,
     ) -> Result<Option<steps::traits::StepRef>, StoreError> {
         use crate::engine::volcano::steps::traits::{BufferedStep, GremlinStep, StepRef};
         use smallvec::SmallVec;
@@ -167,6 +168,7 @@ impl PhysicalPlanBuilder {
                                 $direction,
                                 $rank,
                                 $output_edges,
+                                track_path,
                             )),
                             upstream,
                             $name
@@ -186,8 +188,13 @@ impl PhysicalPlanBuilder {
                     .iter()
                     .map(|l| resolve_read_edge_label(l, &schema).map(|id_opt| id_opt.unwrap_or(u16::MAX)))
                     .collect::<Result<SmallVec<[LabelId; 4]>, _>>()?;
-                let scan_step =
-                    steps::both::BothStep::new(label_ids.clone(), s.end_vertex_ids.clone(), None::<Rank>, false);
+                let scan_step = steps::both::BothStep::new(
+                    label_ids.clone(),
+                    s.end_vertex_ids.clone(),
+                    None::<Rank>,
+                    false,
+                    track_path,
+                );
                 get_e_or_scan!(s, label_ids, None, None::<Rank>, false, scan_step, "BothStep")
             }
             LogicalStep::BothE(s) => {
@@ -196,7 +203,8 @@ impl PhysicalPlanBuilder {
                     .iter()
                     .map(|l| resolve_read_edge_label(l, &schema).map(|id_opt| id_opt.unwrap_or(u16::MAX)))
                     .collect::<Result<SmallVec<[LabelId; 4]>, _>>()?;
-                let scan_step = steps::both::BothStep::new(label_ids.clone(), s.end_vertex_ids.clone(), s.rank, true);
+                let scan_step =
+                    steps::both::BothStep::new(label_ids.clone(), s.end_vertex_ids.clone(), s.rank, true, track_path);
                 get_e_or_scan!(s, label_ids, None, s.rank, true, scan_step, "BothEStep")
             }
             LogicalStep::V(s) => {
@@ -271,6 +279,7 @@ impl PhysicalPlanBuilder {
                     s.end_vertex_ids.clone(),
                     None::<Rank>,
                     false,
+                    track_path,
                 );
                 get_e_or_scan!(s, label_ids, Some(Direction::IN), None::<Rank>, false, scan_step, "InStep")
             }
@@ -286,6 +295,7 @@ impl PhysicalPlanBuilder {
                     s.end_vertex_ids.clone(),
                     s.rank,
                     true,
+                    track_path,
                 );
                 get_e_or_scan!(s, label_ids, Some(Direction::IN), s.rank, true, scan_step, "InEStep")
             }
@@ -301,6 +311,7 @@ impl PhysicalPlanBuilder {
                     s.end_vertex_ids.clone(),
                     None::<Rank>,
                     false,
+                    track_path,
                 );
                 get_e_or_scan!(s, label_ids, Some(Direction::OUT), None::<Rank>, false, scan_step, "OutStep")
             }
@@ -316,22 +327,23 @@ impl PhysicalPlanBuilder {
                     s.end_vertex_ids.clone(),
                     s.rank,
                     true,
+                    track_path,
                 );
                 get_e_or_scan!(s, label_ids, Some(Direction::OUT), s.rank, true, scan_step, "OutEStep")
             }
             LogicalStep::InV(_) => {
                 wire_required!(
-                    BufferedStep::new(steps::in_v_out_v::InVOutVStep::new(Direction::IN)),
+                    BufferedStep::new(steps::in_v_out_v::InVOutVStep::new(Direction::IN, track_path)),
                     upstream,
                     "InVStep"
                 )
             }
             LogicalStep::OtherV(_) => {
-                wire_required!(BufferedStep::new(steps::other_v::OtherVStep::default()), upstream, "OtherVStep")
+                wire_required!(BufferedStep::new(steps::other_v::OtherVStep::new(track_path)), upstream, "OtherVStep")
             }
             LogicalStep::OutV(_) => {
                 wire_required!(
-                    BufferedStep::new(steps::in_v_out_v::InVOutVStep::new(Direction::OUT)),
+                    BufferedStep::new(steps::in_v_out_v::InVOutVStep::new(Direction::OUT, track_path)),
                     upstream,
                     "OutVStep"
                 )
@@ -361,7 +373,7 @@ impl PhysicalPlanBuilder {
                     })
                     .collect::<Result<SmallVec<[(SmolStr, u16); 4]>, _>>()?;
                 wire_required!(
-                    BufferedStep::new(steps::values::ValuesStep::new(resolved_keys, false)),
+                    BufferedStep::new(steps::values::ValuesStep::new(resolved_keys, false, track_path)),
                     upstream,
                     "ValuesStep"
                 )
@@ -384,7 +396,7 @@ impl PhysicalPlanBuilder {
                     })
                     .collect::<Result<SmallVec<[(SmolStr, u16); 4]>, _>>()?;
                 wire_required!(
-                    BufferedStep::new(steps::values::ValuesStep::new(resolved_keys, true)),
+                    BufferedStep::new(steps::values::ValuesStep::new(resolved_keys, true, track_path)),
                     upstream,
                     "ValuesStep"
                 )
@@ -394,7 +406,7 @@ impl PhysicalPlanBuilder {
                     return Err(StoreError::TraversalError("WhereStep must have a non-empty sub-plan.".to_string()));
                 }
                 drop(schema);
-                let physical_plan = self.build(&s.plan, schema_lock)?;
+                let physical_plan = self.build_steps(&s.plan, schema_lock, track_path)?;
                 wire_required!(BufferedStep::new(steps::r#where::WhereStep::new(physical_plan)), upstream, "WhereStep")
             }
             LogicalStep::Union(s) => {
@@ -404,7 +416,8 @@ impl PhysicalPlanBuilder {
                     ));
                 }
                 drop(schema);
-                let physical_plans = s.plans.iter().map(|p| self.build(p, schema_lock)).collect::<Result<_, _>>()?;
+                let physical_plans =
+                    s.plans.iter().map(|p| self.build_steps(p, schema_lock, track_path)).collect::<Result<_, _>>()?;
                 wire_required!(BufferedStep::new(steps::union::UnionStep::new(physical_plans)), upstream, "UnionStep")
             }
             LogicalStep::AddV(s) => {
@@ -488,7 +501,8 @@ impl PhysicalPlanBuilder {
                     ));
                 }
                 drop(schema);
-                let physical_plans = s.plans.iter().map(|p| self.build(p, schema_lock)).collect::<Result<_, _>>()?;
+                let physical_plans =
+                    s.plans.iter().map(|p| self.build_steps(p, schema_lock, track_path)).collect::<Result<_, _>>()?;
                 wire_required!(
                     BufferedStep::new(steps::coalesce::CoalesceStep::new(physical_plans)),
                     upstream,
@@ -521,13 +535,13 @@ impl PhysicalPlanBuilder {
                     ));
                 }
                 drop(schema);
-                let body = self.build(&s.body, schema_lock)?;
-                let until = s.until.as_ref().map(|p| self.build(p, schema_lock)).transpose()?;
+                let body = self.build_steps(&s.body, schema_lock, track_path)?;
+                let until = s.until.as_ref().map(|p| self.build_steps(p, schema_lock, track_path)).transpose()?;
                 let emit = match &s.emit {
                     crate::planner::logical_step::EmitSpec::Never => steps::repeat::PhysicalEmitMode::Never,
                     crate::planner::logical_step::EmitSpec::Always => steps::repeat::PhysicalEmitMode::Always,
                     crate::planner::logical_step::EmitSpec::If(plan) => {
-                        steps::repeat::PhysicalEmitMode::If(self.build(plan, schema_lock)?)
+                        steps::repeat::PhysicalEmitMode::If(self.build_steps(plan, schema_lock, track_path)?)
                     }
                 };
                 wire_required!(
@@ -541,7 +555,7 @@ impl PhysicalPlanBuilder {
                     return Err(StoreError::TraversalError("NotStep must have a non-empty sub-plan.".to_string()));
                 }
                 drop(schema);
-                let physical_plan = self.build(&s.plan, schema_lock)?;
+                let physical_plan = self.build_steps(&s.plan, schema_lock, track_path)?;
                 wire_required!(BufferedStep::new(steps::not::NotStep::new(physical_plan)), upstream, "NotStep")
             }
             LogicalStep::And(s) => {
@@ -551,7 +565,8 @@ impl PhysicalPlanBuilder {
                     ));
                 }
                 drop(schema);
-                let physical_plans = s.plans.iter().map(|p| self.build(p, schema_lock)).collect::<Result<_, _>>()?;
+                let physical_plans =
+                    s.plans.iter().map(|p| self.build_steps(p, schema_lock, track_path)).collect::<Result<_, _>>()?;
                 wire_required!(BufferedStep::new(steps::and_or::AndStep::new(physical_plans)), upstream, "AndStep")
             }
             LogicalStep::Or(s) => {
@@ -561,7 +576,8 @@ impl PhysicalPlanBuilder {
                     ));
                 }
                 drop(schema);
-                let physical_plans = s.plans.iter().map(|p| self.build(p, schema_lock)).collect::<Result<_, _>>()?;
+                let physical_plans =
+                    s.plans.iter().map(|p| self.build_steps(p, schema_lock, track_path)).collect::<Result<_, _>>()?;
                 wire_required!(BufferedStep::new(steps::and_or::OrStep::new(physical_plans)), upstream, "OrStep")
             }
             LogicalStep::Sum(_) => {
@@ -582,7 +598,7 @@ impl PhysicalPlanBuilder {
             }
             LogicalStep::Unfold(_) => {
                 drop(schema);
-                wire_required!(BufferedStep::new(steps::unfold::UnfoldStep::default()), upstream, "UnfoldStep")
+                wire_required!(BufferedStep::new(steps::unfold::UnfoldStep::new(track_path)), upstream, "UnfoldStep")
             }
             LogicalStep::As(s) => {
                 drop(schema);
