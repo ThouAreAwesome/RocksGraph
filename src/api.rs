@@ -69,7 +69,7 @@ use crate::{
 /// Cheap to clone — wraps an `Arc` internally.
 ///
 /// # Example
-/// ```no_run
+/// ```
 /// # use rocksgraph::{Graph, TraversalBuilder};
 /// # let dir = tempfile::tempdir().unwrap();
 /// # let graph = Graph::open(dir.path()).unwrap();
@@ -180,7 +180,7 @@ impl Graph {
 /// Dropped automatically with no side effects.
 ///
 /// # Example
-/// ```no_run
+/// ```
 /// # use rocksgraph::{Graph, TraversalBuilder};
 /// # let dir = tempfile::tempdir().unwrap();
 /// # let graph = Graph::open(dir.path()).unwrap();
@@ -231,7 +231,7 @@ impl ReadSession {
 /// Dropped without `commit()` / `rollback()` → automatic rollback.
 ///
 /// # Example
-/// ```no_run
+/// ```
 /// # use rocksgraph::{Graph, TraversalBuilder};
 /// # let dir = tempfile::tempdir().unwrap();
 /// # let graph = Graph::open(dir.path()).unwrap();

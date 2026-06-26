@@ -545,21 +545,3 @@ fn test_concurrent_auto_mode_complex_distinct_schemas() {
         }
     }
 }
-
-/// `PropertyKeyMaker::cardinality()` is staged and applied like the other builder fields.
-#[test]
-fn test_property_key_maker_cardinality_builder() {
-    use crate::schema::definition::Cardinality;
-
-    let dir = tempdir().unwrap();
-    let graph = Graph::open(dir.path()).unwrap();
-    {
-        let mut mgmt = graph.open_management();
-        mgmt.make_property_key("tags", DataType::String).cardinality(Cardinality::Single).make();
-        mgmt.commit().unwrap();
-    }
-    let schema = graph.schema();
-    let s = schema.read().unwrap();
-    let id = s.prop_key_id("tags").unwrap();
-    assert_eq!(s.prop_key_types.get(&id).unwrap().cardinality, Cardinality::Single);
-}

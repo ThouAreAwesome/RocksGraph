@@ -105,4 +105,5 @@ pub(crate) const VERTEX_PROPS_INLINE: usize = 8;
 pub(crate) const SCAN_PREFIX_INLINE: usize = 10;
 
 #[cfg(test)]
-pub mod tests;
+#[cfg(test)]
+mod tests;

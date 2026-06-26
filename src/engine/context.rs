@@ -15,6 +15,13 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
+//! Trait `GraphCtx` — the storage-access interface consumed by every volcano step.
+//!
+//! Each step calls `ctx.get_vertex`, `ctx.get_adjacent_edges`, etc. through a
+//! `&mut dyn GraphCtx` to avoid a generic parameter on every step.
+//! The trait is implemented by `LogicalGraph` (read-write overlay) and
+//! `LogicalSnapshot` (read-only snapshot). A zero-cost `NoopCtx` is available
+//! for unit tests.
 use std::sync::{Arc, RwLock};
 
 use crate::{

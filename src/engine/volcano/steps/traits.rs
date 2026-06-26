@@ -143,6 +143,8 @@ impl<T: CoreStep + 'static> GremlinStep for BufferedStep<T> {
         let mut inner = self.inner.borrow_mut();
         if inner.buffer.is_empty() {
             let Some(items) = inner.core.produce(ctx)? else { return Ok(None) };
+            #[cfg(feature = "tracing")]
+            tracing::trace!(target: "rocksgraph::pipeline", "{:?} produced {} items", self, items.len());
             inner.buffer.extend(items);
         }
         Ok(inner.buffer.pop_front())

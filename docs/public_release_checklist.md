@@ -13,96 +13,12 @@
 4. [P3 — Nice-to-Have](#p3--nice-to-have)
 5. [Suggested Implementation Order](#suggested-implementation-order)
 
----
----
-
-### 5. Missing `rust-version` in Cargo.toml
-
-**Issue:** No `rust-version` field. crates.io displays "Requires Rust ≥ ???" — left blank
-it looks unmaintained. Downstream users need to know if their toolchain is compatible.
-
-**Solution:** Add to `Cargo.toml`:
-```toml
-rust-version = "1.80"
-```
-(Choose the actual MSRV based on what the project compiles with. Run `cargo msrv` or
-manually test with `rustup run 1.XX cargo check` to determine the real floor.)
-
-
----
-
-### 7. No MSRV policy documented
-
-**Issue:** README and docs don't state what Rust version is required, or what the upgrade
-policy is.
-
-**Solution:** Add an "MSRV Policy" section to README.md:
-```markdown
-## Minimum Supported Rust Version
-
-RocksGraph targets stable Rust. The MSRV is Rust 1.80. Bumping the MSRV is
-considered a minor (not patch) change.
-```
-
----
 
 ## P1 — Feature Gaps for Credibility
 
 These are Gremlin steps or capabilities that users will expect from a graph database
 traversal engine. Their absence makes the product feel incomplete.
 
-
-
-### 14. No safety / `unsafe` policy
-
-**Issue:** Graph databases handle raw byte encoding and RocksDB FFI. Users need to know
-whether `unsafe` is used and what guarantees apply.
-
-**Solution:**
-- Add `#![forbid(unsafe_code)]` to `lib.rs` if the crate (and all deps through FFI) permits.
-  If RocksDB bindings require `unsafe`, add a prominent safety section in the README:
-  ```markdown
-  ## Safety
-
-  RocksGraph itself contains no `unsafe` code. The RocksDB dependency
-  (`rust-rocksdb`) wraps a C++ library via FFI and is widely audited.
-  ```
-- If the crate _does_ contain `unsafe`, document every block with a `SAFETY:` comment
-  explaining the invariant.
-
----
-
-### 15. Empty `store/distributed/` placeholder module
-
-**Issue:** `src/store/distributed/mod.rs` exists but is empty. It's confusing — users
-may try to import it or wonder why it's there.
-
-**Solution:**
-- Remove the `pub mod distributed;` declaration from `src/store/mod.rs` and delete
-  `src/store/distributed/`.
-- If a distributed backend is planned for later, re-add it when it has real code.
-  Empty modules in a published crate signal dead-ends.
-
----
-
-### 16. `_ => unreachable!()` wildcards in step builder
-
-**Issue:** `src/engine/volcano/builder/build_step.rs` and
-`src/planner/logical_step/mod.rs` use `_ => unreachable!()` (or `_ => {}`) to handle
-unknown `LogicalStep` variants. Adding a new step variant compiles but panics at
-runtime.
-
-**Solution:**
-- Replace wildcard match arms with exhaustive per-variant arms. Every `LogicalStep`
-  variant should have an explicit handler, even if it's:
-  ```rust
-  LogicalStep::NewStep { .. } => {
-      Err(StoreError::UnsupportedOperation("new_step is not yet implemented".into()))
-  }
-  ```
-- This ensures the compiler forces every handler to account for new variants.
-
----
 
 ## P2 — Polish & Trust Signals
 
@@ -163,43 +79,6 @@ conflicts, or banned crates.
 - Add a CI step: `cargo deny check advisories && cargo deny check licenses`.
 - Add a `just audit` recipe.
 - Run at least once before release; consider making it part of CI.
-
----
-
-### 21. `GraphTraversal` is `#[doc(hidden)]` but users encounter it
-
-**Issue:** `__()` returns a `GraphTraversal`, which users see in error messages and
-type hints but cannot look up in docs. The type is hidden to avoid clutter, but this
-creates a "phantom type" problem.
-
-**Solution:**
-- Add a section to the README or module docs explaining the `__()` pattern:
-  ```markdown
-  ### Anonymous sub-traversals with `__()`
-
-  `__()` returns an internal type you never need to name. Use it with
-  `where`, `coalesce`, `union` — any step that accepts a sub-traversal argument.
-  ```
-- Consider adding a type alias `AnonymousTraversal` that _is_ visible in docs but
-  is just `GraphTraversal` under the hood.
-
----
-
-### 22. No database upgrade/migration story
-
-**Issue:** On-disk format changes between versions will break existing databases.
-No documented upgrade path.
-
-**Solution:**
-- For v0.1.0: document that the on-disk format is unstable and may change without
-  backward compatibility.
-- Store a format version byte in the RocksDB metadata (e.g., in the `_schema` CF).
-  On open, check the version and either:
-  - Reject with a clear error if the format is too old.
-  - Run a migration if one is defined.
-- Add a `Graph::open_with_upgrade(path)` or similar.
-- Document: *"RocksGraph v0.x makes no backward-compatibility guarantees for on-disk
-  data. Export/re-import is required across minor versions."*
 
 ---
 
@@ -269,19 +148,6 @@ cannot have `tags: ["rust", "database", "graph"]` as a single-property-key list.
 - This is a significant design change — for v0.1, document as a known limitation and
   defer to v0.2+.
 
----
-
-### 27. `withProperties()` fetch hint (planned, not implemented)
-
-**Issue:** `out()` always fetches all vertex properties. There's no way to say "I only
-need `name` and `age`" to skip unnecessary RocksDB reads.
-
-**Solution:**
-- Add a `with_properties(keys: &[&str])` method on `ReadTraversal` / `WriteTraversal`
-  that sets a fetch hint on the traversal context.
-- During materialization (in `GraphCtx::get_vertex`), only load the specified keys.
-- Empty list → id + label only; absent call → all properties (current behavior).
-- This is already designed in `docs/design_principles.md` § "withProperties() fetch hint".
 
 ---
 
@@ -304,17 +170,6 @@ per ID or a linear scan?
 
 ## P3 — Nice-to-Have
 
-### 29. Split large source files
-
-**Issue:** `builder.rs` (~870 lines), `traversal/mod.rs` (~815 lines), and test files
-(~2,500–3,400 lines) are large. Not a release blocker, but documented in the codebase
-assessment as P1 maintainability items.
-
-**Solution:** Follow the suggested refactoring in `docs/codebase_assessment.md` §
-"Consolidated Improvement Roadmap":
-- Split `builder.rs` → `builder/mod.rs` + `builder/build_step.rs`.
-- Split `traversal/mod.rs` → traits / read / write submodules.
-- Split large test files by feature area.
 
 ---
 

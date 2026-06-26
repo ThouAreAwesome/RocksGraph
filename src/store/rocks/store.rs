@@ -96,7 +96,7 @@ impl RocksStorage {
         defaults: crate::schema::definition::GraphOptions,
     ) -> Result<crate::schema::Schema, StoreError> {
         use crate::{
-            schema::definition::{Cardinality, DataType, EdgeMode, PropKeyConfig, Schema, SchemaMode},
+            schema::definition::{DataType, EdgeMode, PropKeyConfig, Schema, SchemaMode},
             store::rocks::encoding::{
                 decode_schema_label_value, decode_schema_meta, decode_schema_prop_value, encode_schema_meta, CF_SCHEMA,
                 SCHEMA_KIND_EDGE_LABEL, SCHEMA_KIND_META, SCHEMA_KIND_PROP_KEY, SCHEMA_KIND_VERTEX_LABEL,
@@ -154,14 +154,12 @@ impl RocksStorage {
                     schema.persisted_edge_labels.insert(id);
                 }
                 SCHEMA_KIND_PROP_KEY => {
-                    let (id, data_type_u8, cardinality_u8) =
+                    let (id, data_type_u8) =
                         decode_schema_prop_value(&v).ok_or(StoreError::CorruptData("invalid prop key value"))?;
                     let data_type = DataType::from_u8(data_type_u8)
                         .ok_or(StoreError::CorruptData("invalid data type discriminant"))?;
-                    let cardinality = Cardinality::from_u8(cardinality_u8)
-                        .ok_or(StoreError::CorruptData("invalid cardinality discriminant"))?;
                     schema.prop_keys.insert(id, smol_str::SmolStr::new(name_str));
-                    schema.prop_key_types.insert(id, PropKeyConfig { data_type, cardinality });
+                    schema.prop_key_types.insert(id, PropKeyConfig { data_type });
                     schema.persisted_prop_keys.insert(id);
                 }
                 _ => {}

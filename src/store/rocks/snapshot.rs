@@ -60,6 +60,9 @@ type OwnedRocksSnap = rocksdb::SnapshotWithThreadMode<'static, OptimisticTransac
 /// struct guarantees this via field declaration order (`snap` before `db`).
 fn pin_snapshot(db: &Arc<OptimisticTransactionDB>) -> OwnedRocksSnap {
     let snap: rocksdb::SnapshotWithThreadMode<'_, OptimisticTransactionDB> = db.snapshot();
+    // SAFETY: see module doc and this function's doc comment — `Snapshot` declares
+    // `snap` before `db`, so `snap` always drops before the `Arc<OptimisticTransactionDB>`
+    // it borrows from.
     unsafe { std::mem::transmute(snap) }
 }
 

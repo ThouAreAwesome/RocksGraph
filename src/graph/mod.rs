@@ -15,6 +15,12 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
+//! Query-scoped overlay and dirty-tracking.
+//!
+//! `LogicalGraph` buffers mutations in an in-memory overlay (`HashMap`). On
+//! commit, it flushes dirty entries to the store. `LogicalSnapshot` provides a
+//! read view for query-only snapshots. Both implement the `GraphCtx` trait so
+//! the engine operates uniformly regardless of read-only vs. read-write mode.
 //! Query-scoped logical graph — the ground truth for a single traversal.
 //! See [`LogicalGraph`] and [`LogicalSnapshot`] for details.
 

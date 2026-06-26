@@ -43,7 +43,7 @@
 //! | Kind                  | Value layout                                  |
 //! |------------------------|------------------------------------------------|
 //! | vertex/edge label      | `[ id:LabelId ]`                                   |
-//! | property key            | `[ id:u16 \| data_type:u8 \| cardinality:u8 ]` |
+//! | property key            | `[ id:u16 \| data_type:u8 ]` |
 //! | meta (singleton)        | `[ version:u64 \| edge_mode:u8 \| schema_mode:u8 ]` |
 //!
 //! # Prefix scan lengths
@@ -153,23 +153,21 @@ pub fn decode_schema_label_value(bytes: &[u8]) -> Option<LabelId> {
 }
 
 #[inline]
-pub fn encode_schema_prop_value(id: u16, data_type: u8, cardinality: u8) -> [u8; 4] {
-    let mut bytes = [0u8; 4];
+pub fn encode_schema_prop_value(id: u16, data_type: u8) -> [u8; 3] {
+    let mut bytes = [0u8; 3];
     bytes[0..2].copy_from_slice(&id.to_be_bytes());
     bytes[2] = data_type;
-    bytes[3] = cardinality;
     bytes
 }
 
 #[inline]
-pub fn decode_schema_prop_value(bytes: &[u8]) -> Option<(u16, u8, u8)> {
-    if bytes.len() < 4 {
+pub fn decode_schema_prop_value(bytes: &[u8]) -> Option<(u16, u8)> {
+    if bytes.len() < 3 {
         return None;
     }
     let id = u16::from_be_bytes(bytes[0..2].try_into().ok()?);
     let data_type = bytes[2];
-    let cardinality = bytes[3];
-    Some((id, data_type, cardinality))
+    Some((id, data_type))
 }
 
 // ── Size constants ────────────────────────────────────────────────────────────

@@ -9,15 +9,18 @@ readme = "README.md"
 repository = "https://github.com/austinhan/rocksgraph"
 keywords = ["graph", "gremlin", "rocksdb", "database"]
 categories = ["database-implementations"]
+rust-version = "1.80"
+exclude = ["/docs"]
 
 [features]
 # Enable RocksDB statistics collection. Adds ~5-10% overhead on every storage
 # operation (atomic counter increments). Use only for profiling/diagnostics.
 rocksdb-stats = []
+# Enable `tracing`-based instrumentation of the pipeline.  Each step logs
+# traversers it emits or filters out.  Opt-in — zero-cost when disabled.
+tracing = ["dep:tracing"]
 
 [dependencies]
-serde = { version = "1.0", features = ["derive"] }
-
 # Compact inline strings (≤22 bytes stack-allocated)
 smol_str = "0.2"
 
@@ -36,24 +39,12 @@ rocksdb = "0.22"
 # Bidirectional hash map — used by Schema for label_id ↔ label_string lookup
 bimap = "0.6"
 
-# tokio tasks
-tokio = { version = "1.52.3", features = [
-    "sync",
-    "rt",
-    "rt-multi-thread",
-    "macros",
-    "time",
-    "signal",
-] }
-async-trait = "0.1.89"
-futures-util = "0.3.32"
 tempfile = "3"
 rand = "0.8"
 hdrhistogram = "7.5.4"
+tracing = { version = "0.1", optional = true }
 
 [dev-dependencies]
-# tempfile is already inherited from [dependencies] above
 
-
-[profile.release]
+[profile.bench]
 debug = true

@@ -216,7 +216,7 @@ fn test_local_step_flatmaps() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![scalar_t(1), scalar_t(2), scalar_t(3)]);
 
-    let sub_plan = PhysicalPlanBuilder::default()
+    let sub_plan = PhysicalPlanBuilder
         .build(&LogicalPlan { steps: vec![LogicalStep::Count(LogicalCountStep {})] }, &RwLock::new(Schema::default()))
         .unwrap();
 
@@ -234,8 +234,7 @@ fn test_local_step_flatmaps() {
 
 #[test]
 fn test_local_step_no_upstream() {
-    let sub_plan =
-        PhysicalPlanBuilder::default().build(&LogicalPlan { steps: vec![] }, &RwLock::new(Schema::default())).unwrap();
+    let sub_plan = PhysicalPlanBuilder.build(&LogicalPlan { steps: vec![] }, &RwLock::new(Schema::default())).unwrap();
     let mut step = LocalStep::new(sub_plan);
     let mut ctx = NoopCtx;
     assert!(step.produce(&mut ctx).unwrap().is_none());
@@ -246,7 +245,7 @@ fn test_local_step_reset() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![scalar_t(42)]);
 
-    let sub_plan = PhysicalPlanBuilder::default()
+    let sub_plan = PhysicalPlanBuilder
         .build(&LogicalPlan { steps: vec![LogicalStep::Count(LogicalCountStep {})] }, &RwLock::new(Schema::default()))
         .unwrap();
 
@@ -259,8 +258,7 @@ fn test_local_step_reset() {
 
 #[test]
 fn test_local_step_upper() {
-    let sub_plan =
-        PhysicalPlanBuilder::default().build(&LogicalPlan { steps: vec![] }, &RwLock::new(Schema::default())).unwrap();
+    let sub_plan = PhysicalPlanBuilder.build(&LogicalPlan { steps: vec![] }, &RwLock::new(Schema::default())).unwrap();
     let mut step = LocalStep::new(sub_plan);
     let src: StepRef = BufferedStep::new(VecSourceStep::empty());
     step.add_upper(src.clone());
@@ -269,8 +267,7 @@ fn test_local_step_upper() {
 
 #[test]
 fn test_local_step_explain() {
-    let sub_plan =
-        PhysicalPlanBuilder::default().build(&LogicalPlan { steps: vec![] }, &RwLock::new(Schema::default())).unwrap();
+    let sub_plan = PhysicalPlanBuilder.build(&LogicalPlan { steps: vec![] }, &RwLock::new(Schema::default())).unwrap();
     let step = LocalStep::new(sub_plan);
     let node = step.explain();
     assert_eq!(node.name, "LocalStep");

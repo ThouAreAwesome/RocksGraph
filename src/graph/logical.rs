@@ -1029,11 +1029,7 @@ impl<S: GraphStore> LogicalGraph<S> {
             for &prop_key_id in &self.staged_schema.staged_prop_keys {
                 if let Some(name) = schema.prop_key_str(prop_key_id) {
                     if let Some(cfg) = schema.prop_key_types.get(&prop_key_id) {
-                        let val = encoding::encode_schema_prop_value(
-                            prop_key_id,
-                            cfg.data_type.to_u8(),
-                            cfg.cardinality.to_u8(),
-                        );
+                        let val = encoding::encode_schema_prop_value(prop_key_id, cfg.data_type.to_u8());
                         self.store.put_schema_entry(encoding::SCHEMA_KIND_PROP_KEY, name, &val)?;
                         schema_changed = true;
                     }

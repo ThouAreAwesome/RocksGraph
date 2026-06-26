@@ -15,6 +15,11 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
+//! Logical-to-physical plan translation, optimizer rules, and filter reordering.
+//!
+//! The planner translates a Gremlin-idiom AST into a logical plan IR, then
+//! applies optimizer rules (id-filter fusion, edge-step fusion, filter reorder)
+//! before handing off to the Volcano engine for physical plan construction.
 pub mod logical_step;
 
 pub(crate) mod optimizer;
@@ -23,8 +28,8 @@ use crate::{
     planner::{
         logical_step::{LogicalPlan, Optimizer, OptimizerRule},
         optimizer::{
-            extract_end_vertex_filter, merge_adde_ids, merge_addv_id, merge_end_vertex_filter, merge_v_id_filter,
-            reorder_filter,
+            extract_end_vertex_filter, merge_adde_ids, merge_addv_id, merge_end_vertex_filter,
+            merge_haslabel_into_edge, merge_v_id_filter, reorder_filter,
         },
     },
     types::StoreError,
@@ -41,6 +46,7 @@ pub fn apply_rules(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
         merge_adde_ids::merge_adde_rank,
         extract_end_vertex_filter::extract_end_vertex_filter,
         merge_end_vertex_filter::merge_end_vertex_filter,
+        merge_haslabel_into_edge::merge_haslabel_into_edge,
     ];
     let mut plan_changed = true;
     while plan_changed {

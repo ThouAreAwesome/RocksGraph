@@ -15,6 +15,13 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
+//! Volcano-style pull-based query engine.
+//!
+//! The engine translates a logical plan into a directed acyclic graph of
+//! physical steps. Each step pulls traversers from its upstream via a uniform
+//! `next()` interface; results are buffered one at a time by `BufferedStep`.
+//! Execution is single-threaded per query; multiple queries can run concurrently
+//! against independent sessions.
 //! Execution engine and shared runtime primitives.
 //!
 //! ## Submodules

@@ -19,13 +19,12 @@ pub(crate) mod definition;
 pub(crate) mod management;
 
 #[cfg(test)]
-pub mod tests;
+#[cfg(test)]
+mod tests;
 
 // Public surface: only what callers need to configure a `Graph` (`GraphOptions` and friends) and
 // to declare schema via `SchemaManagement`. `Schema` itself (the live registry) and
 // `PropKeyConfig` (one of its internal fields) are crate-internal — see `Graph::schema()`.
-// `Cardinality` is also crate-internal: it has a single variant (`Single`) today, so there's
-// nothing for `PropertyKeyMaker::cardinality()` to publicly expose yet — see docs/TODO.md.
 pub use definition::{DataType, EdgeMode, GraphOptions, SchemaMode};
 pub use management::{EdgeLabelMaker, PropertyKeyMaker, SchemaManagement, VertexLabelMaker};
 

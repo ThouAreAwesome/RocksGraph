@@ -19,23 +19,26 @@
 //!
 //! ## Quick start
 //!
-//! ```no_run
+//! ```
 //! use rocksgraph::{Graph, TraversalBuilder, Value};
 //!
 //! # let dir = tempfile::tempdir().unwrap();
 //! # let graph = Graph::open(dir.path()).unwrap();
 //!
+//! // Read-write transaction
+//! let mut tx = graph.begin();
+//! tx.g().addV("person").property("id", 1).property("name", "alice").next().unwrap();
+//! tx.g().addV("person").property("id", 2).property("name", "bob").next().unwrap();
+//! tx.g().addE("knows").from(1).to(2).property("weight", 0.9f64).next().unwrap();
+//! tx.commit().unwrap();
+//!
 //! // Read-only snapshot query
 //! let mut snap = graph.read();
 //! let count = snap.g().V([1]).out(["knows"]).count().next().unwrap().unwrap();
+//! assert_eq!(count, Value::Int64(1));
 //! let names = snap.g().V([1]).out(["knows"]).values(["name"]).to_list().unwrap();
+//! assert_eq!(names, vec![Value::String("bob".into())]);
 //! for v in snap.g().V([]).out(["knows"]).iter().unwrap() { println!("{:?}", v.unwrap()); }
-//!
-//! // Read-write transaction
-//! let mut tx = graph.begin();
-//! tx.g().addV("person").property("name", "alice").next().unwrap();
-//! tx.g().addE("knows").from(1).to(2).property("weight", 0.9f64).next().unwrap();
-//! tx.commit().unwrap();
 //! # graph.close().unwrap();
 //! ```
 //!
@@ -61,6 +64,8 @@
 //! All modules below `api` are `pub(crate)` — users only interact through
 //! [`Graph`], [`ReadSession`], [`TxSession`], and the traversal types re-exported
 //! at the crate root.
+#![warn(clippy::undocumented_unsafe_blocks)]
+
 pub mod api;
 pub(crate) mod engine;
 pub(crate) mod graph;
@@ -82,7 +87,7 @@ pub use gremlin::{
         between, eq, gt, gte, lt, lte, ne, within, without, Edge, Key, Map, Path, Predicate, Property, Value, Vertex,
     },
 };
-pub use types::{BatchScenario, StoreError};
+pub use types::StoreError;
 
 #[cfg(test)]
 mod concurrency_tests;

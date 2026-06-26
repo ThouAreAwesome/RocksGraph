@@ -378,6 +378,27 @@ let by_age_range = snap.g().V([]).has("age", between(20i32, 30i32)).to_list()?;
 let result = snap.g().V([]).hasId([1, 2, 3]).count().next()?.unwrap();
 ```
 
+#### Performance of `within` with large lists
+
+- **`V([]).hasId([...])`** — the optimizer folds `HasIdStep` with `Eq` or `Within`
+  into `VStep(ids=[...])`, which fetches all vertices in a single batch call
+  (`get_vertices`).  Over a read-only snapshot (`graph.read()`) this is a single
+  RocksDB `multi_get` round-trip; inside a transaction (`graph.transact()`) it
+  is still one batch call but resolves as one point lookup per id under the
+  hood, since RocksDB transactional reads have no multi-get equivalent here.
+
+- **`hasId([...])` separated from `V([])` by other filters** — `has()` /
+  `hasLabel()` / `where()` steps between `V([])` and `hasId()` get reordered
+  and folded automatically, so write order among filters doesn't matter. Only
+  a graph-navigation step in between (`out()`, `in()`, `otherV()`, etc.) blocks
+  the fold — in that case `hasId` falls back to evaluating the `Within`
+  predicate O(n) per traverser.
+
+- **`has("prop", within([...]))`** — property-based `Within` is evaluated
+  in-memory O(n) per traverser.  Large lists here incur per-element
+  comparison cost.  For ID-based filtering, prefer `hasId()` with an
+  explicit ID list over `has("id", within([...]))`.
+
 ### Idempotent upserts with coalesce
 
 `coalesce()` only evaluates its branches once per *incoming* traverser — it needs a seed step
@@ -508,7 +529,12 @@ rustdoc](src/schema/management.rs) for the full guarantees, and `set_edge_mode` 
 
 ## Development
 
-**Prerequisites:** Rust toolchain (stable), [`just`](https://github.com/casey/just)
+**Prerequisites:** Rust toolchain 1.80+ (stable), [`just`](https://github.com/casey/just)
+
+The Minimum Supported Rust Version (MSRV) is 1.80. It is bumped
+conservatively — only when a dependency or a desired language feature
+requires it. The `rust-version` field in `Cargo.toml` tracks the
+current floor.
 
 ```bash
 # List all commands
@@ -570,7 +596,9 @@ comments of `transaction.rs` and `snapshot.rs`: the transaction / snapshot
 field is declared *before* the `Arc<DB>` field in every struct, so the DB
 handle is dropped first — guaranteeing the borrowed transaction/snapshot never
 outlives it.  Every callsite carries a `// SAFETY:` comment referencing this
-invariant.
+invariant, and `#![warn(clippy::undocumented_unsafe_blocks)]` (enforced as an
+error via `just full-check`'s `--deny warnings`) keeps it that way for any
+`unsafe` block added in the future.
 
 The RocksDB dependency (`rust-rocksdb`) wraps a C++ library via FFI and is
 widely audited.
@@ -582,6 +610,32 @@ widely audited.
 - **Schema ID space limits:** up to `i32::MAX` (~2.1 billion) distinct vertex labels and edge labels (independent namespaces), and 32767 property keys per graph — registering past that fails with `StoreError::SchemaExhausted`. (Label IDs are stored as `i32`; property-key IDs remain `u16`.)
 - **Not TinkerPop-compatible:** RocksGraph is Gremlin-inspired but intentionally departs from the standard. See [docs/design_principles.md](docs/design_principles.md).
 - **No distributed backend:** placeholder exists but is not implemented.
+
+## Operations
+
+### Backup & Restore
+
+RocksDB stores all data in the directory passed to `Graph::open()` (or
+`Graph::open_with_options()`). To back up:
+
+1. Close the graph: `graph.close()?;` — this is best-effort if other `Graph` clones or open
+   sessions still hold a reference; see [`Graph::close`](src/api.rs) for the exact semantics.
+2. Copy the entire directory to your backup location.
+3. To restore, point `Graph::open()` at a copy of that directory.
+
+This is a cold backup: no writes should be in flight while you copy the directory. For a live
+backup without stopping writes, use RocksDB's `Checkpoint` API directly via the raw RocksDB
+handle — not yet wrapped by RocksGraph (see [Roadmap](#roadmap)).
+
+### Upgrade & Migration Policy
+
+RocksGraph is pre-1.0 (`0.x.y`). Per semver, **a minor version bump (`0.x` → `0.(x+1)`) may
+change the on-disk format** with no schema-version check or automated migration path between
+releases. Back up your data directory before upgrading the `rocksgraph` dependency on a project
+with existing on-disk data, and validate the upgrade against a copy first.
+
+Once the crate reaches 1.0, on-disk format compatibility will be covered by semver: breaking
+format changes will require a major version bump and a documented migration path.
 
 ## Roadmap
 

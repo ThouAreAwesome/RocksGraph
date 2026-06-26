@@ -237,7 +237,7 @@ fn materialize_edge(
 /// Implements `Iterator<Item = Result<Value, StoreError>>`.
 ///
 /// Holds the schema lock for the duration of iteration so that
-/// [`materialize`] does not re-acquire it per result.
+/// this helper does not re-acquire it per result.
 ///
 /// [`ReadTraversal::iter`]: super::ReadTraversal::iter
 /// [`WriteTraversal::iter`]: super::WriteTraversal::iter

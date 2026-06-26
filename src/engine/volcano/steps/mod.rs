@@ -66,7 +66,8 @@ pub mod range_skip_tail;
 pub mod repeat;
 pub mod scalar_filter;
 pub mod simple_cyclic_path;
-pub mod tests;
+#[cfg(test)]
+mod tests;
 pub mod traits;
 pub mod unfold;
 pub mod union;

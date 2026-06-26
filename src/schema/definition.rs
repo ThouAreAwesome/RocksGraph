@@ -119,35 +119,9 @@ impl DataType {
     }
 }
 
-/// On-disk discriminant, pinned explicitly for the same reason as [`SchemaMode`];
-/// see [`Cardinality::to_u8`]/[`Cardinality::from_u8`].
-///
-/// Crate-internal: only `Single` exists today, so there's no real choice for
-/// `PropertyKeyMaker::cardinality()` to expose yet — see [docs/TODO.md](../../docs/TODO.md).
-/// Re-export this publicly once a `Multi` variant (or similar) actually lands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub(crate) enum Cardinality {
-    Single = 0,
-}
-
-impl Cardinality {
-    pub fn to_u8(self) -> u8 {
-        self as u8
-    }
-
-    pub fn from_u8(v: u8) -> Option<Self> {
-        match v {
-            0 => Some(Cardinality::Single),
-            _ => None,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PropKeyConfig {
     pub data_type: DataType,
-    pub cardinality: Cardinality,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -228,12 +202,9 @@ impl Default for Schema {
         prop_keys.insert(RANK_KEY_ID, RANK);
 
         let mut prop_key_types = HashMap::new();
-        prop_key_types
-            .insert(ID_KEY_ID, PropKeyConfig { data_type: DataType::Int64, cardinality: Cardinality::Single });
-        prop_key_types
-            .insert(LABEL_KEY_ID, PropKeyConfig { data_type: DataType::Int32, cardinality: Cardinality::Single });
-        prop_key_types
-            .insert(RANK_KEY_ID, PropKeyConfig { data_type: DataType::UInt16, cardinality: Cardinality::Single });
+        prop_key_types.insert(ID_KEY_ID, PropKeyConfig { data_type: DataType::Int64 });
+        prop_key_types.insert(LABEL_KEY_ID, PropKeyConfig { data_type: DataType::Int32 });
+        prop_key_types.insert(RANK_KEY_ID, PropKeyConfig { data_type: DataType::UInt16 });
 
         let mut persisted_prop_keys = HashSet::new();
         persisted_prop_keys.insert(ID_KEY_ID);
@@ -426,8 +397,7 @@ impl Schema {
                     )));
                 }
             } else {
-                self.prop_key_types
-                    .insert(id, PropKeyConfig { data_type: inferred_type, cardinality: Cardinality::Single });
+                self.prop_key_types.insert(id, PropKeyConfig { data_type: inferred_type });
                 self.version += 1;
             }
             return Ok(id);
@@ -436,8 +406,7 @@ impl Schema {
             return Err(crate::types::StoreError::SchemaViolation(format!("Undeclared property key: '{}'", name)));
         }
         if let Some(id) = self.register_prop_key(name) {
-            self.prop_key_types
-                .insert(id, PropKeyConfig { data_type: inferred_type, cardinality: Cardinality::Single });
+            self.prop_key_types.insert(id, PropKeyConfig { data_type: inferred_type });
             self.version += 1;
             Ok(id)
         } else {
@@ -446,25 +415,20 @@ impl Schema {
     }
 
     /// Declare property key by name (explicit management).
-    pub fn declare_prop_key(
-        &mut self,
-        name: &str,
-        data_type: DataType,
-        cardinality: Cardinality,
-    ) -> Result<u16, crate::types::StoreError> {
+    pub fn declare_prop_key(&mut self, name: &str, data_type: DataType) -> Result<u16, crate::types::StoreError> {
         if let Some(id) = self.prop_key_id(name) {
             if let Some(config) = self.prop_key_types.get(&id) {
-                if config.data_type != data_type || config.cardinality != cardinality {
+                if config.data_type != data_type {
                     return Err(crate::types::StoreError::SchemaConflict(format!(
-                        "Property key '{}' is already defined with type {:?} and cardinality {:?}, but requested {:?} and {:?}",
-                        name, config.data_type, config.cardinality, data_type, cardinality
+                        "Property key '{}' is already defined with type {:?}, but requested {:?}",
+                        name, config.data_type, data_type
                     )));
                 }
             }
             return Ok(id);
         }
         if let Some(id) = self.register_prop_key(name) {
-            self.prop_key_types.insert(id, PropKeyConfig { data_type, cardinality });
+            self.prop_key_types.insert(id, PropKeyConfig { data_type });
             Ok(id)
         } else {
             Err(crate::types::StoreError::SchemaExhausted("Property key ID space exhausted".to_string()))
@@ -547,11 +511,5 @@ mod tests {
             assert_eq!(DataType::from_u8(dt.to_u8()), Some(dt));
         }
         assert_eq!(DataType::from_u8(8), None);
-    }
-
-    #[test]
-    fn cardinality_u8_roundtrip() {
-        assert_eq!(Cardinality::from_u8(Cardinality::Single.to_u8()), Some(Cardinality::Single));
-        assert_eq!(Cardinality::from_u8(1), None);
     }
 }

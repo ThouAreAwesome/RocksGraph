@@ -10,3 +10,4 @@ bench_data/
 *.pid
 *.log
 .DS_Store
+.claude/

@@ -117,6 +117,9 @@ impl Transaction {
     pub fn new(db: Arc<OptimisticTransactionDB>) -> Self {
         let db_txn = begin_txn(&db);
         let snap = db_txn.snapshot();
+        // SAFETY: see module doc — `db_txn_snap` (this value) is declared before
+        // `db_txn`, which is declared before `db`, so both drop before the
+        // `Arc<OptimisticTransactionDB>` they transitively borrow from.
         let db_txn_snap = unsafe { std::mem::transmute(snap) };
         Self { db_txn_snap: Some(db_txn_snap), db_txn: Some(db_txn), db }
     }
@@ -516,6 +519,11 @@ impl GraphTransaction for Transaction {
         let new_txn = begin_txn(&self.db);
         self.db_txn = Some(new_txn);
         let snap = self.db_txn.as_ref().unwrap().snapshot();
+        // SAFETY: `snap` borrows the `new_txn` just stored in `self.db_txn`. The old
+        // `db_txn_snap`/`db_txn` pair was already torn down above (lines above this),
+        // so this is the only live borrow of `self.db_txn`, and the next call to
+        // `commit`/`abort`/`drop` tears it down (in that order) before `self.db_txn`
+        // is replaced or dropped again — see module doc.
         self.db_txn_snap = Some(unsafe { std::mem::transmute(snap) });
         result
     }
@@ -535,6 +543,7 @@ impl GraphTransaction for Transaction {
         let new_txn = begin_txn(&self.db);
         self.db_txn = Some(new_txn);
         let snap = self.db_txn.as_ref().unwrap().snapshot();
+        // SAFETY: same reasoning as the equivalent transmute in `commit` above.
         self.db_txn_snap = Some(unsafe { std::mem::transmute(snap) });
     }
 }

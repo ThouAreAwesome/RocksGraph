@@ -28,15 +28,19 @@
 //! property names.  This lets the same key be used symmetrically in input
 //! steps and output extraction:
 //!
-//! ```no_run
-//! # use rocksgraph::{Graph, Key, TraversalBuilder};
+//! ```
+//! # use rocksgraph::{Graph, Key, TraversalBuilder, Value};
 //! # let dir = tempfile::tempdir().unwrap();
 //! # let graph = Graph::open(dir.path()).unwrap();
-//! # let mut snap = graph.read();
+//! # let mut tx = graph.begin();
+//! # tx.g().addV("person").property("id", 42i64).next().unwrap();
+//! # tx.commit().unwrap();
+//! let mut snap = graph.read();
 //! // filter by id
 //! snap.g().V([]).has(Key::Id, 42i64).next().unwrap();
 //! // extract id as a scalar
-//! snap.g().V([42]).values([Key::Id]).next().unwrap();  // → Some(Value::Int64(42))
+//! let id = snap.g().V([42]).values([Key::Id]).next().unwrap();
+//! assert_eq!(id, Some(Value::Int64(42)));
 //! # graph.close().unwrap();
 //! ```
 //!

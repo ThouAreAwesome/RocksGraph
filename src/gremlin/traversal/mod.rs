@@ -46,9 +46,13 @@
 //! `until`) accept a `GraphTraversal` — but the type is `#[doc(hidden)]`, so you
 //! never name it directly.  Import `__` from the crate root and call it inline:
 //!
-//! ```ignore
-//! use rocksgraph::__;
-//! snap.g().V([1]).outE(["knows"]).r#where(__().otherV().hasId([2])).count().next()?;
+//! ```
+//! use rocksgraph::{Graph, TraversalBuilder, __};
+//! # let dir = tempfile::tempdir().unwrap();
+//! # let graph = Graph::open(dir.path()).unwrap();
+//! # let mut snap = graph.read();
+//! snap.g().V([1]).outE(["knows"]).r#where(__().otherV().hasId([2])).count().next().unwrap();
+//! # graph.close().unwrap();
 //! ```
 //!
 //! If `GraphTraversal` appears in a compiler error, it's the hidden type behind

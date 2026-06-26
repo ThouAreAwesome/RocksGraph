@@ -15,6 +15,11 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
+//! Persistent storage backends.
+//!
+//! The storage layer abstracts over RocksDB via the `GraphStore` trait.
+//! Key/encoding layout is defined in `rocks/encoding.rs`. The `RocksGraph`
+//! implementation wraps an `OptimisticTransactionDB` with OCC-based transactions.
 pub mod rocks;
 pub mod traits;
 

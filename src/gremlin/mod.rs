@@ -15,6 +15,11 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
+//! User-facing Gremlin-idiom types: traversal builder, value types, and the
+//! property-graph element models (`Vertex`, `Edge`, `Property`).
+//!
+//! The traversal module provides a fluent builder that accumulates step
+//! descriptors; built traversers are handed to the planner for compilation.
 pub(crate) mod multi_edge_tests;
 pub(crate) mod tests;
 pub mod traversal;

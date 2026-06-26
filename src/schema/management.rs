@@ -18,7 +18,7 @@
 use std::sync::Arc;
 
 use crate::{
-    schema::definition::{Cardinality, DataType, EdgeMode, Schema, SchemaMode},
+    schema::definition::{DataType, EdgeMode, Schema, SchemaMode},
     store::RocksStorage,
     types::StoreError,
 };
@@ -94,7 +94,7 @@ pub struct SchemaManagement {
     base_version: u64,
     pending_vertex_labels: Vec<String>,
     pending_edge_labels: Vec<String>,
-    pending_prop_keys: Vec<(String, DataType, Cardinality)>,
+    pending_prop_keys: Vec<(String, DataType)>,
     pending_edge_mode: Option<EdgeMode>,
     pending_schema_mode: Option<SchemaMode>,
 }
@@ -127,7 +127,7 @@ impl SchemaManagement {
 
     /// Create a maker for a property key.
     pub fn make_property_key(&mut self, name: impl Into<String>, data_type: DataType) -> PropertyKeyMaker<'_> {
-        PropertyKeyMaker { mgmt: self, name: name.into(), data_type, cardinality: Cardinality::Single }
+        PropertyKeyMaker { mgmt: self, name: name.into(), data_type }
     }
 
     /// Stage a graph-wide multiplicity change.
@@ -210,12 +210,12 @@ impl SchemaManagement {
         }
 
         // 3. Process property keys
-        for (name, data_type, cardinality) in &self.pending_prop_keys {
+        for (name, data_type) in &self.pending_prop_keys {
             let is_new = staged.prop_key_id(name).is_none();
-            let id = staged.declare_prop_key(name, *data_type, *cardinality)?;
+            let id = staged.declare_prop_key(name, *data_type)?;
             changed |= is_new;
             let key = encode_schema_key(SCHEMA_KIND_PROP_KEY, name);
-            let val = encode_schema_prop_value(id, data_type.to_u8(), cardinality.to_u8());
+            let val = encode_schema_prop_value(id, data_type.to_u8());
             batch.put_cf(&cf, key, val);
             staged.persisted_prop_keys.insert(id);
         }
@@ -268,19 +268,10 @@ pub struct PropertyKeyMaker<'a> {
     mgmt: &'a mut SchemaManagement,
     name: String,
     data_type: DataType,
-    cardinality: Cardinality,
 }
 
 impl<'a> PropertyKeyMaker<'a> {
-    /// Crate-internal: `Cardinality` has only one variant (`Single`, already the default set by
-    /// `make_property_key()`), so there's no real choice to expose here yet.
-    #[cfg(test)]
-    pub(crate) fn cardinality(mut self, cardinality: Cardinality) -> Self {
-        self.cardinality = cardinality;
-        self
-    }
-
     pub fn make(self) {
-        self.mgmt.pending_prop_keys.push((self.name, self.data_type, self.cardinality));
+        self.mgmt.pending_prop_keys.push((self.name, self.data_type));
     }
 }
