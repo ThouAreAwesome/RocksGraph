@@ -71,15 +71,13 @@ impl RocksStorage {
         let mut vertex_cf_opts = Options::default();
         vertex_cf_opts.set_block_based_table_factory(&vertex_block_opts);
 
-        let cfs = [CF_VERTICES, CF_VERTEX_DEGREE, CF_EDGES_OUT, CF_EDGES_IN, CF_SCHEMA]
-            .into_iter()
-            .map(|name| match name {
-                CF_EDGES_OUT | CF_EDGES_IN => ColumnFamilyDescriptor::new(name, edge_cf_opts.clone()),
-                CF_VERTICES | CF_VERTEX_DEGREE => ColumnFamilyDescriptor::new(name, vertex_cf_opts.clone()),
-                CF_SCHEMA => ColumnFamilyDescriptor::new(name, Options::default()),
-                _ => unreachable!(),
-            })
-            .collect::<Vec<_>>();
+        let cfs = vec![
+            ColumnFamilyDescriptor::new(CF_VERTICES, vertex_cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_VERTEX_DEGREE, vertex_cf_opts),
+            ColumnFamilyDescriptor::new(CF_EDGES_OUT, edge_cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_EDGES_IN, edge_cf_opts),
+            ColumnFamilyDescriptor::new(CF_SCHEMA, Options::default()),
+        ];
 
         let db = OptimisticTransactionDB::open_cf_descriptors(&opts, path, cfs).map_err(StoreError::RocksDb)?;
 

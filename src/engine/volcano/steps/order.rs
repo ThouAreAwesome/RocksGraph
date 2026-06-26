@@ -9,14 +9,19 @@ use crate::{
         volcano::steps::traits::{CoreStep, StepRef},
     },
     planner::logical_step::{Order, OrderKey, OrderKeySpec},
+    schema::Schema,
     types::{
         error::StoreError,
         gvalue::{GValue, Primitive},
+        keys::CanonicalKey,
         ORDER_KEY_INLINE,
     },
 };
 use smallvec::{smallvec, SmallVec};
+use smol_str::SmolStr;
+use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::{Arc, RwLock};
 
 /// Sorts all upstream traversers and emits them in order.
 #[derive(Debug)]
@@ -26,27 +31,61 @@ pub struct OrderStep {
     buffer: Vec<(Rc<Traverser>, SmallVec<[Primitive; ORDER_KEY_INLINE]>)>,
     cursor: usize,
     drained: bool,
+    /// Lazily resolved property-key ids, populated on first use per name.
+    prop_key_cache: HashMap<SmolStr, u16>,
 }
 
 impl OrderStep {
     pub fn new(keys: SmallVec<[OrderKey; ORDER_KEY_INLINE]>) -> Self {
-        Self { upstream: None, keys, buffer: Vec::new(), cursor: 0, drained: false }
+        Self { upstream: None, keys, buffer: Vec::new(), cursor: 0, drained: false, prop_key_cache: HashMap::new() }
     }
 }
 
-/// Extract a comparison key from a traverser value. Returns None for non-comparable values.
-fn extract_key(value: &GValue, spec: &OrderKeySpec) -> Option<Primitive> {
+/// Resolve a property name to its `u16` prop_key_id, caching the result.
+fn resolve_prop_key_id(schema: &Arc<RwLock<Schema>>, cache: &mut HashMap<SmolStr, u16>, name: &SmolStr) -> Option<u16> {
+    if let Some(&id) = cache.get(name) {
+        return Some(id);
+    }
+    let guard = schema.read().unwrap();
+    let id = guard.prop_key_id(name)?;
+    cache.insert(name.clone(), id);
+    Some(id)
+}
+
+/// Extract a comparison key from a traverser, resolving property lookups
+/// where needed.
+fn extract_order_key(
+    prop_key_cache: &mut HashMap<SmolStr, u16>,
+    ctx: &mut dyn GraphCtx,
+    value: &GValue,
+    spec: &OrderKeySpec,
+) -> Option<Primitive> {
     match spec {
         OrderKeySpec::Value => match value {
             GValue::Scalar(p) => Some(p.clone()),
             GValue::Vertex(v) => Some(Primitive::Int64(*v)),
             _ => None,
         },
-        OrderKeySpec::Property(_prop_name) => {
-            // Property-based ordering requires schema resolution at build time.
-            // For now, treat the value as-is.
-            extract_key(value, &OrderKeySpec::Value)
+        OrderKeySpec::Property(prop_name) => {
+            let schema = ctx.schema();
+            let prop_id = resolve_prop_key_id(&schema, prop_key_cache, prop_name)?;
+            let canonical_key = match value {
+                GValue::Vertex(vk) => CanonicalKey::Vertex(*vk),
+                GValue::Edge(ek) => CanonicalKey::Edge(ek.canonical_edge_key()),
+                GValue::Scalar(_) => return extract_key_fallback(value),
+                _ => return None,
+            };
+            ctx.get_value(&canonical_key, prop_id).ok().flatten()
         }
+    }
+}
+
+/// Fallback extraction for non-vertex/non-edge values.
+fn extract_key_fallback(value: &GValue) -> Option<Primitive> {
+    match value {
+        GValue::Scalar(p) => Some(p.clone()),
+        GValue::Vertex(v) => Some(Primitive::Int64(*v)),
+        _ => None,
     }
 }
 
@@ -72,9 +111,12 @@ impl CoreStep for OrderStep {
     ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
         if !self.drained {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
+            let cache = &mut self.prop_key_cache;
             while let Some(t) = upstream.next(ctx)? {
-                let key_values: SmallVec<[Primitive; ORDER_KEY_INLINE]> =
-                    self.keys.iter().map(|k| extract_key(&t.value, &k.spec).unwrap_or(Primitive::Null)).collect();
+                let mut key_values = SmallVec::new();
+                for k in &self.keys {
+                    key_values.push(extract_order_key(cache, ctx, &t.value, &k.spec).unwrap_or(Primitive::Null));
+                }
                 self.buffer.push((t, key_values));
             }
             self.drained = true;

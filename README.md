@@ -57,7 +57,7 @@ All user-facing query inputs and outputs use types from `gremlin::value`, re-exp
 | `Vertex` | Materialized vertex: `id`, `label` (decoded string name), `properties` |
 | `Edge` | Materialized edge: `out_v`, `in_v`, `label` (decoded string name), `rank` (`u16`, see `Value::UInt16`), `properties` |
 | `Property` | Key-value property element returned by `.properties()` |
-| `Map` | Ordered key-value map returned by `.group_count()` |
+| `Map` | Ordered key-value map returned by `.group()` or `.group_count()` |
 | `Path` | Sequence of values with per-step labels returned by `.path()` |
 
 Predicate constructors are free functions: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `between`, `within`, `without`.
@@ -165,6 +165,8 @@ the traversal API. The `schema` module interns them to compact numeric IDs inter
 | `is(pred)` | `.is(pred)` | filter the current scalar value |
 | `where(traversal)` | `.r#where(__().xxx())` | sub-traversal filter |
 | `not(traversal)` | `.not(__().xxx())` | negation filter |
+| `and(traversals)` | `.and([__().xxx(), __().yyy()])` | passes if every sub-traversal yields a result |
+| `or(traversals)` | `.or([__().xxx(), __().yyy()])` | passes if any sub-traversal yields a result |
 | `choose(traversal)` | `.choose(pred, true, false?)` | conditional branching |
 | `limit(n)` | `.limit(n)` | |
 | `range(lo, hi)` | `.range(lo, hi)` | pagination into the result stream |
@@ -172,6 +174,7 @@ the traversal API. The `schema` module interns them to compact numeric IDs inter
 | `tail(n)` | `.tail(n)` | keep last N results |
 | `dedup()` | `.dedup()` | |
 | `order()` | `.order()` | ascending sort on the current value |
+| `order().by(key)` | `.order().by("key")` / `.order_by("key", dir)` | sort by a resolved property value; chain `.by(k1).by(k2)` for multi-key tie-breaking |
 
 ### Extraction & Aggregation
 
@@ -189,6 +192,7 @@ the traversal API. The `schema` module interns them to compact numeric IDs inter
 | `min()` | `.min()` | numeric minimum |
 | `fold()` | `.fold()` | collects all results into a single `Value::List` |
 | `unfold()` | `.unfold()` | flattens a list back into individual traversers |
+| `group()` | `.group()` | keyed list aggregation into a `Map` |
 | `groupCount()` | `.group_count()` | keyed count aggregation into a `Map` |
 | `path()` | `.path()` | returns `Value::Path` with per-step labels |
 

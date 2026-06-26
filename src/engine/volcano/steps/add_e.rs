@@ -37,31 +37,26 @@ use crate::{
 };
 
 /// A physical step that adds a new edge to the graph.
+///
+/// When both endpoints are `Some` the step acts as a source and emits one edge.
+/// When one endpoint is `None` the step accepts an upstream; each traverser
+/// provides the missing vertex via `GValue::Vertex`.
 #[derive(Debug)]
 pub struct AddEStep {
-    // ── Static/Fixed configuration ──
-    /// The label ID of the edge to be created.
     label_id: LabelId,
-    /// The source vertex key of the edge.
-    out_v_id: VertexKey,
-    /// The destination vertex key of the edge.
-    in_v_id: VertexKey,
-    /// The property list to initialize the new edge with.
+    out_v_id: Option<VertexKey>,
+    in_v_id: Option<VertexKey>,
     properties: SmallVec<[Property; VERTEX_PROPS_INLINE]>,
-    /// The rank of the edge to be created.
     rank: Rank,
-
-    // ── Dynamic/Runtime execution state ──
-    /// Whether the edge has been successfully created and emitted in this run.
+    upstream: Option<StepRef>,
     emitted: bool,
 }
 
 impl AddEStep {
-    /// Creates a new `AddEStep` with the specified edge details.
     pub fn new(
         label_id: LabelId,
-        out_v_id: VertexKey,
-        in_v_id: VertexKey,
+        out_v_id: Option<VertexKey>,
+        in_v_id: Option<VertexKey>,
         properties: HashMap<u16, Primitive>,
         rank: Option<Rank>,
     ) -> Self {
@@ -70,50 +65,77 @@ impl AddEStep {
             .into_iter()
             .map(|(key, value)| Property {
                 owner: CanonicalKey::Edge(CanonicalEdgeKey {
-                    src_id: out_v_id,
+                    src_id: out_v_id.unwrap_or(0),
                     label_id,
-                    dst_id: in_v_id,
+                    dst_id: in_v_id.unwrap_or(0),
                     rank: final_rank,
                 }),
                 key,
                 value,
             })
             .collect::<SmallVec<[Property; VERTEX_PROPS_INLINE]>>();
-        Self { label_id, out_v_id, in_v_id, properties, rank: final_rank, emitted: false }
+        Self { label_id, out_v_id, in_v_id, properties, rank: final_rank, upstream: None, emitted: false }
     }
 }
 
 impl CoreStep for AddEStep {
-    fn add_upper(&mut self, _upstream: StepRef) {
-        panic!("AddEStep is a source step and cannot have an upstream");
+    fn add_upper(&mut self, upstream: StepRef) {
+        self.upstream = Some(upstream);
     }
 
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
     ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
-        // Emits the newly created edge as a traverser.
-        if self.emitted {
+        if self.emitted && self.upstream.is_none() {
             return Ok(None);
         }
+        let (out_v_id, in_v_id) = if let Some(ref upstream) = self.upstream {
+            let Some(t) = upstream.next(ctx)? else {
+                self.emitted = true;
+                return Ok(None);
+            };
+            let vk = match &t.value {
+                GValue::Vertex(v) => *v,
+                other => {
+                    return Err(StoreError::UnexpectedDataType(format!(
+                        "addE expects a vertex traverser, got {:?}",
+                        other
+                    )));
+                }
+            };
+            (self.out_v_id.unwrap_or(vk), self.in_v_id.unwrap_or(vk))
+        } else {
+            self.emitted = true;
+            (
+                self.out_v_id.expect("out_v_id required for source AddEStep"),
+                self.in_v_id.expect("in_v_id required for source AddEStep"),
+            )
+        };
+
         let edge_key = EdgeKey {
-            primary_id: self.out_v_id,
+            primary_id: out_v_id,
             direction: Direction::OUT,
             label_id: self.label_id,
-            secondary_id: self.in_v_id,
+            secondary_id: in_v_id,
             rank: self.rank,
         };
         let new_edge = ctx.add_edge(&edge_key)?;
         for property in &self.properties {
             ctx.set_property(property)?;
         }
-        self.emitted = true;
         Ok(Some(smallvec![Traverser::new_rc(GValue::Edge(new_edge))]))
     }
 
     fn reset(&mut self) {
-        // Resets the step's state, allowing it to be re-executed.
         self.emitted = false;
+        if let Some(u) = &self.upstream {
+            u.reset();
+        }
+    }
+
+    fn upper(&self) -> Option<StepRef> {
+        self.upstream.clone()
     }
 
     fn explain(&self) -> ExplainNode {

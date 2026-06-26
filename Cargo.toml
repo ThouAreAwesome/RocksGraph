@@ -24,12 +24,6 @@ tracing = ["dep:tracing"]
 # Compact inline strings (≤22 bytes stack-allocated)
 smol_str = "0.2"
 
-# LRU cache for SharedStoreCache
-lru = "0.12"
-
-# RwLock used for SharedStoreCache shards
-parking_lot = "0.12"
-
 # Inline vec for Traverser labels: stack-allocates ≤2 label strings with no heap
 smallvec = "1"
 

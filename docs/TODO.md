@@ -16,20 +16,23 @@ These block entire classes of queries, not just convenience.
 
 - [x] **`repeat()` / `until()` / `emit()`** — variable-length traversals (N-hop neighbors,
       reachability, recursive paths).
-- [ ] **`as()`** — step labeling (sibling to `select()`). `GValue::Path` already
-      carries a `step_labels: Option<SmallVec<[SmolStr; 2]>>` slot per position
-      (`types/gvalue.rs`), and `path()`'s rendering code in `traversal.rs` already reads it —
-      but nothing ever writes to it, since there's no `as()` step.
+- [x] **`as()`** — step labeling (sibling to `select()`), exposed as `.as_(label)`
+      (`as` is a Rust keyword).
 - [x] **`select()`** — result extraction from labelled path history.
 - [x] **`not()`** — boolean filter negation.
-- [ ] **`and()` / `or()`** — boolean filter composition. `where()` only takes one
-      positive sub-traversal today; there's no way to compose multiple conditions.
+- [x] **`and()` / `or()`** — boolean filter composition, exposed as `.and([...])` /
+      `.or([...])` taking a list of sub-traversals.
+- [x] **`order()` `by()`** — `.by(key)` / `.order_by(key, dir)` do real,
+      schema-resolved, property-based sorting. Chaining `.by(k1).by(k2)` correctly
+      appends for multi-key tie-breaking (only replaces the default `Value` placeholder
+      on the first call) — verified empirically and covered by
+      `test_builder_order_by_two_keys_tie_break` in `order_tests.rs`.
 
 ## P1 — commonly used, moderate effort
 
-- [x] **`order()`** (with `by()`) — sorting traversal results.
 - [x] **`range()` / `skip()` / `tail()`** — pagination beyond `limit()`.
-- [ ] **`group()`** — arbitrary keyed aggregation (sibling to `groupCount()`).
+- [x] **`group()`** — arbitrary keyed aggregation (sibling to `groupCount()`), exposed
+      as `.group()`.
 - [x] **`groupCount()`** — keyed count aggregation.
 - [ ] **`valueMap()` / `elementMap()`** — bulk property extraction as a map (today this is
       `properties()` + `values()` as two separate steps).
@@ -39,16 +42,22 @@ These block entire classes of queries, not just convenience.
 - [x] **`sum()` / `mean()` / `max()` / `min()`** — numeric reducers alongside the existing
       `count()` / `fold()`.
 - [x] **`unfold()`** — inverse of `fold()`.
-- [ ] **`simplePath()` / `cyclicPath()`** — path filters (physical step implemented;
-      needs traversal API exposure).
+- [x] **`simplePath()` / `cyclicPath()`** — path filters, exposed as `.simple_path()` /
+      `.cyclic_path()`.
 - [x] **`choose()`** — conditional traversal branching.
+- [ ] **`branch()`** — multi-way conditional branching (sibling to `choose()`); no
+      `.branch()` builder method exists.
+- [x] **`identity()` / `constant()` / `local()`** — these don't actually require lambda
+      support (they take a fixed value or a sub-traversal, not a closure) and are
+      implemented: `.identity()`, `.constant(value)`, `.local(__().xxx())`.
 
 ## P3 — deferred or likely out of scope
 
-- **`aggregate()` / `sideEffect()` / `store()` / `map()` / `flatMap()` / `local()`** — all
-  depend on lambda support, which isn't planned (see the main README roadmap).
-- **`inject()` / `constant()` / `identity()`** — minor utility steps, low value on their own.
-- **`explain()` / `profile()`** — introspection terminals; useful eventually, not blocking.
+- **`aggregate()` / `sideEffect()` / `store()` / `map()` / `flatMap()`** — depend on lambda
+  support, which isn't planned (see the main README roadmap).
+- **`inject()`** — minor utility step, low value on its own.
+- **`explain()` / `profile()`** — `explain()` is implemented; `profile()` (runtime timing
+  breakdown per step) is not.
 - **OLAP-style steps** (`pageRank`, `connectedComponent`, `program()`, `subgraph()`/`tree()`) —
   likely a permanent non-goal for a single-threaded, embedded OLTP engine rather than a
   "not yet."

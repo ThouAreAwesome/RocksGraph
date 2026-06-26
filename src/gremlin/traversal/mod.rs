@@ -74,11 +74,11 @@ use crate::{
         logical_step::{
             AddEStep, AddVStep, AndStep, AsStep, BothEStep, BothStep, ChooseStep, CoalesceStep, ConstantStep,
             CountStep, CyclicPathStep, DedupStep, DropStep, EStep, EmitSpec, FoldStep, FromStep, GroupCountStep,
-            HasIdStep, HasLabelStep, IdStep, IdentityStep, InEStep, InStep, InVStep, LabelStep, LimitStep, LocalStep,
-            LogicalPlan, LogicalStep, MaxStep, MeanStep, MinStep, NotStep, OrStep, Order, OrderKey, OrderKeySpec,
-            OrderStep, OtherVStep, OutEStep, OutStep, OutVStep, PathStep, PropertiesStep, PropertyStep, RangeStep,
-            RepeatStep, ScalarFilterStep, SelectStep, SimplePathStep, SkipStep, SumStep, TailStep, ToStep, UnfoldStep,
-            UnionStep, ValuesStep, WhereStep,
+            GroupStep, HasIdStep, HasLabelStep, IdStep, IdentityStep, InEStep, InStep, InVStep, LabelStep, LimitStep,
+            LocalStep, LogicalPlan, LogicalStep, MaxStep, MeanStep, MinStep, NotStep, OrStep, Order, OrderKey,
+            OrderKeySpec, OrderStep, OtherVStep, OutEStep, OutStep, OutVStep, PathStep, PropertiesStep, PropertyStep,
+            RangeStep, RepeatStep, ScalarFilterStep, SelectStep, SimplePathStep, SkipStep, SumStep, TailStep, ToStep,
+            UnfoldStep, UnionStep, ValuesStep, WhereStep,
         },
     },
     types::{keys::EdgeKey, prop_key::LABEL, StoreError},
@@ -494,10 +494,93 @@ pub trait TraversalBuilder: PlanAppender {
         self
     }
 
-    fn by(self, _key: impl Into<SmolStr>) -> Self {
+    /// Modulates the most recent `order()` step to sort by a property value
+    /// instead of traverser identity.  If the last key is still the default
+    /// `Value` placeholder left by `order()`, it is replaced; otherwise the
+    /// new key is appended (enabling multi-key tie-breaking):
+    ///
+    /// ```
+    /// # use rocksgraph::{Graph, TraversalBuilder};
+    /// # let dir = tempfile::tempdir().unwrap();
+    /// # let graph = Graph::open(dir.path()).unwrap();
+    /// # let mut snap = graph.read();
+    /// // sort by age, ties broken by name
+    /// snap.g().V([]).order().by("age").by("name");
+    /// ```
+    fn by(mut self, key: impl Into<SmolStr>) -> Self {
+        let key: SmolStr = key.into();
+        let key2 = key.clone();
+        let needs_order = {
+            let plan = self.plan_mut();
+            match plan.steps.last_mut() {
+                Some(LogicalStep::Order(order_step)) => {
+                    let is_default = matches!(order_step.keys.as_slice(), [OrderKey { spec: OrderKeySpec::Value, .. }]);
+                    if is_default {
+                        order_step.keys =
+                            smallvec::smallvec![OrderKey { spec: OrderKeySpec::Property(key), order: Order::Asc }];
+                    } else {
+                        order_step.keys.push(OrderKey { spec: OrderKeySpec::Property(key), order: Order::Asc });
+                    }
+                    false
+                }
+                _ => true,
+            }
+        };
+        if needs_order {
+            self = self.order();
+            let plan = self.plan_mut();
+            match plan.steps.last_mut() {
+                Some(LogicalStep::Order(order_step)) => {
+                    let is_default = matches!(order_step.keys.as_slice(), [OrderKey { spec: OrderKeySpec::Value, .. }]);
+                    if is_default {
+                        order_step.keys =
+                            smallvec::smallvec![OrderKey { spec: OrderKeySpec::Property(key2), order: Order::Asc }];
+                    } else {
+                        order_step.keys.push(OrderKey { spec: OrderKeySpec::Property(key2), order: Order::Asc });
+                    }
+                }
+                _ => unreachable!("order() just pushed an Order step"),
+            }
+        }
         self
     }
-    fn order_by(self, _key: impl Into<SmolStr>, _order: Order) -> Self {
+
+    /// Creates or modulates an `order()` step with an explicit sort direction.
+    /// Follows the same accumulate-vs-replace logic as [`by`](Self::by).
+    fn order_by(mut self, key: impl Into<SmolStr>, order: Order) -> Self {
+        let key: SmolStr = key.into();
+        let needs_order = {
+            let plan = self.plan_mut();
+            match plan.steps.last_mut() {
+                Some(LogicalStep::Order(order_step)) => {
+                    let is_default = matches!(order_step.keys.as_slice(), [OrderKey { spec: OrderKeySpec::Value, .. }]);
+                    if is_default {
+                        order_step.keys =
+                            smallvec::smallvec![OrderKey { spec: OrderKeySpec::Property(key.clone()), order }];
+                    } else {
+                        order_step.keys.push(OrderKey { spec: OrderKeySpec::Property(key.clone()), order });
+                    }
+                    false
+                }
+                _ => true,
+            }
+        };
+        if needs_order {
+            self = self.order();
+            let plan = self.plan_mut();
+            match plan.steps.last_mut() {
+                Some(LogicalStep::Order(order_step)) => {
+                    let is_default = matches!(order_step.keys.as_slice(), [OrderKey { spec: OrderKeySpec::Value, .. }]);
+                    if is_default {
+                        order_step.keys =
+                            smallvec::smallvec![OrderKey { spec: OrderKeySpec::Property(key.clone()), order }];
+                    } else {
+                        order_step.keys.push(OrderKey { spec: OrderKeySpec::Property(key.clone()), order });
+                    }
+                }
+                _ => unreachable!("order() just pushed an Order step"),
+            }
+        }
         self
     }
 
@@ -572,6 +655,11 @@ pub trait TraversalBuilder: PlanAppender {
 
     fn dedup(mut self) -> Self {
         self.push_step(LogicalStep::Dedup(DedupStep {}));
+        self
+    }
+
+    fn group(mut self) -> Self {
+        self.push_step(LogicalStep::Group(GroupStep { key: None }));
         self
     }
 

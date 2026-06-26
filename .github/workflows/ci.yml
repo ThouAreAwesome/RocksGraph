@@ -26,3 +26,9 @@ jobs:
       - run: |
           echo "## CI result (${{ matrix.os }})" >> $GITHUB_STEP_SUMMARY
           echo "✅ Passed" >> $GITHUB_STEP_SUMMARY
+
+  audit:
+    runs-on: "ubuntu-latest"
+    steps:
+      - uses: "actions/checkout@v4"
+      - uses: "EmbarkStudios/cargo-deny-action@v2"

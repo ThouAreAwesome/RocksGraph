@@ -316,6 +316,7 @@ pub enum PrimitivePredicate {
 }
 
 impl PrimitivePredicate {
+    #[inline]
     pub fn evaluate(&self, val: &Primitive) -> bool {
         match self {
             Self::Eq(p) => val.loose_eq(p),

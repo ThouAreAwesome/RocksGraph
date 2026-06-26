@@ -90,24 +90,26 @@ pub trait GraphSnapshot {
     ) -> Result<(Vec<Edge>, Option<AdjacentEdgeCursor>), StoreError>;
 
     /// Scan all vertices in the database in batch mode.
+    ///
+    /// Required — there is no default. A backend that can't support scanning must
+    /// return `Err(StoreError::UnsupportedOperation(..))` explicitly, rather than
+    /// silently inheriting that behavior by skipping the method.
     fn scan_vertices(
         &mut self,
-        _label: Option<LabelId>,
-        _start_from: Option<VertexKey>,
-        _limit: u32,
-    ) -> Result<(Vec<Vertex>, Option<VertexKey>), StoreError> {
-        Err(StoreError::UnsupportedOperation("scan_vertices is not supported".to_string()))
-    }
+        label: Option<LabelId>,
+        start_from: Option<VertexKey>,
+        limit: u32,
+    ) -> Result<(Vec<Vertex>, Option<VertexKey>), StoreError>;
 
     /// Scan all unique canonical edges in the database in batch mode.
+    ///
+    /// Required — see [`GraphSnapshot::scan_vertices`] for why there is no default.
     fn scan_edges(
         &mut self,
-        _label: Option<LabelId>,
-        _start_from: Option<CanonicalEdgeKey>,
-        _limit: u32,
-    ) -> Result<(Vec<Edge>, Option<CanonicalEdgeKey>), StoreError> {
-        Err(StoreError::UnsupportedOperation("scan_edges is not supported".to_string()))
-    }
+        label: Option<LabelId>,
+        start_from: Option<CanonicalEdgeKey>,
+        limit: u32,
+    ) -> Result<(Vec<Edge>, Option<CanonicalEdgeKey>), StoreError>;
 }
 
 // ── GraphTransaction ──────────────────────────────────────────────────────────
@@ -176,24 +178,24 @@ pub trait GraphTransaction {
     ) -> Result<(Vec<Edge>, Option<AdjacentEdgeCursor>), StoreError>;
 
     /// Scan all vertices in the database in batch mode.
+    ///
+    /// Required — there is no default; see [`GraphSnapshot::scan_vertices`] for why.
     fn scan_vertices(
         &mut self,
-        _label: Option<LabelId>,
-        _start_from: Option<VertexKey>,
-        _limit: u32,
-    ) -> Result<(Vec<Vertex>, Option<VertexKey>), StoreError> {
-        Err(StoreError::UnsupportedOperation("scan_vertices is not supported".to_string()))
-    }
+        label: Option<LabelId>,
+        start_from: Option<VertexKey>,
+        limit: u32,
+    ) -> Result<(Vec<Vertex>, Option<VertexKey>), StoreError>;
 
     /// Scan all unique canonical edges in the database in batch mode.
+    ///
+    /// Required — there is no default; see [`GraphSnapshot::scan_vertices`] for why.
     fn scan_edges(
         &mut self,
-        _label: Option<LabelId>,
-        _start_from: Option<CanonicalEdgeKey>,
-        _limit: u32,
-    ) -> Result<(Vec<Edge>, Option<CanonicalEdgeKey>), StoreError> {
-        Err(StoreError::UnsupportedOperation("scan_edges is not supported".to_string()))
-    }
+        label: Option<LabelId>,
+        start_from: Option<CanonicalEdgeKey>,
+        limit: u32,
+    ) -> Result<(Vec<Edge>, Option<CanonicalEdgeKey>), StoreError>;
 
     // ── Writes ────────────────────────────────────────────────────────────────
 
@@ -295,6 +297,22 @@ mod tests {
         ) -> Result<(Vec<Edge>, Option<AdjacentEdgeCursor>), StoreError> {
             Ok((vec![], None))
         }
+        fn scan_vertices(
+            &mut self,
+            _label: Option<LabelId>,
+            _start_from: Option<VertexKey>,
+            _limit: u32,
+        ) -> Result<(Vec<Vertex>, Option<VertexKey>), StoreError> {
+            Err(StoreError::UnsupportedOperation("MockSnapshot does not support scan_vertices".to_string()))
+        }
+        fn scan_edges(
+            &mut self,
+            _label: Option<LabelId>,
+            _start_from: Option<CanonicalEdgeKey>,
+            _limit: u32,
+        ) -> Result<(Vec<Edge>, Option<CanonicalEdgeKey>), StoreError> {
+            Err(StoreError::UnsupportedOperation("MockSnapshot does not support scan_edges".to_string()))
+        }
     }
 
     struct MockTxn;
@@ -330,6 +348,22 @@ mod tests {
             _limit: Option<u32>,
         ) -> Result<(Vec<Edge>, Option<AdjacentEdgeCursor>), StoreError> {
             Ok((vec![], None))
+        }
+        fn scan_vertices(
+            &mut self,
+            _label: Option<LabelId>,
+            _start_from: Option<VertexKey>,
+            _limit: u32,
+        ) -> Result<(Vec<Vertex>, Option<VertexKey>), StoreError> {
+            Err(StoreError::UnsupportedOperation("MockTxn does not support scan_vertices".to_string()))
+        }
+        fn scan_edges(
+            &mut self,
+            _label: Option<LabelId>,
+            _start_from: Option<CanonicalEdgeKey>,
+            _limit: u32,
+        ) -> Result<(Vec<Edge>, Option<CanonicalEdgeKey>), StoreError> {
+            Err(StoreError::UnsupportedOperation("MockTxn does not support scan_edges".to_string()))
         }
         fn put_vertex(&mut self, _key: VertexKey, _label_id: LabelId, _props: &[Property]) -> Result<(), StoreError> {
             Ok(())

@@ -114,7 +114,7 @@ pub fn merge_haslabel_into_edge(plan: &mut LogicalPlan) -> Result<bool, StoreErr
                 LogicalStep::OutE(ref mut s) => s.labels = labels,
                 LogicalStep::InE(ref mut s) => s.labels = labels,
                 LogicalStep::BothE(ref mut s) => s.labels = labels,
-                _ => unreachable!(),
+                _ => unreachable!("should never reach here since we have checked the pattern already"),
             }
             plan.steps.remove(j);
             plan_changed = true;

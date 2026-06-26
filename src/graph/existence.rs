@@ -45,6 +45,7 @@ impl Existence {
     /// - Any operation followed by a deletion (`Tombstone`) results in a `Tombstone`.
     /// - Modifying properties (`Modified`) and changing edge counts (`CounterOnly`) combines into
     ///   `ModifiedWithCounter`.
+    #[inline]
     pub(crate) fn merge(self, other: Existence) -> Existence {
         use Existence::*;
         match (self, other) {

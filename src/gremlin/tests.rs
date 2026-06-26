@@ -1811,12 +1811,106 @@ mod integration_test {
     }
 
     #[test]
+    fn test_group_e2e() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+        let result = tx.g().V([]).hasLabel(["person"]).values(["age"]).group().next().unwrap().unwrap();
+        // Result is a Map<age, List<age>> — e.g. {29: [29, 29], 27: [27], 32: [32], 35: [35]}
+        // Marko (29), Vadas (27), Josh (32), Peter (35)
+        if let Value::Map(m) = result {
+            assert_eq!(m.len(), 4);
+            // Each value should be a List with at least one element
+            for (_, v) in &m.entries {
+                assert!(matches!(v, Value::List(_)));
+            }
+        } else {
+            panic!("expected Map, got {:?}", result);
+        }
+    }
+
+    #[test]
+    fn test_group_count_e2e() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+        let result = tx.g().V([]).hasLabel(["person"]).values(["age"]).group_count().next().unwrap().unwrap();
+        // Result is a Map<age, count> — one entry per distinct age.
+        // Marko=29, Vadas=27, Josh=32, Peter=35 — each age appears once.
+        if let Value::Map(m) = result {
+            assert_eq!(m.len(), 4);
+            // Every value should be Int64(1) — one occurrence per age.
+            for (_, v) in &m.entries {
+                assert!(matches!(v, Value::Int64(1)), "expected count 1, got {:?}", v);
+            }
+        } else {
+            panic!("expected Map, got {:?}", result);
+        }
+    }
+
+    #[test]
     fn test_simple_path_e2e() {
         let graph = setup_modern_graph();
         let mut tx = graph.begin();
-        // V(1).out().simplePath() — from marko, out knows → vadas, josh, no cycles expected
-        let results = tx.g().V([1]).out(["knows"]).simple_path().to_list().unwrap();
-        assert_eq!(results.len(), 2);
+        // V(1).out("knows").both("knows") produces 2 paths, both cycles back to V(1):
+        //   1→2→1 (Vadas back to Marko via incoming knows edge)
+        //   1→4→1 (Josh back to Marko via incoming knows edge)
+        // simplePath() filters them all out — 0 results.
+        let results = tx.g().V([1]).out(["knows"]).both(["knows"]).simple_path().to_list().unwrap();
+        assert_eq!(results.len(), 0, "simplePath should filter out the back-edges to V(1)");
+    }
+
+    #[test]
+    fn test_cyclic_path_e2e() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+        // Same traversal — cyclicPath() keeps only the 2 cycles.
+        let results = tx.g().V([1]).out(["knows"]).both(["knows"]).cyclic_path().to_list().unwrap();
+        assert_eq!(results.len(), 2, "cyclicPath should keep only the cyclic back-edges");
+    }
+
+    #[test]
+    fn test_add_e_variable_source_constant_target() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+        // g.V([1]).out("knows").addE("friends").to(3)
+        // Marko knows Vadas(2), Josh(4).  For each, create friends->Lop(3).
+        let edges: Vec<_> = tx.g().V([1]).out(["knows"]).addE("friends").to(3).to_list().unwrap();
+        assert_eq!(edges.len(), 2, "should create edges from each traverser");
+
+        // Both new edges must be visible from BOTH sides (bidirectional indexing,
+        // not just the out-side the producing step happened to emit).
+        let in_count = tx.g().V([3]).inE(["friends"]).count().next().unwrap().unwrap();
+        assert_eq!(in_count, Value::Int64(2), "in-side index should see both new edges");
+        let out_count_2 = tx.g().V([2]).outE(["friends"]).count().next().unwrap().unwrap();
+        assert_eq!(out_count_2, Value::Int64(1));
+        let out_count_4 = tx.g().V([4]).outE(["friends"]).count().next().unwrap().unwrap();
+        assert_eq!(out_count_4, Value::Int64(1));
+    }
+
+    #[test]
+    fn test_add_e_variable_source_with_property() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+        // Same traversal with a property.
+        let edges: Vec<_> =
+            tx.g().V([1]).out(["knows"]).addE("friends").to(3).property("weight", 0.5f64).to_list().unwrap();
+        assert_eq!(edges.len(), 2);
+
+        // Verify the property landed on each *real* created edge (vadas->3, josh->3),
+        // not just that two edges exist — `vadas->3` and `josh->3` have different
+        // out-vertices resolved per-traverser from the upstream `out("knows")`, so this
+        // also confirms the property isn't being tagged with a stale/static owner key.
+        for src in [2i64, 4i64] {
+            let weight =
+                tx.g().V([src]).outE(["friends"]).r#where(__().otherV().hasId([3])).values(["weight"]).next().unwrap();
+            assert_eq!(weight, Some(Value::Float64(0.5)), "property missing/wrong on edge {src}->3");
+        }
+    }
+
+    #[test]
+    fn test_add_e_no_endpoints_error() {
+        let graph = setup_modern_graph();
+        let res = graph.begin().g().addE("knows").next();
+        assert!(res.is_err(), "addE without from() or to() should error");
     }
 
     #[test]

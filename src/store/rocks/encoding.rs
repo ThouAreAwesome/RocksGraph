@@ -237,6 +237,7 @@ pub struct VertexValue {
 
 impl VertexValue {
     /// Encodes the `VertexValue` into a byte vector.
+    #[inline]
     pub fn encode(&self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(4 + self.property_blob.len());
         buf.extend_from_slice(&self.label_id.to_be_bytes());
@@ -245,6 +246,7 @@ impl VertexValue {
     }
 
     /// Decodes a byte slice into a `VertexValue`.
+    #[inline]
     pub fn decode(bytes: &[u8]) -> Option<Self> {
         if bytes.len() < 4 {
             return None;
@@ -310,6 +312,7 @@ pub struct EdgeValue {
 impl EdgeValue {
     /// Encodes the `EdgeValue` into a byte vector, prefixing the
     /// `end_vertex_label` as a 4-byte big-endian `i32`.
+    #[inline]
     pub fn encode(&self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(4 + self.property_blob.len());
         buf.extend_from_slice(&self.end_vertex_label.to_be_bytes());
@@ -319,6 +322,7 @@ impl EdgeValue {
 
     /// Decodes a byte slice into an `EdgeValue`.
     /// Returns `None` if the slice is fewer than 2 bytes.
+    #[inline]
     pub fn decode(bytes: &[u8]) -> Option<Self> {
         if bytes.len() < 4 {
             return None;
@@ -425,6 +429,7 @@ pub(super) fn build_full_edge(ek: &EdgeKey, ev: &EdgeValue) -> Result<Edge, Stor
 /// Used by `GraphTransaction::get_vertex` and `GraphSnapshot::get_vertex`.
 /// The [`LogicalGraph`](crate::graph::LogicalGraph) overlay automatically decodes
 /// properties via `all_props()` or `props_mut()` on access.
+#[inline]
 pub(super) fn build_lazy_vertex(id: VertexKey, vv: &VertexValue) -> Vertex {
     Vertex::from_raw(id, vv.label_id, vv.property_blob.clone().into_boxed_slice(), decode_props)
 }
@@ -434,6 +439,7 @@ pub(super) fn build_lazy_vertex(id: VertexKey, vv: &VertexValue) -> Vertex {
 /// Used by `GraphTransaction::get_edge` / `get_edges` and the snapshot equivalents.
 /// The `ek.direction` determines whether `EdgeValue::end_vertex_label` becomes
 /// `dst_label` (OUT) or `src_label` (IN).
+#[inline]
 pub(super) fn build_lazy_edge(ek: &EdgeKey, ev: &EdgeValue) -> Edge {
     let cek = ek.canonical_edge_key();
     let (src_label, dst_label) = match ek.direction {

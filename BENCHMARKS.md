@@ -29,9 +29,10 @@ tx.commit()?;
 | **Binary** | `target/release/bench_read` / `bench_write` (`just build-release`) |
 | **Dataset** | soc-LiveJournal1, 1 M edges, shuffled (`bench_data/soc-LiveJournal1-shuffled.txt`) |
 | **Data dir** | `data/rocksGraph_shuffled` |
-| **Parallelism** | 3 concurrent workers |
+| **Parallelism** | 3 (write) / 5 (read) concurrent workers |
 | **Machine** | Apple M3, 16G, SSD 256G |
 | **OS** | macOS 15.4.1 |
+| **Rust** | 1.95.0 |
 
 ---
 
@@ -52,7 +53,7 @@ Each mutation upserts source vertex, destination vertex, and the connecting edge
 
 | Query | Mutations/s | Total | p50 (μs) | p90 (μs) | p95 (μs) | p99 (μs) | max (μs) |
 |-------|------------:|------:|--------:|--------:|--------:|--------:|---------:|
-| Upsert (2V + 1E) | 83,333 | 1,000,000 | 32.511 | 40.319 | 50.047 | 112.063 | 63,307.8 |
+| Upsert (2V + 1E) | 100,000 | 1,000,000 | 30.927 | 35.903 | 38.143 | 56.031 | 13,901.8 |
 
 ---
 
@@ -69,13 +70,19 @@ One `ReadSession` is created per worker thread and reused for all queries in tha
 | Q3 | `g.V().hasId(id).bothE(label).values('weight','timestamp').count()` | Bidirectional edge scan + property projection |
 | Q4 | `g.V().hasId(id).both(label).values('name','age').count()` | Bidirectional neighbor scan + property projection |
 | Q5 | `g.V(id).out(label).both(label).count()` | 2-hop traversal (mixed directions) |
+| Q6 | `g.V(id).out(label).both(label).hasLabel(v_label).count()` | 2-hop traversal with endpoint label filter |
+| Q7 | `g.V().count()` | Full vertex scan |
+| Q8 | `g.E().count()` | Full edge scan |
 
 #### Results
 
 | Query | Ops/s | Queries | Duration | p50 (μs) | p90 (μs) | p95 (μs) | p99 (μs) | max (μs) |
 |-------|------:|-------:|--------:|--------:|--------:|--------:|--------:|--------:|
-| Q1 | 667,045.92 | 1,000,000 | 1.50 s | 2.751 | 5.291 | 5.583 | 7.419 | 5,595.1 |
-| Q2 | 369,685.32 | 1,000,000 | 2.71 s | 5.835 | 10.127 | 10.799 | 20.303 | 1,663.0 |
-| Q3 | 180,996.04 | 1,000,000 | 5.52 s | 13.879 | 22.639 | 26.255 | 42.943 | 3,645.4 |
-| Q4 | 124,975.85 | 1,000,000 | 8.00 s | 18.591 | 36.799 | 45.855 | 74.559 | 1,385.5 |
-| Q5 | 72,109.28 | 1,000,000 | 13.87 s | 25.503 | 72.703 | 103.935 | 186.623 | 12,107.8 |
+| Q1 | 922,655.80 | 1,000,000 | 1.08 s | 3.417 | 7.295 | 9.839 | 17.055 | 39,026.7 |
+| Q2 | 524,982.39 | 1,000,000 | 1.90 s | 7.875 | 13.671 | 19.471 | 29.711 | 4,333.6 |
+| Q3 | 277,940.98 | 1,000,000 | 3.60 s | 14.711 | 26.127 | 35.391 | 55.519 | 24,821.8 |
+| Q4 | 182,428.97 | 1,000,000 | 5.48 s | 20.335 | 43.519 | 57.375 | 101.887 | 23,150.6 |
+| Q5 | 117,041.44 | 1,000,000 | 8.54 s | 27.471 | 74.431 | 102.335 | 188.671 | 14,442.5 |
+| Q6 | 110,856.19 | 1,000,000 | 9.02 s | 28.879 | 78.527 | 108.031 | 197.759 | 6,545.4 |
+| Q7 | 3.39 | 5 | 1.48 s | 246,939.6 | 304,087.0 | 304,087.0 | 304,087.0 | 304,087.0 |
+| Q8 | 2.53 | 5 | 1.97 s | 333,185.0 | 427,819.0 | 427,819.0 | 427,819.0 | 427,819.0 |

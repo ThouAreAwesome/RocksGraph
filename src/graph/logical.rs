@@ -115,6 +115,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     /// Cache a vertex label learned for free from an adjacent edge's value prefix.
     /// Uses `or_insert_with` — never clobbers a richer entry (same pattern as the
     /// edges overlay: `self.edges.entry(cek).or_insert(edge)`).
+    #[inline]
     fn cache_vertex_label(&mut self, id: VertexKey, label_id: LabelId) {
         self.vertices.entry(id).or_insert_with(|| Vertex::label_only(id, label_id));
     }

@@ -1,0 +1,45 @@
+# cargo-deny configuration — see https://embarkstudios.github.io/cargo-deny/
+# Run locally with `just audit`; enforced in CI via `.github/workflows/ci.yml`.
+
+[graph]
+all-features = false
+no-default-features = false
+
+# `cargo deny check advisories` — flags dependencies with known RUSTSEC vulnerabilities
+# or that are unmaintained/yanked. No exceptions yet; add an `ignore` entry with a
+# `reason` if a specific advisory is investigated and judged not applicable.
+[advisories]
+ignore = []
+
+# `cargo deny check licenses` — every license below is permissive and GPL-compatible.
+# GPL-2.0-or-later is RocksGraph's own license, listed so the root package itself
+# passes the check.
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "Unlicense",
+    "Unicode-3.0",
+    "GPL-2.0-or-later",
+]
+confidence-threshold = 0.8
+
+[licenses.private]
+ignore = false
+
+# `cargo deny check bans` — warn (not deny) on duplicate dependency versions for now;
+# tighten to "deny" once the dependency tree is deliberately curated.
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+# `cargo deny check sources` — only allow crates.io; no git/alternate-registry deps.
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

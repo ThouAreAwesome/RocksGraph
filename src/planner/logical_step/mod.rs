@@ -71,7 +71,7 @@ impl LogicalPlan {
             use LogicalStep::*;
             for s in steps {
                 match s {
-                    As(_) | Select(_) | Path(_) => return true,
+                    As(_) | Select(_) | Path(_) | SimplePath(_) | CyclicPath(_) => return true,
                     Not(NotStep { plan }) if scan(&plan.steps) => {
                         return true;
                     }
@@ -369,7 +369,7 @@ pub struct TailStep {
 impl Optimizer for TailStep {}
 
 /// Sorting direction.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Copy)]
 pub enum Order {
     Asc,
     Desc,

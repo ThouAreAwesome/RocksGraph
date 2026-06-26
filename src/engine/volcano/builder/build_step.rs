@@ -439,20 +439,12 @@ impl PhysicalPlanBuilder {
                 )
             }
             LogicalStep::AddE(s) => {
-                let Some(out_v_id) = s.out_v_id else {
+                if s.out_v_id.is_none() && s.in_v_id.is_none() {
                     return Err(StoreError::TraversalError(
-                        "AddEStep cannot be built without an out-vertex ID. A preceding `from(...)` step is required \
-                         and should have been folded by the optimizer."
-                            .to_string(),
+                        "AddEStep requires at least one endpoint: from() or to()".to_string(),
                     ));
-                };
-                let Some(in_v_id) = s.in_v_id else {
-                    return Err(StoreError::TraversalError(
-                        "AddEStep cannot be built without an in-vertex ID. A preceding `to(...)` step is required \
-                         and should have been folded by the optimizer."
-                            .to_string(),
-                    ));
-                };
+                }
+                let needs_upstream = s.out_v_id.is_none() || s.in_v_id.is_none();
                 drop(schema);
                 let label_id = resolve_write_edge_label(&s.label, schema_lock)?;
                 let mut resolved_props = HashMap::new();
@@ -461,10 +453,18 @@ impl PhysicalPlanBuilder {
                     let id = resolve_write_prop_key(k, inferred_type, schema_lock)?;
                     resolved_props.insert(id, v.clone());
                 }
-                wire!(
-                    BufferedStep::new(steps::add_e::AddEStep::new(label_id, out_v_id, in_v_id, resolved_props, s.rank)),
-                    None::<StepRef>
-                )
+                let phys = BufferedStep::new(steps::add_e::AddEStep::new(
+                    label_id,
+                    s.out_v_id,
+                    s.in_v_id,
+                    resolved_props,
+                    s.rank,
+                ));
+                if needs_upstream {
+                    wire_required!(phys, upstream, "AddEStep")
+                } else {
+                    wire!(phys, None::<StepRef>)
+                }
             }
             LogicalStep::Property(s) => {
                 if s.prop_key == ID || s.prop_key == LABEL || s.prop_key == RANK {
