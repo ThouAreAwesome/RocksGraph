@@ -33,28 +33,28 @@ use crate::{
     schema::Schema,
     types::{
         gvalue::GValue,
-        keys::{CanonicalKey, VertexKey},
+        keys::{CanonicalKey, LabelId, VertexKey},
         StoreError,
     },
 };
 
 /// Pre-built lookup table: label_id → SmolStr, avoiding per-result BiHashMap lookups.
 pub(crate) struct LabelCache {
-    vertex_labels: HashMap<u16, SmolStr>,
-    edge_labels: HashMap<u16, SmolStr>,
+    vertex_labels: HashMap<LabelId, SmolStr>,
+    edge_labels: HashMap<LabelId, SmolStr>,
 }
 
 impl LabelCache {
     pub(crate) fn from_schema(schema: &Schema) -> Self {
         // Iterate all known vertex label ids and resolve eagerly.
         let mut vertex_labels = HashMap::new();
-        for id in 1..=schema.vertex_labels_count() as u16 {
+        for id in 1..=schema.vertex_labels_count() as LabelId {
             if let Some(name) = schema.vertex_label_str(id) {
                 vertex_labels.insert(id, name.clone());
             }
         }
         let mut edge_labels = HashMap::new();
-        for id in 1..=schema.edge_labels_count() as u16 {
+        for id in 1..=schema.edge_labels_count() as LabelId {
             if let Some(name) = schema.edge_label_str(id) {
                 edge_labels.insert(id, name.clone());
             }
@@ -63,7 +63,7 @@ impl LabelCache {
     }
 
     #[inline]
-    fn vertex_label(&self, label_id: u16) -> &SmolStr {
+    fn vertex_label(&self, label_id: LabelId) -> &SmolStr {
         self.vertex_labels.get(&label_id).unwrap_or_else(|| {
             static EMPTY: SmolStr = SmolStr::new_inline("");
             &EMPTY
@@ -71,7 +71,7 @@ impl LabelCache {
     }
 
     #[inline]
-    fn edge_label(&self, label_id: u16) -> &SmolStr {
+    fn edge_label(&self, label_id: LabelId) -> &SmolStr {
         self.edge_labels.get(&label_id).unwrap_or_else(|| {
             static EMPTY: SmolStr = SmolStr::new_inline("");
             &EMPTY

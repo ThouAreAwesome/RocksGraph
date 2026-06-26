@@ -670,12 +670,12 @@ mod tests {
     }
 
     // Helper to create a simple vertex
-    fn create_test_vertex(id: i64, label_id: u16) -> Vertex {
+    fn create_test_vertex(id: i64, label_id: LabelId) -> Vertex {
         Vertex::with_props(id, label_id, vec![])
     }
 
     // Helper to create a simple edge
-    fn create_test_edge(src: i64, label: u16, dst: i64, _dir: Direction) -> Edge {
+    fn create_test_edge(src: i64, label: LabelId, dst: i64, _dir: Direction) -> Edge {
         Edge::with_props(src, label, dst, 0, vec![], None, None)
     }
 

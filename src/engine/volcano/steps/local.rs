@@ -29,7 +29,7 @@ use crate::{
             steps::traits::{CoreStep, ExplainNode, StepRef},
         },
     },
-    types::{error::StoreError},
+    types::error::StoreError,
 };
 
 /// Executes a sub-traversal locally on each incoming traverser and emits every
@@ -111,7 +111,6 @@ impl CoreStep for LocalStep {
     }
 
     fn explain(&self) -> ExplainNode {
-        ExplainNode::new("LocalStep")
-            .with_children(vec![(String::new(), self.sub_plan.explain())])
+        ExplainNode::new("LocalStep").with_children(vec![(String::new(), self.sub_plan.explain())])
     }
 }

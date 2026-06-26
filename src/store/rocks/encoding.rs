@@ -24,11 +24,11 @@
 //!
 //! | CF name         | Key layout                               | Value layout                        |
 //! |-----------------|------------------------------------------|-------------------------------------|
-//! | `vertices`      | `[ VertexId:i64 ]`                       | `[ label_id:u16 \| props ]`         |
-//! | `vertex_degree` | `[ VertexId:i64 ]`                       | `[ vertex_label_id:u16 \| out_e_cnt:u32 \| in_e_cnt:u32 ]` |
-//! | `edges_out`     | `[ SrcId:i64 \| LabelId:u16 \| DstId:i64 \| Rank:u16 ]` | `[ end_vertex_label:u16 \| props ]` |
-//! | `edges_in`      | `[ DstId:i64 \| LabelId:u16 \| SrcId:i64 \| Rank:u16 ]` | `[ end_vertex_label:u16 \| props ]` |
-//! | `schema`        | `[ kind:u8 \| name ]` (or the 1-byte meta key) | kind-dependent, see below      |
+//! | `vertices`      | `[ VertexId:i64 ]`                       | `[ label_id:LabelId | props ]`         |
+//! | `vertex_degree` | `[ VertexId:i64 ]`                       | `[ vertex_label_id:LabelId | out_e_cnt:u32 | in_e_cnt:u32 ]` |
+//! | `edges_out`     | `[ SrcId:i64 | LabelId:i32 | DstId:i64 | Rank:u16 ]` | `[ end_vertex_label:LabelId | props ]` |
+//! | `edges_in`      | `[ DstId:i64 | LabelId:i32 | SrcId:i64 | Rank:u16 ]` | `[ end_vertex_label:LabelId | props ]` |
+//! | `schema`        | `[ kind:u8 | name ]` (or the 1-byte meta key) | kind-dependent, see below      |
 //!
 //! Edge properties are duplicated across `edges_out` and `edges_in`.
 //! The direction byte present in previous versions has been removed; each CF
@@ -42,7 +42,7 @@
 //!
 //! | Kind                  | Value layout                                  |
 //! |------------------------|------------------------------------------------|
-//! | vertex/edge label      | `[ id:u16 ]`                                   |
+//! | vertex/edge label      | `[ id:LabelId ]`                                   |
 //! | property key            | `[ id:u16 \| data_type:u8 \| cardinality:u8 ]` |
 //! | meta (singleton)        | `[ version:u64 \| edge_mode:u8 \| schema_mode:u8 ]` |
 //!
@@ -51,7 +51,7 @@
 //! | Prefix          | Bytes | Enables                              |
 //! |-----------------|-------|--------------------------------------|
 //! | `vertex_id`     | 8     | all incident edges (`bothE`)          |
-//! | `vertex_id \| label_id` | 10 | `outE(label)` / `inE(label)`    |
+//! | `vertex_id | label_id` | 12 | `outE(label)` / `inE(label)`    |
 
 use smallvec::SmallVec;
 
@@ -65,7 +65,7 @@ use crate::types::{
 pub(crate) const EDGE_PREFIX_LENGTH: usize = 8;
 
 /// Builds the prefix for an edge Column Family (CF) scan.
-/// `vertex_id` (8 B), optionally followed by `label_id` (2 B).
+/// `vertex_id` (8 B), optionally followed by `label_id` (4 B).
 ///
 /// Returns an inline [`SmallVec`] — no heap allocation for the typical
 /// 8–10 byte prefix. The caller can pass the result directly to
@@ -143,13 +143,13 @@ pub fn decode_schema_meta(bytes: &[u8]) -> Option<(u64, u8, u8)> {
 }
 
 #[inline]
-pub fn encode_schema_label_value(id: u16) -> [u8; 2] {
+pub fn encode_schema_label_value(id: LabelId) -> [u8; 4] {
     id.to_be_bytes()
 }
 
 #[inline]
-pub fn decode_schema_label_value(bytes: &[u8]) -> Option<u16> {
-    Some(u16::from_be_bytes(bytes.try_into().ok()?))
+pub fn decode_schema_label_value(bytes: &[u8]) -> Option<LabelId> {
+    Some(LabelId::from_be_bytes(bytes.try_into().ok()?))
 }
 
 #[inline]
@@ -175,9 +175,9 @@ pub fn decode_schema_prop_value(bytes: &[u8]) -> Option<(u16, u8, u8)> {
 // ── Size constants ────────────────────────────────────────────────────────────
 
 pub const VERTEX_KEY_SIZE: usize = 8;
-/// Edge key: 8 (vertex) + 2 (label) + 8 (vertex) + 2 (rank) = 20 bytes.
+/// Edge key: 8 (vertex) + 4 (label) + 8 (vertex) + 2 (rank) = 22 bytes.
 /// No direction byte is included; each Column Family (CF) encodes direction implicitly.
-pub const EDGE_KEY_SIZE: usize = 20;
+pub const EDGE_KEY_SIZE: usize = 22;
 
 // ── VertexKey encoding ────────────────────────────────────────────────────────
 
@@ -205,9 +205,9 @@ pub fn decode_vertex_key(bytes: &[u8]) -> Option<VertexKey> {
 pub fn encode_edge_key(k: &EdgeKey) -> [u8; EDGE_KEY_SIZE] {
     let mut buf = [0u8; EDGE_KEY_SIZE];
     buf[0..8].copy_from_slice(&(k.primary_id ^ (1 << 63)).to_be_bytes());
-    buf[8..10].copy_from_slice(&k.label_id.to_be_bytes());
-    buf[10..18].copy_from_slice(&(k.secondary_id ^ (1 << 63)).to_be_bytes());
-    buf[18..20].copy_from_slice(&k.rank.to_be_bytes());
+    buf[8..12].copy_from_slice(&k.label_id.to_be_bytes());
+    buf[12..20].copy_from_slice(&(k.secondary_id ^ (1 << 63)).to_be_bytes());
+    buf[20..22].copy_from_slice(&k.rank.to_be_bytes());
     buf
 }
 
@@ -220,14 +220,14 @@ pub fn decode_edge_key(bytes: &[u8], dir: Direction) -> Option<EdgeKey> {
     Some(EdgeKey {
         primary_id: i64::from_be_bytes(bytes[0..8].try_into().ok()?) ^ (1 << 63),
         direction: dir,
-        label_id: u16::from_be_bytes(bytes[8..10].try_into().ok()?) as LabelId,
-        secondary_id: i64::from_be_bytes(bytes[10..18].try_into().ok()?) ^ (1 << 63),
-        rank: u16::from_be_bytes(bytes[18..20].try_into().ok()?) as Rank,
+        label_id: LabelId::from_be_bytes(bytes[8..12].try_into().ok()?),
+        secondary_id: i64::from_be_bytes(bytes[12..20].try_into().ok()?) ^ (1 << 63),
+        rank: u16::from_be_bytes(bytes[20..22].try_into().ok()?) as Rank,
     })
 }
 // ── VertexValue ───────────────────────────────────────────────────────────────
 
-/// `[ label_id:u16 | property_blob ]` — value in the `vertices` CF.
+/// `[ label_id:LabelId | property_blob ]` — value in the `vertices` CF.
 /// The `label_id` is a numeric identifier for the vertex's label.
 /// The label string itself is NOT stored here; `label_id` is resolved to a string
 /// via the process-wide `Schema` when needed.
@@ -240,7 +240,7 @@ pub struct VertexValue {
 impl VertexValue {
     /// Encodes the `VertexValue` into a byte vector.
     pub fn encode(&self) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(2 + self.property_blob.len());
+        let mut buf = Vec::with_capacity(4 + self.property_blob.len());
         buf.extend_from_slice(&self.label_id.to_be_bytes());
         buf.extend_from_slice(&self.property_blob);
         buf
@@ -248,18 +248,18 @@ impl VertexValue {
 
     /// Decodes a byte slice into a `VertexValue`.
     pub fn decode(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() < 2 {
+        if bytes.len() < 4 {
             return None;
         }
-        let label_id = u16::from_be_bytes(bytes[0..2].try_into().ok()?);
-        let property_blob = bytes[2..].to_vec();
+        let label_id = LabelId::from_be_bytes(bytes[0..4].try_into().ok()?);
+        let property_blob = bytes[4..].to_vec();
         Some(Self { label_id, property_blob })
     }
 }
 
 // ── VertexDegree ──────────────────────────────────────────────────────────────
 
-/// `[ vertex_label_id:u16 | out_e_cnt:u32 | in_e_cnt:u32 ]` — value in the `vertex_degree` CF.
+/// `[ vertex_label_id:LabelId | out_e_cnt:u32 | in_e_cnt:u32 ]` — value in the `vertex_degree` CF.
 ///
 /// Stores the vertex label together with out-degree and in-degree for a vertex.
 /// The label is written once at `add_vertex` time and never updated again (no
@@ -274,32 +274,32 @@ pub struct VertexDegree {
 }
 
 impl VertexDegree {
-    /// Encodes the `VertexDegree` into a 10-byte array.
-    pub fn encode(&self) -> [u8; 10] {
-        let mut buf = [0u8; 10];
-        buf[0..2].copy_from_slice(&self.vertex_label_id.to_be_bytes());
-        buf[2..6].copy_from_slice(&self.out_e_cnt.to_be_bytes());
-        buf[6..10].copy_from_slice(&self.in_e_cnt.to_be_bytes());
+    /// Encodes the `VertexDegree` into a 12-byte array.
+    pub fn encode(&self) -> [u8; 12] {
+        let mut buf = [0u8; 12];
+        buf[0..4].copy_from_slice(&self.vertex_label_id.to_be_bytes());
+        buf[4..8].copy_from_slice(&self.out_e_cnt.to_be_bytes());
+        buf[8..12].copy_from_slice(&self.in_e_cnt.to_be_bytes());
         buf
     }
 
     /// Decodes a byte slice into a `VertexDegree`.
     pub fn decode(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() != 10 {
+        if bytes.len() != 12 {
             return None;
         }
-        let vertex_label_id = u16::from_be_bytes(bytes[0..2].try_into().ok()?);
-        let out_e_cnt = u32::from_be_bytes(bytes[2..6].try_into().ok()?);
-        let in_e_cnt = u32::from_be_bytes(bytes[6..10].try_into().ok()?);
+        let vertex_label_id = LabelId::from_be_bytes(bytes[0..4].try_into().ok()?);
+        let out_e_cnt = u32::from_be_bytes(bytes[4..8].try_into().ok()?);
+        let in_e_cnt = u32::from_be_bytes(bytes[8..12].try_into().ok()?);
         Some(Self { vertex_label_id, out_e_cnt, in_e_cnt })
     }
 }
 
 // ── EdgeValue ─────────────────────────────────────────────────────────────────
 
-/// `[ end_vertex_label:u16 | property_blob ]` — value in both `edges_out` and `edges_in` CFs.
+/// `[ end_vertex_label:LabelId | property_blob ]` — value in both `edges_out` and `edges_in` CFs.
 ///
-/// The 2-byte `end_vertex_label` prefix stores the label of the *other* vertex for
+/// The 4-byte `end_vertex_label` prefix stores the label of the *other* vertex for
 /// free at edge-scan time. For an `edges_out` row this is `dst_label`; for an
 /// `edges_in` row this is `src_label`. The direction-aware builders
 /// (`build_lazy_edge` / `build_full_edge`) attribute it correctly.
@@ -311,9 +311,9 @@ pub struct EdgeValue {
 
 impl EdgeValue {
     /// Encodes the `EdgeValue` into a byte vector, prefixing the
-    /// `end_vertex_label` as a 2-byte big-endian `u16`.
+    /// `end_vertex_label` as a 4-byte big-endian `i32`.
     pub fn encode(&self) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(2 + self.property_blob.len());
+        let mut buf = Vec::with_capacity(4 + self.property_blob.len());
         buf.extend_from_slice(&self.end_vertex_label.to_be_bytes());
         buf.extend_from_slice(&self.property_blob);
         buf
@@ -322,11 +322,11 @@ impl EdgeValue {
     /// Decodes a byte slice into an `EdgeValue`.
     /// Returns `None` if the slice is fewer than 2 bytes.
     pub fn decode(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() < 2 {
+        if bytes.len() < 4 {
             return None;
         }
-        let end_vertex_label = u16::from_be_bytes(bytes[0..2].try_into().ok()?);
-        Some(Self { end_vertex_label, property_blob: bytes[2..].to_vec() })
+        let end_vertex_label = LabelId::from_be_bytes(bytes[0..4].try_into().ok()?);
+        Some(Self { end_vertex_label, property_blob: bytes[4..].to_vec() })
     }
 }
 
@@ -553,6 +553,7 @@ pub(crate) fn decode_props(blob: &[u8], owner: CanonicalKey) -> Option<Vec<Prope
 
 #[cfg(test)]
 mod tests {
+    use crate::types::keys::LabelId;
     use smol_str::SmolStr;
 
     use super::{decode_vertex_key, encode_vertex_key, EdgeValue, VertexDegree, VertexValue};
@@ -680,7 +681,7 @@ mod tests {
     }
 
     /// Helper to create a `Vertex` for testing.
-    fn make_vertex(id: i64, label_id: u16, raw: &[(u16, Primitive)]) -> Vertex {
+    fn make_vertex(id: i64, label_id: LabelId, raw: &[(u16, Primitive)]) -> Vertex {
         let owner = CanonicalKey::Vertex(id);
         let props = raw.iter().map(|(k, v)| Property { owner, key: *k, value: v.clone() }).collect();
         Vertex::with_props(id, label_id, props)
@@ -726,13 +727,13 @@ mod tests {
         assert!(decode_vertex_key(&[]).is_none());
     }
 
-    // ── EdgeKey (20 bytes, no direction byte) ─────────────────────────────────
+    // ── EdgeKey (22 bytes, no direction byte) ─────────────────────────────────
 
     #[test]
     fn edge_key_out_encode_decode() {
         let k = CanonicalEdgeKey { src_id: 100, label_id: 3, rank: 0, dst_id: 200 };
         let encoded = encode_edge_key_out(k);
-        assert_eq!(encoded.len(), 20);
+        assert_eq!(encoded.len(), 22);
         let decoded = decode_edge_key_out(&encoded).unwrap();
         assert_eq!(decoded, k);
     }
@@ -741,7 +742,7 @@ mod tests {
     fn edge_key_in_encode_decode() {
         let k = CanonicalEdgeKey { src_id: 100, label_id: 5, rank: 2, dst_id: 200 };
         let in_bytes = encode_edge_key_in(k);
-        assert_eq!(in_bytes.len(), 20);
+        assert_eq!(in_bytes.len(), 22);
         assert_eq!(i64::from_be_bytes(in_bytes[0..8].try_into().unwrap()) ^ (1 << 63), 200i64);
         let decoded = decode_edge_key_in(&in_bytes).unwrap();
         assert_eq!(decoded, k);
@@ -751,7 +752,7 @@ mod tests {
     fn edge_key_in_encode_decode_negative_dst() {
         let k = CanonicalEdgeKey { src_id: 100, label_id: 5, rank: 2, dst_id: -200 };
         let in_bytes = encode_edge_key_in(k);
-        assert_eq!(in_bytes.len(), 20);
+        assert_eq!(in_bytes.len(), 22);
         assert_eq!(i64::from_be_bytes(in_bytes[0..8].try_into().unwrap()) ^ (1 << 63), -200i64);
         let decoded = decode_edge_key_in(&in_bytes).unwrap();
         assert_eq!(decoded, k);
@@ -801,7 +802,7 @@ mod tests {
     fn vertex_degree_encode_decode() {
         let vd = VertexDegree { vertex_label_id: 7, out_e_cnt: 10, in_e_cnt: 20 };
         let bytes = vd.encode();
-        assert_eq!(bytes.len(), 10);
+        assert_eq!(bytes.len(), 12);
         let dec = VertexDegree::decode(&bytes).unwrap();
         assert_eq!(dec.vertex_label_id, 7);
         assert_eq!(dec.out_e_cnt, 10);

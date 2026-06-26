@@ -41,6 +41,7 @@ use crate::{
 };
 
 use super::PhysicalPlanBuilder;
+use crate::engine::volcano::steps::has_label::UNRESOLVED_LABEL_ID;
 
 // ── Schema-resolution helpers ────────────────────────────────────────────────
 
@@ -188,7 +189,7 @@ impl PhysicalPlanBuilder {
                 let label_ids = s
                     .labels
                     .iter()
-                    .map(|l| resolve_read_edge_label(l, &schema).map(|id_opt| id_opt.unwrap_or(u16::MAX)))
+                    .map(|l| resolve_read_edge_label(l, &schema).map(|id_opt| id_opt.unwrap_or(UNRESOLVED_LABEL_ID)))
                     .collect::<Result<SmallVec<[LabelId; 4]>, _>>()?;
                 let scan_step = steps::both::BothStep::new(
                     label_ids.clone(),
@@ -203,7 +204,7 @@ impl PhysicalPlanBuilder {
                 let label_ids = s
                     .labels
                     .iter()
-                    .map(|l| resolve_read_edge_label(l, &schema).map(|id_opt| id_opt.unwrap_or(u16::MAX)))
+                    .map(|l| resolve_read_edge_label(l, &schema).map(|id_opt| id_opt.unwrap_or(UNRESOLVED_LABEL_ID)))
                     .collect::<Result<SmallVec<[LabelId; 4]>, _>>()?;
                 let scan_step =
                     steps::both::BothStep::new(label_ids.clone(), s.end_vertex_ids.clone(), s.rank, true, track_path);
@@ -229,21 +230,15 @@ impl PhysicalPlanBuilder {
                     }
                 }
                 let vertex_pred = s.pred.clone().map(|v| match v {
-                    Primitive::String(name) => Primitive::Int32(
-                        schema
-                            .vertex_label_id(&name)
-                            .map(|id| id as i32)
-                            .unwrap_or(steps::has_label::UNRESOLVED_LABEL_ID),
-                    ),
+                    Primitive::String(name) => {
+                        Primitive::Int32(schema.vertex_label_id(&name).unwrap_or(steps::has_label::UNRESOLVED_LABEL_ID))
+                    }
                     other => other,
                 });
                 let edge_pred = s.pred.clone().map(|v| match v {
-                    Primitive::String(name) => Primitive::Int32(
-                        schema
-                            .edge_label_id(&name)
-                            .map(|id| id as i32)
-                            .unwrap_or(steps::has_label::UNRESOLVED_LABEL_ID),
-                    ),
+                    Primitive::String(name) => {
+                        Primitive::Int32(schema.edge_label_id(&name).unwrap_or(steps::has_label::UNRESOLVED_LABEL_ID))
+                    }
                     other => other,
                 });
                 wire_required!(
@@ -273,7 +268,7 @@ impl PhysicalPlanBuilder {
                 let label_ids = s
                     .labels
                     .iter()
-                    .map(|l| resolve_read_edge_label(l, &schema).map(|id_opt| id_opt.unwrap_or(u16::MAX)))
+                    .map(|l| resolve_read_edge_label(l, &schema).map(|id_opt| id_opt.unwrap_or(UNRESOLVED_LABEL_ID)))
                     .collect::<Result<SmallVec<[LabelId; 4]>, _>>()?;
                 let scan_step = steps::in_out::InOutStep::new(
                     label_ids.clone(),
@@ -289,7 +284,7 @@ impl PhysicalPlanBuilder {
                 let label_ids = s
                     .labels
                     .iter()
-                    .map(|l| resolve_read_edge_label(l, &schema).map(|id_opt| id_opt.unwrap_or(u16::MAX)))
+                    .map(|l| resolve_read_edge_label(l, &schema).map(|id_opt| id_opt.unwrap_or(UNRESOLVED_LABEL_ID)))
                     .collect::<Result<SmallVec<[LabelId; 4]>, _>>()?;
                 let scan_step = steps::in_out::InOutStep::new(
                     label_ids.clone(),
@@ -305,7 +300,7 @@ impl PhysicalPlanBuilder {
                 let label_ids = s
                     .labels
                     .iter()
-                    .map(|l| resolve_read_edge_label(l, &schema).map(|id_opt| id_opt.unwrap_or(u16::MAX)))
+                    .map(|l| resolve_read_edge_label(l, &schema).map(|id_opt| id_opt.unwrap_or(UNRESOLVED_LABEL_ID)))
                     .collect::<Result<SmallVec<[LabelId; 4]>, _>>()?;
                 let scan_step = steps::in_out::InOutStep::new(
                     label_ids.clone(),
@@ -321,7 +316,7 @@ impl PhysicalPlanBuilder {
                 let label_ids = s
                     .labels
                     .iter()
-                    .map(|l| resolve_read_edge_label(l, &schema).map(|id_opt| id_opt.unwrap_or(u16::MAX)))
+                    .map(|l| resolve_read_edge_label(l, &schema).map(|id_opt| id_opt.unwrap_or(UNRESOLVED_LABEL_ID)))
                     .collect::<Result<SmallVec<[LabelId; 4]>, _>>()?;
                 let scan_step = steps::in_out::InOutStep::new(
                     label_ids.clone(),
@@ -690,11 +685,7 @@ impl PhysicalPlanBuilder {
             LogicalStep::Local(s) => {
                 drop(schema);
                 let physical_plan = self.build_steps(&s.plan, schema_lock, track_path)?;
-                wire_required!(
-                    BufferedStep::new(steps::local::LocalStep::new(physical_plan)),
-                    upstream,
-                    "LocalStep"
-                )
+                wire_required!(BufferedStep::new(steps::local::LocalStep::new(physical_plan)), upstream, "LocalStep")
             }
             LogicalStep::From(_) | LogicalStep::To(_) => Err(StoreError::UnsupportedOperation(
                 "From/To steps are optimizer-internal and should be eliminated before physical build.".to_string(),

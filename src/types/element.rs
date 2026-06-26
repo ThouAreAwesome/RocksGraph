@@ -156,7 +156,7 @@ impl Vertex {
             return Some(Property {
                 owner: CanonicalKey::Vertex(self.id),
                 key: LABEL_KEY_ID,
-                value: Primitive::Int32(self.label_id as i32),
+                value: Primitive::Int32(self.label_id),
             });
         }
         self.ensure_decoded();
@@ -174,7 +174,7 @@ impl Vertex {
             return Some(Primitive::Int64(self.id));
         }
         if prop_key_id == LABEL_KEY_ID {
-            return Some(Primitive::Int32(self.label_id as i32));
+            return Some(Primitive::Int32(self.label_id));
         }
         self.ensure_decoded();
         self.props.iter().find(|p| p.key == prop_key_id).map(|p| p.value.clone())
@@ -309,7 +309,7 @@ impl Edge {
             return Some(Property {
                 owner: CanonicalKey::Edge(self.canonical_key()),
                 key: LABEL_KEY_ID,
-                value: Primitive::Int32(self.label_id as i32),
+                value: Primitive::Int32(self.label_id),
             });
         }
         if RANK_KEY_ID == prop_key_id {
@@ -331,7 +331,7 @@ impl Edge {
     pub fn get_value(&mut self, prop_key_id: u16) -> Option<Primitive> {
         use crate::types::prop_key::{LABEL_KEY_ID, RANK_KEY_ID};
         if LABEL_KEY_ID == prop_key_id {
-            return Some(Primitive::Int32(self.label_id as i32));
+            return Some(Primitive::Int32(self.label_id));
         }
         if RANK_KEY_ID == prop_key_id {
             return Some(Primitive::UInt16(self.rank));

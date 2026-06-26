@@ -179,6 +179,8 @@ the traversal API. The `schema` module interns them to compact numeric IDs inter
 |------|--------|-------|
 | `values(keys)` | `.values([key, ...])` | `key` may be `Key::Id`, `Key::Label`, or `&str` |
 | `properties(keys)` | `.properties([\"key\", ...])` | returns `Property` elements; id/label excluded |
+| `id()` | `.id()` | extracts the element id as a scalar (e.g. `Int64(1)`) |
+| `label()` | `.label()` | extracts the element label as a `String` |
 | `select(label)` | `.select(label)` | extract a labelled value from the path history |
 | `count()` | `.count()` | |
 | `sum()` | `.sum()` | numeric sum |
@@ -206,6 +208,10 @@ the traversal API. The `schema` module interns them to compact numeric IDs inter
 
 | Step | Method | Notes |
 |------|--------|-------|
+| `as(label)` | `.as_(\"label\")` | labels the current traverser for later `select()` |
+| `identity()` | `.identity()` | pass-through — emits the traverser unchanged |
+| `constant(value)` | `.constant(v)` | replaces every traverser with a fixed value |
+| `local(traversal)` | `.local(__().xxx())` | runs the sub-traversal on each traverser and emits all results |
 | `repeat(traversal)` | `.repeat(__().xxx())` | loop body |
 | `until(traversal)` | `.until(__().xxx())` | loop termination condition |
 | `emit()` / `emit_if(traversal)` | `.emit()` / `.emit_if(__().xxx())` | emit intermediate results during repetition |
@@ -573,7 +579,7 @@ widely audited.
 
 - **Embedded only:** no server/client mode; queries are executed in-process.
 - **Single-threaded per query:** each volcano pipeline runs single-threaded; multiple sessions can run concurrently against a shared `Graph`.
-- **Schema ID space limits:** up to 32767 distinct vertex labels and 32767 distinct edge labels (independent namespaces), and 32767 property keys per graph — registering past that fails with `StoreError::SchemaExhausted`. (Ids are stored as `u16`; the high bit is reserved, unused for now, for a possible future tag.)
+- **Schema ID space limits:** up to `i32::MAX` (~2.1 billion) distinct vertex labels and edge labels (independent namespaces), and 32767 property keys per graph — registering past that fails with `StoreError::SchemaExhausted`. (Label IDs are stored as `i32`; property-key IDs remain `u16`.)
 - **Not TinkerPop-compatible:** RocksGraph is Gremlin-inspired but intentionally departs from the standard. See [docs/design_principles.md](docs/design_principles.md).
 - **No distributed backend:** placeholder exists but is not implemented.
 

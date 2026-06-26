@@ -26,7 +26,7 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, ExplainNode, StepRef},
     },
-    types::{error::StoreError},
+    types::error::StoreError,
 };
 
 /// Passes each traverser through unchanged — a no-op step.

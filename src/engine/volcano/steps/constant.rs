@@ -57,9 +57,7 @@ impl CoreStep for ConstantStep {
         let Some(_t) = upstream.next(ctx)? else {
             return Ok(None);
         };
-        Ok(Some(smallvec![Traverser::new_rc(
-            crate::types::GValue::Scalar(self.value.clone())
-        )]))
+        Ok(Some(smallvec![Traverser::new_rc(crate::types::GValue::Scalar(self.value.clone()))]))
     }
 
     fn reset(&mut self) {

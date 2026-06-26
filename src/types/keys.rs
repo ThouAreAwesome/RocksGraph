@@ -23,8 +23,8 @@
 //! | Type | What it identifies | Copy? | Size |
 //! |---|---|---|---|
 //! | [`VertexKey`] | A single vertex | yes | 8 B |
-//! | [`CanonicalEdgeKey`] | An edge, direction-free | yes | 20 B |
-//! | [`EdgeKey`] | An edge **with** traversal direction | yes | 22 B |
+//! | [`CanonicalEdgeKey`] | An edge, direction-free | yes | 22 B |
+//! | [`EdgeKey`] | An edge **with** traversal direction | yes | 24 B |
 //! | [`CanonicalKey`] | Either kind of element (or nothing) | yes | 24 B |
 //!
 //! # Canonical vs directed edges
@@ -46,9 +46,10 @@ use std::fmt::Display;
 pub type VertexKey = i64;
 
 /// Numeric id for a vertex/edge label, mapped via the schema registry.
-/// 15 bits are used semantically (max 32 768 distinct labels); stored as u16, with the high bit
-/// reserved for a possible future tag (see `schema::definition::MAX_LABELS`).
-pub type LabelId = u16;
+/// Valid range is `1..=i32::MAX`; `0` is reserved for "no such label" (never assigned
+/// by the schema).  The sign bit (bit 31) is reserved — negative values are used as
+/// internal sentinels (see `UNRESOLVED_LABEL_ID`) and are never written to disk.
+pub type LabelId = i32;
 
 /// Disambiguates parallel edges sharing the same (src, label, dst) triple.
 pub type Rank = u16;

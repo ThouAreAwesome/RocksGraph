@@ -209,6 +209,7 @@ impl RocksStorage {
 
 #[cfg(test)]
 mod tests {
+    use crate::types::keys::LabelId;
     use smol_str::SmolStr;
 
     use crate::{
@@ -226,7 +227,7 @@ mod tests {
         (store, dir)
     }
 
-    fn make_vertex(id: i64, label_id: u16, props: Vec<(u16, Primitive)>) -> Vertex {
+    fn make_vertex(id: i64, label_id: LabelId, props: Vec<(u16, Primitive)>) -> Vertex {
         let owner = CanonicalKey::Vertex(id);
         Vertex::with_props(id, label_id, props.into_iter().map(|(k, v)| Property { owner, key: k, value: v }).collect())
     }
@@ -244,7 +245,7 @@ mod tests {
         )
     }
 
-    fn cek(src: i64, label: u16, dst: i64) -> CanonicalEdgeKey {
+    fn cek(src: i64, label: LabelId, dst: i64) -> CanonicalEdgeKey {
         CanonicalEdgeKey { src_id: src, label_id: label, rank: 0, dst_id: dst }
     }
 

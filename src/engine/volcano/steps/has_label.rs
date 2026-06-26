@@ -83,7 +83,7 @@ impl CoreStep for HasLabelStep {
                     };
                     self.vertex_pred.evaluate(&Primitive::Int32(lb))
                 }
-                GValue::Edge(ek) => self.edge_pred.evaluate(&Primitive::Int32(ek.label_id as i32)),
+                GValue::Edge(ek) => self.edge_pred.evaluate(&Primitive::Int32(ek.label_id)),
                 _ => false,
             };
             if matched {

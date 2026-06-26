@@ -74,7 +74,7 @@ fn ctx(store: &RocksStorage) -> LogicalGraph<RocksStorage> {
     LogicalGraph::new(store.begin(), schema)
 }
 
-fn cek(src: i64, label: u16, dst: i64) -> CanonicalEdgeKey {
+fn cek(src: i64, label: LabelId, dst: i64) -> CanonicalEdgeKey {
     CanonicalEdgeKey { src_id: src, label_id: label, rank: 0, dst_id: dst }
 }
 

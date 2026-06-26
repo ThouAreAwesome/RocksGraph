@@ -114,15 +114,18 @@ impl LogicalPlan {
                             }
                         }
                     }
-                    Choose(ChooseStep {
-                        predicate,
-                        true_choice,
-                        false_choice,
-                        ..
-                    }) => {
-                        if scan(&predicate.steps) { return true; }
-                        if scan(&true_choice.steps) { return true; }
-                        if let Some(fc) = false_choice { if scan(&fc.steps) { return true; } }
+                    Choose(ChooseStep { predicate, true_choice, false_choice, .. }) => {
+                        if scan(&predicate.steps) {
+                            return true;
+                        }
+                        if scan(&true_choice.steps) {
+                            return true;
+                        }
+                        if let Some(fc) = false_choice {
+                            if scan(&fc.steps) {
+                                return true;
+                            }
+                        }
                     }
                     Local(LocalStep { plan }) if scan(&plan.steps) => {
                         return true;
@@ -454,13 +457,17 @@ impl Optimizer for LabelStep {}
 
 /// Replaces each traverser with a fixed constant value (Gremlin `constant()` step).
 #[derive(Clone, Debug)]
-pub struct ConstantStep { pub value: Primitive }
+pub struct ConstantStep {
+    pub value: Primitive,
+}
 impl Optimizer for ConstantStep {}
 
 /// Executes a sub-traversal locally on each traverser and emits every result
 /// (Gremlin `local()` step).
 #[derive(Clone)]
-pub struct LocalStep { pub plan: LogicalPlan }
+pub struct LocalStep {
+    pub plan: LogicalPlan,
+}
 
 impl Optimizer for LocalStep {
     fn optimize(&mut self, optimizer_rule: &OptimizerRule) -> Result<bool, StoreError> {

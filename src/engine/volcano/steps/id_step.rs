@@ -26,7 +26,10 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, ExplainNode, StepRef},
     },
-    types::{error::StoreError, gvalue::{GValue, Primitive}},
+    types::{
+        error::StoreError,
+        gvalue::{GValue, Primitive},
+    },
 };
 
 /// Extracts the id of the current element.  For vertices returns `Int64(vk)`,

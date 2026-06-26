@@ -29,7 +29,10 @@
       "Bash(grep -v \"^--$\")",
       "Bash(grep -n \"^mod scratch_probe\\\\|^#\\\\[cfg\\(test\\)\\\\]$\" /Users/austinhan/Workplace/RocksGraph/src/gremlin/tests.rs)",
       "Bash(python3 -c \"print\\(2*32767 + 32767 + 1\\)\")",
-      "Bash(python3 -m json.tool)"
+      "Bash(python3 -m json.tool)",
+      "Bash(git checkout *)",
+      "Bash(rustc -O /tmp/size_check2.rs -o /tmp/size_check2)",
+      "Bash(/tmp/size_check2)"
     ],
     "additionalDirectories": [
       "/Users/austinhan/Workplace/RocksGraph/src/schema"

@@ -2184,7 +2184,7 @@ fn test_additional_physical_steps_coverage() {
     {
         let src = BufferedStep::new(VecSourceStep::empty());
         src.inner.borrow_mut().core.inject(smallvec![Rc::new(Traverser::new(GValue::Vertex(1))),]);
-        let mut step = BothStep::new(smallvec![1u16], None, None, true, true);
+        let mut step = BothStep::new(smallvec![1i32], None, None, true, true);
         step.add_upper(src.clone() as StepRef);
 
         let _ = step.produce(&mut graph);

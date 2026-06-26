@@ -162,13 +162,11 @@ impl Default for GraphOptions {
     }
 }
 
-/// Maximum number of distinct vertex or edge labels. `LabelId`/property-key ids are stored as
-/// `u16`, but only the low 15 bits are used (values 0..=32 767) — the high bit is reserved,
-/// unused for now, for a possible future tag (see [`MAX_PROP_KEYS`]). Within that 15-bit space,
-/// id `0` is further reserved crate-internally to mean "no such label" — real ids are allocated
-/// starting at `1` (see `register_vertex_label`/`register_edge_label`), so at most
-/// `(1 << 15) - 1` of them are assignable.
-pub(crate) const MAX_LABELS: usize = (1 << 15) - 1;
+/// Maximum number of distinct vertex or edge labels.  `LabelId` is `i32`; valid IDs
+/// range from `1..=i32::MAX`.  ID `0` is reserved for "no such label" and negative
+/// values are internal sentinels.  Real IDs are allocated starting at `1` (see
+/// `register_vertex_label`/`register_edge_label`).
+pub(crate) const MAX_LABELS: usize = i32::MAX as usize;
 
 /// Maximum number of distinct property keys — see [`MAX_LABELS`] for why this is one short of
 /// the full 15-bit range. Property-key ids additionally reserve `1..=3` for the built-in
@@ -196,7 +194,7 @@ pub(crate) struct Schema {
     pub vertex_labels: BiHashMap<LabelId, SmolStr>,
 
     /// Maps between `LabelId` and the edge label string (e.g. `"knows"`).
-    /// Uses the same 15-bit `LabelId` space, but vertex and edge labels are
+    /// Uses the same `LabelId` space, but vertex and edge labels are
     /// independent namespaces — id 1 for vertices and id 1 for edges refer to
     /// different strings.
     pub edge_labels: BiHashMap<LabelId, SmolStr>,
@@ -292,7 +290,7 @@ impl Schema {
             return None;
         }
         // Ids start at 1 — 0 is reserved crate-internally to mean "no such label".
-        let id = self.vertex_labels.len() as u16 + 1;
+        let id = self.vertex_labels.len() as LabelId + 1;
         self.vertex_labels.insert(id, s);
         Some(id)
     }
@@ -325,7 +323,7 @@ impl Schema {
             return None;
         }
         // Ids start at 1 — 0 is reserved crate-internally to mean "no such label".
-        let id = self.edge_labels.len() as u16 + 1;
+        let id = self.edge_labels.len() as LabelId + 1;
         self.edge_labels.insert(id, s);
         Some(id)
     }
