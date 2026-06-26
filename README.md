@@ -57,7 +57,7 @@ All user-facing query inputs and outputs use types from `gremlin::value`, re-exp
 | `Vertex` | Materialized vertex: `id`, `label` (decoded string name), `properties` |
 | `Edge` | Materialized edge: `out_v`, `in_v`, `label` (decoded string name), `rank` (`u16`, see `Value::UInt16`), `properties` |
 | `Property` | Key-value property element returned by `.properties()` |
-| `Map` | Ordered key-value map returned by `.group()` etc. |
+| `Map` | Ordered key-value map returned by `.group_count()` |
 | `Path` | Sequence of values with per-step labels returned by `.path()` |
 
 Predicate constructors are free functions: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `between`, `within`, `without`.
@@ -157,24 +157,37 @@ the traversal API. The `schema` module interns them to compact numeric IDs inter
 
 ### Filtering
 
-| Step | Method |
-|------|--------|
-| `has(key, value)` | `.has(key, pred)` — `key` is `Key::Id`, `Key::Label`, or a `&str` |
-| `hasLabel(labels)` | `.hasLabel([label, ...])` |
-| `hasId(ids)` | `.hasId([id, ...])` |
-| `is(pred)` | `.is(pred)` — filter the current scalar value |
-| `where(traversal)` | `.r#where(__().xxx())` |
-| `limit(n)` | `.limit(n)` |
-| `dedup()` | `.dedup()` |
+| Step | Method | Notes |
+|------|--------|-------|
+| `has(key, value)` | `.has(key, pred)` | `key` is `Key::Id`, `Key::Label`, or a `&str` |
+| `hasLabel(labels)` | `.hasLabel([label, ...])` | |
+| `hasId(ids)` | `.hasId([id, ...])` | |
+| `is(pred)` | `.is(pred)` | filter the current scalar value |
+| `where(traversal)` | `.r#where(__().xxx())` | sub-traversal filter |
+| `not(traversal)` | `.not(__().xxx())` | negation filter |
+| `choose(traversal)` | `.choose(pred, true, false?)` | conditional branching |
+| `limit(n)` | `.limit(n)` | |
+| `range(lo, hi)` | `.range(lo, hi)` | pagination into the result stream |
+| `skip(n)` | `.skip(n)` | skip first N results |
+| `tail(n)` | `.tail(n)` | keep last N results |
+| `dedup()` | `.dedup()` | |
+| `order()` | `.order()` | ascending sort on the current value |
 
 ### Extraction & Aggregation
 
 | Step | Method | Notes |
 |------|--------|-------|
 | `values(keys)` | `.values([key, ...])` | `key` may be `Key::Id`, `Key::Label`, or `&str` |
-| `properties(keys)` | `.properties(["key", ...])` | returns `Property` elements; id/label excluded |
+| `properties(keys)` | `.properties([\"key\", ...])` | returns `Property` elements; id/label excluded |
+| `select(label)` | `.select(label)` | extract a labelled value from the path history |
 | `count()` | `.count()` | |
+| `sum()` | `.sum()` | numeric sum |
+| `mean()` | `.mean()` | numeric mean |
+| `max()` | `.max()` | numeric maximum |
+| `min()` | `.min()` | numeric minimum |
 | `fold()` | `.fold()` | collects all results into a single `Value::List` |
+| `unfold()` | `.unfold()` | flattens a list back into individual traversers |
+| `groupCount()` | `.group_count()` | keyed count aggregation into a `Map` |
 | `path()` | `.path()` | returns `Value::Path` with per-step labels |
 
 ### Mutation (WriteTraversal only)
@@ -186,12 +199,16 @@ the traversal API. The `schema` module interns them to compact numeric IDs inter
 | `from(vertex_id)` | `.from(vertex_id)` |
 | `to(vertex_id)` | `.to(vertex_id)` |
 | `property(key, value)` | `.property(key, value)` — `"id"` sets the vertex/edge id |
+| `withProperties(keys)` | `.withProperties(["key", ...])` — declare property keys for `addE` |
 | `drop()` | `.drop()` — drops whatever the traverser carries: a vertex, an edge, or (after `.properties([..])`) a single property key |
 
 ### Composition
 
 | Step | Method | Notes |
 |------|--------|-------|
+| `repeat(traversal)` | `.repeat(__().xxx())` | loop body |
+| `until(traversal)` | `.until(__().xxx())` | loop termination condition |
+| `emit()` / `emit_if(traversal)` | `.emit()` / `.emit_if(__().xxx())` | emit intermediate results during repetition |
 | `union(traversals)` | `.union([__().xxx(), __().yyy()])` | merges all result streams |
 | `coalesce(traversals)` | `.coalesce([__().xxx(), __().yyy()])` | first non-empty branch wins |
 
@@ -202,6 +219,7 @@ the traversal API. The `schema` module interns them to compact numeric IDs inter
 | `next()` | ✓ | ✓ | `Result<Option<Value>, StoreError>` |
 | `to_list()` | ✓ | ✓ | `Result<Vec<Value>, StoreError>` |
 | `iter()` | ✓ | ✓ | `Result<BuiltTraversal, StoreError>` — lazy `Iterator<Item = Result<Value, StoreError>>` |
+| `explain()` | ✓ | ✓ | `Result<String, StoreError>` — pretty-printed physical plan tree |
 
 ## Usage
 
@@ -253,6 +271,29 @@ for result in snap.g().V([]).out(["knows"]).iter()? {
     let value = result?;
     // process each Value::Vertex(...)
 }
+```
+
+### Inspecting query plans
+
+`explain()` builds the physical plan and returns a pretty-printed tree showing
+exactly which operators the engine will execute — including optimizer rule
+effects like index lookup folding and filter reordering:
+
+```rust
+let plan = snap.g().V([1]).out(["knows"]).hasLabel(["person"]).count().explain()?;
+println!("{}", plan);
+// PhysicalPlan
+//   └─ VStep(ids=[1])
+//   └─ InOutStep(direction=OUT, labels=[1])
+//   └─ HasLabelStep(vertex_pred=Eq(Int32(2)))
+//   └─ CountStep()
+
+// See how the optimizer folded hasId into a VStep index seek:
+let plan = snap.g().V([]).hasId([1]).outE(["knows"]).where(__().otherV().hasId([2])).explain()?;
+println!("{}", plan);
+// PhysicalPlan
+//   └─ VStep(ids=[1])
+//   └─ GetEStep(labels=[...], end_vertex_ids=[2], rank=Some(0))
 ```
 
 ### Write transactions

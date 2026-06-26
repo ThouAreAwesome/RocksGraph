@@ -1,5 +1,6 @@
 // Physical step: choose()
 
+use crate::engine::volcano::steps::traits::ExplainNode;
 use crate::types::PIPELINE_BATCH_INLINE;
 use crate::{
     engine::{
@@ -86,5 +87,14 @@ impl CoreStep for ChooseStep {
             self.active_plan = Some(branch.clone());
             // Continue loop to drain from active_plan
         }
+    }
+
+    fn explain(&self) -> ExplainNode {
+        let params = vec![("pred", format!("{:?}", self.predicate))];
+        let mut children = vec![("true".to_string(), self.true_choice.explain())];
+        if let Some(ref fc) = self.false_choice {
+            children.push(("false".to_string(), fc.explain()));
+        }
+        ExplainNode::new("ChooseStep").with_params(params).with_children(children)
     }
 }

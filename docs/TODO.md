@@ -14,33 +14,34 @@ item needs both a `GraphTraversal` method and a new physical step.
 
 These block entire classes of queries, not just convenience.
 
-- [ ] **`repeat()` / `until()` / `emit()`** — variable-length traversals (N-hop neighbors,
-      reachability, recursive paths). Without this, nothing beyond a fixed-depth chain of
-      `.out()` calls is expressible.
-- [ ] **`as()` / `select()`** — step labeling and result extraction. `GValue::Path` already
+- [x] **`repeat()` / `until()` / `emit()`** — variable-length traversals (N-hop neighbors,
+      reachability, recursive paths).
+- [ ] **`as()`** — step labeling (sibling to `select()`). `GValue::Path` already
       carries a `step_labels: Option<SmallVec<[SmolStr; 2]>>` slot per position
       (`types/gvalue.rs`), and `path()`'s rendering code in `traversal.rs` already reads it —
-      but nothing ever writes to it, since there's no `as()` step. The consumer side exists;
-      only the producer is missing.
-- [ ] **`not()` / `and()` / `or()`** — boolean filter combinators. `where()` only takes one
-      positive sub-traversal today; there's no way to negate or compose conditions.
+      but nothing ever writes to it, since there's no `as()` step.
+- [x] **`select()`** — result extraction from labelled path history.
+- [x] **`not()`** — boolean filter negation.
+- [ ] **`and()` / `or()`** — boolean filter composition. `where()` only takes one
+      positive sub-traversal today; there's no way to compose multiple conditions.
 
 ## P1 — commonly used, moderate effort
 
-- [ ] **`order()`** (with `by()`) — sorting traversal results.
-- [ ] **`range()` / `skip()` / `tail()`** — pagination beyond `limit()`.
-- [ ] **`group()` / `groupCount()`** — keyed aggregation.
+- [x] **`order()`** (with `by()`) — sorting traversal results.
+- [x] **`range()` / `skip()` / `tail()`** — pagination beyond `limit()`.
+- [ ] **`group()`** — arbitrary keyed aggregation (sibling to `groupCount()`).
+- [x] **`groupCount()`** — keyed count aggregation.
 - [ ] **`valueMap()` / `elementMap()`** — bulk property extraction as a map (today this is
       `properties()` + `values()` as two separate steps).
 
 ## P2 — useful, narrower audience
 
-- [ ] **`sum()` / `mean()` / `max()` / `min()`** — numeric reducers alongside the existing
+- [x] **`sum()` / `mean()` / `max()` / `min()`** — numeric reducers alongside the existing
       `count()` / `fold()`.
-- [ ] **`unfold()`** — inverse of `fold()`.
-- [ ] **`simplePath()` / `cyclicPath()`** — path filters, mainly valuable once `repeat()`
-      exists.
-- [ ] **`choose()` / `branch()`** — conditional traversal branching.
+- [x] **`unfold()`** — inverse of `fold()`.
+- [ ] **`simplePath()` / `cyclicPath()`** — path filters (physical step implemented;
+      needs traversal API exposure).
+- [x] **`choose()`** — conditional traversal branching.
 
 ## P3 — deferred or likely out of scope
 

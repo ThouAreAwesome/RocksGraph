@@ -1,5 +1,6 @@
 // Physical steps: group(), groupCount()
 
+use crate::engine::volcano::steps::traits::ExplainNode;
 use crate::types::PIPELINE_BATCH_INLINE;
 use crate::{
     engine::{
@@ -54,6 +55,10 @@ impl CoreStep for GroupStep {
         let map = GValue::Map(groups.into_iter().map(|(k, v)| (k, GValue::List(v))).collect());
         Ok(Some(smallvec![Traverser::new_rc(map)]))
     }
+
+    fn explain(&self) -> ExplainNode {
+        ExplainNode::new("GroupStep")
+    }
 }
 
 /// Collects all traversers and counts occurrences per value.
@@ -97,5 +102,9 @@ impl CoreStep for GroupCountStep {
         use crate::types::gvalue::Primitive;
         let map = GValue::Map(counts.into_iter().map(|(k, v)| (k, GValue::Scalar(Primitive::Int64(v)))).collect());
         Ok(Some(smallvec![Traverser::new_rc(map)]))
+    }
+
+    fn explain(&self) -> ExplainNode {
+        ExplainNode::new("GroupCountStep")
     }
 }

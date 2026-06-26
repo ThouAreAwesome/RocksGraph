@@ -20,6 +20,7 @@ use std::rc::Rc;
 
 use smallvec::{smallvec, SmallVec};
 
+use crate::engine::volcano::steps::traits::ExplainNode;
 use crate::{
     engine::{
         context::GraphCtx,
@@ -84,5 +85,10 @@ impl CoreStep for PropertyStep {
     fn upper(&self) -> Option<StepRef> {
         // Returns a clone of the upstream step reference.
         self.upstream.clone()
+    }
+
+    fn explain(&self) -> ExplainNode {
+        let params = vec![("key", self.prop.key.to_string())];
+        ExplainNode::new("PropertiesStep").with_params(params)
     }
 }

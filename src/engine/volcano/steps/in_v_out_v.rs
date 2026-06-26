@@ -20,6 +20,7 @@ use std::rc::Rc;
 
 use smallvec::{smallvec, SmallVec};
 
+use crate::engine::volcano::steps::traits::ExplainNode;
 use crate::{
     engine::{
         context::GraphCtx,
@@ -93,5 +94,9 @@ impl CoreStep for InVOutVStep {
     fn upper(&self) -> Option<StepRef> {
         // Returns a clone of the upstream step reference.
         self.upstream.clone()
+    }
+
+    fn explain(&self) -> ExplainNode {
+        ExplainNode::new("InVOutVStep").with_params(vec![("direction", format!("{:?}", self.direction))])
     }
 }

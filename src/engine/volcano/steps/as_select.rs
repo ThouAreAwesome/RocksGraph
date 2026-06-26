@@ -22,6 +22,7 @@ use std::rc::Rc;
 use smallvec::{smallvec, SmallVec};
 use smol_str::SmolStr;
 
+use crate::engine::volcano::steps::traits::ExplainNode;
 use crate::{
     engine::{
         context::GraphCtx,
@@ -76,6 +77,11 @@ impl CoreStep for AsStep {
     fn upper(&self) -> Option<StepRef> {
         self.upstream.clone()
     }
+
+    fn explain(&self) -> ExplainNode {
+        let params = vec![("label", format!("{:?}", self.labels))];
+        ExplainNode::new("AsStep").with_params(params)
+    }
 }
 
 /// Physical step for `select(label)`: walks the parent chain to find a traverser
@@ -125,6 +131,11 @@ impl CoreStep for SelectStep {
 
     fn upper(&self) -> Option<StepRef> {
         self.upstream.clone()
+    }
+
+    fn explain(&self) -> ExplainNode {
+        let params = vec![("label", format!("{:?}", self.labels))];
+        ExplainNode::new("SelectStep").with_params(params)
     }
 }
 

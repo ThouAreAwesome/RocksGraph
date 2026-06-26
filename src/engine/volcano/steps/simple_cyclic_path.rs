@@ -1,5 +1,6 @@
 // Physical steps: simplePath(), cyclicPath()
 
+use crate::engine::volcano::steps::traits::ExplainNode;
 use crate::types::PIPELINE_BATCH_INLINE;
 use crate::{
     engine::{
@@ -44,6 +45,10 @@ impl CoreStep for SimplePathStep {
             return Ok(Some(smallvec![t]));
         }
     }
+
+    fn explain(&self) -> ExplainNode {
+        ExplainNode::new("SimplePathStep")
+    }
 }
 
 /// Filters out traversers without duplicate vertices — keeps only cyclic paths.
@@ -77,6 +82,10 @@ impl CoreStep for CyclicPathStep {
             }
             return Ok(Some(smallvec![t]));
         }
+    }
+
+    fn explain(&self) -> ExplainNode {
+        ExplainNode::new("CyclicPathStep")
     }
 }
 

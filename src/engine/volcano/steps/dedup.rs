@@ -20,6 +20,7 @@ use std::{collections::HashSet, rc::Rc};
 
 use smallvec::{smallvec, SmallVec};
 
+use crate::engine::volcano::steps::traits::ExplainNode;
 use crate::{
     engine::{
         context::GraphCtx,
@@ -78,5 +79,9 @@ impl CoreStep for DedupStep {
 
     fn upper(&self) -> Option<StepRef> {
         self.upstream.clone()
+    }
+
+    fn explain(&self) -> ExplainNode {
+        ExplainNode::new("DedupStep")
     }
 }

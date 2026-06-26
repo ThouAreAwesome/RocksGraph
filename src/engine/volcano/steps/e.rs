@@ -20,6 +20,7 @@ use std::rc::Rc;
 
 use smallvec::{smallvec, SmallVec};
 
+use crate::engine::volcano::steps::traits::ExplainNode;
 use crate::{
     engine::{
         context::GraphCtx,
@@ -127,5 +128,10 @@ impl CoreStep for EStep {
         self.cursor = None;
         self.scan_started = false;
         self.scan_finished = false;
+    }
+
+    fn explain(&self) -> ExplainNode {
+        let params = vec![("keys", format!("{:?}", self.keys))];
+        ExplainNode::new("EStep").with_params(params)
     }
 }

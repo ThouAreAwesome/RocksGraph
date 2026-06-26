@@ -27,7 +27,7 @@ use crate::{
         traverser::Traverser,
         volcano::{
             builder::PhysicalPlan,
-            steps::traits::{CoreStep, StepRef},
+            steps::traits::{CoreStep, ExplainNode, StepRef},
         },
     },
     types::error::StoreError,
@@ -200,5 +200,25 @@ impl CoreStep for RepeatStep {
 
     fn upper(&self) -> Option<StepRef> {
         self.upstream.clone()
+    }
+
+    fn explain(&self) -> ExplainNode {
+        let mut children = vec![("body".to_string(), self.body.explain())];
+        if let Some(ref until) = self.until {
+            children.push(("until".to_string(), until.explain()));
+        }
+        // Emit policy: Never / Always are plain params; If(plan) becomes a
+        // labelled child so the nested plan gets rendered without leaking
+        // runtime Debug output.
+        let emit_param = match &self.emit {
+            PhysicalEmitMode::Never => ("emit", "Never".to_string()),
+            PhysicalEmitMode::Always => ("emit", "Always".to_string()),
+            PhysicalEmitMode::If(plan) => {
+                children.push(("emit_if".to_string(), plan.explain()));
+                ("emit", "If".to_string())
+            }
+        };
+        let params = vec![("times", format!("{:?}", self.times)), emit_param];
+        ExplainNode::new("RepeatStep").with_params(params).with_children(children)
     }
 }

@@ -20,6 +20,7 @@ use std::rc::Rc;
 
 use smallvec::{smallvec, SmallVec};
 
+use crate::engine::volcano::steps::traits::ExplainNode;
 use crate::{
     engine::{
         context::GraphCtx,
@@ -90,6 +91,12 @@ impl CoreStep for AndStep {
     fn upper(&self) -> Option<StepRef> {
         self.upstream.clone()
     }
+
+    fn explain(&self) -> ExplainNode {
+        let children =
+            self.physical_plans.iter().enumerate().map(|(i, plan)| (format!("sub {}", i), plan.explain())).collect();
+        ExplainNode::new("AndStep").with_children(children)
+    }
 }
 
 /// Physical step for `or(subs...)`: passes if ANY sub-plan yields results.
@@ -144,5 +151,11 @@ impl CoreStep for OrStep {
 
     fn upper(&self) -> Option<StepRef> {
         self.upstream.clone()
+    }
+
+    fn explain(&self) -> ExplainNode {
+        let children =
+            self.physical_plans.iter().enumerate().map(|(i, plan)| (format!("sub {}", i), plan.explain())).collect();
+        ExplainNode::new("OrStep").with_children(children)
     }
 }

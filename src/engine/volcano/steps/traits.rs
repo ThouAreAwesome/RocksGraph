@@ -23,6 +23,34 @@ use crate::{
 use smallvec::SmallVec;
 use std::{cell::RefCell, collections::VecDeque, rc::Rc};
 
+// ── ExplainNode ───────────────────────────────────────────────────────────────
+
+/// A structured node in an explain tree — name, key-value params, and labelled
+/// child sub-trees.  Built by each step's `CoreStep::explain()` impl and
+/// rendered by the `PhysicalPlan` pretty-printer.
+#[derive(Debug, Clone)]
+pub(crate) struct ExplainNode {
+    pub(crate) name: &'static str,
+    pub(crate) params: Vec<(&'static str, String)>,
+    pub(crate) children: Vec<(String, ExplainNode)>,
+}
+
+impl ExplainNode {
+    pub(crate) fn new(name: &'static str) -> Self {
+        ExplainNode { name, params: vec![], children: vec![] }
+    }
+
+    pub(crate) fn with_params(mut self, params: Vec<(&'static str, String)>) -> Self {
+        self.params = params;
+        self
+    }
+
+    pub(crate) fn with_children(mut self, children: Vec<(String, ExplainNode)>) -> Self {
+        self.children = children;
+        self
+    }
+}
+
 // ── Public step reference ─────────────────────────────────────────────────────
 
 /// Type-erased handle to any step. Downstream steps hold one of these for each
@@ -34,10 +62,12 @@ pub type StepRef = Rc<dyn GremlinStep>;
 /// The interface callers and downstream steps use. All methods take `&self`
 /// because interior mutability is encapsulated inside [`BufferedStep`].
 pub trait GremlinStep: std::fmt::Debug {
-    fn next(&self, ctx: &mut dyn GraphCtx) -> Result<Option<Rc<Traverser>>, StoreError>; // Retrieves the next traverser from the step.
+    fn next(&self, ctx: &mut dyn GraphCtx) -> Result<Option<Rc<Traverser>>, StoreError>;
     fn reset(&self);
     fn add_upper(&self, upstream: StepRef);
     fn upper(&self) -> Option<StepRef>;
+    /// Return a structured explain node for this step.  Used by `explain()`.
+    fn explain(&self) -> ExplainNode;
 }
 
 // ── CoreStep — what each step author implements ───────────────────────────────
@@ -56,12 +86,16 @@ pub trait CoreStep: std::fmt::Debug {
     ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError>;
 
     /// Reset all mutable state and propagate to upstreams.
-    fn reset(&mut self); // Resets the internal state of the step.
+    fn reset(&mut self);
 
     /// Access the upstream step if one exists. Defaults to None for source steps.
     fn upper(&self) -> Option<StepRef> {
         None
     }
+
+    /// Return a structured explain node — no default impl, every step must
+    /// provide one explicitly.
+    fn explain(&self) -> ExplainNode;
 }
 
 // ── BufferedStep — the single generic wrapper ─────────────────────────────────
@@ -129,5 +163,9 @@ impl<T: CoreStep + 'static> GremlinStep for BufferedStep<T> {
     fn upper(&self) -> Option<StepRef> {
         // Delegates to the wrapped `CoreStep` to get the upstream.
         self.inner.borrow().core.upper()
+    }
+
+    fn explain(&self) -> ExplainNode {
+        self.inner.borrow().core.explain()
     }
 }

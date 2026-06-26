@@ -20,6 +20,7 @@ use std::rc::Rc;
 
 use smallvec::{smallvec, SmallVec};
 
+use crate::engine::volcano::steps::traits::ExplainNode;
 use crate::{
     engine::{
         context::GraphCtx,
@@ -88,5 +89,10 @@ impl CoreStep for WhereStep {
     fn upper(&self) -> Option<StepRef> {
         // Returns a clone of the upstream step reference.
         self.upstream.clone()
+    }
+
+    fn explain(&self) -> ExplainNode {
+        let children = vec![(String::new(), self.physical_plans.explain())];
+        ExplainNode::new("WhereStep").with_children(children)
     }
 }

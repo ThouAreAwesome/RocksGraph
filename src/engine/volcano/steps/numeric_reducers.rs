@@ -20,6 +20,7 @@ use std::rc::Rc;
 
 use smallvec::{smallvec, SmallVec};
 
+use crate::engine::volcano::steps::traits::ExplainNode;
 use crate::{
     engine::{
         context::GraphCtx,
@@ -107,6 +108,10 @@ impl CoreStep for SumStep {
     fn upper(&self) -> Option<StepRef> {
         self.upstream.clone()
     }
+
+    fn explain(&self) -> ExplainNode {
+        ExplainNode::new("SumStep")
+    }
 }
 
 // ── MeanStep ─────────────────────────────────────────────────────────────────
@@ -157,6 +162,10 @@ impl CoreStep for MeanStep {
 
     fn upper(&self) -> Option<StepRef> {
         self.upstream.clone()
+    }
+
+    fn explain(&self) -> ExplainNode {
+        ExplainNode::new("MeanStep")
     }
 }
 
@@ -240,6 +249,10 @@ impl CoreStep for MaxStep {
     fn upper(&self) -> Option<StepRef> {
         self.upstream.clone()
     }
+
+    fn explain(&self) -> ExplainNode {
+        ExplainNode::new("MaxStep")
+    }
 }
 
 // ── MinStep ──────────────────────────────────────────────────────────────────
@@ -321,5 +334,9 @@ impl CoreStep for MinStep {
 
     fn upper(&self) -> Option<StepRef> {
         self.upstream.clone()
+    }
+
+    fn explain(&self) -> ExplainNode {
+        ExplainNode::new("MinStep")
     }
 }

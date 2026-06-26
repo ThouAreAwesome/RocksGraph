@@ -20,6 +20,7 @@ use std::rc::Rc;
 
 use smallvec::{smallvec, SmallVec};
 
+use crate::engine::volcano::steps::traits::ExplainNode;
 use crate::{
     engine::{
         context::GraphCtx,
@@ -82,5 +83,10 @@ impl CoreStep for NotStep {
 
     fn upper(&self) -> Option<StepRef> {
         self.upstream.clone()
+    }
+
+    fn explain(&self) -> ExplainNode {
+        let children = vec![(String::new(), self.physical_plan.explain())];
+        ExplainNode::new("NotStep").with_children(children)
     }
 }

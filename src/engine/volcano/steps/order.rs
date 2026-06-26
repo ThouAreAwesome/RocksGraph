@@ -1,5 +1,6 @@
 // Physical step: order()
 
+use crate::engine::volcano::steps::traits::ExplainNode;
 use crate::types::PIPELINE_BATCH_INLINE;
 use crate::{
     engine::{
@@ -96,5 +97,9 @@ impl CoreStep for OrderStep {
         } else {
             Ok(None)
         }
+    }
+
+    fn explain(&self) -> ExplainNode {
+        ExplainNode::new("OrderStep")
     }
 }

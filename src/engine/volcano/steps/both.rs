@@ -20,6 +20,7 @@ use std::rc::Rc;
 
 use smallvec::SmallVec;
 
+use crate::engine::volcano::steps::traits::ExplainNode;
 use crate::{
     engine::{
         context::GraphCtx,
@@ -195,5 +196,10 @@ impl CoreStep for BothStep {
 
     fn upper(&self) -> Option<StepRef> {
         self.upstream.clone()
+    }
+
+    fn explain(&self) -> ExplainNode {
+        let params = vec![("direction", "Both".to_string()), ("labels", format!("{:?}", self.label_ids))];
+        ExplainNode::new("InOutStep").with_params(params)
     }
 }

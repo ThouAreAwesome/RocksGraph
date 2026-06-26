@@ -20,6 +20,7 @@ use std::rc::Rc;
 
 use smallvec::SmallVec;
 
+use crate::engine::volcano::steps::traits::ExplainNode;
 use crate::{
     engine::{
         context::GraphCtx,
@@ -71,5 +72,9 @@ impl CoreStep for VecSourceStep {
     fn reset(&mut self) {
         // Resets the step by clearing its internal buffer of items.
         self.items.clear();
+    }
+
+    fn explain(&self) -> ExplainNode {
+        ExplainNode::new("VecSourceStep")
     }
 }

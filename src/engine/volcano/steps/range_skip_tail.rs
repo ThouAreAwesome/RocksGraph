@@ -1,5 +1,6 @@
 // Physical steps: range(), skip(), tail()
 
+use crate::engine::volcano::steps::traits::ExplainNode;
 use crate::types::PIPELINE_BATCH_INLINE;
 use crate::{
     engine::{
@@ -58,6 +59,11 @@ impl CoreStep for RangeStep {
             }
         }
     }
+
+    fn explain(&self) -> ExplainNode {
+        let params = vec![("lo", self.lo.to_string()), ("hi", self.hi.to_string())];
+        ExplainNode::new("RangeStep").with_params(params)
+    }
 }
 
 /// Skips the first n traversers.
@@ -100,6 +106,11 @@ impl CoreStep for SkipStep {
             }
             self.skipped += 1;
         }
+    }
+
+    fn explain(&self) -> ExplainNode {
+        let params = vec![("n", self.n.to_string())];
+        ExplainNode::new("SkipStep").with_params(params)
     }
 }
 
@@ -155,5 +166,10 @@ impl CoreStep for TailStep {
         } else {
             Ok(None)
         }
+    }
+
+    fn explain(&self) -> ExplainNode {
+        let params = vec![("n", self.n.to_string())];
+        ExplainNode::new("TailStep").with_params(params)
     }
 }

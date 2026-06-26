@@ -21,6 +21,7 @@ use std::{collections::HashMap, rc::Rc};
 
 use smallvec::{smallvec, SmallVec};
 
+use crate::engine::volcano::steps::traits::ExplainNode;
 use crate::{
     engine::{
         context::GraphCtx,
@@ -113,5 +114,15 @@ impl CoreStep for AddEStep {
     fn reset(&mut self) {
         // Resets the step's state, allowing it to be re-executed.
         self.emitted = false;
+    }
+
+    fn explain(&self) -> ExplainNode {
+        let params = vec![
+            ("label", self.label_id.to_string()),
+            ("from", format!("{:?}", self.out_v_id)),
+            ("to", format!("{:?}", self.in_v_id)),
+            ("rank", format!("{:?}", self.rank)),
+        ];
+        ExplainNode::new("AddEStep").with_params(params)
     }
 }

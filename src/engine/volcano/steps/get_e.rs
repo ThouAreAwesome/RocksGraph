@@ -20,6 +20,7 @@ use std::rc::Rc;
 
 use smallvec::{smallvec, SmallVec};
 
+use crate::engine::volcano::steps::traits::ExplainNode;
 use crate::{
     engine::{
         context::GraphCtx,
@@ -48,6 +49,12 @@ pub struct GetEStep {
     upstream: Option<StepRef>,
 
     // ── Static/Fixed configuration ──
+    /// Label IDs to look up (kept for explain()).
+    label_ids: SmallVec<[LabelId; PIPELINE_BATCH_INLINE]>,
+    /// End-vertex IDs to look up (kept for explain()).
+    end_vertex_ids: SmallVec<[VertexKey; PIPELINE_BATCH_INLINE]>,
+    /// Edge rank (kept for explain()). `None` means DEFAULT_RANK was used.
+    rank: Option<Rank>,
     /// Whether to return the matched edges themselves (true) or the adjacent vertices (false).
     output_edges: bool,
     /// Whether to link the parent chain on emitted traversers (`false` skips the `Rc::clone`
@@ -95,7 +102,7 @@ impl GetEStep {
                 }
             }
         }
-        Self { upstream: None, output_edges, track_path, keys_buffer }
+        Self { upstream: None, label_ids, end_vertex_ids, rank: Some(rank), output_edges, track_path, keys_buffer }
     }
 }
 
@@ -161,5 +168,13 @@ impl CoreStep for GetEStep {
     fn upper(&self) -> Option<StepRef> {
         // Returns a clone of the upstream step reference.
         self.upstream.clone()
+    }
+
+    fn explain(&self) -> ExplainNode {
+        ExplainNode::new("GetEStep").with_params(vec![
+            ("labels", format!("{:?}", self.label_ids)),
+            ("end_vertex_ids", format!("{:?}", self.end_vertex_ids)),
+            ("rank", format!("{:?}", self.rank)),
+        ])
     }
 }

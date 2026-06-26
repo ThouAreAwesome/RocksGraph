@@ -744,6 +744,23 @@ impl<'s> ReadTraversal<'s> {
     pub fn to_list(self) -> Result<Vec<Value>, StoreError> {
         self.iter()?.collect()
     }
+
+    /// Build the physical plan and return a pretty-printed explanation tree.
+    pub fn explain(self) -> Result<String, StoreError> {
+        if let Some(err) = self.error {
+            return Err(err);
+        }
+        if self.pending_repeat.is_some() {
+            return Err(StoreError::TraversalError(
+                "repeat() requires at least one stop condition — call .times(n) or .until(cond).".to_string(),
+            ));
+        }
+        let mut logical = self.plan;
+        crate::planner::apply_rules(&mut logical)?;
+        let schema_lock = self.ctx.schema();
+        let plan = crate::engine::volcano::builder::PhysicalPlanBuilder.build(&logical, &schema_lock)?;
+        Ok(crate::engine::volcano::builder::render_explain(&plan.explain(), 0, ""))
+    }
 }
 
 #[allow(private_interfaces)]
@@ -866,6 +883,23 @@ impl<'s> WriteTraversal<'s> {
     /// Execute and collect all results.
     pub fn to_list(self) -> Result<Vec<Value>, StoreError> {
         self.iter()?.collect()
+    }
+
+    /// Build the physical plan and return a pretty-printed explanation tree.
+    pub fn explain(self) -> Result<String, StoreError> {
+        if let Some(err) = self.error {
+            return Err(err);
+        }
+        if self.pending_repeat.is_some() {
+            return Err(StoreError::TraversalError(
+                "repeat() requires at least one stop condition — call .times(n) or .until(cond).".to_string(),
+            ));
+        }
+        let mut logical = self.plan;
+        crate::planner::apply_rules(&mut logical)?;
+        let schema_lock = self.ctx.schema();
+        let plan = crate::engine::volcano::builder::PhysicalPlanBuilder.build(&logical, &schema_lock)?;
+        Ok(crate::engine::volcano::builder::render_explain(&plan.explain(), 0, ""))
     }
 }
 

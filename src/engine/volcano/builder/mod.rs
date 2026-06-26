@@ -88,6 +88,45 @@ impl PhysicalPlan {
     pub fn reset(&self) {
         self.tail.reset();
     }
+
+    /// Return a structured explain tree for rendering.  Walks the `upper()`
+    /// backbone and stops at `self.source` via `Rc::ptr_eq` to exclude the
+    /// injection point from the tree.
+    pub fn explain(&self) -> crate::engine::volcano::steps::traits::ExplainNode {
+        use crate::engine::volcano::steps::traits::ExplainNode;
+        let mut nodes = Vec::new();
+        let mut current = Some(self.tail.clone());
+        while let Some(step) = current {
+            if Rc::ptr_eq(&step, &(self.source.clone() as StepRef)) {
+                break;
+            }
+            nodes.push(step.explain());
+            current = step.upper();
+        }
+        nodes.reverse();
+        ExplainNode::new("PhysicalPlan").with_children(nodes.into_iter().map(|n| (String::new(), n)).collect())
+    }
+}
+
+/// Recursively render an [`ExplainNode`] tree into a string with tree-drawing
+/// characters and indentation.
+pub(crate) fn render_explain(
+    node: &crate::engine::volcano::steps::traits::ExplainNode,
+    depth: usize,
+    prefix: &str,
+) -> String {
+    let indent = "  ".repeat(depth);
+    let params_str = if node.params.is_empty() {
+        String::new()
+    } else {
+        format!("({})", node.params.iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<_>>().join(", "))
+    };
+    let mut out = format!("{}{}{}{}\n", indent, prefix, node.name, params_str);
+    for (label, child) in &node.children {
+        let child_prefix = if label.is_empty() { "  └─ ".to_string() } else { format!("    {}: └─ ", label) };
+        out.push_str(&render_explain(child, depth + 1, &child_prefix));
+    }
+    out
 }
 
 // ── PhysicalPlanBuilder ───────────────────────────────────────────────────────
@@ -378,6 +417,587 @@ mod tests {
                 LogicalStep::Repeat(RepeatStep { body, until: None, times: Some(3), emit: EmitSpec::Never }),
             ];
             assert_plan_contains_in_order(steps, &["VStep", "RepeatStep", "InOutStep"]);
+        }
+    }
+
+    /// Tests verifying that `explain()` correctly reflects optimizer rule
+    /// transformations in the physical plan tree.
+    mod explain_tests {
+        use super::*;
+        use crate::planner::{apply_rules, logical_step::*};
+        use crate::types::gvalue::{Primitive, PrimitivePredicate};
+        use crate::types::prop_key::ID;
+        use smallvec::smallvec;
+
+        fn explain_str(steps: Vec<LogicalStep>) -> String {
+            let mut plan = LogicalPlan { steps };
+            apply_rules(&mut plan).expect("Optimizer rules failed");
+            let mut builder: PhysicalPlanBuilder = Default::default();
+            let schema_lock = std::sync::RwLock::new(Schema::default());
+            let physical_plan = builder.build(&plan, &schema_lock).unwrap();
+            crate::engine::volcano::builder::render_explain(&physical_plan.explain(), 0, "")
+        }
+
+        #[track_caller]
+        fn assert_names_in_order(explain: &str, names: &[&str]) {
+            let mut last_pos = 0;
+            for name in names {
+                if let Some(pos) = explain[last_pos..].find(name) {
+                    last_pos += pos + name.len();
+                } else {
+                    panic!("Did not find '{}' in order in explain output:\n{}", name, explain);
+                }
+            }
+        }
+
+        #[track_caller]
+        fn assert_names_absent(explain: &str, names: &[&str]) {
+            for name in names {
+                if explain.contains(name) {
+                    panic!("Found unexpected '{}' in explain output:\n{}", name, explain);
+                }
+            }
+        }
+
+        #[track_caller]
+        fn assert_contains(haystack: &str, needle: &str) {
+            if !haystack.contains(needle) {
+                panic!("Expected '{}' not found in explain output:\n{}", needle, haystack);
+            }
+        }
+
+        // ── Group 1: V + hasId folding ───────────────────────────────────
+
+        #[test]
+        fn v_hasid_folds_into_vstep() {
+            let steps = vec![
+                LogicalStep::V(VStep { ids: smallvec![] }),
+                LogicalStep::HasId(HasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(1)) }),
+            ];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep"]);
+            assert_names_absent(&out, &["HasIdStep", "ScalarFilterStep"]);
+            assert_contains(&out, "ids=[1]");
+        }
+
+        #[test]
+        fn v_has_prop_id_folds_into_vstep() {
+            let steps = vec![
+                LogicalStep::V(VStep { ids: smallvec![] }),
+                LogicalStep::HasProperty(HasPropertyStep {
+                    key: ID.clone(),
+                    pred: PrimitivePredicate::Eq(Primitive::Int64(1)),
+                }),
+            ];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep"]);
+            assert_names_absent(&out, &["HasPropertyStep", "ScalarFilterStep", "HasIdStep"]);
+            assert_contains(&out, "ids=[1]");
+        }
+
+        #[test]
+        fn v_hasid_hasid_only_first_folds() {
+            let steps = vec![
+                LogicalStep::V(VStep { ids: smallvec![] }),
+                LogicalStep::HasId(HasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(1)) }),
+                LogicalStep::HasId(HasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(2)) }),
+            ];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "HasIdStep"]);
+            assert_contains(&out, "ids=[1]");
+        }
+
+        #[test]
+        fn v_hasprop_then_hasid_reorder_and_fold() {
+            let steps = vec![
+                LogicalStep::V(VStep { ids: smallvec![] }),
+                LogicalStep::HasProperty(HasPropertyStep {
+                    key: "age".into(),
+                    pred: PrimitivePredicate::Eq(Primitive::Int32(42)),
+                }),
+                LogicalStep::HasId(HasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(1)) }),
+            ];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "HasPropertyStep"]);
+            assert_names_absent(&out, &[]);
+            assert_contains(&out, "ids=[1]");
+        }
+
+        #[test]
+        fn v_hasid_empty_within_not_folded() {
+            let steps = vec![
+                LogicalStep::V(VStep { ids: smallvec![] }),
+                LogicalStep::HasId(HasIdStep {
+                    pred: PrimitivePredicate::Within(vec![
+                        Primitive::Int64(1),
+                        Primitive::Int64(2),
+                        Primitive::Int64(3),
+                    ]),
+                }),
+            ];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep"]);
+            assert_names_absent(&out, &["HasIdStep", "ScalarFilterStep"]);
+            assert_contains(&out, "ids=[1, 2, 3]");
+        }
+
+        #[test]
+        fn v_explicit_ids_prevents_hasid_fold() {
+            let steps = vec![
+                LogicalStep::V(VStep { ids: smallvec![42] }),
+                LogicalStep::HasId(HasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(1)) }),
+            ];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "HasIdStep"]);
+            assert_contains(&out, "ids=[42]");
+        }
+
+        // ── Group 2: label-based edge folding ─────────────────────────────
+
+        #[test]
+        fn oute_label_where_otherv_hasid_folds_to_gete() {
+            let where_plan = LogicalPlan {
+                steps: vec![
+                    LogicalStep::OtherV(OtherVStep {}),
+                    LogicalStep::HasId(HasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(2)) }),
+                ],
+            };
+            let steps = vec![
+                LogicalStep::V(VStep { ids: smallvec![1] }),
+                LogicalStep::OutE(OutEStep { labels: smallvec!["123".into()], end_vertex_ids: None, rank: None }),
+                LogicalStep::Where(WhereStep { plan: where_plan }),
+            ];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "GetEStep"]);
+            assert_names_absent(&out, &["WhereStep", "OtherVStep", "HasIdStep", "InOutStep"]);
+            assert_contains(&out, "end_vertex_ids=[2]");
+        }
+
+        #[test]
+        fn bothe_label_where_otherv_hasid_folds_to_gete() {
+            let where_plan = LogicalPlan {
+                steps: vec![
+                    LogicalStep::OtherV(OtherVStep {}),
+                    LogicalStep::HasId(HasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(2)) }),
+                ],
+            };
+            let steps = vec![
+                LogicalStep::V(VStep { ids: smallvec![1] }),
+                LogicalStep::BothE(BothEStep { labels: smallvec!["123".into()], end_vertex_ids: None, rank: None }),
+                LogicalStep::Where(WhereStep { plan: where_plan }),
+            ];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "GetEStep"]);
+            assert_names_absent(&out, &["WhereStep", "OtherVStep", "HasIdStep"]);
+        }
+
+        #[test]
+        fn ine_label_where_otherv_hasid_folds_to_gete() {
+            let where_plan = LogicalPlan {
+                steps: vec![
+                    LogicalStep::OtherV(OtherVStep {}),
+                    LogicalStep::HasId(HasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(2)) }),
+                ],
+            };
+            let steps = vec![
+                LogicalStep::V(VStep { ids: smallvec![1] }),
+                LogicalStep::InE(InEStep { labels: smallvec!["456".into()], end_vertex_ids: None, rank: None }),
+                LogicalStep::Where(WhereStep { plan: where_plan }),
+            ];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "GetEStep"]);
+            assert_names_absent(&out, &["WhereStep", "OtherVStep", "HasIdStep"]);
+        }
+
+        #[test]
+        fn oute_label_where_otherv_hasprop_extracts_to_endvertexfilter() {
+            let where_plan = LogicalPlan {
+                steps: vec![
+                    LogicalStep::OtherV(OtherVStep {}),
+                    LogicalStep::HasProperty(HasPropertyStep {
+                        key: "age".into(),
+                        pred: PrimitivePredicate::Eq(Primitive::Int32(30)),
+                    }),
+                ],
+            };
+            let steps = vec![
+                LogicalStep::V(VStep { ids: smallvec![1] }),
+                LogicalStep::OutE(OutEStep { labels: smallvec!["123".into()], end_vertex_ids: None, rank: None }),
+                LogicalStep::Where(WhereStep { plan: where_plan }),
+            ];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "InOutStep", "WhereStep"]);
+        }
+
+        #[test]
+        fn oute_has_rank_where_otherv_hasid_folds() {
+            let where_plan = LogicalPlan {
+                steps: vec![
+                    LogicalStep::OtherV(OtherVStep {}),
+                    LogicalStep::HasId(HasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(2)) }),
+                ],
+            };
+            let steps = vec![
+                LogicalStep::V(VStep { ids: smallvec![1] }),
+                LogicalStep::OutE(OutEStep { labels: smallvec!["123".into()], end_vertex_ids: None, rank: Some(0) }),
+                LogicalStep::Where(WhereStep { plan: where_plan }),
+            ];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "GetEStep"]);
+            assert_names_absent(&out, &["WhereStep", "OtherVStep", "HasIdStep"]);
+            assert_contains(&out, "rank=Some(0)");
+        }
+
+        #[test]
+        fn oute_two_where_both_extracted() {
+            let where1 = LogicalPlan {
+                steps: vec![
+                    LogicalStep::OtherV(OtherVStep {}),
+                    LogicalStep::HasId(HasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(2)) }),
+                ],
+            };
+            let where2 = LogicalPlan {
+                steps: vec![
+                    LogicalStep::OtherV(OtherVStep {}),
+                    LogicalStep::HasId(HasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(3)) }),
+                ],
+            };
+            let steps = vec![
+                LogicalStep::V(VStep { ids: smallvec![1] }),
+                LogicalStep::OutE(OutEStep { labels: smallvec!["123".into()], end_vertex_ids: None, rank: None }),
+                LogicalStep::Where(WhereStep { plan: where1 }),
+                LogicalStep::Where(WhereStep { plan: where2 }),
+            ];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "GetEStep"]);
+            assert_names_absent(&out, &["WhereStep", "OtherVStep", "HasIdStep"]);
+        }
+
+        #[test]
+        fn oute_no_label_where_otherv_hasid_no_fold() {
+            let where_plan = LogicalPlan {
+                steps: vec![
+                    LogicalStep::OtherV(OtherVStep {}),
+                    LogicalStep::HasId(HasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(2)) }),
+                ],
+            };
+            let steps = vec![
+                LogicalStep::V(VStep { ids: smallvec![1] }),
+                LogicalStep::OutE(OutEStep { labels: smallvec![], end_vertex_ids: None, rank: None }),
+                LogicalStep::Where(WhereStep { plan: where_plan }),
+            ];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "InOutStep"]);
+            assert_names_absent(&out, &["GetEStep", "WhereStep"]);
+        }
+
+        #[test]
+        fn oute_no_where_stays_inout() {
+            let steps = vec![
+                LogicalStep::V(VStep { ids: smallvec![1] }),
+                LogicalStep::OutE(OutEStep { labels: smallvec!["123".into()], end_vertex_ids: None, rank: None }),
+            ];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "InOutStep"]);
+            assert_names_absent(&out, &["GetEStep"]);
+        }
+
+        #[test]
+        fn bothe_where_hasid_and_haslabel_partial_fold() {
+            let where1 = LogicalPlan {
+                steps: vec![
+                    LogicalStep::OtherV(OtherVStep {}),
+                    LogicalStep::HasId(HasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(2)) }),
+                ],
+            };
+            let where2 = LogicalPlan {
+                steps: vec![
+                    LogicalStep::OtherV(OtherVStep {}),
+                    LogicalStep::HasLabel(HasLabelStep { pred: PrimitivePredicate::Eq(Primitive::Int32(1)) }),
+                ],
+            };
+            let steps = vec![
+                LogicalStep::V(VStep { ids: smallvec![1] }),
+                LogicalStep::OutE(OutEStep { labels: smallvec!["123".into()], end_vertex_ids: None, rank: None }),
+                LogicalStep::Where(WhereStep { plan: where1 }),
+                LogicalStep::Where(WhereStep { plan: where2 }),
+            ];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "GetEStep", "WhereStep"]);
+            assert_names_absent(&out, &[]);
+        }
+
+        // ── Group 5: branching operators ──────────────────────────────────
+
+        #[test]
+        fn union_has_branch_children() {
+            let out_plan =
+                LogicalPlan { steps: vec![LogicalStep::Out(OutStep { labels: smallvec![], end_vertex_ids: None })] };
+            let in_plan =
+                LogicalPlan { steps: vec![LogicalStep::In(InStep { labels: smallvec![], end_vertex_ids: None })] };
+            let steps = vec![
+                LogicalStep::V(VStep { ids: smallvec![1] }),
+                LogicalStep::Union(UnionStep { plans: smallvec![out_plan, in_plan] }),
+            ];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "UnionStep"]);
+            assert_contains(&out, "branch 0:");
+            assert_contains(&out, "branch 1:");
+        }
+
+        #[test]
+        fn coalesce_has_branch_children() {
+            let out_plan =
+                LogicalPlan { steps: vec![LogicalStep::Out(OutStep { labels: smallvec![], end_vertex_ids: None })] };
+            let addv_plan = LogicalPlan {
+                steps: vec![
+                    LogicalStep::AddV(AddVStep {
+                        label: "person".into(),
+                        vertex_id: None,
+                        properties: std::collections::HashMap::new(),
+                    }),
+                    LogicalStep::Property(PropertyStep { prop_key: ID.clone(), prop_value: Primitive::Int64(99) }),
+                ],
+            };
+            let steps = vec![
+                LogicalStep::V(VStep { ids: smallvec![1] }),
+                LogicalStep::Coalesce(CoalesceStep { plans: vec![out_plan, addv_plan] }),
+            ];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "CoalesceStep"]);
+            assert_contains(&out, "branch 0:");
+            assert_contains(&out, "branch 1:");
+        }
+
+        #[test]
+        fn where_has_sub_plan_child() {
+            let sub = LogicalPlan {
+                steps: vec![
+                    LogicalStep::Out(OutStep { labels: smallvec![], end_vertex_ids: None }),
+                    LogicalStep::HasId(HasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(2)) }),
+                ],
+            };
+            let steps = vec![LogicalStep::V(VStep { ids: smallvec![1] }), LogicalStep::Where(WhereStep { plan: sub })];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "WhereStep"]);
+            assert_contains(&out, "InOutStep");
+        }
+
+        #[test]
+        fn not_has_sub_plan_child() {
+            let sub =
+                LogicalPlan { steps: vec![LogicalStep::Out(OutStep { labels: smallvec![], end_vertex_ids: None })] };
+            let steps = vec![LogicalStep::V(VStep { ids: smallvec![1] }), LogicalStep::Not(NotStep { plan: sub })];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "NotStep"]);
+            assert_contains(&out, "InOutStep");
+        }
+
+        #[test]
+        fn choose_has_predicate_and_branches() {
+            let pred_plan = LogicalPlan {
+                steps: vec![LogicalStep::ScalarFilter(ScalarFilterStep {
+                    pred: PrimitivePredicate::Eq(Primitive::Int64(1)),
+                })],
+            };
+            let true_plan =
+                LogicalPlan { steps: vec![LogicalStep::Out(OutStep { labels: smallvec![], end_vertex_ids: None })] };
+            let false_plan =
+                LogicalPlan { steps: vec![LogicalStep::In(InStep { labels: smallvec![], end_vertex_ids: None })] };
+            let steps = vec![
+                LogicalStep::V(VStep { ids: smallvec![1] }),
+                LogicalStep::Choose(ChooseStep {
+                    predicate: pred_plan,
+                    true_choice: true_plan,
+                    false_choice: Some(false_plan),
+                }),
+            ];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "ChooseStep"]);
+            assert_contains(&out, "pred=");
+        }
+
+        #[test]
+        fn repeat_times_shows_child() {
+            let body =
+                LogicalPlan { steps: vec![LogicalStep::Out(OutStep { labels: smallvec![], end_vertex_ids: None })] };
+            let steps = vec![
+                LogicalStep::V(VStep { ids: smallvec![1] }),
+                LogicalStep::Repeat(RepeatStep { body, until: None, times: Some(3), emit: EmitSpec::Never }),
+            ];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "RepeatStep"]);
+            assert_contains(&out, "times=Some(3)");
+            assert_contains(&out, "InOutStep");
+        }
+
+        #[test]
+        fn repeat_until_shows_body_and_until_children() {
+            let body =
+                LogicalPlan { steps: vec![LogicalStep::Out(OutStep { labels: smallvec![], end_vertex_ids: None })] };
+            let until = LogicalPlan {
+                steps: vec![LogicalStep::HasId(HasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(2)) })],
+            };
+            let steps = vec![
+                LogicalStep::V(VStep { ids: smallvec![1] }),
+                LogicalStep::Repeat(RepeatStep { body, until: Some(until), times: None, emit: EmitSpec::Never }),
+            ];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "RepeatStep"]);
+            assert_contains(&out, "body");
+            assert_contains(&out, "until");
+        }
+
+        #[test]
+        fn repeat_emit_if_shows_child() {
+            let body =
+                LogicalPlan { steps: vec![LogicalStep::Out(OutStep { labels: smallvec![], end_vertex_ids: None })] };
+            let emit_if = LogicalPlan {
+                steps: vec![LogicalStep::HasId(HasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(42)) })],
+            };
+            let steps = vec![
+                LogicalStep::V(VStep { ids: smallvec![1] }),
+                LogicalStep::Repeat(RepeatStep { body, until: None, times: Some(1), emit: EmitSpec::If(emit_if) }),
+            ];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "RepeatStep"]);
+            assert_contains(&out, "emit=If");
+            assert_contains(&out, "emit_if");
+            assert_contains(&out, "HasIdStep");
+        }
+
+        // ── Group 6: multi-hop and combined rules ─────────────────────────
+
+        #[test]
+        fn v_hasid_out_haslabel_combined() {
+            let steps = vec![
+                LogicalStep::V(VStep { ids: smallvec![] }),
+                LogicalStep::HasId(HasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(1)) }),
+                LogicalStep::Out(OutStep { labels: smallvec![], end_vertex_ids: None }),
+                LogicalStep::HasLabel(HasLabelStep { pred: PrimitivePredicate::Eq(Primitive::Int32(1)) }),
+            ];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "InOutStep", "HasLabelStep"]);
+            assert_names_absent(&out, &[]);
+            assert_contains(&out, "ids=[1]");
+        }
+
+        #[test]
+        fn v_hasid_oute_where_hasid_inv_haslabel_combined() {
+            let where_plan = LogicalPlan {
+                steps: vec![
+                    LogicalStep::OtherV(OtherVStep {}),
+                    LogicalStep::HasId(HasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(2)) }),
+                ],
+            };
+            let steps = vec![
+                LogicalStep::V(VStep { ids: smallvec![] }),
+                LogicalStep::HasId(HasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(1)) }),
+                LogicalStep::OutE(OutEStep { labels: smallvec!["123".into()], end_vertex_ids: None, rank: None }),
+                LogicalStep::Where(WhereStep { plan: where_plan }),
+                LogicalStep::InV(InVStep {}),
+                LogicalStep::HasLabel(HasLabelStep { pred: PrimitivePredicate::Eq(Primitive::Int32(1)) }),
+            ];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "GetEStep", "InVOutVStep", "HasLabelStep"]);
+            assert_names_absent(&out, &["HasIdStep", "WhereStep", "OtherVStep"]);
+            assert_contains(&out, "ids=[1]");
+        }
+
+        #[test]
+        fn v_has_prop_id_out_out_haslabel_combined() {
+            let steps = vec![
+                LogicalStep::V(VStep { ids: smallvec![] }),
+                LogicalStep::HasProperty(HasPropertyStep {
+                    key: ID.clone(),
+                    pred: PrimitivePredicate::Eq(Primitive::Int64(1)),
+                }),
+                LogicalStep::Out(OutStep { labels: smallvec![], end_vertex_ids: None }),
+                LogicalStep::Out(OutStep { labels: smallvec![], end_vertex_ids: None }),
+                LogicalStep::HasLabel(HasLabelStep { pred: PrimitivePredicate::Eq(Primitive::Int32(1)) }),
+            ];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "InOutStep", "InOutStep", "HasLabelStep"]);
+            assert_names_absent(&out, &["HasPropertyStep"]);
+            assert_contains(&out, "ids=[1]");
+        }
+
+        #[test]
+        fn v_hasid_bothe_where_hasid_and_hasprop_combined() {
+            let where_plan = LogicalPlan {
+                steps: vec![
+                    LogicalStep::OtherV(OtherVStep {}),
+                    LogicalStep::HasId(HasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(2)) }),
+                    LogicalStep::HasProperty(HasPropertyStep {
+                        key: "age".into(),
+                        pred: PrimitivePredicate::Gt(Primitive::Int32(30)),
+                    }),
+                ],
+            };
+            let steps = vec![
+                LogicalStep::V(VStep { ids: smallvec![] }),
+                LogicalStep::HasId(HasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(1)) }),
+                LogicalStep::BothE(BothEStep { labels: smallvec!["123".into()], end_vertex_ids: None, rank: None }),
+                LogicalStep::Where(WhereStep { plan: where_plan }),
+            ];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "InOutStep", "WhereStep"]);
+            assert_names_absent(&out, &[]);
+            assert_contains(&out, "ids=[1]");
+        }
+
+        // ── Group 7: regression ──────────────────────────────────────────
+
+        #[test]
+        fn empty_plan_renders_root() {
+            let steps = vec![];
+            let out = explain_str(steps);
+            assert_contains(&out, "PhysicalPlan");
+        }
+
+        #[test]
+        fn plan_with_many_steps_all_present() {
+            let mut steps = Vec::new();
+            steps.push(LogicalStep::V(VStep { ids: smallvec![1] }));
+            for _ in 0..10 {
+                steps.push(LogicalStep::Out(OutStep { labels: smallvec![], end_vertex_ids: None }));
+            }
+            steps.push(LogicalStep::Count(CountStep {}));
+            let out = explain_str(steps);
+            for name in &["VStep", "InOutStep", "CountStep"] {
+                assert_contains(&out, name);
+            }
+        }
+
+        #[test]
+        fn nested_branching_depth_correct() {
+            let out_plan =
+                LogicalPlan { steps: vec![LogicalStep::Out(OutStep { labels: smallvec![], end_vertex_ids: None })] };
+            let in_plan =
+                LogicalPlan { steps: vec![LogicalStep::In(InStep { labels: smallvec![], end_vertex_ids: None })] };
+            let body =
+                LogicalPlan { steps: vec![LogicalStep::Union(UnionStep { plans: smallvec![out_plan, in_plan] })] };
+            let steps = vec![
+                LogicalStep::V(VStep { ids: smallvec![1] }),
+                LogicalStep::Repeat(RepeatStep { body, until: None, times: Some(2), emit: EmitSpec::Never }),
+            ];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "RepeatStep"]);
+            assert_contains(&out, "UnionStep");
+        }
+
+        #[test]
+        fn step_with_no_params() {
+            let steps = vec![LogicalStep::Count(CountStep {})];
+            let out = explain_str(steps);
+            assert_contains(&out, "CountStep");
+        }
+
+        #[test]
+        fn step_with_params_renders_kv() {
+            let steps = vec![LogicalStep::V(VStep { ids: smallvec![1, 2] })];
+            let out = explain_str(steps);
+            assert_contains(&out, "VStep(ids=[1, 2])");
         }
     }
 }
