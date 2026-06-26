@@ -24,6 +24,12 @@
 //! For elements created in-memory (mutations), the decoded `props` vec is
 //! populated directly and `raw_props` is `None`.
 //!
+//! A vertex can also enter a third state: [`Vertex::label_only`], where
+//! `label_id` is known (learned for free from an adjacent edge's value prefix)
+//! but no properties have been loaded yet.  Access beyond `id`/`label` requires
+//! an upgrade via `ensure_vertex_props_loaded` on the owning [`LogicalGraph`]
+//! or [`LogicalSnapshot`](crate::graph::LogicalSnapshot).
+//!
 //! # Relationship to keys
 //!
 //! The traversal pipeline usually carries lightweight *keys* ([`VertexKey`],

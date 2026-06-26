@@ -25,9 +25,9 @@
 //! | CF name         | Key layout                               | Value layout                        |
 //! |-----------------|------------------------------------------|-------------------------------------|
 //! | `vertices`      | `[ VertexId:i64 ]`                       | `[ label_id:u16 \| props ]`         |
-//! | `vertex_degree` | `[ VertexId:i64 ]`                       | `[ out_e_cnt:u32 \| in_e_cnt:u32 ]` |
-//! | `edges_out`     | `[ SrcId:i64 \| LabelId:u16 \| DstId:i64 \| Rank:u16 ]` | `[ props ]` |
-//! | `edges_in`      | `[ DstId:i64 \| LabelId:u16 \| SrcId:i64 \| Rank:u16 ]` | `[ props ]` |
+//! | `vertex_degree` | `[ VertexId:i64 ]`                       | `[ vertex_label_id:u16 \| out_e_cnt:u32 \| in_e_cnt:u32 ]` |
+//! | `edges_out`     | `[ SrcId:i64 \| LabelId:u16 \| DstId:i64 \| Rank:u16 ]` | `[ end_vertex_label:u16 \| props ]` |
+//! | `edges_in`      | `[ DstId:i64 \| LabelId:u16 \| SrcId:i64 \| Rank:u16 ]` | `[ end_vertex_label:u16 \| props ]` |
 //! | `schema`        | `[ kind:u8 \| name ]` (or the 1-byte meta key) | kind-dependent, see below      |
 //!
 //! Edge properties are duplicated across `edges_out` and `edges_in`.

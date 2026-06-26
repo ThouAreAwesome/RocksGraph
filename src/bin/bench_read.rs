@@ -27,6 +27,7 @@ use std::{
 };
 
 const EDGE_LABEL: &str = "Knows";
+const VERTEX_LABEL: &str = "Person";
 const NAME_KEY: &str = "name";
 const AGE_KEY: &str = "age";
 const WEIGHT_KEY: &str = "weight";
@@ -149,9 +150,32 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
         },
     )?;
 
+    run_query_benchmark(
+        "Q6: g.V(id).out(label).both(label).hasLabel(v_label).count()",
+        &lines,
+        &graph,
+        parallelism,
+        |snap, src, _dst| {
+            let Value::Int64(ct) = snap
+                .g()
+                .V([src])
+                .out([EDGE_LABEL])
+                .both([EDGE_LABEL])
+                .hasLabel([VERTEX_LABEL])
+                .count()
+                .next()?
+                .unwrap()
+            else {
+                unreachable!("unexpected gremlin result type")
+            };
+            assert!(ct >= 1);
+            Ok(())
+        },
+    )?;
+
     // We run the full DB scan benchmarks with 5 sequential runs to measure stable database scan latencies.
     run_query_benchmark(
-        "Q6: g.V().count() (Scan total vertices in DB)",
+        "Q7: g.V().count() (Scan total vertices in DB)",
         &Arc::new(vec!["0 0".to_string(); 5]),
         &graph,
         1,
@@ -165,7 +189,7 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     run_query_benchmark(
-        "Q7: g.E().count() (Scan total edges in DB)",
+        "Q8: g.E().count() (Scan total edges in DB)",
         &Arc::new(vec!["0 0".to_string(); 5]),
         &graph,
         1,
