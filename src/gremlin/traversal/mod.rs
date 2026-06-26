@@ -39,6 +39,20 @@
 //! | `t.next()` | `t.next()` — `Result<Option<Value>>` |
 //! | `t.toList()` | `t.to_list()` — `Result<Vec<Value>>` |
 //! | iterate `Traversal` | `t.iter()?` → `BuiltTraversal` (`Iterator<Item=Result<Value>>`) |
+//!
+//! # Anonymous sub-traversals (`__()`)
+//!
+//! Sub-traversal steps (`where`, `union`, `coalesce`, `repeat`, `not`, `choose`,
+//! `until`) accept a `GraphTraversal` — but the type is `#[doc(hidden)]`, so you
+//! never name it directly.  Import `__` from the crate root and call it inline:
+//!
+//! ```ignore
+//! use rocksgraph::__;
+//! snap.g().V([1]).outE(["knows"]).r#where(__().otherV().hasId([2])).count().next()?;
+//! ```
+//!
+//! If `GraphTraversal` appears in a compiler error, it's the hidden type behind
+//! `__()` — the same way the compiler prints `[closure@…]` for anonymous functions.
 
 use std::collections::HashMap;
 
@@ -54,12 +68,13 @@ use crate::{
     planner::{
         apply_rules,
         logical_step::{
-            AddEStep, AddVStep, AndStep, AsStep, BothEStep, BothStep, ChooseStep, CoalesceStep, CountStep,
-            CyclicPathStep, DedupStep, DropStep, EStep, EmitSpec, FoldStep, FromStep, GroupCountStep, HasIdStep,
-            HasLabelStep, InEStep, InStep, InVStep, LimitStep, LogicalPlan, LogicalStep, MaxStep, MeanStep, MinStep,
-            NotStep, OrStep, Order, OrderKey, OrderKeySpec, OrderStep, OtherVStep, OutEStep, OutStep, OutVStep,
-            PathStep, PropertiesStep, PropertyStep, RangeStep, RepeatStep, ScalarFilterStep, SelectStep,
-            SimplePathStep, SkipStep, SumStep, TailStep, ToStep, UnfoldStep, UnionStep, ValuesStep, WhereStep,
+            AddEStep, AddVStep, AndStep, AsStep, BothEStep, BothStep, ChooseStep, CoalesceStep, ConstantStep,
+            CountStep, CyclicPathStep, DedupStep, DropStep, EStep, EmitSpec, FoldStep, FromStep, GroupCountStep,
+            HasIdStep, HasLabelStep, IdStep, IdentityStep, InEStep, InStep, InVStep,
+            LabelStep, LimitStep, LocalStep, LogicalPlan, LogicalStep, MaxStep, MeanStep, MinStep, NotStep, OrStep,
+            Order, OrderKey, OrderKeySpec, OrderStep, OtherVStep, OutEStep, OutStep, OutVStep, PathStep,
+            PropertiesStep, PropertyStep, RangeStep, RepeatStep, ScalarFilterStep, SelectStep, SimplePathStep,
+            SkipStep, SumStep, TailStep, ToStep, UnfoldStep, UnionStep, ValuesStep, WhereStep,
         },
     },
     types::{keys::EdgeKey, prop_key::LABEL, StoreError},
@@ -523,6 +538,34 @@ pub trait TraversalBuilder: PlanAppender {
         self
     }
 
+    fn id(mut self) -> Self {
+        self.push_step(LogicalStep::Id(IdStep {}));
+        self
+    }
+
+    fn label(mut self) -> Self {
+        self.push_step(LogicalStep::Label(LabelStep {}));
+        self
+    }
+
+    fn identity(mut self) -> Self {
+        self.push_step(LogicalStep::Identity(IdentityStep {}));
+        self
+    }
+
+    fn constant(mut self, value: impl Into<crate::types::gvalue::Primitive>) -> Self {
+        self.push_step(LogicalStep::Constant(ConstantStep { value: value.into() }));
+        self
+    }
+
+    fn local(mut self, mut traversal: GraphTraversal) -> Self {
+        if let Some(err) = traversal.error.take() {
+            self.record_error(err);
+        }
+        self.push_step(LogicalStep::Local(LocalStep { plan: traversal.into_plan() }));
+        self
+    }
+
     fn dedup(mut self) -> Self {
         self.push_step(LogicalStep::Dedup(DedupStep {}));
         self
@@ -695,225 +738,7 @@ pub trait TraversalBuilder: PlanAppender {
 
 impl<T: PlanAppender> TraversalBuilder for T {}
 
-// ── ReadTraversal ─────────────────────────────────────────────────────────────
-
-/// A read-only traversal bound to a [`ReadSession`](crate::api::ReadSession) context.
-pub struct ReadTraversal<'s> {
-    plan: LogicalPlan,
-    ctx: &'s mut dyn GraphCtx,
-    pub(crate) error: Option<StoreError>,
-    pending_repeat: Option<RepeatBuilder>,
-    prop_keys: Option<Vec<SmolStr>>,
-}
-
-impl<'s> ReadTraversal<'s> {
-    pub(crate) fn new(ctx: &'s mut dyn GraphCtx) -> Self {
-        Self { plan: LogicalPlan { steps: vec![] }, ctx, error: None, pending_repeat: None, prop_keys: None }
-    }
-
-    /// Configure property fetching for this traversal.
-    ///
-    /// With no arguments, all properties are fetched (matching the pre-0.2.0 behavior).
-    /// With a list of keys, only those named properties are returned.
-    /// Without this call, elements are returned with id + label only.
-    #[allow(non_snake_case)]
-    pub fn withProperties(mut self, keys: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
-        self.prop_keys = Some(keys.into_iter().map(Into::into).collect());
-        self
-    }
-
-    /// Build the physical plan and return a lazy iterator over all results.
-    pub fn iter(self) -> Result<BuiltTraversal<'s>, StoreError> {
-        if let Some(err) = self.error {
-            return Err(err);
-        }
-        if self.pending_repeat.is_some() {
-            return Err(StoreError::TraversalError(
-                "repeat() requires at least one stop condition — call .times(n) or .until(cond).".to_string(),
-            ));
-        }
-        GraphTraversal { plan: self.plan, error: None, pending_repeat: None }.build(self.ctx, self.prop_keys)
-    }
-
-    /// Execute and return the first result (`tryNext()` in Gremlin).
-    pub fn next(self) -> Result<Option<Value>, StoreError> {
-        self.iter()?.next().transpose()
-    }
-
-    /// Execute and collect all results (`toList()` in Gremlin).
-    pub fn to_list(self) -> Result<Vec<Value>, StoreError> {
-        self.iter()?.collect()
-    }
-
-    /// Build the physical plan and return a pretty-printed explanation tree.
-    pub fn explain(self) -> Result<String, StoreError> {
-        if let Some(err) = self.error {
-            return Err(err);
-        }
-        if self.pending_repeat.is_some() {
-            return Err(StoreError::TraversalError(
-                "repeat() requires at least one stop condition — call .times(n) or .until(cond).".to_string(),
-            ));
-        }
-        let mut logical = self.plan;
-        crate::planner::apply_rules(&mut logical)?;
-        let schema_lock = self.ctx.schema();
-        let plan = crate::engine::volcano::builder::PhysicalPlanBuilder.build(&logical, &schema_lock)?;
-        Ok(crate::engine::volcano::builder::render_explain(&plan.explain(), 0, ""))
-    }
-}
-
-#[allow(private_interfaces)]
-impl PlanAppender for ReadTraversal<'_> {
-    fn plan_mut(&mut self) -> &mut LogicalPlan {
-        &mut self.plan
-    }
-    fn record_error(&mut self, err: StoreError) {
-        if self.error.is_none() {
-            self.error = Some(err);
-        }
-    }
-    fn pending_repeat_mut(&mut self) -> &mut Option<RepeatBuilder> {
-        &mut self.pending_repeat
-    }
-}
-
-// ── WriteTraversal ────────────────────────────────────────────────────────────
-
-/// A read-write traversal bound to a [`TxSession`](crate::api::TxSession) context.
-pub struct WriteTraversal<'s> {
-    plan: LogicalPlan,
-    ctx: &'s mut dyn GraphCtx,
-    pub(crate) error: Option<StoreError>,
-    pending_repeat: Option<RepeatBuilder>,
-    prop_keys: Option<Vec<SmolStr>>,
-}
-
-impl<'s> WriteTraversal<'s> {
-    pub(crate) fn new(ctx: &'s mut dyn GraphCtx) -> Self {
-        Self { plan: LogicalPlan { steps: vec![] }, ctx, error: None, pending_repeat: None, prop_keys: None }
-    }
-
-    /// Configure property fetching for this traversal (see [`ReadTraversal::withProperties`]).
-    #[allow(non_snake_case)]
-    pub fn withProperties(mut self, keys: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
-        self.prop_keys = Some(keys.into_iter().map(Into::into).collect());
-        self
-    }
-
-    // ── Concrete mutating methods ─────────────────────────────────────────────
-
-    #[allow(non_snake_case)]
-    pub fn addV(mut self, label: impl Into<SmolStr>) -> Self {
-        self.push_step(LogicalStep::AddV(AddVStep {
-            label: label.into(),
-            vertex_id: None,
-            properties: HashMap::new(),
-        }));
-        self
-    }
-
-    #[allow(non_snake_case)]
-    pub fn addE(mut self, label: impl Into<SmolStr>) -> Self {
-        self.push_step(LogicalStep::AddE(AddEStep {
-            label: label.into(),
-            out_v_id: None,
-            in_v_id: None,
-            properties: HashMap::new(),
-            rank: None,
-        }));
-        self
-    }
-
-    pub fn from(mut self, vertex_id: i64) -> Self {
-        self.push_step(LogicalStep::From(FromStep { vertex_id }));
-        self
-    }
-
-    pub fn to(mut self, vertex_id: i64) -> Self {
-        self.push_step(LogicalStep::To(ToStep { vertex_id }));
-        self
-    }
-
-    pub fn property(mut self, key: impl Into<SmolStr>, value: impl Into<Value>) -> Self {
-        let key_smol = key.into();
-        if key_smol == LABEL {
-            self.record_error(StoreError::SchemaViolation(
-                "Cannot manually set or update the reserved property 'label'. Vertex and edge labels must be specified when creating elements via addV()/addE().".to_string()
-            ));
-            return self;
-        }
-        let val = value.into();
-        if let Some(prim) = value_to_primitive(val.clone()) {
-            self.push_step(LogicalStep::Property(PropertyStep { prop_key: key_smol, prop_value: prim }));
-        } else {
-            self.record_error(StoreError::UnexpectedDataType(format!(
-                "property() expects a scalar primitive value, got complex type: {:?}",
-                val
-            )));
-        }
-        self
-    }
-
-    pub fn drop(mut self) -> Self {
-        self.push_step(LogicalStep::Drop(DropStep {}));
-        self
-    }
-
-    // ── Terminal ops ──────────────────────────────────────────────────────────
-
-    /// Build the physical plan and return a lazy iterator over all results.
-    pub fn iter(self) -> Result<BuiltTraversal<'s>, StoreError> {
-        if let Some(err) = self.error {
-            return Err(err);
-        }
-        if self.pending_repeat.is_some() {
-            return Err(StoreError::TraversalError(
-                "repeat() requires at least one stop condition — call .times(n) or .until(cond).".to_string(),
-            ));
-        }
-        GraphTraversal { plan: self.plan, error: None, pending_repeat: None }.build(self.ctx, self.prop_keys)
-    }
-
-    /// Execute and return the first result.
-    pub fn next(self) -> Result<Option<Value>, StoreError> {
-        self.iter()?.next().transpose()
-    }
-
-    /// Execute and collect all results.
-    pub fn to_list(self) -> Result<Vec<Value>, StoreError> {
-        self.iter()?.collect()
-    }
-
-    /// Build the physical plan and return a pretty-printed explanation tree.
-    pub fn explain(self) -> Result<String, StoreError> {
-        if let Some(err) = self.error {
-            return Err(err);
-        }
-        if self.pending_repeat.is_some() {
-            return Err(StoreError::TraversalError(
-                "repeat() requires at least one stop condition — call .times(n) or .until(cond).".to_string(),
-            ));
-        }
-        let mut logical = self.plan;
-        crate::planner::apply_rules(&mut logical)?;
-        let schema_lock = self.ctx.schema();
-        let plan = crate::engine::volcano::builder::PhysicalPlanBuilder.build(&logical, &schema_lock)?;
-        Ok(crate::engine::volcano::builder::render_explain(&plan.explain(), 0, ""))
-    }
-}
-
-#[allow(private_interfaces)]
-impl PlanAppender for WriteTraversal<'_> {
-    fn plan_mut(&mut self) -> &mut LogicalPlan {
-        &mut self.plan
-    }
-    fn record_error(&mut self, err: StoreError) {
-        if self.error.is_none() {
-            self.error = Some(err);
-        }
-    }
-    fn pending_repeat_mut(&mut self) -> &mut Option<RepeatBuilder> {
-        &mut self.pending_repeat
-    }
-}
+// ── ReadTraversal / WriteTraversal ────────────────────────────────────────
+// Terminal traversal types live in terminals.rs.
+mod terminals;
+pub use terminals::{ReadTraversal, WriteTraversal};

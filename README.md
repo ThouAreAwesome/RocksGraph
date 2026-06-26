@@ -416,7 +416,19 @@ tx.commit()?;
 
 ### Anonymous sub-traversals with `__()`
 
-`__()` creates a context-free traversal used as an argument to `where`, `coalesce`, and `union`. The type is `#[doc(hidden)]`; you never need to name it:
+`__()` creates a context-free traversal used as an argument to `where`,
+`coalesce`, `union`, `repeat`, `not`, `choose`, and `until`.  The type is
+`#[doc(hidden)]` because it's an internal implementation detail — you never
+write it by hand.  Import `__` from the crate root:
+
+```rust
+use rocksgraph::__;
+```
+
+If you see `GraphTraversal` in a compiler error, that's the hidden type
+behind `__()`.  The error message is referencing the internal type name, but
+your code should only ever interact with it through `__()` — the same way you
+pass `|x| x + 1` without naming the closure type.
 
 ```rust
 // where: filter edges whose other endpoint matches a condition
@@ -427,6 +439,9 @@ snap.g().V([1]).union([__().outE(["knows"]), __().outE(["created"])]).count().ne
 
 // coalesce: first non-empty branch (needs a `.count()` seed — see "Idempotent upserts" above)
 tx.g().V([id]).count().coalesce([__().V([id]).values(["name"]), __().addV("person").property("name", "x")]).next()?;
+
+// repeat: loop body
+snap.g().V([1]).repeat(__().out(["knows"])).times(3).explain()?;
 ```
 
 ### Multiple queries per session
@@ -533,6 +548,26 @@ just build-release
 ```
 
 [Current benchmark records](BENCHMARKS.md)
+
+## Safety
+
+RocksGraph's own code contains 5 `unsafe` blocks, all confined to the RocksDB
+store layer (`src/store/rocks/`) and all performing the same operation:
+`std::mem::transmute` to erase RocksDB transaction and snapshot lifetimes to
+`'static`.  This is necessary because `rocksdb::Transaction` and
+`rocksdb::Snapshot` borrow the database handle, but our structs own both the
+transaction and the `Arc<OptimisticTransactionDB>` — and Rust's borrow checker
+can't see that they're heap-allocated together.
+
+The invariant upholding these transmutes is documented in the module-level
+comments of `transaction.rs` and `snapshot.rs`: the transaction / snapshot
+field is declared *before* the `Arc<DB>` field in every struct, so the DB
+handle is dropped first — guaranteeing the borrowed transaction/snapshot never
+outlives it.  Every callsite carries a `// SAFETY:` comment referencing this
+invariant.
+
+The RocksDB dependency (`rust-rocksdb`) wraps a C++ library via FFI and is
+widely audited.
 
 ## Known Limitations
 

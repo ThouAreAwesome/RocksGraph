@@ -2522,6 +2522,7 @@ fn test_additional_physical_steps_coverage() {
 mod as_select_tests;
 mod choose_tests;
 mod group_tests;
+mod id_label_identity_constant_local_tests;
 mod not_and_or_tests;
 mod numeric_reducer_tests;
 mod order_tests;

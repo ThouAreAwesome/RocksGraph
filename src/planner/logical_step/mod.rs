@@ -114,6 +114,19 @@ impl LogicalPlan {
                             }
                         }
                     }
+                    Choose(ChooseStep {
+                        predicate,
+                        true_choice,
+                        false_choice,
+                        ..
+                    }) => {
+                        if scan(&predicate.steps) { return true; }
+                        if scan(&true_choice.steps) { return true; }
+                        if let Some(fc) = false_choice { if scan(&fc.steps) { return true; } }
+                    }
+                    Local(LocalStep { plan }) if scan(&plan.steps) => {
+                        return true;
+                    }
                     _ => {}
                 }
             }
@@ -178,6 +191,11 @@ pub enum LogicalStep {
     Choose(ChooseStep),
     Group(GroupStep),
     GroupCount(GroupCountStep),
+    Id(IdStep),
+    Label(LabelStep),
+    Constant(ConstantStep),
+    Identity(IdentityStep),
+    Local(LocalStep),
 }
 
 /// Specifies when a repeat step should emit intermediate results.
@@ -419,6 +437,37 @@ pub struct GroupCountStep {
 }
 impl Optimizer for GroupCountStep {}
 
+/// Passes each traverser through unchanged (Gremlin `identity()` step).
+#[derive(Clone, Debug)]
+pub struct IdentityStep {}
+impl Optimizer for IdentityStep {}
+
+/// Replaces each traverser with the id of its element (Gremlin `id()` step).
+#[derive(Clone, Debug)]
+pub struct IdStep {}
+impl Optimizer for IdStep {}
+
+/// Replaces each traverser with the label of its element (Gremlin `label()` step).
+#[derive(Clone, Debug)]
+pub struct LabelStep {}
+impl Optimizer for LabelStep {}
+
+/// Replaces each traverser with a fixed constant value (Gremlin `constant()` step).
+#[derive(Clone, Debug)]
+pub struct ConstantStep { pub value: Primitive }
+impl Optimizer for ConstantStep {}
+
+/// Executes a sub-traversal locally on each traverser and emits every result
+/// (Gremlin `local()` step).
+#[derive(Clone)]
+pub struct LocalStep { pub plan: LogicalPlan }
+
+impl Optimizer for LocalStep {
+    fn optimize(&mut self, optimizer_rule: &OptimizerRule) -> Result<bool, StoreError> {
+        optimizer_rule(&mut self.plan)
+    }
+}
+
 /// Implements the `Optimizer` trait for `LogicalStep`, allowing optimization rules to be applied to individual steps.
 impl Optimizer for LogicalStep {
     fn optimize(&mut self, optimizer_rule: &OptimizerRule) -> Result<bool, StoreError> {
@@ -432,6 +481,7 @@ impl Optimizer for LogicalStep {
             LogicalStep::And(a) => changed |= a.optimize(optimizer_rule)?,
             LogicalStep::Or(o) => changed |= o.optimize(optimizer_rule)?,
             LogicalStep::Choose(c) => changed |= c.optimize(optimizer_rule)?,
+            LogicalStep::Local(l) => changed |= l.optimize(optimizer_rule)?,
             _ => {}
         }
         Ok(changed)

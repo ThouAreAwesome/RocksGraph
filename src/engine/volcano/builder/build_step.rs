@@ -668,6 +668,34 @@ impl PhysicalPlanBuilder {
                     "ChooseStep"
                 )
             }
+            LogicalStep::Id(_) => {
+                drop(schema);
+                wire_required!(BufferedStep::new(steps::id_step::IdStep::default()), upstream, "IdStep")
+            }
+            LogicalStep::Identity(_) => {
+                drop(schema);
+                wire_required!(BufferedStep::new(steps::identity::IdentityStep::default()), upstream, "IdentityStep")
+            }
+            LogicalStep::Constant(s) => {
+                drop(schema);
+                wire_required!(
+                    BufferedStep::new(steps::constant::ConstantStep::new(s.value.clone())),
+                    upstream,
+                    "ConstantStep"
+                )
+            }
+            LogicalStep::Label(_) => {
+                wire_required!(BufferedStep::new(steps::label_step::LabelStep::default()), upstream, "LabelStep")
+            }
+            LogicalStep::Local(s) => {
+                drop(schema);
+                let physical_plan = self.build_steps(&s.plan, schema_lock, track_path)?;
+                wire_required!(
+                    BufferedStep::new(steps::local::LocalStep::new(physical_plan)),
+                    upstream,
+                    "LocalStep"
+                )
+            }
             LogicalStep::From(_) | LogicalStep::To(_) => Err(StoreError::UnsupportedOperation(
                 "From/To steps are optimizer-internal and should be eliminated before physical build.".to_string(),
             )),
