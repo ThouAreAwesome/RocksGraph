@@ -89,6 +89,7 @@ use crate::{
             VertexKey, DEFAULT_RANK,
         },
         prop_key::PropKey,
+        prop_key::{ID_KEY_ID, LABEL_KEY_ID},
         Primitive, Rank, StoreError,
     },
 };
@@ -240,6 +241,31 @@ impl<S: GraphStore> LogicalGraph<S> {
         }
     }
 
+    /// Cache a vertex label learned for free from an adjacent edge's value prefix.
+    /// Uses `or_insert_with` — never clobbers a richer entry (same pattern as the
+    /// edges overlay: `self.edges.entry(cek).or_insert(edge)`).
+    fn cache_vertex_label(&mut self, id: VertexKey, label_id: LabelId) {
+        self.vertices.entry(id).or_insert_with(|| Vertex::label_only(id, label_id));
+    }
+
+    /// Upgrade a `LabelOnly` vertex entry to a fully-loaded one from the store.
+    /// No-op if the entry is already richer or absent.  Returns
+    /// `StoreError::CorruptData` if a `LabelOnly`-cached vertex is no longer
+    /// present in the store — this is unreachable under the degree-counter
+    /// invariant (an edge can't exist without its endpoint), but it becomes a
+    /// surfaced error rather than a silent fallthrough to "zero properties."
+    fn ensure_vertex_props_loaded(&mut self, id: VertexKey) -> Result<(), StoreError> {
+        if self.vertices.get(&id).is_some_and(Vertex::is_label_only) {
+            match self.store.get_vertex(id)? {
+                Some(fresh) => {
+                    self.vertices.insert(id, fresh);
+                }
+                None => return Err(StoreError::CorruptData("vertex missing for LabelOnly cache entry")),
+            }
+        }
+        Ok(())
+    }
+
     // ── Reads ─────────────────────────────────────────────────────────────────
 
     /// Look up a vertex by key, loading from the store on first access.
@@ -275,6 +301,12 @@ impl<S: GraphStore> LogicalGraph<S> {
             match self.store.get_edge(key)? {
                 None => return Ok(None),
                 Some(eg) => {
+                    if let Some(l) = eg.src_label {
+                        self.cache_vertex_label(eg.src_id, l);
+                    }
+                    if let Some(l) = eg.dst_label {
+                        self.cache_vertex_label(eg.dst_id, l);
+                    }
                     self.edges.insert(cek, eg);
                 }
             }
@@ -322,6 +354,12 @@ impl<S: GraphStore> LogicalGraph<S> {
         if !missing_keys.is_empty() {
             let fetched = self.store.get_edges(&missing_keys)?;
             for eg in fetched {
+                if let Some(l) = eg.src_label {
+                    self.cache_vertex_label(eg.src_id, l);
+                }
+                if let Some(l) = eg.dst_label {
+                    self.cache_vertex_label(eg.dst_id, l);
+                }
                 self.edges.insert(eg.canonical_key(), eg);
             }
         }
@@ -345,6 +383,14 @@ impl<S: GraphStore> LogicalGraph<S> {
     ) -> Result<(Vec<EdgeKey>, Option<AdjacentEdgeCursor>), StoreError> {
         let (committed, cursor) = self.store.get_adjacent_edges(vertex, direction, opts, limit)?;
         for edge in committed {
+            // Cache vertex labels learned for free from this physical edge read
+            // — populates the vertex overlay so later hasLabel() calls skip the store.
+            if let Some(l) = edge.src_label {
+                self.cache_vertex_label(edge.src_id, l);
+            }
+            if let Some(l) = edge.dst_label {
+                self.cache_vertex_label(edge.dst_id, l);
+            }
             let cek = edge.canonical_key();
             self.edges.entry(cek).or_insert(edge);
         }
@@ -421,7 +467,17 @@ impl<S: GraphStore> LogicalGraph<S> {
     ) -> Result<(Vec<VertexKey>, Option<VertexKey>), StoreError> {
         let (committed, cursor) = self.store.scan_vertices(label, start_from, limit)?;
         for vt in committed {
-            self.vertices.entry(vt.id).or_insert(vt);
+            // Upgrade a LabelOnly placeholder if a full record just arrived from
+            // the scan — don't waste the read scan_vertices already paid for.
+            match self.vertices.entry(vt.id) {
+                Entry::Vacant(e) => {
+                    e.insert(vt);
+                }
+                Entry::Occupied(mut e) if e.get().is_label_only() => {
+                    e.insert(vt);
+                }
+                Entry::Occupied(_) => {}
+            }
         }
 
         let mut matching = Vec::new();
@@ -471,6 +527,12 @@ impl<S: GraphStore> LogicalGraph<S> {
     ) -> Result<(Vec<EdgeKey>, Option<CanonicalEdgeKey>), StoreError> {
         let (committed, cursor) = self.store.scan_edges(label, start_from, limit)?;
         for edge in committed {
+            if let Some(l) = edge.src_label {
+                self.cache_vertex_label(edge.src_id, l);
+            }
+            if let Some(l) = edge.dst_label {
+                self.cache_vertex_label(edge.dst_id, l);
+            }
             let cek = edge.canonical_key();
             self.edges.entry(cek).or_insert(edge);
         }
@@ -535,6 +597,11 @@ impl<S: GraphStore> LogicalGraph<S> {
         match *key {
             CanonicalKey::Vertex(vk) => {
                 if self.get_vertex(vk).unwrap().is_some() {
+                    // LabelOnly entries carry the label and id but no properties —
+                    // for any key other than id/label, upgrade to a real fetch first.
+                    if prop_key_id != ID_KEY_ID && prop_key_id != LABEL_KEY_ID {
+                        self.ensure_vertex_props_loaded(vk)?;
+                    }
                     Ok(self.vertices.get_mut(&vk).unwrap().get_property(prop_key_id))
                 } else {
                     Ok(None)
@@ -565,6 +632,9 @@ impl<S: GraphStore> LogicalGraph<S> {
         match *key {
             CanonicalKey::Vertex(vk) => {
                 if self.get_vertex(vk).unwrap().is_some() {
+                    if prop_key_id != ID_KEY_ID && prop_key_id != LABEL_KEY_ID {
+                        self.ensure_vertex_props_loaded(vk)?;
+                    }
                     Ok(self.vertices.get_mut(&vk).unwrap().get_value(prop_key_id))
                 } else {
                     Ok(None)
@@ -592,6 +662,8 @@ impl<S: GraphStore> LogicalGraph<S> {
                 if self.get_vertex(vk)?.is_none() {
                     return Ok(None);
                 }
+                // "all" can never be answered from a label-only entry — upgrade first.
+                self.ensure_vertex_props_loaded(vk)?;
                 let vt = self.vertices.get_mut(&vk).unwrap();
                 let label_id = vt.label_id;
                 let schema = self.schema.read().unwrap();
@@ -823,8 +895,10 @@ impl<S: GraphStore> LogicalGraph<S> {
                 if self.dirty.get(&key) == Some(&Existence::Tombstone) {
                     return Err(StoreError::Tombstoned);
                 }
-                // Auto-load from store if not yet in overlay.
-                if !self.vertices.contains_key(&id) {
+                // Auto-load from store if not yet in overlay, or if the existing entry
+                // is LabelOnly — mutating a LabelOnly entry without an upgrade first
+                // would treat unread properties as nonexistent and discard them.
+                if !self.vertices.contains_key(&id) || self.vertices.get(&id).is_some_and(Vertex::is_label_only) {
                     match self.store.get_vertex(id)? {
                         None => return Err(StoreError::NotFound),
                         Some(vt) => {
@@ -871,8 +945,9 @@ impl<S: GraphStore> LogicalGraph<S> {
                 if self.dirty.get(&key) == Some(&Existence::Tombstone) {
                     return Err(StoreError::Tombstoned);
                 }
-                // Auto-load from store if not yet in overlay.
-                if !self.vertices.contains_key(&id) {
+                // Auto-load from store if not yet in overlay, or if the existing entry
+                // is LabelOnly — same rationale as set_property.
+                if !self.vertices.contains_key(&id) || self.vertices.get(&id).is_some_and(Vertex::is_label_only) {
                     match self.store.get_vertex(id)? {
                         None => return Err(StoreError::NotFound),
                         Some(vt) => {
@@ -1180,6 +1255,22 @@ impl<S: GraphStore> LogicalSnapshot<S> {
         self.edges.clear();
     }
 
+    fn cache_vertex_label(&mut self, id: VertexKey, label_id: LabelId) {
+        self.vertices.entry(id).or_insert_with(|| Vertex::label_only(id, label_id));
+    }
+
+    fn ensure_vertex_props_loaded(&mut self, id: VertexKey) -> Result<(), StoreError> {
+        if self.vertices.get(&id).is_some_and(Vertex::is_label_only) {
+            match self.store.get_vertex(id)? {
+                Some(fresh) => {
+                    self.vertices.insert(id, fresh);
+                }
+                None => return Err(StoreError::CorruptData("vertex missing for LabelOnly cache entry")),
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn get_vertex(&mut self, key: VertexKey) -> Result<Option<VertexKey>, StoreError> {
         if !self.vertices.contains_key(&key) {
             match self.store.get_vertex(key)? {
@@ -1198,6 +1289,12 @@ impl<S: GraphStore> LogicalSnapshot<S> {
             match self.store.get_edge(key)? {
                 None => return Ok(None),
                 Some(eg) => {
+                    if let Some(l) = eg.src_label {
+                        self.cache_vertex_label(eg.src_id, l);
+                    }
+                    if let Some(l) = eg.dst_label {
+                        self.cache_vertex_label(eg.dst_id, l);
+                    }
                     self.edges.insert(cek, eg);
                 }
             }
@@ -1238,6 +1335,12 @@ impl<S: GraphStore> LogicalSnapshot<S> {
         if !missing_keys.is_empty() {
             let fetched = self.store.get_edges(&missing_keys)?;
             for eg in fetched {
+                if let Some(l) = eg.src_label {
+                    self.cache_vertex_label(eg.src_id, l);
+                }
+                if let Some(l) = eg.dst_label {
+                    self.cache_vertex_label(eg.dst_id, l);
+                }
                 self.edges.insert(eg.canonical_key(), eg);
             }
         }
@@ -1261,6 +1364,12 @@ impl<S: GraphStore> LogicalSnapshot<S> {
         let (committed, cursor) = self.store.get_adjacent_edges(vertex, direction, opts, limit)?;
         let mut result = Vec::with_capacity(committed.len());
         for edge in committed {
+            if let Some(l) = edge.src_label {
+                self.cache_vertex_label(edge.src_id, l);
+            }
+            if let Some(l) = edge.dst_label {
+                self.cache_vertex_label(edge.dst_id, l);
+            }
             let cek = edge.canonical_key();
             result.push(match direction {
                 Direction::OUT => cek.out_key(),
@@ -1281,7 +1390,15 @@ impl<S: GraphStore> LogicalSnapshot<S> {
         let mut result = Vec::with_capacity(committed.len());
         for vt in committed {
             result.push(vt.id);
-            self.vertices.entry(vt.id).or_insert(vt);
+            match self.vertices.entry(vt.id) {
+                Entry::Vacant(e) => {
+                    e.insert(vt);
+                }
+                Entry::Occupied(mut e) if e.get().is_label_only() => {
+                    e.insert(vt);
+                }
+                Entry::Occupied(_) => {}
+            }
         }
         Ok((result, cursor))
     }
@@ -1295,6 +1412,12 @@ impl<S: GraphStore> LogicalSnapshot<S> {
         let (committed, cursor) = self.store.scan_edges(label, start_from, limit)?;
         let mut result = Vec::with_capacity(committed.len());
         for edge in committed {
+            if let Some(l) = edge.src_label {
+                self.cache_vertex_label(edge.src_id, l);
+            }
+            if let Some(l) = edge.dst_label {
+                self.cache_vertex_label(edge.dst_id, l);
+            }
             let cek = edge.canonical_key();
             result.push(cek.out_key());
             self.edges.entry(cek).or_insert(edge);
@@ -1310,6 +1433,9 @@ impl<S: GraphStore> LogicalSnapshot<S> {
         match *key {
             CanonicalKey::Vertex(vk) => {
                 if self.get_vertex(vk)?.is_some() {
+                    if prop_key_id != ID_KEY_ID && prop_key_id != LABEL_KEY_ID {
+                        self.ensure_vertex_props_loaded(vk)?;
+                    }
                     Ok(self.vertices.get_mut(&vk).unwrap().get_property(prop_key_id))
                 } else {
                     Ok(None)
@@ -1324,6 +1450,9 @@ impl<S: GraphStore> LogicalSnapshot<S> {
         match *key {
             CanonicalKey::Vertex(vk) => {
                 if self.get_vertex(vk)?.is_some() {
+                    if prop_key_id != ID_KEY_ID && prop_key_id != LABEL_KEY_ID {
+                        self.ensure_vertex_props_loaded(vk)?;
+                    }
                     Ok(self.vertices.get_mut(&vk).unwrap().get_value(prop_key_id))
                 } else {
                     Ok(None)
@@ -1346,6 +1475,7 @@ impl<S: GraphStore> LogicalSnapshot<S> {
                 if self.get_vertex(vk)?.is_none() {
                     return Ok(None);
                 }
+                self.ensure_vertex_props_loaded(vk)?;
                 let vt = self.vertices.get_mut(&vk).unwrap();
                 let label_id = vt.label_id;
                 let schema = self.schema.read().unwrap();
@@ -1446,6 +1576,7 @@ mod tests {
         store::RocksStorage,
         types::{
             element::Property,
+            element::Vertex,
             gvalue::Primitive,
             keys::{AdjacentEdgesOptions, CanonicalEdgeKey, CanonicalKey, Direction, EdgeKey, LabelId, VertexKey},
             StoreError,
@@ -3413,5 +3544,224 @@ mod tests {
         let (v_batch3, v_cursor3) = snap.scan_vertices(None, v_cursor2, 1).unwrap();
         assert_eq!(v_batch3.len(), 0);
         assert_eq!(v_cursor3, None);
+    }
+
+    // ── Phase 3: vertex label cache tests ────────────────────────────────────
+    //
+    // 1. Read-after-mutate through a LabelOnly entry
+
+    #[test]
+    fn labelonly_mutate_then_read_back() {
+        let (store, _dir) = open();
+        let mut base = ctx(&store);
+        let x = base.add_vertex(100, 1).unwrap();
+        let y = base.add_vertex(200, 1).unwrap();
+        let ek = cek(y, 2, x);
+        base.add_edge(&ek.out_key()).unwrap();
+        base.commit().unwrap();
+
+        let mut c = ctx(&store);
+        let edges = get_adjacent_edges_test(&mut c, y, Direction::OUT, Some(2), None, None);
+        assert_eq!(edges.len(), 1);
+
+        let prop = Property { owner: CanonicalKey::Vertex(x), key: 4, value: Primitive::Int32(42) };
+        c.set_property(&prop).unwrap();
+
+        let val = c.get_value(&CanonicalKey::Vertex(x), 4).unwrap();
+        assert_eq!(val, Some(Primitive::Int32(42)));
+    }
+
+    // 2. Mutating one property must not lose a different, pre-existing one
+
+    #[test]
+    fn labelonly_mutate_preserves_existing_property() {
+        let (store, _dir) = open();
+        let mut base = ctx(&store);
+        let x = base.add_vertex(100, 1).unwrap();
+        let name_prop = Property { owner: CanonicalKey::Vertex(x), key: 4, value: Primitive::Int32(10) };
+        base.set_property(&name_prop).unwrap();
+        let y = base.add_vertex(200, 1).unwrap();
+        let ek = cek(y, 2, x);
+        base.add_edge(&ek.out_key()).unwrap();
+        base.commit().unwrap();
+
+        let mut c = ctx(&store);
+        let edges = get_adjacent_edges_test(&mut c, y, Direction::OUT, Some(2), None, None);
+        assert_eq!(edges.len(), 1);
+
+        let score_prop = Property { owner: CanonicalKey::Vertex(x), key: 6, value: Primitive::Int32(99) };
+        c.set_property(&score_prop).unwrap();
+
+        let val = c.get_value(&CanonicalKey::Vertex(x), 4).unwrap();
+        assert_eq!(val, Some(Primitive::Int32(10)));
+    }
+
+    // 3. drop_property through a LabelOnly entry
+
+    #[test]
+    fn labelonly_drop_property() {
+        let (store, _dir) = open();
+        let mut base = ctx(&store);
+        let x = base.add_vertex(100, 1).unwrap();
+        let name_prop = Property { owner: CanonicalKey::Vertex(x), key: 4, value: Primitive::Int32(10) };
+        base.set_property(&name_prop).unwrap();
+        let temp_prop = Property { owner: CanonicalKey::Vertex(x), key: 6, value: Primitive::Int32(99) };
+        base.set_property(&temp_prop).unwrap();
+        let y = base.add_vertex(200, 1).unwrap();
+        let ek = cek(y, 2, x);
+        base.add_edge(&ek.out_key()).unwrap();
+        base.commit().unwrap();
+
+        let mut c = ctx(&store);
+        let edges = get_adjacent_edges_test(&mut c, y, Direction::OUT, Some(2), None, None);
+        assert_eq!(edges.len(), 1);
+
+        let drop = Property { owner: CanonicalKey::Vertex(x), key: 6, value: Primitive::Null };
+        c.drop_property(&drop).unwrap();
+
+        assert_eq!(c.get_value(&CanonicalKey::Vertex(x), 6).unwrap(), None);
+        let val = c.get_value(&CanonicalKey::Vertex(x), 4).unwrap();
+        assert_eq!(val, Some(Primitive::Int32(10)));
+    }
+
+    // 4. Mutation through LabelOnly survives commit
+
+    #[test]
+    fn labelonly_mutation_survives_commit() {
+        let (store, _dir) = open();
+        let mut base = ctx(&store);
+        let x = base.add_vertex(100, 1).unwrap();
+        let y = base.add_vertex(200, 1).unwrap();
+        let ek = cek(y, 2, x);
+        base.add_edge(&ek.out_key()).unwrap();
+        base.commit().unwrap();
+
+        let mut c = ctx(&store);
+        let edges = get_adjacent_edges_test(&mut c, y, Direction::OUT, Some(2), None, None);
+        assert_eq!(edges.len(), 1);
+        let prop = Property { owner: CanonicalKey::Vertex(x), key: 4, value: Primitive::Int32(42) };
+        c.set_property(&prop).unwrap();
+        c.commit().unwrap();
+
+        let mut fresh = ctx(&store);
+        let val = fresh.get_value(&CanonicalKey::Vertex(x), 4).unwrap();
+        assert_eq!(val, Some(Primitive::Int32(42)));
+    }
+
+    // 8. LabelOnly placeholder never clobbers stronger data
+
+    #[test]
+    fn labelonly_never_clobbers_decoded() {
+        let (store, _dir) = open();
+        let mut base = ctx(&store);
+        let x = base.add_vertex(100, 1).unwrap();
+        let name_prop = Property { owner: CanonicalKey::Vertex(x), key: 4, value: Primitive::Int32(10) };
+        base.set_property(&name_prop).unwrap();
+        let y = base.add_vertex(200, 1).unwrap();
+        let ek = cek(y, 2, x);
+        base.add_edge(&ek.out_key()).unwrap();
+        base.commit().unwrap();
+
+        let mut c = ctx(&store);
+        // Fully load X via scan_vertices — brings it in as Raw/Decoded.
+        let (verts, _) = c.scan_vertices(None, None, 10).unwrap();
+        assert!(verts.contains(&x));
+        // Confirm it's real by reading a property.
+        let val = c.get_value(&CanonicalKey::Vertex(x), 4).unwrap();
+        assert_eq!(val, Some(Primitive::Int32(10)));
+
+        // Traverse edge to X — cache_vertex_label must not downgrade.
+        let edges = get_adjacent_edges_test(&mut c, y, Direction::OUT, Some(2), None, None);
+        assert_eq!(edges.len(), 1);
+
+        // Property still works — entry was not downgraded to LabelOnly.
+        let val2 = c.get_value(&CanonicalKey::Vertex(x), 4).unwrap();
+        assert_eq!(val2, Some(Primitive::Int32(10)));
+    }
+
+    // 9. Tombstoned vertex not served from stale cache
+
+    #[test]
+    fn labelonly_tombstoned_vertex_not_served() {
+        let (store, _dir) = open();
+        let mut base = ctx(&store);
+        let x = base.add_vertex(100, 1).unwrap();
+        let y = base.add_vertex(200, 1).unwrap();
+        let ek = cek(y, 2, x);
+        base.add_edge(&ek.out_key()).unwrap();
+        base.commit().unwrap();
+
+        let mut c = ctx(&store);
+        // Traverse edge to X, caching it LabelOnly.
+        let edges = get_adjacent_edges_test(&mut c, y, Direction::OUT, Some(2), None, None);
+        assert_eq!(edges.len(), 1);
+
+        // Drop the edge so X has zero incident edges, then drop X.
+        c.drop_element(&CanonicalKey::Edge(ek)).unwrap();
+        c.drop_element(&CanonicalKey::Vertex(x)).unwrap();
+
+        // X must report absent — not answer from the stale LabelOnly entry.
+        assert!(c.get_vertex(x).unwrap().is_none());
+    }
+
+    // 10. scan_vertices upgrades LabelOnly in place
+
+    #[test]
+    fn labelonly_scan_vertices_upgrades_in_place() {
+        let (store, _dir) = open();
+        let mut base = ctx(&store);
+        let x = base.add_vertex(100, 1).unwrap();
+        let name_prop = Property { owner: CanonicalKey::Vertex(x), key: 4, value: Primitive::Int32(42) };
+        base.set_property(&name_prop).unwrap();
+        let y = base.add_vertex(200, 1).unwrap();
+        let ek = cek(y, 2, x);
+        base.add_edge(&ek.out_key()).unwrap();
+        base.commit().unwrap();
+
+        let mut c = ctx(&store);
+        // Cache X as LabelOnly via edge traversal.
+        let edges = get_adjacent_edges_test(&mut c, y, Direction::OUT, Some(2), None, None);
+        assert_eq!(edges.len(), 1);
+
+        // scan_vertices passes over X — must upgrade the LabelOnly entry.
+        let (verts, _) = c.scan_vertices(None, None, 10).unwrap();
+        assert!(verts.contains(&x));
+
+        // Property access works — upgraded in place, no wasted fetch.
+        let val = c.get_value(&CanonicalKey::Vertex(x), 4).unwrap();
+        assert_eq!(val, Some(Primitive::Int32(42)));
+    }
+
+    // 13. ensure_vertex_props_loaded surfaces CorruptData on missing vertex
+
+    #[test]
+    fn labelonly_corrupt_data_on_missing_vertex() {
+        let (store, _dir) = open();
+        let mut base = ctx(&store);
+        let x = base.add_vertex(100, 1).unwrap();
+        let y = base.add_vertex(200, 1).unwrap();
+        let ek = cek(y, 2, x);
+        base.add_edge(&ek.out_key()).unwrap();
+        base.commit().unwrap();
+
+        let mut c = ctx(&store);
+        // Cache X as LabelOnly.
+        let edges = get_adjacent_edges_test(&mut c, y, Direction::OUT, Some(2), None, None);
+        assert_eq!(edges.len(), 1);
+
+        // Drop the edge and X, then commit so the store loses X entirely.
+        c.drop_element(&CanonicalKey::Edge(ek)).unwrap();
+        c.drop_element(&CanonicalKey::Vertex(x)).unwrap();
+        c.commit().unwrap();
+
+        // Fresh transaction: manually inject a LabelOnly placeholder for X,
+        // whose underlying vertex no longer exists in the store.
+        let mut c2 = ctx(&store);
+        c2.vertices.insert(x, Vertex::label_only(x, 1));
+
+        // Accessing a non-trivial property triggers ensure_vertex_props_loaded,
+        // which must fail with CorruptData.
+        let err = c2.get_value(&CanonicalKey::Vertex(x), 4);
+        assert!(matches!(err, Err(StoreError::CorruptData(_))));
     }
 }

@@ -69,6 +69,11 @@ pub type PropDecoder = fn(blob: &[u8], owner: CanonicalKey) -> Option<Vec<Proper
 pub struct Vertex {
     pub id: VertexKey,
     pub label_id: LabelId,
+    /// `true` when only `label_id` is known — learned for free from an
+    /// adjacent edge's value. `raw_props`/`props` are both empty placeholders
+    /// in this state, not real data — any access beyond `id`/`label` needs a
+    /// real fetch first.
+    label_only: bool,
     /// Raw property blob from the store. `Some` until first decode, then `None`.
     raw_props: Option<(Box<[u8]>, PropDecoder)>,
     /// Decoded properties. Empty until decoded on first property accessor call (or `None`
@@ -80,7 +85,7 @@ impl Vertex {
     /// Construct a vertex with already-decoded properties (mutation / admin path).
     #[inline]
     pub fn with_props(id: VertexKey, label_id: LabelId, props: Vec<Property>) -> Self {
-        Vertex { id, label_id, raw_props: None, props }
+        Vertex { id, label_id, label_only: false, raw_props: None, props }
     }
 
     /// Construct a vertex from raw store bytes (lazy-decode path).
@@ -88,7 +93,21 @@ impl Vertex {
     /// `props` starts empty and is decoded lazily on first property access.
     #[inline]
     pub fn from_raw(id: VertexKey, label_id: LabelId, raw: Box<[u8]>, decoder: PropDecoder) -> Self {
-        Vertex { id, label_id, raw_props: Some((raw, decoder)), props: Vec::new() }
+        Vertex { id, label_id, label_only: false, raw_props: Some((raw, decoder)), props: Vec::new() }
+    }
+
+    /// Construct a label-only vertex — `label_id` is known (from an adjacent edge's
+    /// value prefix), but no property data has been loaded yet. Access to any
+    /// property beyond `id`/`label` requires an upgrade via `ensure_vertex_props_loaded`.
+    #[inline]
+    pub fn label_only(id: VertexKey, label_id: LabelId) -> Self {
+        Vertex { id, label_id, label_only: true, raw_props: None, props: Vec::new() }
+    }
+
+    /// Returns `true` if this vertex carries only a label (no property data).
+    #[inline]
+    pub fn is_label_only(&self) -> bool {
+        self.label_only
     }
 
     #[inline]
