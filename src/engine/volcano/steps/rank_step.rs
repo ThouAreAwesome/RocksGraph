@@ -17,9 +17,9 @@
 
 use std::rc::Rc;
 
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 
-use crate::types::PIPELINE_BATCH_INLINE;
+use crate::types::PIPELINE_PRODUCE_INLINE;
 use crate::{
     engine::{
         context::GraphCtx,
@@ -49,21 +49,32 @@ impl CoreStep for RankStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
         let Some(upstream) = self.upstream.as_ref() else {
             return Ok(None);
         };
-        let Some(t) = upstream.next(ctx)? else {
-            return Ok(None);
-        };
-        let rank_value = match &t.value {
-            GValue::Edge(ek) => GValue::Scalar(Primitive::UInt16(ek.rank)),
-            GValue::Vertex(_) => {
-                return Err(StoreError::UnexpectedDataType("rank() is edge-only — vertices have no rank".to_string()));
-            }
-            _ => return Ok(Some(smallvec![t])),
-        };
-        Ok(Some(smallvec![Traverser::new_rc(rank_value)]))
+        let mut batch = SmallVec::with_capacity(PIPELINE_PRODUCE_INLINE);
+        while batch.len() < PIPELINE_PRODUCE_INLINE {
+            let Some(t) = upstream.next(ctx)? else { break };
+            let rank_value = match &t.value {
+                GValue::Edge(ek) => GValue::Scalar(Primitive::UInt16(ek.rank)),
+                GValue::Vertex(_) => {
+                    return Err(StoreError::UnexpectedDataType(
+                        "rank() is edge-only — vertices have no rank".to_string(),
+                    ));
+                }
+                _ => {
+                    batch.push(t);
+                    continue;
+                }
+            };
+            batch.push(Traverser::new_rc(rank_value));
+        }
+        if batch.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(batch))
+        }
     }
 
     fn reset(&mut self) {

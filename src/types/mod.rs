@@ -94,9 +94,14 @@ pub(crate) const DIRECTION_INLINE: usize = 2;
 /// Inline capacity for order-by keys.  Most `order().by(...)` chains use 1–2 keys.
 pub(crate) const ORDER_KEY_INLINE: usize = 2;
 
-/// Default inline capacity for the Volcano pipeline batch buffer and for
-/// small collections of vertex IDs, edge labels, property keys, and sub-plans.
+/// Inline capacity for small collections of vertex IDs, edge labels, property keys,
+/// and logical sub-plans in query parameters (the user rarely supplies more than a
+/// handful per `V()` / `outE()` / `.and()` / `.union()` call).
 pub(crate) const PIPELINE_BATCH_INLINE: usize = 4;
+
+/// Inline capacity for the Volcano pipeline produce buffer — determines how many
+/// traversers can be emitted per single `produce()` → `next()` round-trip.
+pub(crate) const PIPELINE_PRODUCE_INLINE: usize = 8;
 
 /// Inline capacity for vertex property lists in `addV()`.
 pub(crate) const VERTEX_PROPS_INLINE: usize = 8;

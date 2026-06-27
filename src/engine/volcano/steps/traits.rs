@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::types::PIPELINE_BATCH_INLINE;
+use crate::types::PIPELINE_PRODUCE_INLINE;
 use crate::{
     engine::{context::GraphCtx, traverser::Traverser},
     types::error::StoreError,
@@ -83,7 +83,7 @@ pub trait CoreStep: std::fmt::Debug {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError>;
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError>;
 
     /// Reset all mutable state and propagate to upstreams.
     fn reset(&mut self);
@@ -124,7 +124,7 @@ impl<T: CoreStep + 'static> BufferedStep<T> {
     /// capacity of the [`SmallVec`] that [`CoreStep::produce`] returns.
     /// Avoids the 0→4 reallocation chain on the first `produce()` call.
     pub fn new(core: T) -> Rc<Self> {
-        Rc::new(Self { inner: RefCell::new(StepInner { core, buffer: VecDeque::with_capacity(4) }) })
+        Rc::new(Self { inner: RefCell::new(StepInner { core, buffer: VecDeque::with_capacity(PIPELINE_PRODUCE_INLINE + 1) }) })
     }
 }
 

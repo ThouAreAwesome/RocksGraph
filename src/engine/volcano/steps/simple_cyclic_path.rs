@@ -1,7 +1,7 @@
 // Physical steps: simplePath(), cyclicPath()
 
 use crate::engine::volcano::steps::traits::ExplainNode;
-use crate::types::PIPELINE_BATCH_INLINE;
+use crate::types::PIPELINE_PRODUCE_INLINE;
 use crate::{
     engine::{
         context::GraphCtx,
@@ -10,7 +10,7 @@ use crate::{
     },
     types::{error::StoreError, gvalue::GValue},
 };
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 use std::rc::Rc;
 
 /// Filters out traversers whose parent chain contains duplicates — keeps only simple paths.
@@ -35,14 +35,20 @@ impl CoreStep for SimplePathStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
-        loop {
-            let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
-            let Some(t) = upstream.next(ctx)? else { return Ok(None) };
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
+        let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
+        let mut batch = SmallVec::with_capacity(PIPELINE_PRODUCE_INLINE);
+        while batch.len() < PIPELINE_PRODUCE_INLINE {
+            let Some(t) = upstream.next(ctx)? else { break };
             if has_duplicate_vertex(&t) {
                 continue;
             }
-            return Ok(Some(smallvec![t]));
+            batch.push(t);
+        }
+        if batch.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(batch))
         }
     }
 
@@ -73,14 +79,20 @@ impl CoreStep for CyclicPathStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
-        loop {
-            let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
-            let Some(t) = upstream.next(ctx)? else { return Ok(None) };
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
+        let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
+        let mut batch = SmallVec::with_capacity(PIPELINE_PRODUCE_INLINE);
+        while batch.len() < PIPELINE_PRODUCE_INLINE {
+            let Some(t) = upstream.next(ctx)? else { break };
             if !has_duplicate_vertex(&t) {
                 continue;
             }
-            return Ok(Some(smallvec![t]));
+            batch.push(t);
+        }
+        if batch.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(batch))
         }
     }
 

@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::types::PIPELINE_BATCH_INLINE;
+use crate::types::PIPELINE_PRODUCE_INLINE;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
@@ -54,22 +54,22 @@ pub struct RepeatStep {
     // ── Static/Fixed configuration ──
     body: PhysicalPlan,
     until: Option<PhysicalPlan>,
-    times: Option<u32>,
+    times: Option<i64>,
     emit: PhysicalEmitMode,
 
     // ── Dynamic/Runtime execution state ──
     /// BFS frontier: (traverser, iterations_completed_so_far).
-    frontier: VecDeque<(Rc<Traverser>, u32)>,
+    frontier: VecDeque<(Rc<Traverser>, i64)>,
     /// Outputs queued for the next `produce()` call.
     ready: VecDeque<Rc<Traverser>>,
     /// Whether `body` is currently active (has been reset + injected and may yield more).
     body_active: bool,
     /// The iteration count of the traverser currently inside the body.
-    current_iter_count: u32,
+    current_iter_count: i64,
 }
 
 impl RepeatStep {
-    pub fn new(body: PhysicalPlan, until: Option<PhysicalPlan>, times: Option<u32>, emit: PhysicalEmitMode) -> Self {
+    pub fn new(body: PhysicalPlan, until: Option<PhysicalPlan>, times: Option<i64>, emit: PhysicalEmitMode) -> Self {
         Self {
             upstream: None,
             body,
@@ -84,7 +84,7 @@ impl RepeatStep {
     }
 
     /// Returns true when a stop-condition is met for `out` at the given iteration count.
-    fn is_done(&self, iter_count: u32, out: &Rc<Traverser>, ctx: &mut dyn GraphCtx) -> Result<bool, StoreError> {
+    fn is_done(&self, iter_count: i64, out: &Rc<Traverser>, ctx: &mut dyn GraphCtx) -> Result<bool, StoreError> {
         // 1. times bound reached.
         if let Some(times) = self.times {
             if iter_count >= times {
@@ -127,7 +127,7 @@ impl CoreStep for RepeatStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
         loop {
             // ── Drain ready queue first ──
             if let Some(t) = self.ready.pop_front() {

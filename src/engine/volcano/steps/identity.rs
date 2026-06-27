@@ -17,9 +17,9 @@
 
 use std::rc::Rc;
 
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 
-use crate::types::PIPELINE_BATCH_INLINE;
+use crate::types::PIPELINE_PRODUCE_INLINE;
 use crate::{
     engine::{
         context::GraphCtx,
@@ -43,14 +43,20 @@ impl CoreStep for IdentityStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
         let Some(upstream) = self.upstream.as_ref() else {
             return Ok(None);
         };
-        let Some(t) = upstream.next(ctx)? else {
-            return Ok(None);
-        };
-        Ok(Some(smallvec![t]))
+        let mut batch = SmallVec::with_capacity(PIPELINE_PRODUCE_INLINE);
+        while batch.len() < PIPELINE_PRODUCE_INLINE {
+            let Some(t) = upstream.next(ctx)? else { break };
+            batch.push(t);
+        }
+        if batch.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(batch))
+        }
     }
 
     fn reset(&mut self) {

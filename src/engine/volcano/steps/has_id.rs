@@ -16,10 +16,10 @@
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::types::keys::CanonicalEdgeKey;
-use crate::types::PIPELINE_BATCH_INLINE;
+use crate::types::PIPELINE_PRODUCE_INLINE;
 use std::rc::Rc;
 
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 
 use crate::engine::volcano::steps::traits::ExplainNode;
 use crate::{
@@ -123,23 +123,29 @@ impl CoreStep for HasIdStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
-        loop {
-            let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
-            let Some(t) = upstream.next(ctx)? else { return Ok(None) };
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
+        let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
+        let mut batch = SmallVec::with_capacity(PIPELINE_PRODUCE_INLINE);
+        while batch.len() < PIPELINE_PRODUCE_INLINE {
+            let Some(t) = upstream.next(ctx)? else { break };
             match &t.value {
                 GValue::Vertex(vk) if self.pred.evaluate(&Primitive::Int64(*vk)) => {
-                    return Ok(Some(smallvec![t]));
+                    batch.push(t);
                 }
                 GValue::Edge(ek) => {
                     if let Some(edge_pred) = &self.edge_pred {
                         if edge_pred.matches(&ek.canonical_edge_key()) {
-                            return Ok(Some(smallvec![t]));
+                            batch.push(t);
                         }
                     }
                 }
                 _ => {}
             }
+        }
+        if batch.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(batch))
         }
     }
 

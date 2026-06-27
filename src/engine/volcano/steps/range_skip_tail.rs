@@ -1,7 +1,7 @@
 // Physical steps: range(), skip(), tail()
 
 use crate::engine::volcano::steps::traits::ExplainNode;
-use crate::types::PIPELINE_BATCH_INLINE;
+use crate::types::PIPELINE_PRODUCE_INLINE;
 use crate::{
     engine::{
         context::GraphCtx,
@@ -17,13 +17,13 @@ use std::rc::Rc;
 #[derive(Debug)]
 pub struct RangeStep {
     upstream: Option<StepRef>,
-    lo: u32,
-    hi: u32,
+    lo: i64,
+    hi: i64,
     index: usize,
 }
 
 impl RangeStep {
-    pub fn new(lo: u32, hi: u32) -> Self {
+    pub fn new(lo: i64, hi: i64) -> Self {
         Self { upstream: None, lo, hi, index: 0 }
     }
 }
@@ -45,7 +45,7 @@ impl CoreStep for RangeStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
         loop {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
             let Some(t) = upstream.next(ctx)? else { return Ok(None) };
@@ -70,12 +70,12 @@ impl CoreStep for RangeStep {
 #[derive(Debug)]
 pub struct SkipStep {
     upstream: Option<StepRef>,
-    n: u32,
+    n: i64,
     skipped: usize,
 }
 
 impl SkipStep {
-    pub fn new(n: u32) -> Self {
+    pub fn new(n: i64) -> Self {
         Self { upstream: None, n, skipped: 0 }
     }
 }
@@ -97,7 +97,7 @@ impl CoreStep for SkipStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
         loop {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
             let Some(t) = upstream.next(ctx)? else { return Ok(None) };
@@ -118,14 +118,14 @@ impl CoreStep for SkipStep {
 #[derive(Debug)]
 pub struct TailStep {
     upstream: Option<StepRef>,
-    n: u32,
+    n: i64,
     buffer: Vec<Rc<Traverser>>,
     cursor: usize,
     done: bool,
 }
 
 impl TailStep {
-    pub fn new(n: u32) -> Self {
+    pub fn new(n: i64) -> Self {
         Self { upstream: None, n, buffer: Vec::new(), cursor: 0, done: false }
     }
 }
@@ -149,7 +149,7 @@ impl CoreStep for TailStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
         if !self.done {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
             while let Some(t) = upstream.next(ctx)? {

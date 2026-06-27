@@ -15,6 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::types::PIPELINE_BATCH_INLINE;
 use smallvec::SmallVec;
 use smol_str::SmolStr;
 
@@ -24,7 +25,10 @@ use crate::{
 };
 
 /// Intersect `incoming` into `target`.  None = unconstrained; Some = current list.
-fn intersect_option_ids(target: &mut Option<SmallVec<[i64; 4]>>, incoming: SmallVec<[i64; 4]>) {
+fn intersect_option_ids(
+    target: &mut Option<SmallVec<[i64; PIPELINE_BATCH_INLINE]>>,
+    incoming: SmallVec<[i64; PIPELINE_BATCH_INLINE]>,
+) {
     match target {
         None => *target = Some(incoming),
         Some(ref mut existing) => existing.retain(|v| incoming.contains(v)),
@@ -56,7 +60,7 @@ pub fn extract_end_vertex_filter(plan: &mut LogicalPlan) -> Result<bool, StoreEr
             // Reorder the sub-plan so id filter comes first.
             crate::planner::optimizer::reorder_filter::reorder_filters(&mut sub)?;
 
-            let mut ids: Option<SmallVec<[i64; 4]>> = None;
+            let mut ids: Option<SmallVec<[i64; PIPELINE_BATCH_INLINE]>> = None;
             let mut label_preds: Vec<PrimitivePredicate> = Vec::new();
             let mut property_preds: Vec<(SmolStr, PrimitivePredicate)> = Vec::new();
             let mut all_filters = true;

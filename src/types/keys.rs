@@ -253,14 +253,35 @@ impl EdgeKey {
     /// Extract the direction-free `CanonicalEdgeKey`.
     #[inline]
     pub fn canonical_edge_key(self) -> CanonicalEdgeKey {
-        let out = self.canonical();
-        CanonicalEdgeKey { src_id: out.primary_id, label_id: out.label_id, rank: out.rank, dst_id: out.secondary_id }
+        match self.direction {
+            Direction::OUT => CanonicalEdgeKey {
+                src_id: self.primary_id,
+                label_id: self.label_id,
+                dst_id: self.secondary_id,
+                rank: self.rank,
+            },
+            Direction::IN => CanonicalEdgeKey {
+                src_id: self.secondary_id,
+                label_id: self.label_id,
+                dst_id: self.primary_id,
+                rank: self.rank,
+            },
+        }
     }
 
     /// Stable globally-unique string id: Base64 of the packed CanonicalEdgeKey.
     #[inline]
     pub fn to_id_string(self) -> String {
-        self.canonical_edge_key().to_id_string()
+        let (src, dst) = match self.direction {
+            Direction::OUT => (self.primary_id, self.secondary_id),
+            Direction::IN => (self.secondary_id, self.primary_id),
+        };
+        let mut buf = [0u8; 22];
+        buf[0..8].copy_from_slice(&src.to_be_bytes());
+        buf[8..12].copy_from_slice(&self.label_id.to_be_bytes());
+        buf[12..20].copy_from_slice(&dst.to_be_bytes());
+        buf[20..22].copy_from_slice(&self.rank.to_be_bytes());
+        URL_SAFE_NO_PAD.encode(buf)
     }
 }
 

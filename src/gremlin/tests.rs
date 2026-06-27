@@ -2453,6 +2453,29 @@ mod integration_test {
     }
 
     #[test]
+    fn test_end_vertex_filter_continue_regression() {
+        // Regression: the inner `for` loop's `continue` used to continue the
+        // `for` loop (the predicate iterator) instead of the outer traverser
+        // loop, silently passing failed property predicates.  Only the vertex
+        // matching BOTH the label AND the property should pass.
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        // Marko knows Vadas(2, age=27) and Josh(4, age=32).  Both are persons.
+        // Only Vadas has age 27 — Josh must be filtered out by the property predicate.
+        let results = snap
+            .g()
+            .V([1])
+            .outE(["knows"])
+            .r#where(__().otherV().hasLabel(["person"]).has("age", crate::gremlin::value::eq(27i32)))
+            .otherV()
+            .id()
+            .to_list()
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(matches!(&results[0], Value::Int64(2)), "expected Vadas(id=2), got {:?}", results[0]);
+    }
+
+    #[test]
     fn test_choose_e2e() {
         let graph = setup_modern_graph();
         let mut tx = graph.begin();

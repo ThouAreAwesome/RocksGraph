@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::types::PIPELINE_BATCH_INLINE;
+use crate::types::PIPELINE_PRODUCE_INLINE;
 use std::rc::Rc;
 
 use smallvec::{smallvec, SmallVec};
@@ -53,18 +53,18 @@ impl CoreStep for CountStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
         if self.done {
             // Only produces a single count result.
             return Ok(None);
         }
         let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
-        let mut count: u64 = 0;
+        let mut count: i64 = 0;
         while upstream.next(ctx)?.is_some() {
             count += 1;
         }
         self.done = true;
-        Ok(Some(smallvec![Traverser::new_rc(GValue::Scalar(Primitive::Int64(count as i64)))]))
+        Ok(Some(smallvec![Traverser::new_rc(GValue::Scalar(Primitive::Int64(count)))]))
     }
 
     fn reset(&mut self) {

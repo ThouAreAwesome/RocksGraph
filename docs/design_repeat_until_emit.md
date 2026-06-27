@@ -71,7 +71,7 @@ pub enum EmitSpec {
 pub struct RepeatStep {
     pub body: LogicalPlan,
     pub until: Option<LogicalPlan>,
-    pub times: Option<u32>,
+    pub times: Option<i64>,
     pub emit: EmitSpec,
 }
 ```
@@ -96,13 +96,13 @@ pub struct RepeatStep {
     upstream: Option<StepRef>,
     body: PhysicalPlan,
     until: Option<PhysicalPlan>,
-    times: Option<u32>,
+    times: Option<i64>,
     emit: PhysicalEmitMode,
 
-    frontier: VecDeque<(Rc<Traverser>, u32)>, // (traverser, iterations completed so far)
+    frontier: VecDeque<(Rc<Traverser>, i64)>, // (traverser, iterations completed so far)
     ready: VecDeque<Rc<Traverser>>,           // outputs queued for this produce() call
     body_active: bool,
-    current_iter_count: u32,
+    current_iter_count: i64,
 }
 ```
 
@@ -160,7 +160,7 @@ already uses across `GraphTraversal`/`ReadTraversal`/`WriteTraversal`.
 struct RepeatBuilder {
     body: LogicalPlan,
     until: Option<LogicalPlan>,
-    times: Option<u32>,
+    times: Option<i64>,
     emit: EmitSpec,
 }
 ```

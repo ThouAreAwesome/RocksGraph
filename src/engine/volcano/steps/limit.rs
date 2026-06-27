@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::types::PIPELINE_BATCH_INLINE;
+use crate::types::PIPELINE_PRODUCE_INLINE;
 use std::rc::Rc;
 
 use smallvec::{smallvec, SmallVec};
@@ -38,7 +38,7 @@ pub struct LimitStep {
 
     // ── Static/Fixed configuration ──
     /// The maximum number of elements to yield.
-    limit: u32,
+    limit: i64,
 
     // ── Dynamic/Runtime execution state ──
     /// The number of elements yielded so far.
@@ -47,7 +47,7 @@ pub struct LimitStep {
 
 /// Creates a new `LimitStep` with the specified limit.
 impl LimitStep {
-    pub fn new(limit: u32) -> Self {
+    pub fn new(limit: i64) -> Self {
         Self { upstream: None, limit, current_idx: 0 }
     }
 }
@@ -61,7 +61,7 @@ impl CoreStep for LimitStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
         // Produces traversers from its upstream until the limit is reached.
         if self.current_idx >= self.limit as usize {
             return Ok(None);

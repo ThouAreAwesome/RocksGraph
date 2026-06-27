@@ -15,10 +15,10 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::types::PIPELINE_BATCH_INLINE;
+use crate::types::PIPELINE_PRODUCE_INLINE;
 use std::rc::Rc;
 
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 
 use crate::engine::volcano::steps::traits::ExplainNode;
 use crate::{
@@ -58,11 +58,12 @@ impl CoreStep for PropertyStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
         // Sets the property on the element carried by the upstream traverser and then re-emits the traverser.
-        loop {
-            let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
-            let Some(t) = upstream.next(ctx)? else { return Ok(None) };
+        let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
+        let mut batch = SmallVec::with_capacity(PIPELINE_PRODUCE_INLINE);
+        while batch.len() < PIPELINE_PRODUCE_INLINE {
+            let Some(t) = upstream.next(ctx)? else { break };
             let canonical_key = match &t.value {
                 GValue::Vertex(vt) => CanonicalKey::Vertex(*vt),
                 GValue::Edge(eg) => CanonicalKey::Edge(eg.canonical_edge_key()),
@@ -71,7 +72,12 @@ impl CoreStep for PropertyStep {
             let mut prop = self.prop.clone();
             prop.owner = canonical_key;
             ctx.set_property(&prop)?;
-            return Ok(Some(smallvec![t]));
+            batch.push(t);
+        }
+        if batch.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(batch))
         }
     }
 

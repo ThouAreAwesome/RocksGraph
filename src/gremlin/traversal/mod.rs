@@ -97,7 +97,7 @@ pub use built::BuiltTraversal;
 pub(crate) struct RepeatBuilder {
     body: LogicalPlan,
     until: Option<LogicalPlan>,
-    times: Option<u32>,
+    times: Option<i64>,
     emit: EmitSpec,
 }
 
@@ -514,7 +514,7 @@ pub trait TraversalBuilder: PlanAppender {
         self
     }
 
-    fn limit(mut self, n: u32) -> Self {
+    fn limit(mut self, n: i64) -> Self {
         self.push_step(LogicalStep::Limit(LimitStep { limit: n }));
         self
     }
@@ -529,17 +529,17 @@ pub trait TraversalBuilder: PlanAppender {
         self
     }
 
-    fn range(mut self, lo: u32, hi: u32) -> Self {
+    fn range(mut self, lo: i64, hi: i64) -> Self {
         self.push_step(LogicalStep::Range(RangeStep { lo, hi }));
         self
     }
 
-    fn skip(mut self, n: u32) -> Self {
+    fn skip(mut self, n: i64) -> Self {
         self.push_step(LogicalStep::Skip(SkipStep { n }));
         self
     }
 
-    fn tail(mut self, n: u32) -> Self {
+    fn tail(mut self, n: i64) -> Self {
         self.push_step(LogicalStep::Tail(TailStep { n }));
         self
     }
@@ -852,7 +852,7 @@ pub trait TraversalBuilder: PlanAppender {
         self
     }
 
-    fn times(mut self, n: u32) -> Self {
+    fn times(mut self, n: i64) -> Self {
         if n == 0 {
             self.record_error(StoreError::TraversalError(
                 "times(0) is invalid: a repeat body must run at least once.".to_string(),

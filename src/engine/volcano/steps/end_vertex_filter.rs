@@ -15,10 +15,10 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::types::PIPELINE_BATCH_INLINE;
+use crate::types::{PIPELINE_BATCH_INLINE, PIPELINE_PRODUCE_INLINE};
 use std::rc::Rc;
 
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 
 use crate::engine::volcano::steps::traits::ExplainNode;
 use crate::{
@@ -65,10 +65,11 @@ impl CoreStep for EndVertexFilterStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
-        'outer: loop {
-            let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
-            let Some(t) = upstream.next(ctx)? else { return Ok(None) };
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
+        let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
+        let mut batch = SmallVec::with_capacity(PIPELINE_PRODUCE_INLINE);
+        while batch.len() < PIPELINE_PRODUCE_INLINE {
+            let Some(t) = upstream.next(ctx)? else { break };
             if let GValue::Edge(edge) = &t.value {
                 let dst_id = edge.secondary_id;
                 // Id filter — empty ids means match nothing.
@@ -80,29 +81,44 @@ impl CoreStep for EndVertexFilterStep {
                 // Label and property filters on the other vertex.
                 if !self.label_preds.is_empty() || !self.property_preds.is_empty() {
                     let ck = crate::types::keys::CanonicalKey::Vertex(dst_id);
+                    let mut skip = false;
                     for lp in &self.label_preds {
                         if let Some(v) = ctx.get_value(&ck, crate::types::prop_key::LABEL_KEY_ID)? {
                             if !lp.evaluate(&v) {
-                                continue 'outer;
+                                skip = true;
+                                break;
                             }
                         } else {
-                            continue 'outer;
+                            skip = true;
+                            break;
                         }
                     }
-                    for (key_id, pp) in &self.property_preds {
-                        if let Some(v) = ctx.get_value(&ck, *key_id)? {
-                            if !pp.evaluate(&v) {
-                                continue 'outer;
+                    if !skip {
+                        for (key_id, pp) in &self.property_preds {
+                            if let Some(v) = ctx.get_value(&ck, *key_id)? {
+                                if !pp.evaluate(&v) {
+                                    skip = true;
+                                    break;
+                                }
+                            } else {
+                                skip = true;
+                                break;
                             }
-                        } else {
-                            continue 'outer;
                         }
+                    }
+                    if skip {
+                        continue;
                     }
                 }
-                return Ok(Some(smallvec![t]));
+                batch.push(t);
             } else {
                 return Err(StoreError::UnexpectedDataType("end vertex filter can only be applied on Edge".into()));
             }
+        }
+        if batch.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(batch))
         }
     }
 

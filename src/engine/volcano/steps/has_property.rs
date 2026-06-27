@@ -15,10 +15,10 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::types::PIPELINE_BATCH_INLINE;
+use crate::types::PIPELINE_PRODUCE_INLINE;
 use std::rc::Rc;
 
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 
 use crate::engine::volcano::steps::traits::ExplainNode;
 use crate::{
@@ -83,18 +83,19 @@ impl CoreStep for HasPropertyStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
         // Produces traversers whose element has the specified property matching the predicate.
-        loop {
-            let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
-            let Some(t) = upstream.next(ctx)? else { return Ok(None) };
+        let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
+        let mut batch = SmallVec::with_capacity(PIPELINE_PRODUCE_INLINE);
+        while batch.len() < PIPELINE_PRODUCE_INLINE {
+            let Some(t) = upstream.next(ctx)? else { break };
             match &t.value {
                 GValue::Vertex(vk) => {
                     let key = CanonicalKey::Vertex(*vk);
                     if let Some(vl) = ctx.get_value(&key, self.prop_key_id)? {
                         let vl = self.decode_if_label(ctx, &key, vl);
                         if self.pred.evaluate(&vl) {
-                            return Ok(Some(smallvec![t]));
+                            batch.push(t);
                         }
                     }
                 }
@@ -103,12 +104,17 @@ impl CoreStep for HasPropertyStep {
                     if let Some(et) = ctx.get_value(&key, self.prop_key_id)? {
                         let et = self.decode_if_label(ctx, &key, et);
                         if self.pred.evaluate(&et) {
-                            return Ok(Some(smallvec![t]));
+                            batch.push(t);
                         }
                     }
                 }
                 _ => {}
             }
+        }
+        if batch.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(batch))
         }
     }
 

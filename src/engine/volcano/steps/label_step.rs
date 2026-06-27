@@ -17,10 +17,10 @@
 
 use std::{rc::Rc, sync::Arc};
 
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 use smol_str::SmolStr;
 
-use crate::types::PIPELINE_BATCH_INLINE;
+use crate::types::PIPELINE_PRODUCE_INLINE;
 use crate::{
     engine::{
         context::GraphCtx,
@@ -55,26 +55,36 @@ impl CoreStep for LabelStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
         let Some(upstream) = self.upstream.as_ref() else {
             return Ok(None);
         };
-        let Some(t) = upstream.next(ctx)? else {
-            return Ok(None);
-        };
+        let mut batch = SmallVec::with_capacity(PIPELINE_PRODUCE_INLINE);
+        while batch.len() < PIPELINE_PRODUCE_INLINE {
+            let Some(t) = upstream.next(ctx)? else { break };
 
-        let label_str = match &t.value {
-            GValue::Vertex(vk) => {
-                let Some(Primitive::Int32(label_id)) = ctx.get_value(&CanonicalKey::Vertex(*vk), LABEL_KEY_ID)? else {
-                    return Err(StoreError::NotFound);
-                };
-                decode_label(label_id, true, ctx.schema())
-            }
-            GValue::Edge(ek) => decode_label(ek.label_id, false, ctx.schema()),
-            _ => return Ok(Some(smallvec![t])),
-        };
+            let label_str = match &t.value {
+                GValue::Vertex(vk) => {
+                    let Some(Primitive::Int32(label_id)) = ctx.get_value(&CanonicalKey::Vertex(*vk), LABEL_KEY_ID)?
+                    else {
+                        return Err(StoreError::NotFound);
+                    };
+                    decode_label(label_id, true, ctx.schema())
+                }
+                GValue::Edge(ek) => decode_label(ek.label_id, false, ctx.schema()),
+                _ => {
+                    batch.push(t);
+                    continue;
+                }
+            };
 
-        Ok(Some(smallvec![Traverser::new_rc(GValue::Scalar(Primitive::String(label_str)))]))
+            batch.push(Traverser::new_rc(GValue::Scalar(Primitive::String(label_str))));
+        }
+        if batch.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(batch))
+        }
     }
 
     fn reset(&mut self) {

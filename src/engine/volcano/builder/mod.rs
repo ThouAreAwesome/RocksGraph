@@ -37,6 +37,7 @@ mod build_step;
 
 use std::{fmt, rc::Rc};
 
+use crate::types::PIPELINE_PRODUCE_INLINE;
 use smallvec::SmallVec;
 
 use crate::{
@@ -77,7 +78,7 @@ impl fmt::Debug for PhysicalPlan {
 }
 
 impl PhysicalPlan {
-    pub fn inject(&self, items: SmallVec<[Rc<Traverser>; 4]>) {
+    pub fn inject(&self, items: SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>) {
         self.source.inner.borrow_mut().core.inject(items);
     }
 

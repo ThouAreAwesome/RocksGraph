@@ -36,7 +36,7 @@ use crate::{
         gvalue::Primitive,
         keys::Rank,
         prop_key::{ID, LABEL, RANK},
-        Direction, LabelId,
+        Direction, LabelId, PIPELINE_BATCH_INLINE,
     },
 };
 
@@ -208,7 +208,7 @@ impl PhysicalPlanBuilder {
                     .labels
                     .iter()
                     .map(|l| resolve_read_edge_label(l, &schema).map(|id_opt| id_opt.unwrap_or(UNRESOLVED_LABEL_ID)))
-                    .collect::<Result<SmallVec<[LabelId; 4]>, _>>()?;
+                    .collect::<Result<SmallVec<[LabelId; PIPELINE_BATCH_INLINE]>, _>>()?;
                 let scan_step = steps::both::BothStep::new(
                     label_ids.clone(),
                     s.end_vertex_ids.clone(),
@@ -223,7 +223,7 @@ impl PhysicalPlanBuilder {
                     .labels
                     .iter()
                     .map(|l| resolve_read_edge_label(l, &schema).map(|id_opt| id_opt.unwrap_or(UNRESOLVED_LABEL_ID)))
-                    .collect::<Result<SmallVec<[LabelId; 4]>, _>>()?;
+                    .collect::<Result<SmallVec<[LabelId; PIPELINE_BATCH_INLINE]>, _>>()?;
                 let scan_step =
                     steps::both::BothStep::new(label_ids.clone(), s.end_vertex_ids.clone(), s.rank, true, track_path);
                 get_e_or_scan!(s, label_ids, None, s.rank, true, scan_step, edge_mode, "BothEStep")
@@ -288,7 +288,7 @@ impl PhysicalPlanBuilder {
                     .labels
                     .iter()
                     .map(|l| resolve_read_edge_label(l, &schema).map(|id_opt| id_opt.unwrap_or(UNRESOLVED_LABEL_ID)))
-                    .collect::<Result<SmallVec<[LabelId; 4]>, _>>()?;
+                    .collect::<Result<SmallVec<[LabelId; PIPELINE_BATCH_INLINE]>, _>>()?;
                 let scan_step = steps::in_out::InOutStep::new(
                     label_ids.clone(),
                     Direction::IN,
@@ -304,7 +304,7 @@ impl PhysicalPlanBuilder {
                     .labels
                     .iter()
                     .map(|l| resolve_read_edge_label(l, &schema).map(|id_opt| id_opt.unwrap_or(UNRESOLVED_LABEL_ID)))
-                    .collect::<Result<SmallVec<[LabelId; 4]>, _>>()?;
+                    .collect::<Result<SmallVec<[LabelId; PIPELINE_BATCH_INLINE]>, _>>()?;
                 let scan_step = steps::in_out::InOutStep::new(
                     label_ids.clone(),
                     Direction::IN,
@@ -320,7 +320,7 @@ impl PhysicalPlanBuilder {
                     .labels
                     .iter()
                     .map(|l| resolve_read_edge_label(l, &schema).map(|id_opt| id_opt.unwrap_or(UNRESOLVED_LABEL_ID)))
-                    .collect::<Result<SmallVec<[LabelId; 4]>, _>>()?;
+                    .collect::<Result<SmallVec<[LabelId; PIPELINE_BATCH_INLINE]>, _>>()?;
                 let scan_step = steps::in_out::InOutStep::new(
                     label_ids.clone(),
                     Direction::OUT,
@@ -336,7 +336,7 @@ impl PhysicalPlanBuilder {
                     .labels
                     .iter()
                     .map(|l| resolve_read_edge_label(l, &schema).map(|id_opt| id_opt.unwrap_or(UNRESOLVED_LABEL_ID)))
-                    .collect::<Result<SmallVec<[LabelId; 4]>, _>>()?;
+                    .collect::<Result<SmallVec<[LabelId; PIPELINE_BATCH_INLINE]>, _>>()?;
                 let scan_step = steps::in_out::InOutStep::new(
                     label_ids.clone(),
                     Direction::OUT,
@@ -388,7 +388,7 @@ impl PhysicalPlanBuilder {
                             }
                         }
                     })
-                    .collect::<Result<SmallVec<[(SmolStr, u16); 4]>, _>>()?;
+                    .collect::<Result<SmallVec<[(SmolStr, u16); PIPELINE_BATCH_INLINE]>, _>>()?;
                 wire_required!(
                     BufferedStep::new(steps::values::ValuesStep::new(resolved_keys, false, track_path)),
                     upstream,
@@ -412,7 +412,7 @@ impl PhysicalPlanBuilder {
                             }
                         }
                     })
-                    .collect::<Result<SmallVec<[(SmolStr, u16); 4]>, _>>()?;
+                    .collect::<Result<SmallVec<[(SmolStr, u16); PIPELINE_BATCH_INLINE]>, _>>()?;
                 wire_required!(
                     BufferedStep::new(steps::values::ValuesStep::new(resolved_keys, true, track_path)),
                     upstream,

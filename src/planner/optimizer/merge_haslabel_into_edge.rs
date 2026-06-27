@@ -33,6 +33,7 @@
 //! filters that cannot be represented as an edge-step allowlist, so they
 //! are left in place.
 
+use crate::types::PIPELINE_BATCH_INLINE;
 use crate::{
     planner::logical_step::{HasPropertyStep, LogicalPlan, LogicalStep},
     types::{prop_key, Primitive, PrimitivePredicate, StoreError},
@@ -43,7 +44,9 @@ use smol_str::SmolStr;
 /// Extracts label names from a predicate, returning `None` when the
 /// predicate shape cannot be folded into an edge-step allowlist
 /// (e.g. `Ne`, `Gt`, `Without`, or `Eq` with a non-String literal).
-fn extract_labels_from_predicate(pred: &PrimitivePredicate) -> Result<Option<SmallVec<[SmolStr; 4]>>, StoreError> {
+fn extract_labels_from_predicate(
+    pred: &PrimitivePredicate,
+) -> Result<Option<SmallVec<[SmolStr; PIPELINE_BATCH_INLINE]>>, StoreError> {
     fn to_label(v: &Primitive) -> Result<SmolStr, StoreError> {
         match v {
             Primitive::String(s) => Ok(s.clone()),
@@ -80,7 +83,7 @@ pub fn merge_haslabel_into_edge(plan: &mut LogicalPlan) -> Result<bool, StoreErr
     let mut j = 1;
 
     while j < plan.steps.len() {
-        let labels: Option<SmallVec<[SmolStr; 4]>> = match (&plan.steps[i], &plan.steps[j]) {
+        let labels: Option<SmallVec<[SmolStr; PIPELINE_BATCH_INLINE]>> = match (&plan.steps[i], &plan.steps[j]) {
             // ── OutE + HasLabel ───────────────────────────────────────────
             (LogicalStep::OutE(out_e), LogicalStep::HasLabel(hl)) if out_e.labels.is_empty() => {
                 extract_labels_from_predicate(&hl.pred)?

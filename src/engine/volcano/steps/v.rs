@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::types::PIPELINE_BATCH_INLINE;
+use crate::types::{PIPELINE_BATCH_INLINE, PIPELINE_PRODUCE_INLINE};
 use std::rc::Rc;
 
 use smallvec::{smallvec, SmallVec};
@@ -75,7 +75,7 @@ impl CoreStep for VStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
         if !self.vertex_ids.is_empty() {
             if self.buffer.is_empty() && self.current_idx == 0 {
                 let fetched = ctx.get_vertices(&self.vertex_ids)?;

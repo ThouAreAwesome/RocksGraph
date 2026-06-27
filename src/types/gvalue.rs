@@ -30,9 +30,11 @@
 //!
 //! # Path representation
 //!
-//! `GValue::Path` stores a `Vec<(GValue, Option<SmallVec<[SmolStr; 2]>>)>`.  The
+//! `GValue::Path` stores a `Vec<(GValue, Option<SmallVec<[SmolStr; STEP_LABEL_INLINE]>>)>`.  The
 //! second element of each pair is the set of step labels (from `as("x")`) that
 //! named this position, or `None` when the position is unnamed.
+
+use crate::types::STEP_LABEL_INLINE;
 
 use std::hash::{Hash, Hasher};
 
@@ -244,7 +246,7 @@ pub enum GValue {
     ///
     /// Each entry is `(value, labels)` where `labels` is the set of `as("x")`
     /// names that tagged that position, or `None` when the position is unnamed.
-    Path(Vec<(GValue, Option<SmallVec<[SmolStr; 2]>>)>),
+    Path(Vec<(GValue, Option<SmallVec<[SmolStr; STEP_LABEL_INLINE]>>)>),
 }
 
 impl PartialEq for GValue {

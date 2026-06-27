@@ -1,7 +1,7 @@
 // Physical step: choose()
 
 use crate::engine::volcano::steps::traits::ExplainNode;
-use crate::types::PIPELINE_BATCH_INLINE;
+use crate::types::PIPELINE_PRODUCE_INLINE;
 use crate::{
     engine::{
         context::GraphCtx,
@@ -54,7 +54,7 @@ impl CoreStep for ChooseStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
         loop {
             // Drain active sub-plan first
             if let Some(ref plan) = self.active_plan {
