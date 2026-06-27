@@ -20,55 +20,50 @@ use crate::{
     types::{prop_key::ID, StoreError},
 };
 
-/// Reorder pair with partial ordering hasId = has("id"..) > hasLabel > has(not id..) > where():
-/// 1. has().has("id"..) into has("id"..).has(),
-/// 2. has().hasId() into hasId().has()
-/// 3. where().has() into has().where()
-/// 4. where().hasId() into hasId().where()
-/// 5. where().hasLabel() into hasLabel().where()
-/// 6. hasLabel().hasId() into hasId().hasLabel() (already covered by 2)
-/// 7. hasLabel().has("id"..) into has("id"..).hasLabel() (already covered by 1)
-/// 8. has(not id..).hasLabel() into hasLabel().has(not id..)
+/// Priority for filter reordering: lower sorts earlier.
+/// `None` = not a reorderable filter step — acts as a barrier between runs.
+fn filter_priority(step: &LogicalStep) -> Option<u8> {
+    match step {
+        LogicalStep::HasId(_) => Some(0),
+        LogicalStep::HasProperty(hp) if hp.key.as_str() == ID => Some(0),
+        LogicalStep::HasLabel(_) => Some(1),
+        LogicalStep::EndVertexFilter(_) => Some(2),
+        LogicalStep::HasRank(_) => Some(3),
+        LogicalStep::HasProperty(_) => Some(4), // any other key
+        LogicalStep::Where(_) => Some(5),
+        _ => None,
+    }
+}
+
+/// Reorder adjacent filter steps into priority order:
+///
+/// `hasId = has("id"..) > hasLabel > EndVertexFilter > hasRank > has(not id..) > where()`
+///
+/// Each maximal contiguous run of reorderable steps (everything with a priority above)
+/// is stable-sorted in one pass.  Ties (same priority between different keys) keep their
+/// original relative order.
 pub fn reorder_filters(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
     let mut changed = false;
     let mut i = 0;
-    // Iterate up to `plan.steps.len() - 1` to ensure `i + 1` is always a valid index.
-    while i + 1 < plan.steps.len() {
-        let should_swap = match (&plan.steps[i], &plan.steps[i + 1]) {
-            // Rule 1: has().has("id"..) -> has("id"..).has()
-            (LogicalStep::HasProperty(hp0), LogicalStep::HasProperty(hp1))
-                if hp0.key.as_str() != ID && hp1.key.as_str() == ID =>
-            {
-                true
-            }
-            // Rule 2: has().hasId() -> hasId().has()
-            (LogicalStep::HasProperty(_), LogicalStep::HasId(_)) => true,
-            // Rule 3: where().has() -> has().where()
-            (LogicalStep::Where(_), LogicalStep::HasProperty(_)) => true,
-            // Rule 4: where().hasId() -> hasId().where()
-            (LogicalStep::Where(_), LogicalStep::HasId(_)) => true,
-            // Rule 5: where().hasLabel() -> hasLabel().where()
-            (LogicalStep::Where(_), LogicalStep::HasLabel(_)) => true,
-            // Rule 6: hasLabel().hasId() -> hasId().hasLabel()
-            (LogicalStep::HasLabel(_), LogicalStep::HasId(_)) => true,
-            // Rule 7: hasLabel().has("id"..) -> has("id"..).hasLabel()
-            (LogicalStep::HasLabel(_), LogicalStep::HasProperty(hp)) if hp.key.as_str() == ID => true,
-            // Rule 8: has().hasLabel() -> hasLabel().has()
-            (LogicalStep::HasProperty(hp), LogicalStep::HasLabel(_)) if hp.key.as_str() != ID => true,
-            _ => false,
-        };
-
-        if should_swap {
-            plan.steps.swap(i, i + 1);
-            changed = true;
-            // After a swap, it's often beneficial to re-evaluate from the beginning
-            // or at least from the swapped position, as the new order might enable
-            // further optimizations or satisfy a different reordering rule.
-            // For simplicity, we'll just move to the next pair, but a more robust
-            // optimizer might reset `i` to 0 or `i.saturating_sub(1)`.
-            // For this specific reordering, advancing `i` is fine.
+    while i < plan.steps.len() {
+        if filter_priority(&plan.steps[i]).is_none() {
+            i += 1;
+            continue;
         }
-        i += 1;
+        // Find the end of this contiguous run of reorderable steps.
+        let mut j = i + 1;
+        while j < plan.steps.len() && filter_priority(&plan.steps[j]).is_some() {
+            j += 1;
+        }
+        // Stable-sort [i, j) by priority.
+        let run = &mut plan.steps[i..j];
+        let before: Vec<u8> = run.iter().map(|s| filter_priority(s).unwrap()).collect();
+        run.sort_by_key(|s| filter_priority(s).unwrap());
+        let after: Vec<u8> = run.iter().map(|s| filter_priority(s).unwrap()).collect();
+        if before != after {
+            changed = true;
+        }
+        i = j;
     }
     Ok(changed)
 }
@@ -79,7 +74,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        planner::logical_step::{HasIdStep, HasLabelStep, HasPropertyStep, VStep, WhereStep},
+        planner::logical_step::{
+            EndVertexFilter, HasIdStep, HasLabelStep, HasPropertyStep, HasRankStep, VStep, WhereStep,
+        },
         types::{gvalue::Primitive, keys::VertexKey},
     };
     use smallvec::smallvec;
@@ -224,6 +221,164 @@ mod tests {
         let changed = reorder_filters(&mut plan).unwrap();
         assert!(!changed);
         assert_eq!(plan.steps.len(), 1);
+    }
+
+    fn has_rank(pred: PrimitivePredicate) -> LogicalStep {
+        LogicalStep::HasRank(HasRankStep { pred })
+    }
+
+    fn evf(ids: Vec<VertexKey>) -> LogicalStep {
+        LogicalStep::EndVertexFilter(EndVertexFilter {
+            ids: Some(ids.into_iter().collect()),
+            label_preds: vec![],
+            property_preds: vec![],
+        })
+    }
+
+    fn has_rank_eq(v: u16) -> LogicalStep {
+        has_rank(PrimitivePredicate::Eq(Primitive::UInt16(v)))
+    }
+
+    #[test]
+    fn test_where_then_has_rank_swapped() {
+        let mut plan = LogicalPlan { steps: vec![v_all(), whr(vec![has_id(vec![10])]), has_rank_eq(5)] };
+        let changed = reorder_filters(&mut plan).unwrap();
+        assert!(changed);
+        assert!(matches!(plan.steps[1], LogicalStep::HasRank(_)));
+        assert!(matches!(plan.steps[2], LogicalStep::Where(_)));
+    }
+
+    #[test]
+    fn test_has_label_then_has_rank_no_swap() {
+        // hasLabel before hasRank is already the preferred order — no swap.
+        let mut plan = LogicalPlan { steps: vec![v_all(), has_label(vec!["10"]), has_rank_eq(5)] };
+        let changed = reorder_filters(&mut plan).unwrap();
+        assert!(!changed);
+        assert!(matches!(plan.steps[1], LogicalStep::HasLabel(_)));
+        assert!(matches!(plan.steps[2], LogicalStep::HasRank(_)));
+    }
+
+    #[test]
+    fn test_has_rank_then_has_id_swapped() {
+        let mut plan = LogicalPlan { steps: vec![v_all(), has_rank_eq(5), has_id(vec![1])] };
+        let changed = reorder_filters(&mut plan).unwrap();
+        assert!(changed);
+        assert!(matches!(plan.steps[1], LogicalStep::HasId(_)));
+        assert!(matches!(plan.steps[2], LogicalStep::HasRank(_)));
+    }
+
+    #[test]
+    fn test_has_prop_then_has_rank_swapped() {
+        let mut plan = LogicalPlan {
+            steps: vec![v_all(), has_prop("name", Primitive::String(SmolStr::new("marko"))), has_rank_eq(5)],
+        };
+        let changed = reorder_filters(&mut plan).unwrap();
+        assert!(changed);
+        assert!(matches!(plan.steps[1], LogicalStep::HasRank(_)));
+        assert!(matches!(plan.steps[2], LogicalStep::HasProperty(_)));
+    }
+
+    #[test]
+    fn test_full_order_hasid_hasrank_haslabel_where() {
+        // Final: hasLabel > hasRank > has > where  (no hasId in this plan)
+        let mut plan = LogicalPlan {
+            steps: vec![
+                v_all(),
+                has_prop("name", Primitive::String(SmolStr::new("marko"))),
+                has_label(vec!["10"]),
+                has_rank_eq(5),
+                whr(vec![has_id(vec![10])]),
+            ],
+        };
+        while reorder_filters(&mut plan).unwrap() {}
+        assert!(matches!(plan.steps[1], LogicalStep::HasLabel(_)));
+        assert!(matches!(plan.steps[2], LogicalStep::HasRank(_)));
+        assert!(matches!(plan.steps[3], LogicalStep::HasProperty(_)));
+        assert!(matches!(plan.steps[4], LogicalStep::Where(_)));
+    }
+
+    #[test]
+    fn test_has_prop_then_evf_swapped() {
+        let mut plan = LogicalPlan {
+            steps: vec![v_all(), has_prop("name", Primitive::String(SmolStr::new("marko"))), evf(vec![1])],
+        };
+        let changed = reorder_filters(&mut plan).unwrap();
+        assert!(changed);
+        assert!(matches!(plan.steps[1], LogicalStep::EndVertexFilter(_)));
+        assert!(matches!(plan.steps[2], LogicalStep::HasProperty(_)));
+    }
+
+    #[test]
+    fn test_where_then_evf_swapped() {
+        let mut plan = LogicalPlan { steps: vec![v_all(), whr(vec![has_id(vec![10])]), evf(vec![1])] };
+        let changed = reorder_filters(&mut plan).unwrap();
+        assert!(changed);
+        assert!(matches!(plan.steps[1], LogicalStep::EndVertexFilter(_)));
+        assert!(matches!(plan.steps[2], LogicalStep::Where(_)));
+    }
+
+    #[test]
+    fn test_has_rank_then_evf_swapped() {
+        let mut plan = LogicalPlan { steps: vec![v_all(), has_rank_eq(5), evf(vec![1])] };
+        let changed = reorder_filters(&mut plan).unwrap();
+        assert!(changed);
+        assert!(matches!(plan.steps[1], LogicalStep::EndVertexFilter(_)));
+        assert!(matches!(plan.steps[2], LogicalStep::HasRank(_)));
+    }
+
+    #[test]
+    fn test_evf_then_has_id_swapped() {
+        let mut plan = LogicalPlan { steps: vec![v_all(), evf(vec![1]), has_id(vec![2])] };
+        let changed = reorder_filters(&mut plan).unwrap();
+        assert!(changed);
+        assert!(matches!(plan.steps[1], LogicalStep::HasId(_)));
+        assert!(matches!(plan.steps[2], LogicalStep::EndVertexFilter(_)));
+    }
+
+    #[test]
+    fn test_has_label_then_evf_no_swap() {
+        // hasLabel before EndVertexFilter is already correct (label more selective).
+        let mut plan = LogicalPlan { steps: vec![v_all(), has_label(vec!["10"]), evf(vec![1])] };
+        let changed = reorder_filters(&mut plan).unwrap();
+        assert!(!changed);
+        assert!(matches!(plan.steps[1], LogicalStep::HasLabel(_)));
+        assert!(matches!(plan.steps[2], LogicalStep::EndVertexFilter(_)));
+    }
+
+    #[test]
+    fn test_evf_then_has_label_swapped() {
+        let mut plan = LogicalPlan { steps: vec![v_all(), evf(vec![1]), has_label(vec!["person"])] };
+        let changed = reorder_filters(&mut plan).unwrap();
+        assert!(changed);
+        assert!(matches!(plan.steps[1], LogicalStep::HasLabel(_)));
+        assert!(matches!(plan.steps[2], LogicalStep::EndVertexFilter(_)));
+    }
+
+    #[test]
+    fn test_parity_reverse_order_all_six_kinds() {
+        // All 6 reorderable kinds in reverse priority order — one pass should sort them.
+        let mut plan = LogicalPlan {
+            steps: vec![
+                v_all(),
+                whr(vec![has_id(vec![10])]),
+                has_prop("name", Primitive::String(SmolStr::new("marko"))),
+                has_rank_eq(5),
+                evf(vec![1]),
+                has_label(vec!["person"]),
+                has_id(vec![2]),
+            ],
+        };
+        let changed = reorder_filters(&mut plan).unwrap();
+        assert!(changed);
+        // After one pass: hasId > hasLabel > EndVertexFilter > hasRank > has > where
+        assert!(matches!(plan.steps[1], LogicalStep::HasId(_)));
+        assert!(matches!(plan.steps[2], LogicalStep::HasLabel(_)));
+        assert!(matches!(plan.steps[3], LogicalStep::EndVertexFilter(_)));
+        assert!(matches!(plan.steps[4], LogicalStep::HasRank(_)));
+        assert!(matches!(plan.steps[5], LogicalStep::HasProperty(_)));
+        assert!(matches!(plan.steps[6], LogicalStep::Where(_)));
+        // Second pass: no changes.
+        assert!(!reorder_filters(&mut plan).unwrap());
     }
 
     #[test]

@@ -275,11 +275,11 @@ into must carry the expected params.
 | `V([1]).outE("knows").where(otherV().hasId([2]))` | `GetEStep(labels=["knows"], end_vertex_ids=[2])` — no `WhereStep`, no `OtherVStep`, no `HasIdStep` |
 | `V([1]).bothE("knows").where(otherV().hasId([2]))` | `GetEStep(labels=["knows"], end_vertex_ids=[2])` — bothE also folds |
 | `V([1]).inE("knows").where(otherV().hasId([2]))` | `GetEStep(labels=["knows"], end_vertex_ids=[2])` — inE also folds |
-| `V([1]).outE("knows").where(otherV().has("age", eq(30)))` | `GetEStep(labels=["knows"])` then `EndVertexFilterStep` — property filter extracted but stays as separate step |
-| `V([1]).outE("knows").where(otherV().hasId([2]).has("age", gt(30)))` | `GetEStep(labels=["knows"], end_vertex_ids=[2])` then `EndVertexFilterStep` — hasId folds into GetE, hasProperty stays as EndVertexFilter |
+| `V([1]).outE("knows").where(otherV().has("age", eq(30)))` | `GetEStep(labels=["knows"])` then `WhereStep(otherV().has("age", eq(30)))` — property-only where() is NOT extracted; the whole where() stays |
+| `V([1]).outE("knows").where(otherV().hasId([2]).has("age", gt(30)))` | `GetEStep(labels=["knows"], end_vertex_ids=[2])` then `WhereStep(otherV().has("age", gt(30)))` — hasId extracted and folded, remaining property filter stays as a (now-smaller) where() |
 | `V([1]).outE("knows").has("rank", 0).where(otherV().hasId([2]))` | `GetEStep(labels=["knows"], end_vertex_ids=[2], rank=0)` — rank also folds |
 | `V([1]).outE("knows").where(otherV().hasId([2])).where(otherV().hasId([3]))` | Both where-clauses extracted: `GetEStep(labels=["knows"], end_vertex_ids=[2,3])` |
-| `V([1]).bothE("knows").where(otherV().hasId([2])).where(otherV().hasLabel("person"))` | hasId folds into `GetEStep(labels=["knows"], end_vertex_ids=[2])`, hasLabel stays as `EndVertexFilterStep` |
+| `V([1]).bothE("knows").where(otherV().hasId([2])).where(otherV().hasLabel("person"))` | hasId folds into `GetEStep(labels=["knows"], end_vertex_ids=[2])`, hasLabel on the other vertex stays as `WhereStep(otherV().hasLabel("person"))` — not foldable (vertex-label, not edge-label) |
 | `V([1]).outE().where(otherV().hasId([2]))` | `InOutStep` + `EndVertexFilterStep` — no label → edge scan, not point lookup; filter stays separate |
 | `V([1]).outE("knows")` (no where) | `InOutStep` — no filter to fold; plan is unchanged |
 | `V([1]).outE("knows").has("weight", gt(0.5))` | `GetEStep(labels=["knows"])`. has("weight",...) should **not** be optimized — it filters on the edge itself, not the other vertex. |
@@ -322,7 +322,7 @@ into must carry the expected params.
 | `V([]).hasId([1]).out("knows").hasLabel("person")` | `VStep(ids=[1])` → `InOutStep` → `HasLabelStep` — V+hasId folds; out+label intact |
 | `V([]).hasId([1]).outE("knows").where(otherV().hasId([2])).inV().hasLabel("person")` | `VStep(ids=[1])` → `GetEStep(labels=["knows"], end_vertex_ids=[2])` → `OtherVStep` → `HasLabelStep` — V+hasId + edge+filter both fold |
 | `V([]).has("id", 1).out("knows").out("knows").hasLabel("person")` | `VStep(ids=[1])` → `InOutStep` → `InOutStep` → `HasLabelStep` — has("id") folded; two out() intact |
-| `V([]).hasId([1]).bothE("knows").where(otherV().hasId([2]).has("age", gt(30)))` | `VStep(ids=[1])` → `GetEStep(labels=["knows"], end_vertex_ids=[2])` → `EndVertexFilterStep` — hasId folds into GetE; property filter stays |
+| `V([]).hasId([1]).bothE("knows").where(otherV().hasId([2]).has("age", gt(30)))` | `VStep(ids=[1])` → `GetEStep(labels=["knows"], end_vertex_ids=[2])` → `WhereStep(otherV().has("age", gt(30)))` — hasId folds into GetE; property filter stays as (now-smaller) where() |
 
 ### Group 7 — regression: explain output is stable and complete
 

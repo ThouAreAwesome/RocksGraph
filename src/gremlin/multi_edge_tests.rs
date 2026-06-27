@@ -86,12 +86,11 @@ mod multi_edge_integration_test {
         assert!(ranks.contains(&Value::UInt16(2)));
 
         // 6. Verify filtering by rank works
-        let evening_edge_count =
-            read.g().V([10]).outE(["purchased"]).has("rank", 1i32).count().next().unwrap().unwrap();
+        let evening_edge_count = read.g().V([10]).outE(["purchased"]).hasRank(1u16).count().next().unwrap().unwrap();
         assert_eq!(evening_edge_count, Value::Int64(1));
 
         let evening_since =
-            read.g().V([10]).outE(["purchased"]).has("rank", 1i32).values(["since"]).next().unwrap().unwrap();
+            read.g().V([10]).outE(["purchased"]).hasRank(1u16).values(["since"]).next().unwrap().unwrap();
         assert_eq!(evening_since, Value::String("evening".into()));
     }
 
@@ -139,14 +138,14 @@ mod multi_edge_integration_test {
         tx.g().addE("knows").from(1).to(2).property("rank", 1i32).property("weight", 0.2f64).next().unwrap();
 
         // Update rank 1 property specifically
-        tx.g().V([1]).outE(["knows"]).has("rank", 1i32).property("weight", 0.9f64).next().unwrap();
+        tx.g().V([1]).outE(["knows"]).hasRank(1u16).property("weight", 0.9f64).next().unwrap();
 
         tx.commit().unwrap();
 
         // Verify updates
         let mut read = graph.read();
-        let w0 = read.g().V([1]).outE(["knows"]).has("rank", 0i32).values(["weight"]).next().unwrap().unwrap();
-        let w1 = read.g().V([1]).outE(["knows"]).has("rank", 1i32).values(["weight"]).next().unwrap().unwrap();
+        let w0 = read.g().V([1]).outE(["knows"]).hasRank(0u16).values(["weight"]).next().unwrap().unwrap();
+        let w1 = read.g().V([1]).outE(["knows"]).hasRank(1u16).values(["weight"]).next().unwrap().unwrap();
 
         assert_eq!(w0, Value::Float64(0.1));
         assert_eq!(w1, Value::Float64(0.9));
@@ -208,7 +207,7 @@ mod multi_edge_integration_test {
 
         // Delete rank 1 edge
         let mut tx2 = graph.begin();
-        tx2.g().V([1]).outE(["knows"]).has("rank", 1i32).drop().next().unwrap();
+        tx2.g().V([1]).outE(["knows"]).hasRank(1u16).drop().next().unwrap();
         tx2.commit().unwrap();
 
         // Verify remaining edges (rank 0 and 2 should remain, rank 1 should be gone)

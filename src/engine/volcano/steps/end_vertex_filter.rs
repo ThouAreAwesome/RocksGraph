@@ -30,25 +30,33 @@ use crate::{
     types::{GValue, StoreError, VertexKey},
 };
 
-/// A physical step that filters edges based on their secondary (end) vertex ID.
+/// Fused physical step that filters edges by predicates on the other (end) vertex.
 #[derive(Default, Debug)]
-pub struct EndVertexFilter {
+pub struct EndVertexFilterStep {
     // ── Upstream link ──
     upstream: Option<StepRef>,
 
     // ── Static/Fixed configuration ──
-    /// The list of target vertex keys to filter matching edges.
-    ids: SmallVec<[VertexKey; PIPELINE_BATCH_INLINE]>,
+    /// Target vertex IDs (None = unconstrained, Some([]) = matches nothing).
+    ids: Option<SmallVec<[VertexKey; PIPELINE_BATCH_INLINE]>>,
+    /// Label predicates on the other vertex, ANDed — same accumulation shape as
+    /// `property_preds` (label has no structural lookup-key role here, unlike `ids`).
+    label_preds: Vec<crate::types::PrimitivePredicate>,
+    /// Property predicates on the other vertex, ANDed.
+    property_preds: Vec<(u16, crate::types::PrimitivePredicate)>,
 }
 
-/// Creates a new `EndVertexFilter` with a list of target vertex IDs.
-impl EndVertexFilter {
-    pub fn new(ids: SmallVec<[VertexKey; PIPELINE_BATCH_INLINE]>) -> Self {
-        Self { upstream: None, ids }
+impl EndVertexFilterStep {
+    pub fn new(
+        ids: Option<SmallVec<[VertexKey; PIPELINE_BATCH_INLINE]>>,
+        label_preds: Vec<crate::types::PrimitivePredicate>,
+        property_preds: Vec<(u16, crate::types::PrimitivePredicate)>,
+    ) -> Self {
+        Self { upstream: None, ids, label_preds, property_preds }
     }
 }
 
-impl CoreStep for EndVertexFilter {
+impl CoreStep for EndVertexFilterStep {
     fn add_upper(&mut self, upstream: StepRef) {
         // Sets the upstream step for this filter.
         self.upstream = Some(upstream);
@@ -58,14 +66,40 @@ impl CoreStep for EndVertexFilter {
         &mut self,
         ctx: &mut dyn GraphCtx,
     ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
-        // Produces traversers whose edge's secondary vertex ID is present in the `ids` list.
-        loop {
+        'outer: loop {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
             let Some(t) = upstream.next(ctx)? else { return Ok(None) };
             if let GValue::Edge(edge) = &t.value {
-                if self.ids.contains(&edge.secondary_id) {
-                    return Ok(Some(smallvec![t]));
+                let dst_id = edge.secondary_id;
+                // Id filter — empty ids means match nothing.
+                if let Some(ref ids) = self.ids {
+                    if !ids.contains(&dst_id) {
+                        continue;
+                    }
                 }
+                // Label and property filters on the other vertex.
+                if !self.label_preds.is_empty() || !self.property_preds.is_empty() {
+                    let ck = crate::types::keys::CanonicalKey::Vertex(dst_id);
+                    for lp in &self.label_preds {
+                        if let Some(v) = ctx.get_value(&ck, crate::types::prop_key::LABEL_KEY_ID)? {
+                            if !lp.evaluate(&v) {
+                                continue 'outer;
+                            }
+                        } else {
+                            continue 'outer;
+                        }
+                    }
+                    for (key_id, pp) in &self.property_preds {
+                        if let Some(v) = ctx.get_value(&ck, *key_id)? {
+                            if !pp.evaluate(&v) {
+                                continue 'outer;
+                            }
+                        } else {
+                            continue 'outer;
+                        }
+                    }
+                }
+                return Ok(Some(smallvec![t]));
             } else {
                 return Err(StoreError::UnexpectedDataType("end vertex filter can only be applied on Edge".into()));
             }

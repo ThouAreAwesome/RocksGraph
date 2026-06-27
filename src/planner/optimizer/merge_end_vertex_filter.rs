@@ -24,7 +24,7 @@ use crate::{
     },
     types::{
         keys::{Rank, VertexKey},
-        prop_key::{ID, RANK},
+        prop_key::ID,
         StoreError,
     },
 };
@@ -36,11 +36,9 @@ enum Merge {
     Rank(Rank),
 }
 
-/// Extracts a rank value to fold into a preceding `OutE`/`InE`/`BothE` step. Only `Eq` is ever
-/// foldable — every other shape (`Gt`, `Between`, `Within`, …) is left unfolded and returns
-/// `Ok(None)` without validating its literal, since an out-of-`u16`-range or wrong-typed literal
-/// there isn't a caller mistake worth failing the whole plan over: `HasPropertyStep` evaluates
-/// it correctly anyway (e.g. `rank > 100_000` is just always-false).
+/// Extracts a rank value from a `HasRankStep` predicate to fold into a preceding
+/// `OutE`/`InE`/`BothE` step. Only `Eq` is foldable — every other shape (`Gt`, `Between`,
+/// `Within`, …) is left unfolded and returns `Ok(None)`.
 fn extract_rank_from_predicate(pred: &crate::types::PrimitivePredicate) -> Result<Option<Rank>, StoreError> {
     use crate::types::gvalue::PrimitivePredicate;
     if let PrimitivePredicate::Eq(prim) = pred {
@@ -49,8 +47,8 @@ fn extract_rank_from_predicate(pred: &crate::types::PrimitivePredicate) -> Resul
     Ok(None)
 }
 
-/// An optimizer rule that merges an `EndVertexFilter` / `HasId` / `HasProperty("id", …)` step,
-/// or a `HasProperty("rank", …)` step, into a preceding edge traversal step
+/// An optimizer rule that merges an `EndVertexFilter` / `HasId` / `HasProperty("id", …)` step
+/// or a `HasRank` step into a preceding edge traversal step
 /// (`OutE`, `InE`, `BothE`, `Out`, `In`, `Both`).
 ///
 /// This allows the edge traversal step to directly filter by the end vertex ID and/or edge
@@ -66,7 +64,10 @@ pub fn merge_end_vertex_filter(plan: &mut LogicalPlan) -> Result<bool, StoreErro
         let merge = match (&plan.steps[i], &plan.steps[j]) {
             (LogicalStep::OutE(_), LogicalStep::EndVertexFilter(ef))
             | (LogicalStep::InE(_), LogicalStep::EndVertexFilter(ef))
-            | (LogicalStep::BothE(_), LogicalStep::EndVertexFilter(ef)) => Some(Merge::EndVertexIds(ef.ids.clone())),
+            | (LogicalStep::BothE(_), LogicalStep::EndVertexFilter(ef)) => {
+                // Only merge ids — label/property predicates stay in a residual step.
+                ef.ids.clone().map(Merge::EndVertexIds)
+            }
             (LogicalStep::Out(_), LogicalStep::HasId(ef))
             | (LogicalStep::In(_), LogicalStep::HasId(ef))
             | (LogicalStep::Both(_), LogicalStep::HasId(ef)) => {
@@ -79,30 +80,48 @@ pub fn merge_end_vertex_filter(plan: &mut LogicalPlan) -> Result<bool, StoreErro
             {
                 super::extract_ids_from_predicate(pred)?.map(Merge::EndVertexIds)
             }
-            (LogicalStep::OutE(_), LogicalStep::HasProperty(HasPropertyStep { key, pred }))
-            | (LogicalStep::InE(_), LogicalStep::HasProperty(HasPropertyStep { key, pred }))
-            | (LogicalStep::BothE(_), LogicalStep::HasProperty(HasPropertyStep { key, pred }))
-                if RANK == *key =>
-            {
-                extract_rank_from_predicate(pred)?.map(Merge::Rank)
+            // Guarded by `rank.is_none()` — same precondition shape as `merge_haslabel_into_edge`'s
+            // `labels.is_empty()` — so a second `hasRank()` on the same anchor is left unfolded
+            // instead of silently overwriting the first (see regression tests below).
+            (LogicalStep::OutE(oute), LogicalStep::HasRank(hr)) if oute.rank.is_none() => {
+                extract_rank_from_predicate(&hr.pred)?.map(Merge::Rank)
+            }
+            (LogicalStep::InE(ine), LogicalStep::HasRank(hr)) if ine.rank.is_none() => {
+                extract_rank_from_predicate(&hr.pred)?.map(Merge::Rank)
+            }
+            (LogicalStep::BothE(bothe), LogicalStep::HasRank(hr)) if bothe.rank.is_none() => {
+                extract_rank_from_predicate(&hr.pred)?.map(Merge::Rank)
             }
             _ => None,
         };
         if let Some(merge) = merge {
             match (&mut plan.steps[i], merge) {
-                (LogicalStep::OutE(oute), Merge::EndVertexIds(idv)) => oute.end_vertex_ids = Some(idv),
-                (LogicalStep::InE(ine), Merge::EndVertexIds(idv)) => ine.end_vertex_ids = Some(idv),
-                (LogicalStep::BothE(bothe), Merge::EndVertexIds(idv)) => bothe.end_vertex_ids = Some(idv),
-                (LogicalStep::Out(out), Merge::EndVertexIds(idv)) => out.end_vertex_ids = Some(idv),
-                (LogicalStep::In(in_), Merge::EndVertexIds(idv)) => in_.end_vertex_ids = Some(idv),
-                (LogicalStep::Both(both), Merge::EndVertexIds(idv)) => both.end_vertex_ids = Some(idv),
+                (LogicalStep::OutE(oute), Merge::EndVertexIds(idv)) => intersect_ids(&mut oute.end_vertex_ids, idv),
+                (LogicalStep::InE(ine), Merge::EndVertexIds(idv)) => intersect_ids(&mut ine.end_vertex_ids, idv),
+                (LogicalStep::BothE(bothe), Merge::EndVertexIds(idv)) => intersect_ids(&mut bothe.end_vertex_ids, idv),
+                (LogicalStep::Out(out), Merge::EndVertexIds(idv)) => intersect_ids(&mut out.end_vertex_ids, idv),
+                (LogicalStep::In(in_), Merge::EndVertexIds(idv)) => intersect_ids(&mut in_.end_vertex_ids, idv),
+                (LogicalStep::Both(both), Merge::EndVertexIds(idv)) => intersect_ids(&mut both.end_vertex_ids, idv),
                 (LogicalStep::OutE(oute), Merge::Rank(r)) => oute.rank = Some(r),
                 (LogicalStep::InE(ine), Merge::Rank(r)) => ine.rank = Some(r),
                 (LogicalStep::BothE(bothe), Merge::Rank(r)) => bothe.rank = Some(r),
-                _ => unreachable!("should never reach here since we have checked the pattern already"),
+                _ => unreachable!(),
+            }
+            // If the consumed EndVertexFilter has non-id predicates, leave them as a residual.
+            let has_residual = if let LogicalStep::EndVertexFilter(ef) = &plan.steps[j] {
+                !ef.label_preds.is_empty() || !ef.property_preds.is_empty()
+            } else {
+                false
+            };
+            if has_residual {
+                // Clear ids, keep label/property predicates.
+                if let LogicalStep::EndVertexFilter(ef) = &mut plan.steps[j] {
+                    ef.ids = None;
+                }
+            } else {
+                plan.steps.remove(j);
             }
             plan_changed = true;
-            j += 1; // skip the merged step
         } else {
             i += 1;
             if i != j {
@@ -115,11 +134,18 @@ pub fn merge_end_vertex_filter(plan: &mut LogicalPlan) -> Result<bool, StoreErro
     Ok(plan_changed)
 }
 
+/// Intersect `ids` into `target`.  None = unconstrained, Some(empty) = matches nothing.
+fn intersect_ids(target: &mut Option<SmallVec<[VertexKey; 4]>>, incoming: SmallVec<[VertexKey; 4]>) {
+    match target {
+        None => *target = Some(incoming),
+        Some(ref mut existing) => existing.retain(|v| incoming.contains(v)),
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        planner::logical_step::{EndVertexFilter, OutEStep, OutVStep, VStep},
+        planner::logical_step::{EndVertexFilter, HasRankStep, OutEStep, OutVStep, VStep},
         types::keys::VertexKey,
     };
     use smallvec::smallvec;
@@ -129,7 +155,11 @@ mod tests {
     }
 
     fn evf(ids: Vec<VertexKey>) -> LogicalStep {
-        LogicalStep::EndVertexFilter(EndVertexFilter { ids: ids.into_iter().collect() })
+        LogicalStep::EndVertexFilter(EndVertexFilter {
+            ids: Some(ids.into_iter().collect()),
+            label_preds: vec![],
+            property_preds: vec![],
+        })
     }
 
     fn v(ids: Vec<VertexKey>) -> LogicalStep {
@@ -373,8 +403,7 @@ mod tests {
     }
 
     fn has_rank(value: crate::types::Primitive) -> LogicalStep {
-        use smol_str::SmolStr;
-        LogicalStep::HasProperty(HasPropertyStep { key: SmolStr::new("rank"), pred: PrimitivePredicate::Eq(value) })
+        LogicalStep::HasRank(HasRankStep { pred: PrimitivePredicate::Eq(value) })
     }
 
     #[test]
@@ -414,7 +443,6 @@ mod tests {
         }
     }
 
-    // OutE().EVF([1]).has("rank",5) -> OutE(end_vertex_ids=[1], rank=5) — both filters fold into the same step.
     #[test]
     fn test_out_e_evf_and_rank_both_merged() {
         let mut plan = LogicalPlan { steps: vec![out_e(), evf(vec![1]), has_rank(crate::types::Primitive::Int32(5))] };
@@ -429,7 +457,6 @@ mod tests {
         }
     }
 
-    // Order shouldn't matter: OutE().has("rank",5).EVF([1]) merges the same way.
     #[test]
     fn test_out_e_rank_and_evf_both_merged_reversed_order() {
         let mut plan = LogicalPlan { steps: vec![out_e(), has_rank(crate::types::Primitive::Int32(5)), evf(vec![1])] };
@@ -444,9 +471,99 @@ mod tests {
         }
     }
 
+    // OutE().HasRank(1).HasRank(2) — a second hasRank() on the same anchor must not silently
+    // overwrite the first. Only the first folds; the second stays as a residual HasRank step
+    // (which then correctly evaluates to always-false downstream, since every edge OutE now
+    // emits already has rank=1, never rank=2 — the right outcome for an impossible conjunction).
+    #[test]
+    fn test_out_e_second_hasrank_not_merged() {
+        let mut plan = LogicalPlan {
+            steps: vec![
+                out_e(),
+                has_rank(crate::types::Primitive::Int32(1)),
+                has_rank(crate::types::Primitive::Int32(2)),
+            ],
+        };
+        let changed = merge_end_vertex_filter(&mut plan).unwrap();
+        assert!(changed);
+        assert_eq!(plan.steps.len(), 2);
+        if let LogicalStep::OutE(oute) = &plan.steps[0] {
+            assert_eq!(oute.rank, Some(1), "first hasRank() should fold");
+        } else {
+            panic!("expected OutE at step 0");
+        }
+        if let LogicalStep::HasRank(hr) = &plan.steps[1] {
+            assert_eq!(hr.pred, PrimitivePredicate::Eq(crate::types::Primitive::Int32(2)));
+        } else {
+            panic!("expected residual HasRank at step 1, got something else");
+        }
+    }
+
+    #[test]
+    fn test_in_e_second_hasrank_not_merged() {
+        let mut plan = LogicalPlan {
+            steps: vec![
+                in_e(),
+                has_rank(crate::types::Primitive::Int32(1)),
+                has_rank(crate::types::Primitive::Int32(2)),
+            ],
+        };
+        let changed = merge_end_vertex_filter(&mut plan).unwrap();
+        assert!(changed);
+        assert_eq!(plan.steps.len(), 2);
+        if let LogicalStep::InE(ine) = &plan.steps[0] {
+            assert_eq!(ine.rank, Some(1), "first hasRank() should fold");
+        } else {
+            panic!("expected InE at step 0");
+        }
+        assert!(matches!(plan.steps[1], LogicalStep::HasRank(_)));
+    }
+
+    #[test]
+    fn test_both_e_second_hasrank_not_merged() {
+        let mut plan = LogicalPlan {
+            steps: vec![
+                both_e(),
+                has_rank(crate::types::Primitive::Int32(1)),
+                has_rank(crate::types::Primitive::Int32(2)),
+            ],
+        };
+        let changed = merge_end_vertex_filter(&mut plan).unwrap();
+        assert!(changed);
+        assert_eq!(plan.steps.len(), 2);
+        if let LogicalStep::BothE(bothe) = &plan.steps[0] {
+            assert_eq!(bothe.rank, Some(1), "first hasRank() should fold");
+        } else {
+            panic!("expected BothE at step 0");
+        }
+        assert!(matches!(plan.steps[1], LogicalStep::HasRank(_)));
+    }
+
+    // Same value twice (redundant, not conflicting) — still only folds once; the second stays
+    // as a residual that will correctly keep matching (rank==1 AND rank==1 is just rank==1).
+    #[test]
+    fn test_out_e_duplicate_same_value_hasrank_not_merged_but_consistent() {
+        let mut plan = LogicalPlan {
+            steps: vec![
+                out_e(),
+                has_rank(crate::types::Primitive::Int32(1)),
+                has_rank(crate::types::Primitive::Int32(1)),
+            ],
+        };
+        let changed = merge_end_vertex_filter(&mut plan).unwrap();
+        assert!(changed);
+        assert_eq!(plan.steps.len(), 2);
+        if let LogicalStep::OutE(oute) = &plan.steps[0] {
+            assert_eq!(oute.rank, Some(1));
+        } else {
+            panic!("expected OutE at step 0");
+        }
+        assert!(matches!(plan.steps[1], LogicalStep::HasRank(_)));
+    }
+
     #[test]
     fn test_out_rank_not_merged() {
-        // Out (vertex-emitting) has no rank field — has("rank", N) after it is left alone.
+        // Out (vertex-emitting) has no rank field — HasRank after it is left alone.
         let mut plan = LogicalPlan { steps: vec![out_step(), has_rank(crate::types::Primitive::Int32(5))] };
         let changed = merge_end_vertex_filter(&mut plan).unwrap();
         assert!(!changed);
@@ -455,11 +572,14 @@ mod tests {
 
     #[test]
     fn test_out_e_rank_bad_type_errors() {
+        // String rank type in HasRank Eq predicate — primitive_to_rank returns error.
         use smol_str::SmolStr;
-        let mut plan =
-            LogicalPlan { steps: vec![out_e(), has_rank(crate::types::Primitive::String(SmolStr::new("oops")))] };
+        let step = LogicalStep::HasRank(HasRankStep {
+            pred: PrimitivePredicate::Eq(crate::types::Primitive::String(SmolStr::new("oops"))),
+        });
+        let mut plan = LogicalPlan { steps: vec![out_e(), step] };
         let res = merge_end_vertex_filter(&mut plan);
-        assert!(res.is_err(), "non-integer rank type should return error");
+        assert!(res.is_err(), "non-integer rank type should return error from HasRank merge");
     }
 
     // `.has("rank", gt(100_000))` isn't a foldable shape (only Eq folds into OutE.rank) and its

@@ -26,9 +26,9 @@ use crate::{
             AddEStep as LogicalAddEStep, AddVStep as LogicalAddVStep, BothEStep as LogicalBothEStep,
             BothStep as LogicalBothStep, CoalesceStep as LogicalCoalesceStep, CountStep as LogicalCountStep,
             DropStep as LogicalDropStep, EmitSpec, HasIdStep as LogicalHasIdStep, HasLabelStep as LogicalHasLabelStep,
-            HasPropertyStep as LogicalHasPropertyStep, InEStep as LogicalInEStep, InStep as LogicalInStep,
-            InVStep as LogicalInVStep, LimitStep as LogicalLimitStep, LogicalPlan, LogicalStep,
-            OtherVStep as LogicalOtherVStep, OutEStep as LogicalOutEStep, OutStep as LogicalOutStep,
+            HasPropertyStep as LogicalHasPropertyStep, HasRankStep as LogicalHasRankStep, InEStep as LogicalInEStep,
+            InStep as LogicalInStep, InVStep as LogicalInVStep, LimitStep as LogicalLimitStep, LogicalPlan,
+            LogicalStep, OtherVStep as LogicalOtherVStep, OutEStep as LogicalOutEStep, OutStep as LogicalOutStep,
             OutVStep as LogicalOutVStep, PropertiesStep as LogicalPropertiesStep, PropertyStep as LogicalPropertyStep,
             RepeatStep as LogicalRepeatStep, ScalarFilterStep as LogicalScalarFilterStep,
             UnionStep as LogicalUnionStep, VStep as LogicalVStep, ValuesStep as LogicalValuesStep,
@@ -1643,8 +1643,9 @@ fn test_get_e_step_out_vertex_emission_via_optimizer() {
 #[test]
 fn test_get_e_step_exact_rank_point_lookup() {
     // Multi-edge "knows" between marko and josh at rank 0 and rank 1.
-    // g.V(marko).outE("knows").where(otherV().hasId(josh)).has("rank", 1) should resolve to a
-    // single GetEStep point lookup keyed on the exact rank, not just label+dst.
+    // When end_vertex_id AND rank are both known (after optimizer folding of
+    // end_vertex_id from where(), and explicit hasRank()), GetEStep should still
+    // resolve to an exact point lookup.
     let (store, _dir) = open_rocks_store();
     let schema = std::sync::Arc::new(std::sync::RwLock::new(crate::schema::Schema::new()));
     {
@@ -1698,22 +1699,19 @@ fn test_get_e_step_exact_rank_point_lookup() {
             LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
             LogicalStep::OutE(LogicalOutEStep { labels: smallvec!["knows".into()], end_vertex_ids: None, rank: None }),
             LogicalStep::Where(LogicalWhereStep { plan: where_plan }),
-            LogicalStep::HasProperty(LogicalHasPropertyStep {
-                key: SmolStr::new("rank"),
-                pred: PrimitivePredicate::Eq(Primitive::Int32(1)),
-            }),
+            LogicalStep::HasRank(LogicalHasRankStep { pred: PrimitivePredicate::Eq(Primitive::UInt16(1)) }),
         ],
     };
     apply_rules(&mut logical_plan).unwrap();
 
-    // Both the end-vertex id and the rank should have folded into the same OutE step.
+    // Both end_vertex_ids and rank should be merged into OutE (via HasRank merging).
     if let LogicalStep::OutE(s) = &logical_plan.steps[1] {
         assert_eq!(s.end_vertex_ids, Some(smallvec![josh_id]));
         assert_eq!(s.rank, Some(1));
     } else {
         panic!("expected OutE with end_vertex_ids and rank merged");
     }
-    assert_eq!(logical_plan.steps.len(), 2, "the where() and has(\"rank\",1) steps should both be folded away");
+    assert_eq!(logical_plan.steps.len(), 2, "the where() and hasRank() steps should both be folded away");
 
     let mut builder: PhysicalPlanBuilder = Default::default();
     let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
@@ -1920,7 +1918,11 @@ fn test_end_vertex_filter_step() {
                 end_vertex_ids: None,
                 rank: None,
             }),
-            LogicalStep::EndVertexFilter(crate::planner::logical_step::EndVertexFilter { ids: smallvec![josh_id] }),
+            LogicalStep::EndVertexFilter(crate::planner::logical_step::EndVertexFilter {
+                ids: Some(smallvec![josh_id]),
+                label_preds: vec![],
+                property_preds: vec![],
+            }),
         ],
     };
     let mut builder: PhysicalPlanBuilder = Default::default();
@@ -1946,7 +1948,11 @@ fn test_end_vertex_filter_non_edge_error() {
     let logical_plan = LogicalPlan {
         steps: vec![
             LogicalStep::V(LogicalVStep { ids: smallvec![1] }),
-            LogicalStep::EndVertexFilter(crate::planner::logical_step::EndVertexFilter { ids: smallvec![2] }),
+            LogicalStep::EndVertexFilter(crate::planner::logical_step::EndVertexFilter {
+                ids: Some(smallvec![2]),
+                label_preds: vec![],
+                property_preds: vec![],
+            }),
         ],
     };
     let mut builder: PhysicalPlanBuilder = Default::default();
@@ -1966,7 +1972,7 @@ fn test_step_edge_cases_with_graph() {
                     both::BothStep,
                     coalesce::CoalesceStep,
                     drop::DropStep,
-                    end_vertex_filter::EndVertexFilter,
+                    end_vertex_filter::EndVertexFilterStep,
                     has_id::HasIdStep,
                     has_label::HasLabelStep,
                     has_property::HasPropertyStep,
@@ -2071,7 +2077,7 @@ fn test_step_edge_cases_with_graph() {
     {
         let src = BufferedStep::new(VecSourceStep::empty());
         src.inner.borrow_mut().core.inject(smallvec![Rc::new(Traverser::new(GValue::Scalar(Primitive::Int32(42))))]);
-        let mut step = EndVertexFilter::new(smallvec![1]);
+        let mut step = EndVertexFilterStep::new(Some(smallvec![1]), vec![], vec![]);
         step.add_upper(src.clone() as StepRef);
         assert!(step.produce(&mut graph).is_err());
     }
@@ -2086,7 +2092,7 @@ fn test_step_edge_cases_with_graph() {
             secondary_id: 2,
             rank: 0,
         })))]);
-        let mut step = EndVertexFilter::new(smallvec![99]);
+        let mut step = EndVertexFilterStep::new(Some(smallvec![99]), vec![], vec![]);
         step.add_upper(src.clone() as StepRef);
         assert!(step.produce(&mut graph).unwrap().is_none());
     }
@@ -2164,7 +2170,7 @@ fn test_additional_physical_steps_coverage() {
                     dedup::DedupStep,
                     drop::DropStep,
                     e::EStep,
-                    end_vertex_filter::EndVertexFilter,
+                    end_vertex_filter::EndVertexFilterStep,
                     fold::FoldStep,
                     has_id::HasIdStep,
                     has_label::HasLabelStep,
@@ -2301,13 +2307,13 @@ fn test_additional_physical_steps_coverage() {
 
     // 6. EndVertexFilter basic checks
     {
-        let mut step = EndVertexFilter::default();
+        let mut step = EndVertexFilterStep::default();
         assert!(step.produce(&mut graph).unwrap().is_none());
         step.reset();
         assert!(step.upper().is_none());
 
         let src = BufferedStep::new(VecSourceStep::empty());
-        let mut step = EndVertexFilter::default();
+        let mut step = EndVertexFilterStep::default();
         step.add_upper(src.clone() as StepRef);
         step.reset();
         assert!(step.upper().is_some());

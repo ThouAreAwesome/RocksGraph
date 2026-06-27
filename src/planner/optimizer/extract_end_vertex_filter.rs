@@ -15,36 +15,92 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
+use smallvec::SmallVec;
+use smol_str::SmolStr;
+
 use crate::{
-    planner::logical_step::{EndVertexFilter, LogicalPlan, LogicalStep},
-    types::{prop_key::ID, StoreError},
+    planner::logical_step::{EndVertexFilter, LogicalPlan, LogicalStep, WhereStep},
+    types::{prop_key::ID, PrimitivePredicate, StoreError},
 };
 
-/// An optimizer rule that extracts `where(__.otherV().hasId(…))` or `where(__.otherV().has("id", …))`
-/// patterns and replaces them with an `EndVertexFilter` step.
+/// Intersect `incoming` into `target`.  None = unconstrained; Some = current list.
+fn intersect_option_ids(target: &mut Option<SmallVec<[i64; 4]>>, incoming: SmallVec<[i64; 4]>) {
+    match target {
+        None => *target = Some(incoming),
+        Some(ref mut existing) => existing.retain(|v| incoming.contains(v)),
+    }
+}
+
+/// An optimizer rule that extracts filter predicates from `where(otherV()…)` sub-plans
+/// into a generalized `EndVertexFilter`.
 ///
-/// This allows subsequent optimization rules to merge the `EndVertexFilter` directly into edge traversal steps.
+/// Any linear chain of filter steps after `OtherV` — `HasId`, `HasProperty(id)`,
+/// `HasLabel`, `HasProperty(other)` — is extracted.  The first non-filter step
+/// (e.g. `Out`, `And`, `Or`) stops extraction and leaves the entire `where()`
+/// untouched.
+///
+/// This allows subsequent optimization rules to merge the `EndVertexFilter`'s `ids`
+/// directly into edge traversal steps, while label and property predicates run
+/// through the fused `EndVertexFilterStep` at the physical level.
 pub fn extract_end_vertex_filter(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
     let mut changed = false;
-    for step in plan.steps.iter_mut() {
+    let mut new_steps = Vec::with_capacity(plan.steps.len());
+
+    for step in std::mem::take(&mut plan.steps) {
         if let LogicalStep::Where(wh) = step {
-            match wh.plan.steps.as_slice() {
-                [LogicalStep::OtherV(_), LogicalStep::HasId(hi)] => {
-                    if let Some(ids) = super::extract_ids_from_predicate(&hi.pred)? {
-                        *step = LogicalStep::EndVertexFilter(EndVertexFilter { ids });
-                        changed = true;
-                    }
-                }
-                [LogicalStep::OtherV(_), LogicalStep::HasProperty(hp)] if hp.key.as_str() == ID => {
-                    if let Some(ids) = super::extract_ids_from_predicate(&hp.pred)? {
-                        *step = LogicalStep::EndVertexFilter(EndVertexFilter { ids });
-                        changed = true;
-                    }
-                }
-                _ => {}
+            let mut sub = wh.plan;
+            if sub.steps.len() < 2 || !matches!(sub.steps.first(), Some(LogicalStep::OtherV(_))) {
+                new_steps.push(LogicalStep::Where(WhereStep { plan: sub }));
+                continue;
             }
+            // Reorder the sub-plan so id filter comes first.
+            crate::planner::optimizer::reorder_filter::reorder_filters(&mut sub)?;
+
+            let mut ids: Option<SmallVec<[i64; 4]>> = None;
+            let mut label_preds: Vec<PrimitivePredicate> = Vec::new();
+            let mut property_preds: Vec<(SmolStr, PrimitivePredicate)> = Vec::new();
+            let mut all_filters = true;
+
+            for s in &sub.steps[1..] {
+                match s {
+                    LogicalStep::HasId(hi) => {
+                        if let Some(found) = super::extract_ids_from_predicate(&hi.pred)? {
+                            intersect_option_ids(&mut ids, found);
+                        }
+                    }
+                    LogicalStep::HasProperty(hp) if hp.key.as_str() == ID => {
+                        if let Some(found) = super::extract_ids_from_predicate(&hp.pred)? {
+                            intersect_option_ids(&mut ids, found);
+                        }
+                    }
+                    LogicalStep::HasLabel(hl) => {
+                        // Label has no structural lookup-key role (unlike `ids`/edge `rank`),
+                        // so multiple label predicates on the same chain just accumulate —
+                        // ANDed, same as property_preds.
+                        label_preds.push(hl.pred.clone());
+                    }
+                    LogicalStep::HasProperty(hp) => {
+                        property_preds.push((hp.key.clone(), hp.pred.clone()));
+                    }
+                    _ => {
+                        all_filters = false;
+                        break;
+                    }
+                }
+            }
+
+            if all_filters {
+                new_steps.push(LogicalStep::EndVertexFilter(EndVertexFilter { ids, label_preds, property_preds }));
+                changed = true;
+            } else {
+                new_steps.push(LogicalStep::Where(WhereStep { plan: sub }));
+            }
+        } else {
+            new_steps.push(step);
         }
     }
+
+    plan.steps = new_steps;
     Ok(changed)
 }
 
@@ -113,7 +169,7 @@ mod tests {
         assert!(opt, "plan should be changed");
         assert_eq!(plan.steps.len(), 1);
         if let LogicalStep::EndVertexFilter(evf) = &plan.steps[0] {
-            assert_eq!(&evf.ids[..], &[1, 2, 3]);
+            assert_eq!(evf.ids.as_deref().unwrap(), &[1, 2, 3]);
         } else {
             panic!("expected EndVertexFilter");
         }
@@ -126,7 +182,7 @@ mod tests {
         assert!(opt, "plan should be changed");
         assert_eq!(plan.steps.len(), 2);
         if let LogicalStep::EndVertexFilter(evf) = &plan.steps[1] {
-            assert_eq!(&evf.ids[..], &[1, 2, 3]);
+            assert_eq!(evf.ids.as_deref().unwrap(), &[1, 2, 3]);
         } else {
             panic!("expected EndVertexFilter");
         }
@@ -140,20 +196,24 @@ mod tests {
         assert!(opt, "plan should be changed");
         assert_eq!(plan.steps.len(), 2);
         if let LogicalStep::EndVertexFilter(evf) = &plan.steps[1] {
-            assert_eq!(&evf.ids[..], &[123]);
+            assert_eq!(evf.ids.as_deref().unwrap(), &[123]);
         } else {
             panic!("expected EndVertexFilter");
         }
     }
 
     #[test]
-    fn test_v_where_other_v_has_unextracted() {
+    fn test_v_where_other_v_has_property_extracted_to_endvertex() {
         let steps = vec![v_ids(vec![1, 2]), whr_has()];
         let mut plan = LogicalPlan { steps };
         let opt = extract_end_vertex_filter(&mut plan).unwrap();
-        assert!(!opt, "plan should not be changed");
+        assert!(opt, "property-only where() should extract into EndVertexFilter");
         assert_eq!(plan.steps.len(), 2);
-        assert!(matches!(&plan.steps[1], LogicalStep::Where(_)), "plan should not be changed")
+        assert!(matches!(&plan.steps[1], LogicalStep::EndVertexFilter(_)));
+        if let LogicalStep::EndVertexFilter(evf) = &plan.steps[1] {
+            assert_eq!(evf.property_preds.len(), 1);
+            assert_eq!(evf.property_preds[0].0.as_str(), "name");
+        }
     }
 
     #[test]
@@ -173,7 +233,7 @@ mod tests {
         let opt = extract_end_vertex_filter(&mut plan).unwrap();
         assert!(opt, "plan should be changed");
         if let LogicalStep::EndVertexFilter(evf) = &plan.steps[0] {
-            assert_eq!(&evf.ids[..], &[999i64]);
+            assert_eq!(evf.ids.as_deref().unwrap(), &[999i64]);
         } else {
             panic!("expected EndVertexFilter");
         }
@@ -198,8 +258,8 @@ mod tests {
     }
 
     #[test]
-    fn test_where_with_extra_steps_not_extracted() {
-        // where(otherV().hasId(1).hasLabel(2)) — 3-step sub-plan, should not match
+    fn test_where_with_extra_steps_full_extraction() {
+        // where(otherV().hasId(1).hasLabel("2")) — all filters extracted into one EndVertexFilter.
         use crate::planner::logical_step::HasLabelStep;
         let steps = vec![LogicalStep::Where(WhereStep {
             plan: LogicalPlan {
@@ -214,8 +274,73 @@ mod tests {
         })];
         let mut plan = LogicalPlan { steps };
         let opt = extract_end_vertex_filter(&mut plan).unwrap();
-        assert!(!opt, "plan should not be changed");
-        assert!(matches!(&plan.steps[0], LogicalStep::Where(_)));
+        assert!(opt, "plan should be changed — all filters extracted");
+        assert_eq!(plan.steps.len(), 1);
+        assert!(matches!(&plan.steps[0], LogicalStep::EndVertexFilter(_)));
+        if let LogicalStep::EndVertexFilter(evf) = &plan.steps[0] {
+            assert_eq!(evf.ids.as_deref().unwrap(), &[1]);
+            assert_eq!(evf.label_preds.len(), 1);
+        }
+    }
+
+    // where(otherV().hasLabel("a").hasLabel("b")) — a second hasLabel() in the same chain must
+    // accumulate (ANDed), not be silently dropped or block extraction of the rest of the chain.
+    #[test]
+    fn test_where_second_haslabel_in_same_chain_both_accumulate() {
+        use crate::planner::logical_step::HasLabelStep;
+        let steps = vec![LogicalStep::Where(WhereStep {
+            plan: LogicalPlan {
+                steps: vec![
+                    LogicalStep::OtherV(OtherVStep {}),
+                    LogicalStep::HasLabel(HasLabelStep {
+                        pred: PrimitivePredicate::Eq(Primitive::String(smol_str::SmolStr::new("a"))),
+                    }),
+                    LogicalStep::HasLabel(HasLabelStep {
+                        pred: PrimitivePredicate::Eq(Primitive::String(smol_str::SmolStr::new("b"))),
+                    }),
+                ],
+            },
+        })];
+        let mut plan = LogicalPlan { steps };
+        let opt = extract_end_vertex_filter(&mut plan).unwrap();
+        assert!(opt, "plan should be changed — both hasLabel() predicates extract");
+        assert_eq!(plan.steps.len(), 1);
+        if let LogicalStep::EndVertexFilter(evf) = &plan.steps[0] {
+            assert_eq!(evf.label_preds.len(), 2);
+        } else {
+            panic!("expected EndVertexFilter");
+        }
+    }
+
+    // where(otherV().hasId(1).hasLabel("a").hasLabel("b")) — the leading id filter and both
+    // label predicates all extract together into the same EndVertexFilter.
+    #[test]
+    fn test_where_id_and_two_haslabel_all_extracted() {
+        use crate::planner::logical_step::HasLabelStep;
+        let steps = vec![LogicalStep::Where(WhereStep {
+            plan: LogicalPlan {
+                steps: vec![
+                    LogicalStep::OtherV(OtherVStep {}),
+                    LogicalStep::HasId(HasIdStep { pred: PrimitivePredicate::Eq(Primitive::Int64(1)) }),
+                    LogicalStep::HasLabel(HasLabelStep {
+                        pred: PrimitivePredicate::Eq(Primitive::String(smol_str::SmolStr::new("a"))),
+                    }),
+                    LogicalStep::HasLabel(HasLabelStep {
+                        pred: PrimitivePredicate::Eq(Primitive::String(smol_str::SmolStr::new("b"))),
+                    }),
+                ],
+            },
+        })];
+        let mut plan = LogicalPlan { steps };
+        let opt = extract_end_vertex_filter(&mut plan).unwrap();
+        assert!(opt, "plan should be changed — id and both labels all extract");
+        assert_eq!(plan.steps.len(), 1);
+        if let LogicalStep::EndVertexFilter(evf) = &plan.steps[0] {
+            assert_eq!(evf.ids.as_deref().unwrap(), &[1]);
+            assert_eq!(evf.label_preds.len(), 2);
+        } else {
+            panic!("expected EndVertexFilter");
+        }
     }
 
     #[test]

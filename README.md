@@ -80,18 +80,14 @@ for extraction:
 .label()                   // extract: Value::String, decoded from the schema registry
 
 // rank — HasRankStep / RankStep (edge-only; vertices have no rank)
-.hasRank(5u16)
+.hasRank([5u16, 10u16])   // filter: Eq (single), Within (multiple), or any Predicate
+.hasRank(ne(5u16))        // filter: eq/ne/within/without/gt/lt/between
 .rank()                    // extract: Value::UInt16
 
 // negation for hasId()/hasLabel() goes through not(), same as any other filter:
 .not(__().hasId([1, 2]))   // "every vertex except 1 and 2"
 ```
 
-`.has("id", N)` / `.values(["label"])` / `.properties(["rank"])` (bare-string forms) are
-rejected with `StoreError::SchemaViolation` — use the dedicated steps above instead. The
-one exception: `.has("rank", N)` immediately following `.outE()`/`.inE()`/`.bothE()` still
-works, because the optimizer folds it into that step's structural rank filter before the
-rejection check ever runs (see [`docs/design_reserved_keys.md`](docs/design_reserved_keys.md)).
 
 ## Session Model
 

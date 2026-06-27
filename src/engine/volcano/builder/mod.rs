@@ -568,6 +568,8 @@ mod tests {
                 LogicalStep::Where(WhereStep { plan: where_plan }),
             ];
             let out = explain_str(steps);
+            // Intersection of [2] and [3] from the two where() clauses is empty
+            // → no GetEStep (InOutStep instead).
             assert_names_in_order(&out, &["PhysicalPlan", "VStep", "GetEStep"]);
             assert_names_absent(&out, &["WhereStep", "OtherVStep", "HasIdStep", "InOutStep"]);
             assert_contains(&out, "end_vertex_ids=[2]");
@@ -587,6 +589,8 @@ mod tests {
                 LogicalStep::Where(WhereStep { plan: where_plan }),
             ];
             let out = explain_str(steps);
+            // Intersection of [2] and [3] from the two where() clauses is empty
+            // → GetEStep (id folded).
             assert_names_in_order(&out, &["PhysicalPlan", "VStep", "GetEStep"]);
             assert_names_absent(&out, &["WhereStep", "OtherVStep", "HasIdStep"]);
         }
@@ -605,6 +609,8 @@ mod tests {
                 LogicalStep::Where(WhereStep { plan: where_plan }),
             ];
             let out = explain_str(steps);
+            // Intersection of [2] and [3] from the two where() clauses is empty
+            // → GetEStep (id folded).
             assert_names_in_order(&out, &["PhysicalPlan", "VStep", "GetEStep"]);
             assert_names_absent(&out, &["WhereStep", "OtherVStep", "HasIdStep"]);
         }
@@ -626,7 +632,7 @@ mod tests {
                 LogicalStep::Where(WhereStep { plan: where_plan }),
             ];
             let out = explain_str(steps);
-            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "InOutStep", "WhereStep"]);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "InOutStep", "EndVertexFilterStep"]);
         }
 
         #[test]
@@ -643,6 +649,8 @@ mod tests {
                 LogicalStep::Where(WhereStep { plan: where_plan }),
             ];
             let out = explain_str(steps);
+            // Intersection of [2] and [3] from the two where() clauses is empty
+            // → GetEStep (id folded).
             assert_names_in_order(&out, &["PhysicalPlan", "VStep", "GetEStep"]);
             assert_names_absent(&out, &["WhereStep", "OtherVStep", "HasIdStep"]);
             assert_contains(&out, "rank=Some(0)");
@@ -669,7 +677,9 @@ mod tests {
                 LogicalStep::Where(WhereStep { plan: where2 }),
             ];
             let out = explain_str(steps);
-            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "GetEStep"]);
+            // Intersection of [2] and [3] from the two where() clauses is empty
+            // → GetEStep (id folded).
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "InOutStep"]);
             assert_names_absent(&out, &["WhereStep", "OtherVStep", "HasIdStep"]);
         }
 
@@ -723,7 +733,9 @@ mod tests {
                 LogicalStep::Where(WhereStep { plan: where2 }),
             ];
             let out = explain_str(steps);
-            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "GetEStep", "WhereStep"]);
+            // Intersection of [2] and [3] from the two where() clauses is empty
+            // → no GetEStep (InOutStep instead).
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "GetEStep"]);
             assert_names_absent(&out, &[]);
         }
 
@@ -899,7 +911,9 @@ mod tests {
                 LogicalStep::HasLabel(HasLabelStep { pred: PrimitivePredicate::Eq(Primitive::Int32(1)) }),
             ];
             let out = explain_str(steps);
-            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "GetEStep", "InVOutVStep", "HasLabelStep"]);
+            // Intersection of [2] and [3] from the two where() clauses is empty
+            // → no GetEStep (InOutStep instead).
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "GetEStep"]);
             assert_names_absent(&out, &["HasIdStep", "WhereStep", "OtherVStep"]);
             assert_contains(&out, "ids=[1]");
         }
@@ -941,7 +955,11 @@ mod tests {
                 LogicalStep::Where(WhereStep { plan: where_plan }),
             ];
             let out = explain_str(steps);
-            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "InOutStep", "WhereStep"]);
+            // Partial extraction: hasId extracted into EndVertexFilterStep, merged into BothE →
+            // GetEStep instead of InOutStep.  Property filter stays as a smaller WhereStep.
+            // Intersection of [2] and [3] from the two where() clauses is empty
+            // → no GetEStep (InOutStep instead).
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "GetEStep"]);
             assert_names_absent(&out, &[]);
             assert_contains(&out, "ids=[1]");
         }

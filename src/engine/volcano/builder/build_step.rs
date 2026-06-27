@@ -526,8 +526,35 @@ impl PhysicalPlanBuilder {
                 )
             }
             LogicalStep::EndVertexFilter(s) => {
+                // Resolve label predicates: string names → label ids
+                let resolved_labels: Vec<_> = s
+                    .label_preds
+                    .iter()
+                    .map(|pred| {
+                        pred.clone().map(|v| match v {
+                            Primitive::String(name) => {
+                                let v_id = schema.vertex_label_id(&name);
+                                let e_id = schema.edge_label_id(&name);
+                                let id = v_id.unwrap_or_else(|| e_id.unwrap_or(0));
+                                Primitive::Int32(id)
+                            }
+                            other => other,
+                        })
+                    })
+                    .collect();
+                // Resolve property key IDs — reject reserved keys
+                let mut resolved_props = Vec::new();
+                for (name, pred) in &s.property_preds {
+                    reject_reserved_key(name)?;
+                    let id = schema.prop_key_id(name).unwrap_or(u16::MAX);
+                    resolved_props.push((id, pred.clone()));
+                }
                 wire_required!(
-                    BufferedStep::new(steps::end_vertex_filter::EndVertexFilter::new(s.ids.clone())),
+                    BufferedStep::new(steps::end_vertex_filter::EndVertexFilterStep::new(
+                        s.ids.clone(),
+                        resolved_labels,
+                        resolved_props,
+                    )),
                     upstream,
                     "EndVertexFilterStep"
                 )

@@ -351,22 +351,22 @@ impl Optimizer for SelectStep {}
 /// Keeps traversers in the half-open range `[lo, hi)`.
 #[derive(Clone, Debug)]
 pub struct RangeStep {
-    pub lo: u64,
-    pub hi: u64,
+    pub lo: u32,
+    pub hi: u32,
 }
 impl Optimizer for RangeStep {}
 
 /// Skips the first `n` traversers, emitting the rest.
 #[derive(Clone, Debug)]
 pub struct SkipStep {
-    pub n: u64,
+    pub n: u32,
 }
 impl Optimizer for SkipStep {}
 
 /// Collects all traversers and emits only the last `n`.
 #[derive(Clone, Debug)]
 pub struct TailStep {
-    pub n: u64,
+    pub n: u32,
 }
 impl Optimizer for TailStep {}
 
@@ -511,10 +511,19 @@ impl Optimizer for LogicalStep {
     }
 }
 
-/// Represents a filter step that checks if the current traverser's vertex ID is among a list of target IDs.
+/// Generalized filter on the other vertex in a `where(otherV()…)` clause.
+///
+/// Holds id, label, and property predicates extracted from a `where()` sub-plan.
+/// `ids: None` = unconstrained; `ids: Some(empty)` = matches nothing (empty intersection).
 #[derive(Clone)]
 pub struct EndVertexFilter {
-    pub ids: SmallVec<[VertexKey; 4]>,
+    pub ids: Option<SmallVec<[VertexKey; 4]>>,
+    /// The other vertex's label predicates, ANDed — same accumulation shape as
+    /// `property_preds` (label has no structural lookup-key role to constrain it to a single
+    /// value, unlike `ids`/edge `rank`, so there's no reason it can't just be a list).
+    pub label_preds: Vec<PrimitivePredicate>,
+    /// The other vertex's property predicates, ANDed.
+    pub property_preds: Vec<(SmolStr, PrimitivePredicate)>,
 }
 
 /// Implements the `Optimizer` trait for `EndVertexFilter`.

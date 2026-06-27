@@ -17,13 +17,13 @@ use std::rc::Rc;
 #[derive(Debug)]
 pub struct RangeStep {
     upstream: Option<StepRef>,
-    lo: u64,
-    hi: u64,
-    index: u64,
+    lo: u32,
+    hi: u32,
+    index: usize,
 }
 
 impl RangeStep {
-    pub fn new(lo: u64, hi: u64) -> Self {
+    pub fn new(lo: u32, hi: u32) -> Self {
         Self { upstream: None, lo, hi, index: 0 }
     }
 }
@@ -49,10 +49,10 @@ impl CoreStep for RangeStep {
         loop {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
             let Some(t) = upstream.next(ctx)? else { return Ok(None) };
-            if self.index >= self.hi {
+            if self.index >= self.hi as usize {
                 return Ok(None);
             }
-            let emit = self.index >= self.lo;
+            let emit = self.index >= self.lo as usize;
             self.index += 1;
             if emit {
                 return Ok(Some(smallvec![t]));
@@ -70,12 +70,12 @@ impl CoreStep for RangeStep {
 #[derive(Debug)]
 pub struct SkipStep {
     upstream: Option<StepRef>,
-    n: u64,
-    skipped: u64,
+    n: u32,
+    skipped: usize,
 }
 
 impl SkipStep {
-    pub fn new(n: u64) -> Self {
+    pub fn new(n: u32) -> Self {
         Self { upstream: None, n, skipped: 0 }
     }
 }
@@ -101,7 +101,7 @@ impl CoreStep for SkipStep {
         loop {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
             let Some(t) = upstream.next(ctx)? else { return Ok(None) };
-            if self.skipped >= self.n {
+            if self.skipped >= self.n as usize {
                 return Ok(Some(smallvec![t]));
             }
             self.skipped += 1;
@@ -118,14 +118,14 @@ impl CoreStep for SkipStep {
 #[derive(Debug)]
 pub struct TailStep {
     upstream: Option<StepRef>,
-    n: u64,
+    n: u32,
     buffer: Vec<Rc<Traverser>>,
     cursor: usize,
     done: bool,
 }
 
 impl TailStep {
-    pub fn new(n: u64) -> Self {
+    pub fn new(n: u32) -> Self {
         Self { upstream: None, n, buffer: Vec::new(), cursor: 0, done: false }
     }
 }
@@ -156,7 +156,7 @@ impl CoreStep for TailStep {
                 self.buffer.push(t);
             }
             self.done = true;
-            let start = if self.buffer.len() as u64 >= self.n { self.buffer.len() - self.n as usize } else { 0 };
+            let start = if self.buffer.len() >= self.n as usize { self.buffer.len() - self.n as usize } else { 0 };
             self.cursor = start;
         }
         if self.cursor < self.buffer.len() {

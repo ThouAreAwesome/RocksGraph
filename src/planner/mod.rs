@@ -373,7 +373,11 @@ mod tests {
             LogicalStep::From(FromStep { vertex_id: 0 }),
             LogicalStep::To(ToStep { vertex_id: 0 }),
             LogicalStep::Limit(LimitStep { limit: 0 }),
-            LogicalStep::EndVertexFilter(EndVertexFilter { ids: smallvec![] }),
+            LogicalStep::EndVertexFilter(EndVertexFilter {
+                ids: Some(smallvec![]),
+                label_preds: vec![],
+                property_preds: vec![],
+            }),
             LogicalStep::Drop(DropStep {}),
             LogicalStep::Path(PathStep {}),
             LogicalStep::Dedup(DedupStep {}),

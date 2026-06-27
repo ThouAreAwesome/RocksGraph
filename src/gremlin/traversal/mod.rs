@@ -101,6 +101,21 @@ pub(crate) struct RepeatBuilder {
     emit: EmitSpec,
 }
 
+/// `group()`/`group_count()` have no `by()` modulator yet (`docs/design_group_step.md`).
+/// Without this check, `.by()`/`.order_by()` would silently insert a new `order()`
+/// step after them instead — sorting the resulting `Map` traverser by a property it
+/// doesn't have, rather than doing what the caller almost certainly intended.
+fn follows_group_step(plan: &LogicalPlan) -> bool {
+    matches!(plan.steps.last(), Some(LogicalStep::Group(_)) | Some(LogicalStep::GroupCount(_)))
+}
+
+fn by_after_group_error(caller: &str) -> StoreError {
+    StoreError::TraversalError(format!(
+        "{caller} is not supported immediately after group()/group_count() — they have no by() \
+         modulator yet; see docs/design_group_step.md"
+    ))
+}
+
 // ── PlanAppender ──────────────────────────────────────────────────────────────
 
 #[allow(private_interfaces)]
@@ -514,17 +529,17 @@ pub trait TraversalBuilder: PlanAppender {
         self
     }
 
-    fn range(mut self, lo: u64, hi: u64) -> Self {
+    fn range(mut self, lo: u32, hi: u32) -> Self {
         self.push_step(LogicalStep::Range(RangeStep { lo, hi }));
         self
     }
 
-    fn skip(mut self, n: u64) -> Self {
+    fn skip(mut self, n: u32) -> Self {
         self.push_step(LogicalStep::Skip(SkipStep { n }));
         self
     }
 
-    fn tail(mut self, n: u64) -> Self {
+    fn tail(mut self, n: u32) -> Self {
         self.push_step(LogicalStep::Tail(TailStep { n }));
         self
     }
@@ -548,7 +563,18 @@ pub trait TraversalBuilder: PlanAppender {
     /// // sort by age, ties broken by name
     /// snap.g().V([]).order().by("age").by("name");
     /// ```
+    ///
+    /// `by()` is not supported immediately after `group()`/`group_count()` — unlike
+    /// every other step, where a missing `order()` is auto-inserted, doing that here
+    /// would silently sort the resulting `Map` traverser by a property it doesn't
+    /// have, rather than setting a group key/value modulator (`group()`/
+    /// `group_count()` don't have modulators at all yet — see
+    /// `docs/design_group_step.md`).
     fn by(mut self, key: impl Into<SmolStr>) -> Self {
+        if follows_group_step(self.plan_mut()) {
+            self.record_error(by_after_group_error("by()"));
+            return self;
+        }
         let key: SmolStr = key.into();
         let key2 = key.clone();
         let needs_order = {
@@ -587,8 +613,13 @@ pub trait TraversalBuilder: PlanAppender {
     }
 
     /// Creates or modulates an `order()` step with an explicit sort direction.
-    /// Follows the same accumulate-vs-replace logic as [`by`](Self::by).
+    /// Follows the same accumulate-vs-replace logic as [`by`](Self::by), including
+    /// the same rejection immediately after `group()`/`group_count()`.
     fn order_by(mut self, key: impl Into<SmolStr>, order: Order) -> Self {
+        if follows_group_step(self.plan_mut()) {
+            self.record_error(by_after_group_error("order_by()"));
+            return self;
+        }
         let key: SmolStr = key.into();
         let needs_order = {
             let plan = self.plan_mut();

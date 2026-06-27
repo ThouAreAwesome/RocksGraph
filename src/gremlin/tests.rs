@@ -22,7 +22,7 @@ mod integration_test {
         api::{Graph, TxSession},
         gremlin::{
             traversal::{TraversalBuilder, __},
-            value::Value,
+            value::{eq, ne, Value},
         },
         types::{BatchScenario, StoreError},
     };
@@ -2278,6 +2278,178 @@ mod integration_test {
         // property("label", ...) should always be rejected.
         let res = tx.g().V([1]).property("label", "person").next();
         assert!(res.is_err(), "property('label', ...) should be rejected");
+    }
+
+    #[test]
+    fn test_has_rank_with_predicate() {
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        let count = snap.g().V([1]).outE(["knows"]).hasRank(eq(0u16)).count().next().unwrap().unwrap();
+        assert!(matches!(count, Value::Int64(2)));
+        let count2 = snap.g().V([1]).outE(["knows"]).hasRank(ne(0u16)).count().next().unwrap().unwrap();
+        assert!(matches!(count2, Value::Int64(0)));
+    }
+
+    // Regression: a second hasRank() on the same outE() must not silently overwrite the first
+    // in merge_end_vertex_filter's fold — rank==0 AND rank==1 is impossible for a single edge,
+    // and must correctly produce zero results end-to-end, not silently fold to "rank==1".
+    #[test]
+    fn test_double_has_rank_conflicting_values_matches_nothing() {
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        let count =
+            snap.g().V([1]).outE(["knows"]).hasRank(eq(0u16)).hasRank(eq(1u16)).count().next().unwrap().unwrap();
+        assert!(matches!(count, Value::Int64(0)));
+    }
+
+    // Regression: a second hasLabel() inside one where(otherV()...) chain must not silently
+    // vanish during extraction — confirmed end-to-end, not just at the optimizer-unit level.
+    #[test]
+    fn test_where_double_haslabel_same_chain_matches_nothing() {
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        // No vertex is both "person" and "software" — should correctly match nothing, not
+        // silently drop the second hasLabel() and match every "person" target instead.
+        let results = snap
+            .g()
+            .V([1])
+            .outE(["knows", "created"])
+            .r#where(__().otherV().hasLabel(["person"]).hasLabel(["software"]))
+            .otherV()
+            .id()
+            .to_list()
+            .unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_has_rank_rejects_bare_string_has() {
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        let res = snap.g().V([1]).outE(["knows"]).has("rank", 0u16).next();
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_where_partial_extraction_id_and_property() {
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        // where(otherV().hasId(2).has("age", gt(30))) — hasId should fold into
+        // GetEStep, and the property filter should stay as a where().
+        let results = snap
+            .g()
+            .V([1])
+            .outE(["knows"])
+            .r#where(__().otherV().hasId([2]).has("age", crate::gremlin::value::gt(30i32)))
+            .otherV()
+            .id()
+            .to_list()
+            .unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_where_reorder_then_partial_extraction() {
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        // where(otherV().has("age", gt(30)).hasId([4])) — has("age") before
+        // hasId — should be reordered internally before extraction.
+        let results = snap
+            .g()
+            .V([1])
+            .outE(["knows"])
+            .r#where(__().otherV().has("age", crate::gremlin::value::gt(30i32)).hasId([4]))
+            .otherV()
+            .id()
+            .to_list()
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(matches!(&results[0], Value::Int64(4)));
+    }
+
+    #[test]
+    fn test_where_label_only_extraction() {
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        let results = snap
+            .g()
+            .V([1])
+            .outE(["knows"])
+            .r#where(__().otherV().hasLabel(["person"]))
+            .otherV()
+            .id()
+            .to_list()
+            .unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_where_property_only_extraction() {
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        let results = snap
+            .g()
+            .V([1])
+            .outE(["knows"])
+            .r#where(__().otherV().has("age", crate::gremlin::value::gt(30i32)))
+            .otherV()
+            .id()
+            .to_list()
+            .unwrap();
+        // Only Josh(4) passes age>30; Vadas(2) fails.
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_where_label_and_property_extraction() {
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        let results = snap
+            .g()
+            .V([1])
+            .outE(["knows"])
+            .r#where(__().otherV().hasLabel(["person"]).has("age", crate::gremlin::value::gt(30i32)))
+            .otherV()
+            .id()
+            .to_list()
+            .unwrap();
+        // Both are persons; only Josh(4) passes age>30.
+        assert_eq!(results.len(), 1);
+        assert!(matches!(&results[0], Value::Int64(4)));
+    }
+
+    #[test]
+    fn test_where_id_and_property_extraction() {
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        let results = snap
+            .g()
+            .V([1])
+            .outE(["knows"])
+            .r#where(__().otherV().hasId([4]).has("age", crate::gremlin::value::gt(30i32)))
+            .otherV()
+            .id()
+            .to_list()
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(matches!(&results[0], Value::Int64(4)));
+    }
+
+    #[test]
+    fn test_where_all_three_kinds_extraction() {
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        let results = snap
+            .g()
+            .V([1])
+            .outE(["knows"])
+            .r#where(__().otherV().hasLabel(["person"]).hasId([4]).has("age", crate::gremlin::value::gt(30i32)))
+            .otherV()
+            .id()
+            .to_list()
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(matches!(&results[0], Value::Int64(4)));
     }
 
     #[test]

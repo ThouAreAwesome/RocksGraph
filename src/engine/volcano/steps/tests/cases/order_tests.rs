@@ -401,3 +401,34 @@ fn test_builder_by_without_order_auto_creates_order_step() {
     assert_eq!(os.keys.len(), 1);
     assert!(matches!(os.keys[0].spec, OrderKeySpec::Property(ref k) if k == "age"));
 }
+
+// `by()`/`order_by()` immediately after `group()`/`group_count()` must be rejected rather
+// than silently auto-inserting an `order()` step that sorts the resulting `Map` by a
+// property it doesn't have (see `docs/design_group_step.md`, compatibility risk #1).
+
+#[test]
+fn test_builder_by_after_group_rejected() {
+    let traversal = crate::gremlin::traversal::__().group().by("age");
+    assert!(traversal.error.is_some());
+    let plan = traversal.into_plan();
+    assert_eq!(plan.steps.len(), 1);
+    assert!(matches!(plan.steps[0], LogicalStep::Group(_)));
+}
+
+#[test]
+fn test_builder_by_after_group_count_rejected() {
+    let traversal = crate::gremlin::traversal::__().group_count().by("age");
+    assert!(traversal.error.is_some());
+    let plan = traversal.into_plan();
+    assert_eq!(plan.steps.len(), 1);
+    assert!(matches!(plan.steps[0], LogicalStep::GroupCount(_)));
+}
+
+#[test]
+fn test_builder_order_by_after_group_rejected() {
+    let traversal = crate::gremlin::traversal::__().group().order_by("age", Order::Desc);
+    assert!(traversal.error.is_some());
+    let plan = traversal.into_plan();
+    assert_eq!(plan.steps.len(), 1);
+    assert!(matches!(plan.steps[0], LogicalStep::Group(_)));
+}

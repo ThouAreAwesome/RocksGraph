@@ -138,6 +138,21 @@ then continue traversing on them) is rare enough that supporting two overlapping
 not justified. Skip `valueMap()` and `elementMap()` — they are TinkerPop workarounds that
 `withProperties()` renders unnecessary.
 
+### Reserved-key disjoint model *(implemented)*
+
+`id`, `label`, and `rank` carry structural meaning beyond an ordinary property, so they
+are accessible **only** through dedicated steps — `id()`/`label()`/`rank()` for
+extraction, `hasId()`/`hasLabel()`/`hasRank()` for filtering. The generic property
+machinery (`values()`/`properties()`/`has()`) rejects all three outright rather than
+quietly accepting them as a second access path.
+
+TinkerPop's generic steps and reserved tokens (`values("id")`, `Key`-style routing)
+let the same value be reached two ways. RocksGraph treats that overlap as a defect, not
+a convenience — it already produced one real bug (label decoding diverging between the
+two paths) before being closed by removing the second path entirely.
+
+See `docs/design_reserved_keys.md` for the full design.
+
 ### Vertex label as an optional concern *(under consideration)*
 
 Vertex label may be dropped from the core model, treating vertices as ID-only entities
@@ -149,6 +164,20 @@ where semantic typing is a user property. This would:
 Edge label remains structural and non-optional, as in every mainstream graph database.
 
 See `docs/design_vertex_label.md` for the full analysis.
+
+### `group()` / `groupCount()` `by()` modulators *(under consideration)*
+
+TinkerPop's `group()` takes independent key- and value-`by()` modulators, where the
+value modulator's shape (whether it ends in a reducing `Barrier` step like `count()`
+or `sum()`) decides whether each map entry's value is a `List` or a reduced scalar.
+RocksGraph's `group()`/`groupCount()` have no `by()` modulator at all today — `group()`
+always groups by raw identity into `List`s, and `groupCount()` is a separate, fixed
+step rather than a generalization. Closing this gap would mean choosing between
+TinkerPop's full generality and the "narrowly scoped steps" value below.
+
+See `docs/design_group_step.md` for the verified TinkerPop semantics, the current
+implementation's exact behavior (including a dead `key` field left over from an
+earlier attempt), and the options under consideration.
 
 ---
 
@@ -185,3 +214,11 @@ No property fetches for elements that are only waypoints.
 
 **Principled schema.** Labels and property keys are schema-registered identifiers, not
 free-form strings. The schema is the contract.
+
+**Strict syntax, narrowly scoped steps.** Each step's contract should be small enough to
+state in one sentence. A value that carries structural meaning beyond "a property" gets
+its own dedicated step rather than being absorbed into a generic, do-everything one —
+e.g. `id`/`label`/`rank` are reached only through `id()`/`label()`/`rank()` and
+`hasId()`/`hasLabel()`/`hasRank()`, never through `values()`/`has()`. Two access paths to
+the same data are a latent inconsistency waiting to happen, not redundancy worth keeping
+for convenience.
