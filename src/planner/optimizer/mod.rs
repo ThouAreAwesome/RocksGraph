@@ -17,13 +17,14 @@
 
 pub mod extract_end_vertex_filter;
 pub mod merge_adde_ids;
-pub mod merge_addv_id;
 pub mod merge_end_vertex_filter;
 pub mod merge_haslabel_into_edge;
+pub mod merge_property_into_add;
 pub mod merge_v_id_filter;
+pub mod normalize_inv_outv;
 pub mod reorder_filter;
 
-use crate::types::PIPELINE_BATCH_INLINE;
+use crate::types::SMALL_VECTOR_LENGTH;
 use crate::types::{gvalue::Primitive, keys::Rank, StoreError};
 
 /// Converts a `Primitive` rank value (as written by `.property("rank", N)` or
@@ -70,7 +71,7 @@ pub(crate) fn primitive_to_rank(value: &Primitive) -> Result<Rank, StoreError> {
 /// where `HasIdStep`/`HasPropertyStep` evaluate `Within([])` correctly as always-false.
 pub(crate) fn extract_ids_from_predicate(
     pred: &crate::types::PrimitivePredicate,
-) -> Result<Option<smallvec::SmallVec<[i64; PIPELINE_BATCH_INLINE]>>, StoreError> {
+) -> Result<Option<smallvec::SmallVec<[i64; SMALL_VECTOR_LENGTH]>>, StoreError> {
     use crate::types::{Primitive, PrimitivePredicate};
     use smallvec::smallvec;
 
@@ -87,7 +88,7 @@ pub(crate) fn extract_ids_from_predicate(
     match pred {
         PrimitivePredicate::Eq(v) => Ok(Some(smallvec![to_i64(v)?])),
         PrimitivePredicate::Within(vs) => {
-            let parsed: smallvec::SmallVec<[i64; PIPELINE_BATCH_INLINE]> =
+            let parsed: smallvec::SmallVec<[i64; SMALL_VECTOR_LENGTH]> =
                 vs.iter().map(to_i64).collect::<Result<_, _>>()?;
             Ok(if parsed.is_empty() { None } else { Some(parsed) })
         }

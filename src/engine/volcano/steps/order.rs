@@ -1,7 +1,7 @@
 // Physical step: order()
 
 use crate::engine::volcano::steps::traits::ExplainNode;
-use crate::types::PIPELINE_PRODUCE_INLINE;
+use crate::types::PIPELINE_PRODUCE_SIZE;
 use crate::{
     engine::{
         context::GraphCtx,
@@ -108,7 +108,7 @@ impl CoreStep for OrderStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>>, StoreError> {
         if !self.drained {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
             let cache = &mut self.prop_key_cache;

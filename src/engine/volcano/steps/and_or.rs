@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::types::{PIPELINE_BATCH_INLINE, PIPELINE_PRODUCE_INLINE};
+use crate::types::{PIPELINE_PRODUCE_SIZE, SMALL_VECTOR_LENGTH};
 use std::rc::Rc;
 
 use smallvec::{smallvec, SmallVec};
@@ -37,11 +37,11 @@ use crate::{
 #[derive(Debug)]
 pub struct AndStep {
     upstream: Option<StepRef>,
-    physical_plans: SmallVec<[PhysicalPlan; PIPELINE_BATCH_INLINE]>,
+    physical_plans: SmallVec<[PhysicalPlan; SMALL_VECTOR_LENGTH]>,
 }
 
 impl AndStep {
-    pub fn new(physical_plans: SmallVec<[PhysicalPlan; PIPELINE_BATCH_INLINE]>) -> Self {
+    pub fn new(physical_plans: SmallVec<[PhysicalPlan; SMALL_VECTOR_LENGTH]>) -> Self {
         Self { upstream: None, physical_plans }
     }
 }
@@ -54,7 +54,7 @@ impl CoreStep for AndStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>>, StoreError> {
         loop {
             let Some(upstream) = self.upstream.as_ref() else {
                 return Ok(None);
@@ -103,11 +103,11 @@ impl CoreStep for AndStep {
 #[derive(Debug)]
 pub struct OrStep {
     upstream: Option<StepRef>,
-    physical_plans: SmallVec<[PhysicalPlan; PIPELINE_BATCH_INLINE]>,
+    physical_plans: SmallVec<[PhysicalPlan; SMALL_VECTOR_LENGTH]>,
 }
 
 impl OrStep {
-    pub fn new(physical_plans: SmallVec<[PhysicalPlan; PIPELINE_BATCH_INLINE]>) -> Self {
+    pub fn new(physical_plans: SmallVec<[PhysicalPlan; SMALL_VECTOR_LENGTH]>) -> Self {
         Self { upstream: None, physical_plans }
     }
 }
@@ -120,7 +120,7 @@ impl CoreStep for OrStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>>, StoreError> {
         loop {
             let Some(upstream) = self.upstream.as_ref() else {
                 return Ok(None);

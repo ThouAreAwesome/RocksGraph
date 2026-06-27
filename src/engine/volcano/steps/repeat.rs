@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::types::PIPELINE_PRODUCE_INLINE;
+use crate::types::PIPELINE_PRODUCE_SIZE;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
@@ -127,7 +127,7 @@ impl CoreStep for RepeatStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>>, StoreError> {
         loop {
             // ── Drain ready queue first ──
             if let Some(t) = self.ready.pop_front() {

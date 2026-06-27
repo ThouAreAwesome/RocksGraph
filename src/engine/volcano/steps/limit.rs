@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::types::PIPELINE_PRODUCE_INLINE;
+use crate::types::PIPELINE_PRODUCE_SIZE;
 use std::rc::Rc;
 
 use smallvec::{smallvec, SmallVec};
@@ -61,7 +61,7 @@ impl CoreStep for LimitStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>>, StoreError> {
         // Produces traversers from its upstream until the limit is reached.
         if self.current_idx >= self.limit as usize {
             return Ok(None);

@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::types::{PIPELINE_BATCH_INLINE, PIPELINE_PRODUCE_INLINE};
+use crate::types::{PIPELINE_PRODUCE_SIZE, SMALL_VECTOR_LENGTH};
 use std::rc::Rc;
 
 use smallvec::{smallvec, SmallVec};
@@ -38,7 +38,7 @@ use crate::{
 #[derive(Debug)]
 pub struct EStep {
     /// Canonical id strings to look up.  Empty = scan all edges.
-    keys: SmallVec<[String; PIPELINE_BATCH_INLINE]>,
+    keys: SmallVec<[String; SMALL_VECTOR_LENGTH]>,
     /// Index into `keys` for the next string to resolve.
     current_idx: usize,
     /// Buffer of fetched edge keys.
@@ -52,7 +52,7 @@ pub struct EStep {
 }
 
 impl EStep {
-    pub fn new(keys: SmallVec<[String; PIPELINE_BATCH_INLINE]>) -> Self {
+    pub fn new(keys: SmallVec<[String; SMALL_VECTOR_LENGTH]>) -> Self {
         Self {
             keys,
             current_idx: 0,
@@ -73,7 +73,7 @@ impl CoreStep for EStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>>, StoreError> {
         if !self.keys.is_empty() {
             // Look up by id string — resolve one at a time, skip malformed.
             while self.current_idx < self.keys.len() {

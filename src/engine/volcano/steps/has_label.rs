@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::types::PIPELINE_PRODUCE_INLINE;
+use crate::types::PIPELINE_PRODUCE_SIZE;
 use std::rc::Rc;
 
 use smallvec::SmallVec;
@@ -69,12 +69,12 @@ impl CoreStep for HasLabelStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>>, StoreError> {
         // Produces traversers whose element's label id matches the resolved predicate — a plain
         // integer comparison, no schema lookup needed.
         let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
-        let mut batch = SmallVec::with_capacity(PIPELINE_PRODUCE_INLINE);
-        while batch.len() < PIPELINE_PRODUCE_INLINE {
+        let mut batch = SmallVec::with_capacity(PIPELINE_PRODUCE_SIZE);
+        while batch.len() < PIPELINE_PRODUCE_SIZE {
             let Some(t) = upstream.next(ctx)? else { break };
             let matched = match &t.value {
                 GValue::Vertex(vk) => {

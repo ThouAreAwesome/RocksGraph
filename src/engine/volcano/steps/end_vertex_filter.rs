@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::types::{PIPELINE_BATCH_INLINE, PIPELINE_PRODUCE_INLINE};
+use crate::types::{PIPELINE_PRODUCE_SIZE, SMALL_VECTOR_LENGTH};
 use std::rc::Rc;
 
 use smallvec::SmallVec;
@@ -38,7 +38,7 @@ pub struct EndVertexFilterStep {
 
     // ── Static/Fixed configuration ──
     /// Target vertex IDs (None = unconstrained, Some([]) = matches nothing).
-    ids: Option<SmallVec<[VertexKey; PIPELINE_BATCH_INLINE]>>,
+    ids: Option<SmallVec<[VertexKey; SMALL_VECTOR_LENGTH]>>,
     /// Label predicates on the other vertex, ANDed — same accumulation shape as
     /// `property_preds` (label has no structural lookup-key role here, unlike `ids`).
     label_preds: Vec<crate::types::PrimitivePredicate>,
@@ -48,7 +48,7 @@ pub struct EndVertexFilterStep {
 
 impl EndVertexFilterStep {
     pub fn new(
-        ids: Option<SmallVec<[VertexKey; PIPELINE_BATCH_INLINE]>>,
+        ids: Option<SmallVec<[VertexKey; SMALL_VECTOR_LENGTH]>>,
         label_preds: Vec<crate::types::PrimitivePredicate>,
         property_preds: Vec<(u16, crate::types::PrimitivePredicate)>,
     ) -> Self {
@@ -65,10 +65,10 @@ impl CoreStep for EndVertexFilterStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>>, StoreError> {
         let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
-        let mut batch = SmallVec::with_capacity(PIPELINE_PRODUCE_INLINE);
-        while batch.len() < PIPELINE_PRODUCE_INLINE {
+        let mut batch = SmallVec::with_capacity(PIPELINE_PRODUCE_SIZE);
+        while batch.len() < PIPELINE_PRODUCE_SIZE {
             let Some(t) = upstream.next(ctx)? else { break };
             if let GValue::Edge(edge) = &t.value {
                 let dst_id = edge.secondary_id;

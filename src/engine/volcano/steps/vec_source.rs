@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::types::PIPELINE_PRODUCE_INLINE;
+use crate::types::PIPELINE_PRODUCE_SIZE;
 use std::rc::Rc;
 
 use smallvec::SmallVec;
@@ -35,7 +35,7 @@ use crate::{
 pub struct VecSourceStep {
     // ── Dynamic/Runtime execution state ──
     /// Predefined vector of traverser items to emit.
-    items: SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>,
+    items: SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>,
 }
 
 impl VecSourceStep {
@@ -46,7 +46,7 @@ impl VecSourceStep {
 
     /// Injects a collection of `Traverser` items into this source step.
     /// These items will be emitted when `produce` is called.
-    pub fn inject(&mut self, items: SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>) {
+    pub fn inject(&mut self, items: SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>) {
         self.items.extend(items);
     }
 }
@@ -60,7 +60,7 @@ impl CoreStep for VecSourceStep {
     fn produce(
         &mut self,
         _ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>>, StoreError> {
         // Emits all currently held `Traverser` items and then clears its internal buffer.
         if !self.items.is_empty() {
             Ok(Some(std::mem::take(&mut self.items)))

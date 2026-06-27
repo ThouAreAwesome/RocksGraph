@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::types::PIPELINE_PRODUCE_INLINE;
+use crate::types::PIPELINE_PRODUCE_SIZE;
 use std::rc::Rc;
 
 use smallvec::SmallVec;
@@ -57,10 +57,10 @@ impl CoreStep for OtherVStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>>, StoreError> {
         let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
-        let mut batch = SmallVec::with_capacity(PIPELINE_PRODUCE_INLINE);
-        while batch.len() < PIPELINE_PRODUCE_INLINE {
+        let mut batch = SmallVec::with_capacity(PIPELINE_PRODUCE_SIZE);
+        while batch.len() < PIPELINE_PRODUCE_SIZE {
             let Some(t) = upstream.next(ctx)? else { break };
             if let GValue::Edge(ek) = &t.value {
                 batch.push(Traverser::new_rc_conditional(GValue::Vertex(ek.secondary_id), &t, self.track_path));

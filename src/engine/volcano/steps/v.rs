@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::types::{PIPELINE_BATCH_INLINE, PIPELINE_PRODUCE_INLINE};
+use crate::types::{PIPELINE_PRODUCE_SIZE, SMALL_VECTOR_LENGTH};
 use std::rc::Rc;
 
 use smallvec::{smallvec, SmallVec};
@@ -35,7 +35,7 @@ use crate::{
 pub struct VStep {
     // ── Static/Fixed configuration ──
     /// Specific vertex keys to look up. If empty, scans all vertices in the database.
-    vertex_ids: SmallVec<[VertexKey; PIPELINE_BATCH_INLINE]>,
+    vertex_ids: SmallVec<[VertexKey; SMALL_VECTOR_LENGTH]>,
 
     // ── Dynamic/Runtime execution state ──
     /// The index of the current key being processed in `vertex_ids` (only used when lookup IDs are specified).
@@ -54,7 +54,7 @@ pub struct VStep {
 
 /// Creates a new `VStep` with a list of vertex IDs to emit or scan.
 impl VStep {
-    pub fn new(vertex_ids: SmallVec<[VertexKey; PIPELINE_BATCH_INLINE]>) -> Self {
+    pub fn new(vertex_ids: SmallVec<[VertexKey; SMALL_VECTOR_LENGTH]>) -> Self {
         Self {
             vertex_ids,
             current_idx: 0,
@@ -75,7 +75,7 @@ impl CoreStep for VStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>>, StoreError> {
         if !self.vertex_ids.is_empty() {
             if self.buffer.is_empty() && self.current_idx == 0 {
                 let fetched = ctx.get_vertices(&self.vertex_ids)?;

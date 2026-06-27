@@ -1,4 +1,4 @@
-use crate::types::PIPELINE_BATCH_INLINE;
+use crate::types::SMALL_VECTOR_LENGTH;
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 //
 // This file is part of RocksGraph.
@@ -33,7 +33,7 @@ use smallvec::SmallVec;
 
 /// What a single end-vertex/rank filter contributed, applied to the anchor step in one shot.
 enum Merge {
-    EndVertexIds(SmallVec<[VertexKey; PIPELINE_BATCH_INLINE]>),
+    EndVertexIds(SmallVec<[VertexKey; SMALL_VECTOR_LENGTH]>),
     Rank(Rank),
 }
 
@@ -137,8 +137,8 @@ pub fn merge_end_vertex_filter(plan: &mut LogicalPlan) -> Result<bool, StoreErro
 
 /// Intersect `ids` into `target`.  None = unconstrained, Some(empty) = matches nothing.
 fn intersect_ids(
-    target: &mut Option<SmallVec<[VertexKey; PIPELINE_BATCH_INLINE]>>,
-    incoming: SmallVec<[VertexKey; PIPELINE_BATCH_INLINE]>,
+    target: &mut Option<SmallVec<[VertexKey; SMALL_VECTOR_LENGTH]>>,
+    incoming: SmallVec<[VertexKey; SMALL_VECTOR_LENGTH]>,
 ) {
     match target {
         None => *target = Some(incoming),

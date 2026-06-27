@@ -28,8 +28,8 @@ use crate::{
     planner::{
         logical_step::{LogicalPlan, Optimizer, OptimizerRule},
         optimizer::{
-            extract_end_vertex_filter, merge_adde_ids, merge_addv_id, merge_end_vertex_filter,
-            merge_haslabel_into_edge, merge_v_id_filter, reorder_filter,
+            extract_end_vertex_filter, merge_adde_ids, merge_end_vertex_filter, merge_haslabel_into_edge,
+            merge_property_into_add, merge_v_id_filter, normalize_inv_outv, reorder_filter,
         },
     },
     types::StoreError,
@@ -40,10 +40,9 @@ pub fn apply_rules(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
     const OPTIMIZERS: &[OptimizerRule] = &[
         reorder_filter::reorder_filters,
         merge_v_id_filter::merge_v_id_filter,
-        merge_addv_id::merge_addv_id,
         merge_adde_ids::merge_adde_from,
-        merge_adde_ids::reorder_rank_forward,
-        merge_adde_ids::merge_adde_rank,
+        normalize_inv_outv::normalize_inv_outv,
+        merge_property_into_add::merge_property_into_add,
         extract_end_vertex_filter::extract_end_vertex_filter,
         merge_end_vertex_filter::merge_end_vertex_filter,
         merge_haslabel_into_edge::merge_haslabel_into_edge,

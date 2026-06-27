@@ -57,7 +57,6 @@ use smallvec::SmallVec;
 
 use crate::types::{
     CanonicalKey, Direction, Edge, EdgeKey, LabelId, Primitive, Property, Rank, StoreError, Vertex, VertexKey,
-    SCAN_PREFIX_INLINE,
 };
 
 // ── Scan helpers ──────────────────────────────────────────────────────────────
@@ -70,8 +69,8 @@ pub(crate) const EDGE_PREFIX_LENGTH: usize = 8;
 /// Returns an inline [`SmallVec`] — no heap allocation for the typical
 /// 8–10 byte prefix. The caller can pass the result directly to
 /// [`prefix_upper_bound`] or clone it into a `Vec<u8>` for RocksDB keys.
-pub fn edge_scan_prefix(vertex: VertexKey, label: Option<LabelId>) -> SmallVec<[u8; SCAN_PREFIX_INLINE]> {
-    let mut prefix = SmallVec::<[u8; SCAN_PREFIX_INLINE]>::new();
+pub fn edge_scan_prefix(vertex: VertexKey, label: Option<LabelId>) -> SmallVec<[u8; SCAN_PREFIX_LENGTH]> {
+    let mut prefix = SmallVec::<[u8; SCAN_PREFIX_LENGTH]>::new();
     prefix.extend_from_slice(&(vertex ^ (1 << 63)).to_be_bytes());
     if let Some(lbl) = label {
         prefix.extend_from_slice(&lbl.to_be_bytes());
@@ -84,8 +83,8 @@ pub fn edge_scan_prefix(vertex: VertexKey, label: Option<LabelId>) -> SmallVec<[
 /// Copies `prefix` into an inline [`SmallVec`], then increments the last
 /// non-`0xFF` byte. Returns `None` when every byte is `0xFF` (meaning a
 /// scan-to-end should be used instead).
-pub fn prefix_upper_bound(prefix: &[u8]) -> Option<SmallVec<[u8; SCAN_PREFIX_INLINE]>> {
-    let mut upper = SmallVec::<[u8; SCAN_PREFIX_INLINE]>::new();
+pub fn prefix_upper_bound(prefix: &[u8]) -> Option<SmallVec<[u8; SCAN_PREFIX_LENGTH]>> {
+    let mut upper = SmallVec::<[u8; SCAN_PREFIX_LENGTH]>::new();
     upper.extend_from_slice(prefix);
     for byte in upper.iter_mut().rev() {
         if *byte < 0xFF {
@@ -176,6 +175,8 @@ pub const VERTEX_KEY_SIZE: usize = 8;
 /// Edge key: 8 (vertex) + 4 (label) + 8 (vertex) + 2 (rank) = 22 bytes.
 /// No direction byte is included; each Column Family (CF) encodes direction implicitly.
 pub const EDGE_KEY_SIZE: usize = 22;
+/// Inline capacity for RocksDB key-prefix buffers (vertex ID + optional label ID).
+const SCAN_PREFIX_LENGTH: usize = 8 + 4;
 
 // ── VertexKey encoding ────────────────────────────────────────────────────────
 

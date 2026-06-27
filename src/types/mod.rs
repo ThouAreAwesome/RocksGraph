@@ -97,17 +97,14 @@ pub(crate) const ORDER_KEY_INLINE: usize = 2;
 /// Inline capacity for small collections of vertex IDs, edge labels, property keys,
 /// and logical sub-plans in query parameters (the user rarely supplies more than a
 /// handful per `V()` / `outE()` / `.and()` / `.union()` call).
-pub(crate) const PIPELINE_BATCH_INLINE: usize = 4;
+pub(crate) const SMALL_VECTOR_LENGTH: usize = 4;
 
 /// Inline capacity for the Volcano pipeline produce buffer — determines how many
 /// traversers can be emitted per single `produce()` → `next()` round-trip.
-pub(crate) const PIPELINE_PRODUCE_INLINE: usize = 8;
+pub(crate) const PIPELINE_PRODUCE_SIZE: usize = 8;
 
 /// Inline capacity for vertex property lists in `addV()`.
-pub(crate) const VERTEX_PROPS_INLINE: usize = 8;
-
-/// Inline capacity for RocksDB key-prefix buffers (vertex ID + optional label ID).
-pub(crate) const SCAN_PREFIX_INLINE: usize = 10;
+pub(crate) const VERTEX_PROPS_LENGTH: usize = 8;
 
 #[cfg(test)]
 #[cfg(test)]

@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::types::PIPELINE_BATCH_INLINE;
+use crate::types::SMALL_VECTOR_LENGTH;
 use crate::{
     planner::logical_step::{LogicalPlan, LogicalStep},
     types::{prop_key::ID, StoreError},
@@ -38,7 +38,7 @@ pub fn merge_v_id_filter(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
     let mut j = 1;
 
     while j < plan.steps.len() {
-        let v_ids: Option<smallvec::SmallVec<[i64; PIPELINE_BATCH_INLINE]>> = match (&plan.steps[i], &plan.steps[j]) {
+        let v_ids: Option<smallvec::SmallVec<[i64; SMALL_VECTOR_LENGTH]>> = match (&plan.steps[i], &plan.steps[j]) {
             (LogicalStep::V(v), LogicalStep::HasProperty(hp)) if hp.key.as_str() == ID && v.ids.is_empty() => {
                 super::extract_ids_from_predicate(&hp.pred)?
             }

@@ -19,7 +19,7 @@ use std::{collections::VecDeque, rc::Rc};
 
 use smallvec::{smallvec, SmallVec};
 
-use crate::types::{PIPELINE_BATCH_INLINE, PIPELINE_PRODUCE_INLINE};
+use crate::types::{PIPELINE_PRODUCE_SIZE, SMALL_VECTOR_LENGTH};
 use crate::{
     engine::{
         context::GraphCtx,
@@ -60,14 +60,14 @@ impl CoreStep for LocalStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>>, StoreError> {
         loop {
             // Drain buffered results first.
             if !self.buffer.is_empty() {
                 let mut out = SmallVec::new();
                 while let Some(item) = self.buffer.pop_front() {
                     out.push(item);
-                    if out.len() >= PIPELINE_BATCH_INLINE {
+                    if out.len() >= SMALL_VECTOR_LENGTH {
                         return Ok(Some(out));
                     }
                 }

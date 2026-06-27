@@ -37,7 +37,7 @@ mod build_step;
 
 use std::{fmt, rc::Rc};
 
-use crate::types::PIPELINE_PRODUCE_INLINE;
+use crate::types::PIPELINE_PRODUCE_SIZE;
 use smallvec::SmallVec;
 
 use crate::{
@@ -78,7 +78,7 @@ impl fmt::Debug for PhysicalPlan {
 }
 
 impl PhysicalPlan {
-    pub fn inject(&self, items: SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>) {
+    pub fn inject(&self, items: SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>) {
         self.source.inner.borrow_mut().core.inject(items);
     }
 
@@ -914,8 +914,8 @@ mod tests {
             let out = explain_str(steps);
             // Intersection of [2] and [3] from the two where() clauses is empty
             // → no GetEStep (InOutStep instead).
-            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "GetEStep"]);
-            assert_names_absent(&out, &["HasIdStep", "WhereStep", "OtherVStep"]);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "GetEStep", "OtherV", "HasLabel"]);
+            assert_names_absent(&out, &["HasIdStep", "WhereStep"]);
             assert_contains(&out, "ids=[1]");
         }
 

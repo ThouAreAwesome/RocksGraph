@@ -1,7 +1,7 @@
 // Physical steps: simplePath(), cyclicPath()
 
 use crate::engine::volcano::steps::traits::ExplainNode;
-use crate::types::PIPELINE_PRODUCE_INLINE;
+use crate::types::PIPELINE_PRODUCE_SIZE;
 use crate::{
     engine::{
         context::GraphCtx,
@@ -35,10 +35,10 @@ impl CoreStep for SimplePathStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>>, StoreError> {
         let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
-        let mut batch = SmallVec::with_capacity(PIPELINE_PRODUCE_INLINE);
-        while batch.len() < PIPELINE_PRODUCE_INLINE {
+        let mut batch = SmallVec::with_capacity(PIPELINE_PRODUCE_SIZE);
+        while batch.len() < PIPELINE_PRODUCE_SIZE {
             let Some(t) = upstream.next(ctx)? else { break };
             if has_duplicate_vertex(&t) {
                 continue;
@@ -79,10 +79,10 @@ impl CoreStep for CyclicPathStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>>, StoreError> {
         let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
-        let mut batch = SmallVec::with_capacity(PIPELINE_PRODUCE_INLINE);
-        while batch.len() < PIPELINE_PRODUCE_INLINE {
+        let mut batch = SmallVec::with_capacity(PIPELINE_PRODUCE_SIZE);
+        while batch.len() < PIPELINE_PRODUCE_SIZE {
             let Some(t) = upstream.next(ctx)? else { break };
             if !has_duplicate_vertex(&t) {
                 continue;

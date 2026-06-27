@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::types::{PIPELINE_BATCH_INLINE, PIPELINE_PRODUCE_INLINE};
+use crate::types::{PIPELINE_PRODUCE_SIZE, SMALL_VECTOR_LENGTH};
 use std::rc::Rc;
 
 use smallvec::{smallvec, SmallVec};
@@ -50,9 +50,9 @@ pub struct GetEStep {
 
     // ── Static/Fixed configuration ──
     /// Label IDs to look up (kept for explain()).
-    label_ids: SmallVec<[LabelId; PIPELINE_BATCH_INLINE]>,
+    label_ids: SmallVec<[LabelId; SMALL_VECTOR_LENGTH]>,
     /// End-vertex IDs to look up (kept for explain()).
-    end_vertex_ids: SmallVec<[VertexKey; PIPELINE_BATCH_INLINE]>,
+    end_vertex_ids: SmallVec<[VertexKey; SMALL_VECTOR_LENGTH]>,
     /// Edge rank (kept for explain()). `None` means DEFAULT_RANK was used.
     rank: Option<Rank>,
     /// Whether to return the matched edges themselves (true) or the adjacent vertices (false).
@@ -78,8 +78,8 @@ impl GetEStep {
     /// the label is known to be single-edge, and the same assumption this step already made
     /// before rank filters could be folded in.
     pub fn new(
-        label_ids: SmallVec<[LabelId; PIPELINE_BATCH_INLINE]>,
-        end_vertex_ids: SmallVec<[VertexKey; PIPELINE_BATCH_INLINE]>,
+        label_ids: SmallVec<[LabelId; SMALL_VECTOR_LENGTH]>,
+        end_vertex_ids: SmallVec<[VertexKey; SMALL_VECTOR_LENGTH]>,
         direction: Option<Direction>,
         rank: Option<Rank>,
         output_edges: bool,
@@ -115,7 +115,7 @@ impl CoreStep for GetEStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>>, StoreError> {
         // Produces traversers for edges that match the specified criteria.
         loop {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
@@ -126,7 +126,7 @@ impl CoreStep for GetEStep {
                 _ => return Err(StoreError::UnexpectedDataType("expected Vertex before outE".into())),
             };
 
-            let mut results: SmallVec<[_; PIPELINE_PRODUCE_INLINE]> = smallvec![];
+            let mut results: SmallVec<[_; PIPELINE_PRODUCE_SIZE]> = smallvec![];
             let output_edges = self.output_edges;
             let to_gvalue = move |edge_key: EdgeKey| {
                 if output_edges {

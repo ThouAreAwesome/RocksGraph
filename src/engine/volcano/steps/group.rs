@@ -1,7 +1,7 @@
 // Physical steps: group(), groupCount()
 
 use crate::engine::volcano::steps::traits::ExplainNode;
-use crate::types::PIPELINE_PRODUCE_INLINE;
+use crate::types::PIPELINE_PRODUCE_SIZE;
 use crate::{
     engine::{
         context::GraphCtx,
@@ -37,7 +37,7 @@ impl CoreStep for GroupStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>>, StoreError> {
         if self.done {
             return Ok(None);
         }
@@ -85,7 +85,7 @@ impl CoreStep for GroupCountStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>>, StoreError> {
         if self.done {
             return Ok(None);
         }

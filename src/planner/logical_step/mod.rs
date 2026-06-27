@@ -29,7 +29,7 @@ use crate::types::{
     gvalue::{Primitive, PrimitivePredicate},
     keys::{Rank, VertexKey},
     prop_key::PropKey,
-    StoreError, ORDER_KEY_INLINE, PIPELINE_BATCH_INLINE, STEP_LABEL_INLINE,
+    StoreError, ORDER_KEY_INLINE, SMALL_VECTOR_LENGTH, STEP_LABEL_INLINE,
 };
 use smallvec::SmallVec;
 use smol_str::SmolStr;
@@ -517,7 +517,7 @@ impl Optimizer for LogicalStep {
 /// `ids: None` = unconstrained; `ids: Some(empty)` = matches nothing (empty intersection).
 #[derive(Clone)]
 pub struct EndVertexFilter {
-    pub ids: Option<SmallVec<[VertexKey; PIPELINE_BATCH_INLINE]>>,
+    pub ids: Option<SmallVec<[VertexKey; SMALL_VECTOR_LENGTH]>>,
     /// The other vertex's label predicates, ANDed — same accumulation shape as
     /// `property_preds` (label has no structural lookup-key role to constrain it to a single
     /// value, unlike `ids`/edge `rank`, so there's no reason it can't just be a list).
@@ -552,8 +552,8 @@ impl Optimizer for CountStep {}
 #[derive(Clone)]
 /// Represents a logical `both` step, traversing both incoming and outgoing edges.
 pub struct BothStep {
-    pub labels: SmallVec<[SmolStr; PIPELINE_BATCH_INLINE]>,
-    pub end_vertex_ids: Option<SmallVec<[VertexKey; PIPELINE_BATCH_INLINE]>>,
+    pub labels: SmallVec<[SmolStr; SMALL_VECTOR_LENGTH]>,
+    pub end_vertex_ids: Option<SmallVec<[VertexKey; SMALL_VECTOR_LENGTH]>>,
 }
 
 impl Optimizer for BothStep {}
@@ -561,8 +561,8 @@ impl Optimizer for BothStep {}
 /// Represents a logical `bothE` step, traversing both incoming and outgoing edges and returning the edges themselves.
 #[derive(Clone)]
 pub struct BothEStep {
-    pub labels: SmallVec<[SmolStr; PIPELINE_BATCH_INLINE]>,
-    pub end_vertex_ids: Option<SmallVec<[VertexKey; PIPELINE_BATCH_INLINE]>>,
+    pub labels: SmallVec<[SmolStr; SMALL_VECTOR_LENGTH]>,
+    pub end_vertex_ids: Option<SmallVec<[VertexKey; SMALL_VECTOR_LENGTH]>>,
     /// The edge rank to filter by, folded in from a trailing `.has("rank", N)` (see
     /// `merge_end_vertex_filter`). `None` means no rank constraint is known at plan time.
     pub rank: Option<Rank>,
@@ -590,8 +590,8 @@ impl Optimizer for HasPropertyStep {}
 /// Represents a logical `in` step, traversing incoming edges and returning the source vertices.
 #[derive(Clone)]
 pub struct InStep {
-    pub labels: SmallVec<[SmolStr; PIPELINE_BATCH_INLINE]>,
-    pub end_vertex_ids: Option<SmallVec<[VertexKey; PIPELINE_BATCH_INLINE]>>,
+    pub labels: SmallVec<[SmolStr; SMALL_VECTOR_LENGTH]>,
+    pub end_vertex_ids: Option<SmallVec<[VertexKey; SMALL_VECTOR_LENGTH]>>,
 }
 
 /// Implements the `Optimizer` trait for `InStep`.
@@ -599,8 +599,8 @@ impl Optimizer for InStep {}
 
 #[derive(Clone)]
 pub struct InEStep {
-    pub labels: SmallVec<[SmolStr; PIPELINE_BATCH_INLINE]>,
-    pub end_vertex_ids: Option<SmallVec<[VertexKey; PIPELINE_BATCH_INLINE]>>,
+    pub labels: SmallVec<[SmolStr; SMALL_VECTOR_LENGTH]>,
+    pub end_vertex_ids: Option<SmallVec<[VertexKey; SMALL_VECTOR_LENGTH]>>,
     /// The edge rank to filter by, folded in from a trailing `.has("rank", N)` (see
     /// `merge_end_vertex_filter`). `None` means no rank constraint is known at plan time.
     pub rank: Option<Rank>,
@@ -610,8 +610,8 @@ impl Optimizer for InEStep {}
 /// Represents a logical `out` step, traversing outgoing edges and returning the destination vertices.
 #[derive(Clone)]
 pub struct OutStep {
-    pub labels: SmallVec<[SmolStr; PIPELINE_BATCH_INLINE]>,
-    pub end_vertex_ids: Option<SmallVec<[VertexKey; PIPELINE_BATCH_INLINE]>>,
+    pub labels: SmallVec<[SmolStr; SMALL_VECTOR_LENGTH]>,
+    pub end_vertex_ids: Option<SmallVec<[VertexKey; SMALL_VECTOR_LENGTH]>>,
 }
 
 /// Implements the `Optimizer` trait for `OutStep`.
@@ -619,8 +619,8 @@ impl Optimizer for OutStep {}
 
 #[derive(Clone)]
 pub struct OutEStep {
-    pub labels: SmallVec<[SmolStr; PIPELINE_BATCH_INLINE]>,
-    pub end_vertex_ids: Option<SmallVec<[VertexKey; PIPELINE_BATCH_INLINE]>>,
+    pub labels: SmallVec<[SmolStr; SMALL_VECTOR_LENGTH]>,
+    pub end_vertex_ids: Option<SmallVec<[VertexKey; SMALL_VECTOR_LENGTH]>>,
     /// The edge rank to filter by, folded in from a trailing `.has("rank", N)` (see
     /// `merge_end_vertex_filter`). `None` means no rank constraint is known at plan time.
     pub rank: Option<Rank>,
@@ -657,7 +657,7 @@ impl Optimizer for ScalarFilterStep {}
 /// Represents a logical `values` step, extracting property values from elements.
 #[derive(Clone)]
 pub struct ValuesStep {
-    pub property_keys: SmallVec<[PropKey; PIPELINE_BATCH_INLINE]>,
+    pub property_keys: SmallVec<[PropKey; SMALL_VECTOR_LENGTH]>,
 }
 
 /// Implements the `Optimizer` trait for `ValuesStep`.
@@ -665,7 +665,7 @@ impl Optimizer for ValuesStep {}
 
 #[derive(Clone)]
 pub struct PropertiesStep {
-    pub property_keys: SmallVec<[PropKey; PIPELINE_BATCH_INLINE]>,
+    pub property_keys: SmallVec<[PropKey; SMALL_VECTOR_LENGTH]>,
 }
 impl Optimizer for PropertiesStep {}
 
@@ -685,7 +685,7 @@ impl Optimizer for WhereStep {
 #[derive(Clone)]
 /// Represents a logical `union` step, combining results from multiple sub-plans.
 pub struct UnionStep {
-    pub plans: SmallVec<[LogicalPlan; PIPELINE_BATCH_INLINE]>,
+    pub plans: SmallVec<[LogicalPlan; SMALL_VECTOR_LENGTH]>,
 }
 
 /// Implements the `Optimizer` trait for `UnionStep`, optimizing its sub-plans.
@@ -749,14 +749,14 @@ impl Optimizer for PropertyStep {}
 
 #[derive(Clone)]
 pub struct VStep {
-    pub ids: SmallVec<[VertexKey; PIPELINE_BATCH_INLINE]>,
+    pub ids: SmallVec<[VertexKey; SMALL_VECTOR_LENGTH]>,
 }
 
 impl Optimizer for VStep {}
 
 #[derive(Clone)]
 pub struct EStep {
-    pub keys: SmallVec<[String; PIPELINE_BATCH_INLINE]>,
+    pub keys: SmallVec<[String; SMALL_VECTOR_LENGTH]>,
 }
 
 impl Optimizer for EStep {}

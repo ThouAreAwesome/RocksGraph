@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::types::{PIPELINE_BATCH_INLINE, PIPELINE_PRODUCE_INLINE};
+use crate::types::{PIPELINE_PRODUCE_SIZE, SMALL_VECTOR_LENGTH};
 use std::rc::Rc;
 
 use smallvec::{smallvec, SmallVec};
@@ -41,7 +41,7 @@ pub struct UnionStep {
 
     // ── Static/Fixed configuration ──
     /// The physical plans representing the branches of the union.
-    physical_plans: SmallVec<[PhysicalPlan; PIPELINE_BATCH_INLINE]>,
+    physical_plans: SmallVec<[PhysicalPlan; SMALL_VECTOR_LENGTH]>,
 
     // ── Dynamic/Runtime execution state ──
     /// The index of the current branch plan being evaluated for the active input.
@@ -52,7 +52,7 @@ pub struct UnionStep {
 
 impl UnionStep {
     /// Creates a new `UnionStep` with the given physical sub-plans.
-    pub fn new(physical_plans: SmallVec<[PhysicalPlan; PIPELINE_BATCH_INLINE]>) -> Self {
+    pub fn new(physical_plans: SmallVec<[PhysicalPlan; SMALL_VECTOR_LENGTH]>) -> Self {
         Self { upstream: None, physical_plans, current_plan_idx: 0, current_input: None }
     }
 }
@@ -66,7 +66,7 @@ impl CoreStep for UnionStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>>, StoreError> {
         // Continuously attempts to produce traversers from its sub-plans.
         loop {
             if self.current_input.is_none() {

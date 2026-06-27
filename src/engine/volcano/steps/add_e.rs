@@ -15,8 +15,8 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::types::PIPELINE_PRODUCE_INLINE;
-use crate::types::VERTEX_PROPS_INLINE;
+use crate::types::PIPELINE_PRODUCE_SIZE;
+use crate::types::VERTEX_PROPS_LENGTH;
 use std::{collections::HashMap, rc::Rc};
 
 use smallvec::{smallvec, SmallVec};
@@ -46,7 +46,7 @@ pub struct AddEStep {
     label_id: LabelId,
     out_v_id: Option<VertexKey>,
     in_v_id: Option<VertexKey>,
-    properties: SmallVec<[Property; VERTEX_PROPS_INLINE]>,
+    properties: SmallVec<[Property; VERTEX_PROPS_LENGTH]>,
     rank: Rank,
     upstream: Option<StepRef>,
     emitted: bool,
@@ -73,7 +73,7 @@ impl AddEStep {
                 key,
                 value,
             })
-            .collect::<SmallVec<[Property; VERTEX_PROPS_INLINE]>>();
+            .collect::<SmallVec<[Property; VERTEX_PROPS_LENGTH]>>();
         Self { label_id, out_v_id, in_v_id, properties, rank: final_rank, upstream: None, emitted: false }
     }
 }
@@ -86,7 +86,7 @@ impl CoreStep for AddEStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>>, StoreError> {
         if self.emitted && self.upstream.is_none() {
             return Ok(None);
         }
@@ -121,8 +121,11 @@ impl CoreStep for AddEStep {
             rank: self.rank,
         };
         let new_edge = ctx.add_edge(&edge_key)?;
+        let canonical_key = CanonicalKey::Edge(new_edge.canonical_edge_key());
         for property in &self.properties {
-            ctx.set_property(property)?;
+            let mut prop = property.clone();
+            prop.owner = canonical_key;
+            ctx.set_property(&prop)?;
         }
         Ok(Some(smallvec![Traverser::new_rc(GValue::Edge(new_edge))]))
     }

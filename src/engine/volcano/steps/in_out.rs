@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::types::{PIPELINE_BATCH_INLINE, PIPELINE_PRODUCE_INLINE};
+use crate::types::{PIPELINE_PRODUCE_SIZE, SMALL_VECTOR_LENGTH};
 use std::rc::Rc;
 
 use smallvec::SmallVec;
@@ -43,13 +43,13 @@ pub struct InOutStep {
 
     // ── Static/Fixed configuration ──
     /// The edge labels to filter by during traversal (empty means all labels).
-    label_ids: SmallVec<[LabelId; PIPELINE_BATCH_INLINE]>,
+    label_ids: SmallVec<[LabelId; SMALL_VECTOR_LENGTH]>,
     /// The direction of the edge traversal (incoming or outgoing).
     direction: Direction,
     /// Maximum number of results to produce per input vertex.
     limit: Option<u32>,
     /// Optional target vertex IDs to filter the destination vertices of the traversed edges.
-    end_vertex_ids: Option<SmallVec<[VertexKey; PIPELINE_BATCH_INLINE]>>,
+    end_vertex_ids: Option<SmallVec<[VertexKey; SMALL_VECTOR_LENGTH]>>,
     /// Optional edge rank to filter by, folded in from a `.has("rank", N)` filter.
     rank: Option<Rank>,
     /// Whether to return the traversed edges themselves (true) or the adjacent vertices (false).
@@ -70,9 +70,9 @@ pub struct InOutStep {
 impl InOutStep {
     /// Creates a new `InOutStep` for traversing adjacent vertices or edges.
     pub fn new(
-        label_ids: SmallVec<[LabelId; PIPELINE_BATCH_INLINE]>,
+        label_ids: SmallVec<[LabelId; SMALL_VECTOR_LENGTH]>,
         direction: Direction,
-        end_vertex_ids: Option<SmallVec<[VertexKey; PIPELINE_BATCH_INLINE]>>,
+        end_vertex_ids: Option<SmallVec<[VertexKey; SMALL_VECTOR_LENGTH]>>,
         rank: Option<Rank>,
         output_edges: bool,
         track_path: bool,
@@ -101,7 +101,7 @@ impl CoreStep for InOutStep {
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,
-    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_INLINE]>>, StoreError> {
+    ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>>, StoreError> {
         loop {
             if self.current_input.is_none() {
                 let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
@@ -141,7 +141,7 @@ impl CoreStep for InOutStep {
                 }
 
                 if !edges.is_empty() {
-                    let results: SmallVec<[_; PIPELINE_PRODUCE_INLINE]> = edges
+                    let results: SmallVec<[_; PIPELINE_PRODUCE_SIZE]> = edges
                         .into_iter()
                         .map(|e| {
                             let value =
