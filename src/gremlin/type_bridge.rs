@@ -24,11 +24,10 @@
 use smol_str::SmolStr;
 
 use crate::{
-    gremlin::value::{Key, Predicate, Value},
-    planner::logical_step::{HasIdStep, HasLabelStep, HasPropertyStep, LogicalStep},
+    gremlin::value::{Predicate, Value},
+    planner::logical_step::{HasPropertyStep, LogicalStep},
     types::{
         gvalue::{Primitive, PrimitivePredicate},
-        prop_key::{PropKey, ID, LABEL},
         StoreError,
     },
 };
@@ -98,50 +97,6 @@ pub(crate) fn primitive_to_value(p: Primitive) -> Value {
     }
 }
 
-/// Convert a [`Key`] to the internal [`PropKey`].
-///
-/// `Key::Id` → `"id"`, `Key::Label` → `"label"` — the reserved strings that
-/// [`element::Vertex::get_value`](crate::types::element::Vertex::get_value)
-/// and [`element::Edge::get_value`](crate::types::element::Edge::get_value)
-/// handle specially without a props scan.
-pub(crate) fn key_to_prop_key(k: Key) -> PropKey {
-    match k {
-        Key::Id => ID.clone(),
-        Key::Label => LABEL.clone(),
-        Key::Property(s) => s,
-    }
-}
-
-fn validate_id_value(val: &Value) -> Result<(), StoreError> {
-    match val {
-        Value::Int64(_) | Value::Int32(_) => Ok(()),
-        other => Err(StoreError::UnexpectedDataType(format!("ID has-filter expects i32 or i64, got {:?}", other))),
-    }
-}
-
-fn validate_id_predicate(pred: &Predicate) -> Result<(), StoreError> {
-    match pred {
-        Predicate::Eq(v)
-        | Predicate::Ne(v)
-        | Predicate::Gt(v)
-        | Predicate::Gte(v)
-        | Predicate::Lt(v)
-        | Predicate::Lte(v) => {
-            validate_id_value(v)?;
-        }
-        Predicate::Between(lo, hi) => {
-            validate_id_value(lo)?;
-            validate_id_value(hi)?;
-        }
-        Predicate::Within(vs) | Predicate::Without(vs) => {
-            for v in vs {
-                validate_id_value(v)?;
-            }
-        }
-    }
-    Ok(())
-}
-
 fn validate_label_value(val: &Value) -> Result<(), StoreError> {
     match val {
         Value::String(_) => Ok(()),
@@ -149,7 +104,9 @@ fn validate_label_value(val: &Value) -> Result<(), StoreError> {
     }
 }
 
-fn validate_label_predicate(pred: &Predicate) -> Result<(), StoreError> {
+/// Labels are string-only and unordered — `eq`/`ne`/`within`/`without` are meaningful,
+/// `gt`/`gte`/`lt`/`lte`/`between` (lexicographic ordering on a label name) are not.
+pub(crate) fn validate_label_predicate(pred: &Predicate) -> Result<(), StoreError> {
     match pred {
         Predicate::Eq(v) | Predicate::Ne(v) => {
             validate_label_value(v)?;
@@ -202,25 +159,17 @@ fn validate_property_predicate(pred: &Predicate) -> Result<(), StoreError> {
     Ok(())
 }
 
-/// Push the appropriate [`LogicalStep`] for a `.has(key, pred)` call.
-pub(crate) fn push_has_step(steps: &mut Vec<LogicalStep>, key: Key, pred: Predicate) -> Result<(), StoreError> {
-    match key {
-        Key::Id => {
-            validate_id_predicate(&pred)?;
-            let prim_pred = predicate_to_primitive_predicate(pred)?;
-            steps.push(LogicalStep::HasId(HasIdStep { pred: prim_pred }));
-        }
-        Key::Label => {
-            validate_label_predicate(&pred)?;
-            let prim_pred = predicate_to_primitive_predicate(pred)?;
-            steps.push(LogicalStep::HasLabel(HasLabelStep { pred: prim_pred }));
-        }
-        Key::Property(s) => {
-            validate_property_predicate(&pred)?;
-            let prim_pred = predicate_to_primitive_predicate(pred)?;
-            steps.push(LogicalStep::HasProperty(HasPropertyStep { key: s, pred: prim_pred }));
-        }
-    }
+/// Push a [`LogicalStep::HasProperty`] for a `.has(key, pred)` call.
+///
+/// `"id"`/`"label"`/`"rank"` are rejected later, at physical-build time (see
+/// `reject_reserved_key` in `engine/volcano/builder/build_step.rs`) — not here, since a
+/// `.has("rank", ...)` immediately following an edge-traversal step is still expected to
+/// fold into that step's structural rank field via `merge_end_vertex_filter`, and folding
+/// happens between this call and physical build.
+pub(crate) fn push_has_step(steps: &mut Vec<LogicalStep>, key: SmolStr, pred: Predicate) -> Result<(), StoreError> {
+    validate_property_predicate(&pred)?;
+    let prim_pred = predicate_to_primitive_predicate(pred)?;
+    steps.push(LogicalStep::HasProperty(HasPropertyStep { key, pred: prim_pred }));
     Ok(())
 }
 
@@ -258,44 +207,16 @@ mod tests {
     }
 
     #[test]
-    fn test_key_to_prop_key() {
-        assert_eq!(key_to_prop_key(Key::Id), crate::types::prop_key::ID.clone());
-        assert_eq!(key_to_prop_key(Key::Label), crate::types::prop_key::LABEL.clone());
-        assert_eq!(key_to_prop_key(Key::Property("name".into())), SmolStr::from("name"));
-    }
-
-    #[test]
     fn test_push_has_step_errors() {
         let mut steps = Vec::new();
 
-        // ID error cases
-        assert!(push_has_step(&mut steps, Key::Id, Predicate::Eq(Value::Null)).is_err());
-        assert!(push_has_step(&mut steps, Key::Id, Predicate::Within(vec![Value::Null])).is_err());
+        // Non-scalar property values are rejected.
+        assert!(push_has_step(&mut steps, "age".into(), Predicate::Eq(Value::List(vec![]))).is_err());
 
-        // Label error cases
-        assert!(push_has_step(&mut steps, Key::Label, Predicate::Gt(Value::String("person".to_string()))).is_err());
-        assert!(push_has_step(&mut steps, Key::Label, Predicate::Within(vec![Value::Null])).is_err());
-        // Labels are string-only — a label is never meaningfully an Int32/Int64 (see
-        // `validate_label_value`).
-        assert!(push_has_step(&mut steps, Key::Label, Predicate::Eq(Value::Int32(1))).is_err());
-        assert!(push_has_step(&mut steps, Key::Label, Predicate::Eq(Value::Int64(1))).is_err());
-        assert!(push_has_step(&mut steps, Key::Label, Predicate::Within(vec![Value::Int32(1)])).is_err());
-        assert!(push_has_step(&mut steps, Key::Label, Predicate::Within(vec![Value::Int64(1)])).is_err());
-
-        // Property error cases
-        assert!(push_has_step(&mut steps, Key::Property("age".into()), Predicate::Eq(Value::List(vec![]))).is_err());
-
-        // Success cases
-        assert!(push_has_step(&mut steps, Key::Id, Predicate::Eq(Value::Int64(42))).is_ok());
-        assert!(push_has_step(&mut steps, Key::Id, Predicate::Eq(Value::Int32(42))).is_ok());
-        assert!(push_has_step(&mut steps, Key::Id, Predicate::Within(vec![Value::Int64(42)])).is_ok());
-        assert!(push_has_step(&mut steps, Key::Id, Predicate::Within(vec![Value::Int32(42)])).is_ok());
-
-        assert!(push_has_step(&mut steps, Key::Label, Predicate::Eq(Value::String("person".to_string()))).is_ok());
-        assert!(
-            push_has_step(&mut steps, Key::Label, Predicate::Within(vec![Value::String("person".to_string())])).is_ok()
-        );
-
-        assert!(push_has_step(&mut steps, Key::Property("age".into()), Predicate::Eq(Value::Int32(42))).is_ok());
+        // Scalar property values succeed. Reserved-key rejection ("id"/"label"/"rank")
+        // happens later, at physical-build time — see `reject_reserved_key` in
+        // `engine/volcano/builder/build_step.rs` — not here.
+        assert!(push_has_step(&mut steps, "age".into(), Predicate::Eq(Value::Int32(42))).is_ok());
+        assert!(push_has_step(&mut steps, "name".into(), Predicate::Eq(Value::String("alice".to_string()))).is_ok());
     }
 }

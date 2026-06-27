@@ -16,7 +16,7 @@
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 use hdrhistogram::Histogram;
-use rocksgraph::{Graph, Key, StoreError, TraversalBuilder, TxSession, Value, __};
+use rocksgraph::{Graph, StoreError, TraversalBuilder, TxSession, Value, __};
 
 use rand::Rng;
 use std::{
@@ -59,7 +59,7 @@ fn upsert_vertex(tx: &mut TxSession, label: &str, vertex_id: i64) -> Result<bool
         .V([vertex_id])
         .count()
         .coalesce([
-            __().V([vertex_id]).values([Key::Id]),
+            __().V([vertex_id]).id(),
             __().addV(label)
                 .property("id", vertex_id)
                 .property(NAME_KEY, generate_random_string(10))
@@ -82,7 +82,7 @@ fn upsert_edge(tx: &mut TxSession, src: i64, dst: i64, edge_type: &str) -> Resul
         .g()
         .V([src])
         .coalesce([
-            __().outE([edge_type]).r#where(__().otherV().hasId([dst])).values([Key::Label]),
+            __().outE([edge_type]).r#where(__().otherV().hasId([dst])).label(),
             __().addE(edge_type)
                 .from(src)
                 .to(dst)

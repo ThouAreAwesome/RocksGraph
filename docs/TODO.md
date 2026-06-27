@@ -34,8 +34,6 @@ These block entire classes of queries, not just convenience.
 - [x] **`group()`** — arbitrary keyed aggregation (sibling to `groupCount()`), exposed
       as `.group()`.
 - [x] **`groupCount()`** — keyed count aggregation.
-- [ ] **`valueMap()` / `elementMap()`** — bulk property extraction as a map (today this is
-      `properties()` + `values()` as two separate steps).
 
 ## P2 — useful, narrower audience
 
@@ -45,14 +43,17 @@ These block entire classes of queries, not just convenience.
 - [x] **`simplePath()` / `cyclicPath()`** — path filters, exposed as `.simple_path()` /
       `.cyclic_path()`.
 - [x] **`choose()`** — conditional traversal branching.
-- [ ] **`branch()`** — multi-way conditional branching (sibling to `choose()`); no
-      `.branch()` builder method exists.
 - [x] **`identity()` / `constant()` / `local()`** — these don't actually require lambda
       support (they take a fixed value or a sub-traversal, not a closure) and are
       implemented: `.identity()`, `.constant(value)`, `.local(__().xxx())`.
 
-## P3 — deferred or likely out of scope
+## P3 — deferred past the first publish (not blocking, workarounds exist)
 
+- **`valueMap()` / `elementMap()`** — bulk property extraction as a map. Workaround:
+  `.properties([...])` + `.values([...])` as two separate steps. Ergonomic gap, not a
+  functional one — deliberately deferred past v0.1.0.
+- **`branch()`** — multi-way conditional branching (sibling to `choose()`). Workaround:
+  nested/chained `.choose()` calls. Deliberately deferred past v0.1.0.
 - **`aggregate()` / `sideEffect()` / `store()` / `map()` / `flatMap()`** — depend on lambda
   support, which isn't planned (see the main README roadmap).
 - **`inject()`** — minor utility step, low value on its own.

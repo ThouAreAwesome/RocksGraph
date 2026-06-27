@@ -52,7 +52,6 @@ All user-facing query inputs and outputs use types from `gremlin::value`, re-exp
 | Type | Description |
 |------|-------------|
 | `Value` | Scalar or composite result: `Null`, `Bool`, `Int32`, `Int64`, `UInt16`, `Float32`, `Float64`, `String`, `Uuid`, `Vertex`, `Edge`, `Property`, `List`, `Map`, `Path` |
-| `Key` | Property key selector: `Key::Id` (vertex/edge id), `Key::Label` (label, decoded to its string name), `Key::Property(SmolStr)` (user property). String literals convert to `Key::Property` via `From<&str>`. |
 | `Predicate` | Filter condition: `Predicate::Eq`, `Within`, `Without`, `Gt`, `Gte`, `Lt`, `Lte`, `Between`, `Ne` |
 | `Vertex` | Materialized vertex: `id`, `label` (decoded string name), `properties` |
 | `Edge` | Materialized edge: `out_v`, `in_v`, `label` (decoded string name), `rank` (`u16`, see `Value::UInt16`), `properties` |
@@ -62,27 +61,37 @@ All user-facing query inputs and outputs use types from `gremlin::value`, re-exp
 
 Predicate constructors are free functions: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `between`, `within`, `without`.
 
-### Key routing
+### Reserved keys: `id`, `label`, `rank`
 
-`Key` controls how steps like `.has()` and `.values()` are dispatched:
+`"id"`, `"label"`, and `"rank"` are reserved — `.has()`, `.values()`, and `.properties()`
+all reject them. Access them exclusively through dedicated steps, both for filtering and
+for extraction:
 
 ```rust
-// Key::Id  → HasIdStep (vertex id index lookup)
-.has(Key::Id, 1i64)
-.hasId([1, 2, 3])          // shorthand for the same
-.values([Key::Id])         // returns the vertex id as Value::Int64
+// id — HasIdStep / IdStep
+.hasId([1, 2, 3])          // filter: Eq (single) or Within (multiple)
+.hasId(gt(2i64))           // filter: any Predicate works (vertex ids are ordered i64)
+.id()                      // extract: Value::Int64 (vertex) / Value::String (edge)
 
-// Key::Label → HasLabelStep (label filter)
-.has(Key::Label, "person")
-.hasLabel(["person"])      // shorthand
-.values([Key::Label])      // returns the label's string name as Value::String
+// label — HasLabelStep / LabelStep
+.hasLabel(["person"])      // filter: Eq/Within
+.hasLabel(ne("person"))    // filter: eq/ne/within/without (no gt/lt/between — label
+                            // names aren't meaningfully ordered)
+.label()                   // extract: Value::String, decoded from the schema registry
 
-// Key::Property("name") → property-bag lookup
-.has("name", "marko")      // string literals convert to Key::Property automatically
-.values(["name"])
+// rank — HasRankStep / RankStep (edge-only; vertices have no rank)
+.hasRank(5u16)
+.rank()                    // extract: Value::UInt16
+
+// negation for hasId()/hasLabel() goes through not(), same as any other filter:
+.not(__().hasId([1, 2]))   // "every vertex except 1 and 2"
 ```
 
-Note: `.has("id", N)` routes through `Key::Property("id")` — a different code path from `.has(Key::Id, N)` / `.hasId(N)`, but the optimizer folds `V([]).has("id", N)` into a vertex id index seek, so the end result is the same.
+`.has("id", N)` / `.values(["label"])` / `.properties(["rank"])` (bare-string forms) are
+rejected with `StoreError::SchemaViolation` — use the dedicated steps above instead. The
+one exception: `.has("rank", N)` immediately following `.outE()`/`.inE()`/`.bothE()` still
+works, because the optimizer folds it into that step's structural rank filter before the
+rejection check ever runs (see [`docs/design_reserved_keys.md`](docs/design_reserved_keys.md)).
 
 ## Session Model
 
@@ -159,9 +168,10 @@ the traversal API. The `schema` module interns them to compact numeric IDs inter
 
 | Step | Method | Notes |
 |------|--------|-------|
-| `has(key, value)` | `.has(key, pred)` | `key` is `Key::Id`, `Key::Label`, or a `&str` |
-| `hasLabel(labels)` | `.hasLabel([label, ...])` | |
-| `hasId(ids)` | `.hasId([id, ...])` | |
+| `has(key, value)` | `.has(key, pred)` | `key` is a user property name (`&str`) — `"id"`/`"label"`/`"rank"` are rejected, use the steps below |
+| `hasLabel(labels)` | `.hasLabel([label, ...])` / `.hasLabel(pred)` | accepts a list (Eq/Within) or any `Predicate` except range predicates |
+| `hasId(ids)` | `.hasId([id, ...])` / `.hasId(pred)` | accepts a list (Eq/Within) or any `Predicate` |
+| `hasRank(pred)` | `.hasRank(pred)` | edge-only; vertices never match |
 | `is(pred)` | `.is(pred)` | filter the current scalar value |
 | `where(traversal)` | `.r#where(__().xxx())` | sub-traversal filter |
 | `not(traversal)` | `.not(__().xxx())` | negation filter |
@@ -180,10 +190,11 @@ the traversal API. The `schema` module interns them to compact numeric IDs inter
 
 | Step | Method | Notes |
 |------|--------|-------|
-| `values(keys)` | `.values([key, ...])` | `key` may be `Key::Id`, `Key::Label`, or `&str` |
-| `properties(keys)` | `.properties([\"key\", ...])` | returns `Property` elements; id/label excluded |
-| `id()` | `.id()` | extracts the element id as a scalar (e.g. `Int64(1)`) |
+| `values(keys)` | `.values([key, ...])` | `key` is a user property name (`&str`) — `"id"`/`"label"`/`"rank"` are rejected, use the steps below |
+| `properties(keys)` | `.properties(["key", ...])` | returns `Property` elements; `"id"`/`"label"`/`"rank"` are rejected |
+| `id()` | `.id()` | extracts the element id as a scalar (`Int64` for vertices, `String` for edges) |
 | `label()` | `.label()` | extracts the element label as a `String` |
+| `rank()` | `.rank()` | extracts the edge rank as `UInt16`; errors on a vertex traverser |
 | `select(label)` | `.select(label)` | extract a labelled value from the path history |
 | `count()` | `.count()` | |
 | `sum()` | `.sum()` | numeric sum |
@@ -202,8 +213,8 @@ the traversal API. The `schema` module interns them to compact numeric IDs inter
 |------|--------|
 | `addV(label)` | `.addV(label)` |
 | `addE(label)` | `.addE(label)` |
-| `from(vertex_id)` | `.from(vertex_id)` |
-| `to(vertex_id)` | `.to(vertex_id)` |
+| `from(vertex_id)` | `.from(vertex_id)` — optional; if omitted, the upstream traverser's vertex is used as the out-vertex |
+| `to(vertex_id)` | `.to(vertex_id)` — optional; if omitted, the upstream traverser's vertex is used as the in-vertex |
 | `property(key, value)` | `.property(key, value)` — `"id"` sets the vertex/edge id |
 | `withProperties(keys)` | `.withProperties(["key", ...])` — declare property keys for `addE` |
 | `drop()` | `.drop()` — drops whatever the traverser carries: a vertex, an edge, or (after `.properties([..])`) a single property key |
@@ -249,7 +260,7 @@ let graph = Graph::open(tempfile::tempdir()?.path())?;
 ### Read queries
 
 ```rust
-use rocksgraph::{Graph, Key, TraversalBuilder, Value, __};
+use rocksgraph::{Graph, TraversalBuilder, Value, __};
 
 let graph = Graph::open("./path/to/db")?;
 let mut snap = graph.read();
@@ -262,11 +273,9 @@ assert_eq!(count, Value::Int64(3));
 let name = snap.g().V([1]).values(["name"]).next()?.unwrap();
 assert_eq!(name, Value::String("marko".into()));
 
-// Fetch vertex id and label (decoded to its string name) alongside a property
-let results = snap.g()
-    .V([1])
-    .values([Key::Id, Key::Label, "name".into()])
-    .to_list()?;
+// Fetch vertex id and label (decoded to its string name) via the dedicated steps
+let id = snap.g().V([1]).id().next()?.unwrap();
+let label = snap.g().V([1]).label().next()?.unwrap();
 
 // Sub-traversal filter: outgoing "knows" edges whose other endpoint is vertex 2
 let ct = snap.g()
@@ -326,6 +335,34 @@ tx.g().addE("knows").from(1).to(2).property("weight", 0.9f64).next()?;
 tx.commit()?;
 ```
 
+#### Creating edges from a traversal (variable source/target)
+
+`.from()` / `.to()` are only needed when you want a *literal* endpoint. Omit either one
+and `addE()` uses the upstream traverser's vertex instead, creating one edge per upstream
+traverser — useful for "connect every result of a traversal to a fixed vertex" patterns:
+
+```rust
+use rocksgraph::{Graph, TraversalBuilder, StoreError};
+
+let graph = Graph::open("./path/to/db")?;
+let mut tx = graph.begin();
+# tx.g().addV("person").property("id", 1i64).property("name", "alice").next()?;
+# tx.g().addV("person").property("id", 2i64).property("name", "bob").next()?;
+# tx.g().addV("person").property("id", 3i64).property("name", "carol").next()?;
+# tx.g().addE("knows").from(1).to(2).next()?;
+# tx.g().addE("knows").from(1).to(3).next()?;
+
+// For every vertex `1` knows, create a "friends" edge from that vertex to vertex 1 —
+// no `.from()` needed; the current traverser (each "knows" target) becomes the out-vertex.
+let edges = tx.g().V([1]).out(["knows"]).addE("friends").to(1).property("since", "2020").to_list()?;
+assert_eq!(edges.len(), 2); // one edge per upstream traverser
+
+tx.commit()?;
+```
+
+`addE()` requires at least one of `.from()` / `.to()` — calling it with neither (and no
+upstream vertex producer) returns `StoreError::TraversalError`.
+
 ### Deleting elements
 
 `drop()` deletes whatever the traverser carries — a vertex, an edge, or (after `.properties([..])`)
@@ -359,8 +396,10 @@ tx.commit()?;
 
 - **User properties** (`has(key, pred)` where `key` is a `&str`, or `is(pred)` after `values()`):
   every `Predicate` variant is supported.
-- **`Key::Id`**: every `Predicate` variant is supported.
-- **`Key::Label`**: `eq`, `ne`, `within`, and `without` are supported; range predicates (`gt`,
+- **`hasId()`**: every `Predicate` variant is supported (vertex ids are ordered `i64`; edge
+  ids are opaque strings, so `gt`/`gte`/`lt`/`lte`/`between` never match an edge but don't
+  error either).
+- **`hasLabel()`**: `eq`, `ne`, `within`, and `without` are supported; range predicates (`gt`,
   `gte`, `lt`, `lte`, `between`) return `StoreError::UnsupportedOperation` since labels have no
   ordering.
 
@@ -373,12 +412,12 @@ let marko_age = snap.g().V([1]).values(["age"]).is(29i32).to_list()?;
 // has() with a plain scalar — also shorthand for Predicate::Eq
 let by_name = snap.g().V([]).has("name", "alice").to_list()?;
 
-// Range and membership predicates work on properties, ids, and (non-range) labels
+// Range and membership predicates work on properties and ids
 let adults = snap.g().V([]).has("age", gt(18i32)).to_list()?;
 let by_age_range = snap.g().V([]).has("age", between(20i32, 30i32)).to_list()?;
 
-// Multi-value membership (Predicate::Within) is supported on Key::Id / Key::Label —
-// hasId()/hasLabel() use it internally
+// A fixed-size array of values is shorthand for Eq (single)/Within (multiple) —
+// hasId()/hasLabel() collapse it the same way has()/is() collapse a bare scalar to Eq
 let result = snap.g().V([]).hasId([1, 2, 3]).count().next()?.unwrap();
 ```
 

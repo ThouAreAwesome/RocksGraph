@@ -194,6 +194,7 @@ fn materialize_edge(
     match prop_keys {
         // Default: id + label only — label_id is in the key, zero store reads.
         None => Ok(Value::Edge(UserEdge {
+            id: ek.to_id_string(),
             out_v: cek.src_id,
             in_v: cek.dst_id,
             label: cache.edge_label(ek.label_id).clone(),
@@ -209,7 +210,14 @@ fn materialize_edge(
                 for (key, prim) in props {
                     properties.insert(key, primitive_to_value(prim));
                 }
-                Ok(Value::Edge(UserEdge { out_v: cek.src_id, in_v: cek.dst_id, label, rank: cek.rank, properties }))
+                Ok(Value::Edge(UserEdge {
+                    id: ek.to_id_string(),
+                    out_v: cek.src_id,
+                    in_v: cek.dst_id,
+                    label,
+                    rank: cek.rank,
+                    properties,
+                }))
             }
         },
         // Named properties only — filters on client side after fetching.
@@ -223,7 +231,14 @@ fn materialize_edge(
                         properties.insert(prop_name, primitive_to_value(prim));
                     }
                 }
-                Ok(Value::Edge(UserEdge { out_v: cek.src_id, in_v: cek.dst_id, label, rank: cek.rank, properties }))
+                Ok(Value::Edge(UserEdge {
+                    id: ek.to_id_string(),
+                    out_v: cek.src_id,
+                    in_v: cek.dst_id,
+                    label,
+                    rank: cek.rank,
+                    properties,
+                }))
             }
         },
     }

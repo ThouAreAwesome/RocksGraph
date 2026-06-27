@@ -38,12 +38,15 @@ impl<'s> ReadTraversal<'s> {
 
     /// Configure property fetching for this traversal.
     ///
-    /// With no arguments, all properties are fetched (matching the pre-0.2.0 behavior).
-    /// With a list of keys, only those named properties are returned.
-    /// Without this call, elements are returned with id + label only.
+    /// With no arguments (`withProperties([])`), all properties are fetched (matching
+    /// the pre-0.2.0 behavior). With a list of keys, only those named properties are
+    /// returned. Without this call, elements are returned with id + label only.
+    ///
+    /// Takes `&'a str` rather than `impl Into<SmolStr>` so the empty case infers
+    /// without a type annotation — see `TraversalBuilder::out` for why.
     #[allow(non_snake_case)]
-    pub fn withProperties(mut self, keys: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
-        self.prop_keys = Some(keys.into_iter().map(Into::into).collect());
+    pub fn withProperties<'a>(mut self, keys: impl IntoIterator<Item = &'a str>) -> Self {
+        self.prop_keys = Some(keys.into_iter().map(SmolStr::from).collect());
         self
     }
 
@@ -121,8 +124,8 @@ impl<'s> WriteTraversal<'s> {
 
     /// Configure property fetching for this traversal (see [`ReadTraversal::withProperties`]).
     #[allow(non_snake_case)]
-    pub fn withProperties(mut self, keys: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
-        self.prop_keys = Some(keys.into_iter().map(Into::into).collect());
+    pub fn withProperties<'a>(mut self, keys: impl IntoIterator<Item = &'a str>) -> Self {
+        self.prop_keys = Some(keys.into_iter().map(SmolStr::from).collect());
         self
     }
 

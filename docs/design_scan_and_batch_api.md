@@ -1,26 +1,30 @@
-# Design Proposal: Scan and Batch Retrieval APIs (Refined)
+# Design: scan & batch retrieval APIs
 
-This document outlines the refined design to support batch lookups, stateless pagination, and full-graph scanning in the `GraphStore` / `GraphTransaction` / `GraphSnapshot` traits.
+## Problem
 
----
+The `GraphSnapshot` / `GraphTransaction` traits use individual point lookups
+(`get_vertex`, `get_edge`) for all data access.  This is adequate for navigation but
+creates three gaps:
 
-## 1. Core Objectives
-1. **Batching for Performance**: Replace individual point lookups (`get_vertex`, `get_edge`) with batch versions (`get_vertices`, `get_edges`) returning flat vectors (`Vec<Vertex>`, `Vec<Edge>`) to optimize I/O via RocksDB's `MultiGet`.
-2. **Stateless Pagination & Clean Parameters**: Expose `vertex` and `direction` as direct parameters, wrap optional filters/cursors into an options struct (`AdjacentEdgesOptions`), and utilize suffix-based cursor pagination (`AdjacentEdgeCursor`).
-3. **Full-Graph Scans**: Provide batch-based, paginated scanning of all vertices and edges in the database, allowing large analytical scans to execute safely.
+1. No batching — N point lookups = N RocksDB reads, not 1 `MultiGet`.
+2. No stateless pagination for adjacent-edge scans — large neighborhoods require
+   the full result set in memory or repeated full re-scans.
+3. No full-graph scan primitive — analytical workloads have no safe traversal path.
 
----
+## Goals & non-goals
 
-## 2. API Specification
+- **Goals:** Add `get_vertices`/`get_edges` batch methods (backed by `MultiGet`);
+  paginated `get_adjacent_edges` with suffix cursors; `scan_vertices`/`scan_edges`
+  for full-graph scans.
+- **Non-goals:** Change the volcano step internals (those adapt to the new APIs);
+  cursor-based pagination for anything other than adjacency and full-graph scans.
 
-We will update the `GraphSnapshot` and `GraphTransaction` traits with the following structures and methods.
+## Design
 
-### New Structs
+### New structs
 
 ```rust
-/// Suffix cursor for paginating edges adjacent to a specific vertex.
-/// Represents the physical key of the last returned edge (specifically, the suffix parts).
-/// Ordered exactly as the database sorting keys: (label_id, secondary_id, rank).
+/// Suffix cursor for paginating edges adjacent to a vertex.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AdjacentEdgeCursor {
     pub label_id: LabelId,
@@ -28,21 +32,7 @@ pub struct AdjacentEdgeCursor {
     pub rank: Rank,
 }
 
-impl AdjacentEdgeCursor {
-    /// Create a cursor from an existing Edge.
-    pub fn from_edge(edge: &Edge, direction: Direction) -> Self {
-        AdjacentEdgeCursor {
-            label_id: edge.label_id,
-            secondary_id: match direction {
-                Direction::OUT => edge.dst_id,
-                Direction::IN => edge.src_id,
-            },
-            rank: edge.rank,
-        }
-    }
-}
-
-/// Optional filters and pagination parameters for querying adjacent edges.
+/// Optional filters and pagination parameters for adjacent edges.
 #[derive(Debug, Clone, Copy)]
 pub struct AdjacentEdgesOptions<'a> {
     pub label: Option<LabelId>,
@@ -52,121 +42,63 @@ pub struct AdjacentEdgesOptions<'a> {
 }
 ```
 
-### Trait Interfaces
+### Trait methods
 
 ```rust
-pub trait GraphSnapshot {
-    // ── Single & Batch Reads ──────────────────────────────────────────────────
+trait GraphSnapshot {
+    // Batch point lookups
+    fn get_vertex(&mut self, key: VertexKey) -> Result<Option<Vertex>, _>;  // default → get_vertices(&[key])
+    fn get_vertices(&mut self, keys: &[VertexKey]) -> Result<Vec<Vertex>, _>;
+    fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<Edge>, _>;        // default → get_edges(&[key])
+    fn get_edges(&mut self, keys: &[EdgeKey]) -> Result<Vec<Edge>, _>;
 
-    /// Fetch a single vertex.
-    fn get_vertex(&mut self, key: VertexKey) -> Result<Option<Vertex>, StoreError> {
-        let results = self.get_vertices(&[key])?;
-        Ok(results.into_iter().next())
-    }
-
-    /// Fetch a list of vertices in batch (omitting any keys that were not found).
-    fn get_vertices(&mut self, keys: &[VertexKey]) -> Result<Vec<Vertex>, StoreError>;
-
-    /// Fetch a single edge.
-    fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<Edge>, StoreError> {
-        let results = self.get_edges(&[key.clone()])?;
-        Ok(results.into_iter().next())
-    }
-
-    /// Fetch a list of edges in batch (omitting any keys that were not found).
-    fn get_edges(&mut self, keys: &[EdgeKey]) -> Result<Vec<Edge>, StoreError>;
-
-    // ── Adjacent Edge Traversals ──────────────────────────────────────────────
-
-    /// Scan committed edges adjacent to a vertex with options and stateless pagination.
-    ///
-    /// - `vertex` and `direction` remain direct parameters in the method signature.
-    /// - Returns the fetched edges and the cursor representing the last returned edge (if more exist).
+    // Paginated adjacency
     fn get_adjacent_edges(
-        &mut self,
-        vertex: VertexKey,
-        direction: Direction,
-        opts: AdjacentEdgesOptions<'_>,
-        limit: Option<u32>,
-    ) -> Result<(Vec<Edge>, Option<AdjacentEdgeCursor>), StoreError>;
+        &mut self, vertex: VertexKey, direction: Direction,
+        opts: AdjacentEdgesOptions<'_>, limit: Option<u32>,
+    ) -> Result<(Vec<Edge>, Option<AdjacentEdgeCursor>), _>;
 
-    // ── Full-Graph Scans ──────────────────────────────────────────────────────
-
-    /// Scan all vertices in the database in batch mode.
-    ///
-    /// - `label`: optionally restrict to vertices with this label.
-    /// - `start_from`: inclusive starting VertexKey (represents the last seen vertex key).
-    /// - `limit`: maximum number of vertices to return in this batch.
-    /// Returns the batch and the cursor for the last returned vertex (if more exist).
+    // Full-graph scans
     fn scan_vertices(
-        &mut self,
-        label: Option<LabelId>,
-        start_from: Option<VertexKey>,
+        &mut self, label: Option<LabelId>, start_from: Option<VertexKey>,
         limit: u32,
-    ) -> Result<(Vec<Vertex>, Option<VertexKey>), StoreError>;
+    ) -> Result<(Vec<Vertex>, Option<VertexKey>), _>;
 
-    /// Scan all unique canonical edges (OUT direction index) in the database in batch mode.
-    ///
-    /// - `label`: optionally restrict to edges with this label.
-    /// - `start_from`: inclusive starting CanonicalEdgeKey (represents the last seen edge key).
-    /// - `limit`: maximum number of edges to return in this batch.
-    /// Returns the batch and the cursor for the last returned edge (if more exist).
     fn scan_edges(
-        &mut self,
-        label: Option<LabelId>,
-        start_from: Option<CanonicalEdgeKey>,
+        &mut self, label: Option<LabelId>, start_from: Option<CanonicalEdgeKey>,
         limit: u32,
-    ) -> Result<(Vec<Edge>, Option<CanonicalEdgeKey>), StoreError>;
+    ) -> Result<(Vec<Edge>, Option<CanonicalEdgeKey>), _>;
 }
 ```
 
-*Note: The `GraphTransaction` trait will replicate these read interfaces alongside its mutation operations.*
+### Cursor semantics — physical last-returned key with seek-and-skip
 
----
+Cursors represent the exact physical key of the last returned element:
 
-## 3. Key Behavioral Contracts & Cursor Semantics
+1. **Inclusive seek** — iterator lands on the `start_from` key.
+2. **Seek-and-skip** — if the first element matches `start_from`, skip it and yield
+   subsequent elements.  If it doesn't match (cursor element was deleted concurrently),
+   yield it as the first element of the new batch.
 
-### Physical Last-Returned Key with Seek-and-Skip
-To achieve maximum robustness and simplicity under concurrent mutation, cursors (`VertexKey`, `AdjacentEdgeCursor`, `CanonicalEdgeKey`) represent the **exact physical key of the last returned element** of the batch:
+This is simpler and more robust than "logical next key" incrementing, especially for
+compound keys where field-level overflow arithmetic would be needed.
 
-1. **Inclusive Seek**: When querying the next batch, the backend seeks the database iterator directly to the `start_from` cursor key.
-2. **Seek-and-Skip Logic**:
-   - Because seek is inclusive, the iterator will land exactly on the last returned element (if it still exists).
-   - The backend checks if the first element returned by the iterator matches the `start_from` key.
-   - If it **matches**, it is skipped, and iteration proceeds to yield the subsequent elements.
-   - If it **does not match** (meaning the cursor element was deleted concurrently in another transaction), the iterator has landed on the next lexicographically existing element. In this case, we **do not skip** it, and yield it as the first element of the new batch.
+### RocksDB backing
 
-#### Why this is superior to "Logical Next Key" (Incremented Cursors):
-- For simple keys (like `VertexKey`/`i64`), incrementing by 1 (`last_key + 1`) is trivial.
-- However, for compound keys (like `AdjacentEdgeCursor` or `CanonicalEdgeKey`), incrementing the key logically is complex and error-prone because it requires handling numeric overflows across multiple fields (e.g. `rank` overflow -> increment `secondary_id` -> increment `label_id`).
-- Using the **Physical Last-Returned Key with Seek-and-Skip** guarantees that pagination behaves correctly, safely, and identically across all key types without needing key-increment arithmetic.
+- `get_vertices`/`get_edges` → `db.multi_get_cf` on `vertices` / `edges_out` CFs.
+- `get_adjacent_edges` → `edges_out` (OUT) or `edges_in` (IN) CF; `set_iterate_upper_bound`
+  prevents scanning past the current vertex's prefix.
+- `scan_vertices` → `vertices` CF (optionally via `vertex_labels` index if label supplied).
+- `scan_edges` → `edges_out` CF.
 
----
+### Execution engine integration
 
-## 4. RocksDB Implementation Details
+- **`VStep` / `EStep`** without input IDs → loop `scan_vertices` / `scan_edges` in batches.
+- **`OutEStep` / `InEStep`** → construct `AdjacentEdgesOptions`, cursor-stash in step state.
 
-### `get_vertices` & `get_edges`
-- Will utilize `db.multi_get_cf` against the `vertices` and `edges_out` column families respectively. 
-- Results are returned as a flat vector `Vec<T>`, matching the behavior of the administrative lookup tooling and omitting non-existent items.
+## Constraints / invariants
 
-### `get_adjacent_edges` (Stateless Pagination)
-- Targets either `edges_out` (for `Direction::OUT`) or `edges_in` (for `Direction::IN`).
-- Seek is performed by constructing the physical prefix key from `(vertex_id)` and combining it with the `AdjacentEdgeCursor` suffix fields `(label_id, secondary_id, rank)` if `start_from` is supplied.
-- Uses `ReadOptions::set_iterate_upper_bound` to prevent the iterator from scanning past the current vertex's prefix range.
-
-### `scan_vertices`
-- Scans the `vertices` column family.
-- If `label` is provided, we can leverage the secondary index `vertex_labels` to only scan matching keys, or perform a direct range scan if the index exists.
-- Seek is performed from the `start_from` key.
-
-### `scan_edges`
-- Scans the `edges_out` (canonical OUT direction) column family.
-- Seek is performed from the `start_from` canonical key.
-
----
-
-## 5. Execution Engine Integration
-
-The volcano physical steps will be updated to consume these paginated APIs:
-- **`VStep` / `EStep`**: When seeding without input IDs (e.g., `g.V()`), these steps will loop using `scan_vertices` / `scan_edges` fetching batches (e.g., 1000 items) sequentially.
-- **`OutEStep` / `InEStep`**: When expanding edges, they will construct `AdjacentEdgesOptions` and call `get_adjacent_edges`. If an adjacent edge scan exceeds the limits or needs lazy pagination, it stores the `AdjacentEdgeCursor` within the Volcano step state, resuming the iteration on the next `pull()` call.
+- Batch methods omit non-existent keys from results — callers must reconcile if
+  they need to know which keys were absent.
+- Adjacent-edge pagination respects `set_iterate_upper_bound` — iterator never
+  leaks into the next vertex's key range.

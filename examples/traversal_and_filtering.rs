@@ -18,10 +18,12 @@
 //! Demonstrates the read-side traversal vocabulary against the classic TinkerPop
 //! "modern" toy graph (the same dataset used throughout the test suite):
 //! 1. Traversal direction steps: `out`/`r#in`/`both`, `outE`/`inE`/`bothE`, `inV`/`outV`/`otherV`.
-//! 2. Filtering: `has`/`hasLabel`/`hasId`/`is`/`where`/`limit`/`dedup`. `has()`/`is()` accept any
-//!    `Predicate` (`eq`/`ne`/`gt`/`gte`/`lt`/`lte`/`between`/`within`/`without`) on user
-//!    properties and on `Key::Id`; `Key::Label` supports all but the range predicates
-//!    (`gt`/`gte`/`lt`/`lte`/`between`), since labels have no ordering.
+//! 2. Filtering: `has`/`hasLabel`/`hasId`/`is`/`where`/`limit`/`dedup`. `has()`/`is()`/`hasId()`
+//!    accept any `Predicate` (`eq`/`ne`/`gt`/`gte`/`lt`/`lte`/`between`/`within`/`without`) on
+//!    user properties and vertex ids; `hasLabel()` supports all but the range predicates
+//!    (`gt`/`gte`/`lt`/`lte`/`between`), since labels have no ordering. `"id"`/`"label"`/`"rank"`
+//!    are reserved — use `hasId()`/`hasLabel()`/`hasRank()` and `id()`/`label()`/`rank()`, not
+//!    `has()`/`values()`/`properties()`.
 //! 3. Extraction: `values`/`properties`/`count`/`fold`/`path`.
 //! 4. The lazy `iter()` terminal, as an alternative to `next()`/`to_list()`.
 

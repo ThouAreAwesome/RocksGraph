@@ -189,7 +189,7 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     run_query_benchmark(
-        "Q8: g.E().count() (Scan total edges in DB)",
+        "Q8: g.E([]).count() (Scan total edges in DB)",
         &Arc::new(vec!["0 0".to_string(); 5]),
         &graph,
         1,

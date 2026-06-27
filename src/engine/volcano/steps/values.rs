@@ -80,7 +80,43 @@ impl CoreStep for ValuesStep {
             };
 
             if self.property_keys.is_empty() {
-                // TODO: implement fetching all properties if property_keys is empty
+                // Empty property_keys → fetch all properties (TinkerPop convention).
+                if let Some((_, props)) = ctx.get_all_props(&canonical_key)? {
+                    let mut results = smallvec![];
+                    if self.emit_property {
+                        let schema = ctx.schema();
+                        let guard = schema.read().unwrap();
+                        for (name, value) in props {
+                            let Some(key_id) = guard.prop_key_id(&name) else { continue };
+                            let mut val = value;
+                            if key_id == LABEL_KEY_ID {
+                                val = guard.decode_label_value(&canonical_key, val);
+                            }
+                            results.push(Traverser::new_rc_conditional(
+                                GValue::Property(crate::types::element::Property {
+                                    owner: canonical_key,
+                                    key: key_id,
+                                    value: val,
+                                }),
+                                &t,
+                                self.track_path,
+                            ));
+                        }
+                    } else {
+                        let schema = ctx.schema();
+                        let guard = schema.read().unwrap();
+                        for (name, value) in props {
+                            let mut val = value;
+                            if name == crate::types::prop_key::LABEL {
+                                val = guard.decode_label_value(&canonical_key, val);
+                            }
+                            results.push(Traverser::new_rc_conditional(GValue::Scalar(val), &t, self.track_path));
+                        }
+                    }
+                    if !results.is_empty() {
+                        return Ok(Some(results));
+                    }
+                }
                 continue;
             }
 

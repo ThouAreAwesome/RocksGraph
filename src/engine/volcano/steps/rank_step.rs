@@ -32,15 +32,16 @@ use crate::{
     },
 };
 
-/// Extracts the id of the current element.  For vertices returns `Int64(vk)`,
-/// for edges returns `Int64(primary_id)`.  All other traverser values pass
-/// through unchanged.
+/// Extracts the rank of the current element. Edge-only — rank is the structural
+/// multi-edge discriminator (`design_multiple_edges.md`); vertices have no rank.
+/// A vertex traverser reaching this step is a misuse, not a type that's silently
+/// passed through — it errors rather than emitting a wrong-shaped value.
 #[derive(Debug, Default)]
-pub struct IdStep {
+pub struct RankStep {
     upstream: Option<StepRef>,
 }
 
-impl CoreStep for IdStep {
+impl CoreStep for RankStep {
     fn add_upper(&mut self, upstream: StepRef) {
         self.upstream = Some(upstream);
     }
@@ -55,12 +56,14 @@ impl CoreStep for IdStep {
         let Some(t) = upstream.next(ctx)? else {
             return Ok(None);
         };
-        let id_value = match &t.value {
-            GValue::Vertex(vk) => GValue::Scalar(Primitive::Int64(*vk)),
-            GValue::Edge(ek) => GValue::Scalar(Primitive::String(ek.to_id_string().into())),
+        let rank_value = match &t.value {
+            GValue::Edge(ek) => GValue::Scalar(Primitive::UInt16(ek.rank)),
+            GValue::Vertex(_) => {
+                return Err(StoreError::UnexpectedDataType("rank() is edge-only — vertices have no rank".to_string()));
+            }
             _ => return Ok(Some(smallvec![t])),
         };
-        Ok(Some(smallvec![Traverser::new_rc(id_value)]))
+        Ok(Some(smallvec![Traverser::new_rc(rank_value)]))
     }
 
     fn reset(&mut self) {
@@ -74,6 +77,6 @@ impl CoreStep for IdStep {
     }
 
     fn explain(&self) -> ExplainNode {
-        ExplainNode::new("IdStep")
+        ExplainNode::new("RankStep")
     }
 }

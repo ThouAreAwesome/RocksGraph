@@ -22,7 +22,7 @@ mod integration_test {
         api::{Graph, TxSession},
         gremlin::{
             traversal::{TraversalBuilder, __},
-            value::{Key, Value},
+            value::Value,
         },
         types::{BatchScenario, StoreError},
     };
@@ -305,21 +305,23 @@ mod integration_test {
         let graph = setup_modern_graph();
         let mut tx = graph.begin();
 
-        // Key::Id → returns the vertex id as Int64
-        let id_val = tx.g().V([1]).values([Key::Id]).next().unwrap().unwrap();
+        // id() / label() — dedicated extraction steps
+        let id_val = tx.g().V([1]).id().next().unwrap().unwrap();
         assert_eq!(id_val, Value::Int64(1));
 
-        // Key::Label → returns label name as String
-        let label_val = tx.g().V([1]).values([Key::Label]).next().unwrap().unwrap();
+        let label_val = tx.g().V([1]).label().next().unwrap().unwrap();
         assert_eq!(label_val, Value::String("person".to_string()));
 
         // plain property key → returns the stored scalar
         let name_val = tx.g().V([1]).values(["name"]).next().unwrap().unwrap();
         assert_eq!(name_val, Value::String("marko".to_string()));
 
-        // mixing id, label, and a property — count must be 3
-        let ct = tx.g().V([1]).values([Key::Id, Key::Label, "name".into()]).count().next().unwrap().unwrap();
-        assert_eq!(ct, Value::Int64(3));
+        // "id"/"label" are reserved — values()/properties() reject them, must use
+        // id()/label() instead.
+        assert!(tx.g().V([1]).values(["id"]).next().is_err());
+        assert!(tx.g().V([1]).values(["label"]).next().is_err());
+        assert!(tx.g().V([1]).properties(["id"]).next().is_err());
+        assert!(tx.g().V([1]).properties(["label"]).next().is_err());
 
         // .properties() returns Property elements for user-defined keys only
         let prop_val = tx.g().V([1]).properties(["name"]).next().unwrap().unwrap();
@@ -330,15 +332,15 @@ mod integration_test {
             panic!("expected Value::Property, got {:?}", prop_val);
         }
 
-        // .has(Key::Id, n) filters by vertex id (routes through HasIdStep)
-        let ct = tx.g().V([]).hasId([1, 2, 3]).has(Key::Id, 1i64).count().next().unwrap().unwrap();
+        // .hasId(n) filters by vertex id (routes through HasIdStep)
+        let ct = tx.g().V([]).hasId([1, 2, 3]).hasId([1i64]).count().next().unwrap().unwrap();
         assert_eq!(ct, Value::Int64(1));
 
         // .has("age", n) filters by property value
         let ct = tx.g().V([]).hasId([1, 2, 3, 4, 5, 6]).has("age", 29i32).count().next().unwrap().unwrap();
         assert_eq!(ct, Value::Int64(1));
 
-        // Key::Id and Key::Label are NOT yielded by .properties() — only user props are
+        // "id"/"label" are NOT yielded by .properties() — only user props are
         let ct = tx.g().V([1]).properties(["name", "age"]).count().next().unwrap().unwrap();
         assert_eq!(ct, Value::Int64(2));
     }
@@ -348,26 +350,17 @@ mod integration_test {
         let graph = setup_modern_graph();
         let mut tx = graph.begin();
 
-        // .has(Key::Label, "person") routes through HasLabelStep (string-based label
-        // resolution) and must match, equivalent to hasLabel(["person"]).
-        let ct = tx.g().V([]).hasId([1, 2, 3, 4, 5, 6]).has(Key::Label, "person").count().next().unwrap().unwrap();
+        // .hasLabel(["person"]) routes through HasLabelStep (string-based label resolution).
+        let ct = tx.g().V([]).hasId([1, 2, 3, 4, 5, 6]).hasLabel(["person"]).count().next().unwrap().unwrap();
         assert_eq!(ct, Value::Int64(4));
 
-        // .has("label", "person") goes through `Key::Property("label")` -> `HasPropertyStep`,
-        // which must decode the element's label to a string before comparing, exactly like
-        // `.has(Key::Label, ..)` / `.values(["label"])` do.
-        let ct = tx.g().V([]).hasId([1, 2, 3, 4, 5, 6]).has("label", "person").count().next().unwrap().unwrap();
-        assert_eq!(ct, Value::Int64(4), "has(\"label\", ..) should match by decoded label name, like hasLabel does");
+        // .has("label", "person") (bare string, unfolded) is now rejected — "label" is
+        // reserved, must use hasLabel() instead.
+        let err = tx.g().V([]).hasId([1, 2, 3, 4, 5, 6]).has("label", "person").count().next();
+        assert!(err.is_err(), "has(\"label\", ..) should be rejected — use hasLabel() instead");
 
-        // .properties(["label"]) should yield a Property whose value is the decoded label
-        // name (String), consistent with .values(["label"]) / .values([Key::Label]).
-        let prop_val = tx.g().V([1]).properties(["label"]).next().unwrap().unwrap();
-        if let Value::Property(p) = prop_val {
-            assert_eq!(p.key, "label");
-            assert_eq!(*p.value, Value::String("person".to_string()));
-        } else {
-            panic!("expected Value::Property, got {:?}", prop_val);
-        }
+        // .properties(["label"]) is rejected the same way — use .label() instead.
+        assert!(tx.g().V([1]).properties(["label"]).next().is_err());
     }
 
     #[test]
@@ -405,14 +398,15 @@ mod integration_test {
             tx.commit().unwrap();
         }
 
-        // Same check via Key::Label / Key::Id
+        // Same check via the dedicated id()/label() steps (combined with union(), since
+        // id()/label() are reserved and no longer expressible via a single values() call).
         {
             let mut tx = graph.begin();
             let Value::Int64(ct) = tx
                 .g()
                 .V([1])
                 .coalesce([
-                    __().V([1]).values([Key::Label, Key::Id]),
+                    __().V([1]).union([__().id(), __().label()]),
                     __().addV("person").property("id", 1i64).property("name", "marko").property("age", 29i32),
                 ])
                 .count()
@@ -480,7 +474,7 @@ mod integration_test {
         let v_count = tx.g().V([]).count().next().unwrap().unwrap();
         assert_eq!(v_count, Value::Int64(6));
 
-        // g.E() scan (E with empty keys)
+        // g.E([]) scan (E with empty keys)
         let e_count = tx.g().E([]).count().next().unwrap().unwrap();
         assert_eq!(e_count, Value::Int64(6));
     }
@@ -704,7 +698,7 @@ mod integration_test {
 
         // Read and verify Vertex properties (withProperties requests all)
         let mut read = graph.read();
-        let val_v = read.g().withProperties([] as [&str; 0]).V([1]).next().unwrap().unwrap();
+        let val_v = read.g().withProperties([]).V([1]).next().unwrap().unwrap();
         if let Value::Vertex(v) = val_v {
             assert_eq!(v.properties.get("p_bool").unwrap()[0], Value::Bool(true));
             assert_eq!(v.properties.get("p_i32").unwrap()[0], Value::Int32(42));
@@ -719,7 +713,7 @@ mod integration_test {
         }
 
         // Read and verify Edge properties (withProperties requests all)
-        let val_e = read.g().withProperties([] as [&str; 0]).V([1]).outE(["AllTypesE"]).next().unwrap().unwrap();
+        let val_e = read.g().withProperties([]).V([1]).outE(["AllTypesE"]).next().unwrap().unwrap();
         if let Value::Edge(e) = val_e {
             assert_eq!(*e.properties.get("p_bool").unwrap(), Value::Bool(false));
             assert_eq!(*e.properties.get("p_i32").unwrap(), Value::Int32(100));
@@ -1019,28 +1013,24 @@ mod integration_test {
         let u16_1 = read.g().V([]).has("p_u16", 20u16).count().next().unwrap().unwrap();
         assert_eq!(u16_1, Value::Int64(1));
 
-        // Within — supported for Key::Id and Key::Label specifically (see `push_has_step`'s
-        // dedicated branches), unlike plain property keys which only support Eq today. Never
-        // exercised via the `within()` constructor elsewhere in this file — only its de-facto
-        // equivalent `hasId([...])`/`hasLabel([...])`.
-        use crate::gremlin::value::within;
-        let id_within = read.g().V([]).has(Key::Id, within([1i64, 2i64])).count().next().unwrap().unwrap();
+        // Within — hasId()/hasLabel() build Within automatically for a multi-element list.
+        let id_within = read.g().V([]).hasId([1i64, 2i64]).count().next().unwrap().unwrap();
         assert_eq!(id_within, Value::Int64(2));
 
-        let label_within = read.g().V([]).has(Key::Label, within(["Item"])).count().next().unwrap().unwrap();
+        let label_within = read.g().V([]).hasLabel(["Item"]).count().next().unwrap().unwrap();
         assert_eq!(label_within, Value::Int64(2));
 
-        // Without is now fully supported. Let's verify that we can filter out vertex 1
-        // and only get vertex 2 using without([1i64]).
-        use crate::gremlin::value::without;
-        let id_without = read.g().V([]).has(Key::Id, without([1i64])).count().next().unwrap().unwrap();
+        // Without — id()/label() no longer accept a `Predicate` directly (reserved keys are
+        // dedicated-step-only), so negation goes through the existing not() combinator
+        // instead: not(hasId([1])) == "every vertex except id 1", same result as the old
+        // has(Key::Id, without([1])).
+        let id_without = read.g().V([]).not(__().hasId([1i64])).count().next().unwrap().unwrap();
         assert_eq!(id_without, Value::Int64(1));
 
-        let label_without = read.g().V([]).has(Key::Label, without(["Item"])).count().next().unwrap().unwrap();
+        let label_without = read.g().V([]).not(__().hasLabel(["Item"])).count().next().unwrap().unwrap();
         assert_eq!(label_without, Value::Int64(0));
 
-        let label_without_other =
-            read.g().V([]).has(Key::Label, without(["OtherLabel"])).count().next().unwrap().unwrap();
+        let label_without_other = read.g().V([]).not(__().hasLabel(["OtherLabel"])).count().next().unwrap().unwrap();
         assert_eq!(label_without_other, Value::Int64(2));
     }
 
@@ -1107,26 +1097,31 @@ mod integration_test {
 
             // 4. Query both ranks
             let mut read = graph.read();
-            let ranks = read.g().V([1]).outE(["knows"]).values(["rank"]).to_list().unwrap();
+            let ranks = read.g().V([1]).outE(["knows"]).rank().to_list().unwrap();
             assert_eq!(ranks.len(), 2);
             assert!(ranks.contains(&Value::UInt16(0)));
             assert!(ranks.contains(&Value::UInt16(5)));
 
-            // 5. Regression test for the *unmerged* `.has("rank", N)` path. Every rank filter
-            // above (and every one in multi_edge_tests.rs) immediately follows `.outE(...)`,
-            // which `merge_end_vertex_filter` folds into a dedicated physical step — it never
-            // reaches `HasPropertyStep`. Wrapping the same `outE` in a `union()` hides it from
-            // that optimizer rule (sub-plans inside union()/coalesce() are opaque to it, since
-            // the rule only looks at directly-adjacent top-level steps), forcing the filter to
-            // fall through to the generic, unmerged `HasPropertyStep` — which must still
-            // compare correctly against the `UInt16` runtime rank value (see
-            // `HasPropertyStep::new`'s rank normalization).
+            // 5. `.has("rank", N)` is rejected once it can't be optimizer-folded. Every rank
+            // filter above (and every one in multi_edge_tests.rs) immediately follows
+            // `.outE(...)`, which `merge_end_vertex_filter` folds into a dedicated physical
+            // step before `reject_reserved_key` ever runs. Wrapping the same `outE` in a
+            // `union()` hides it from that optimizer rule (sub-plans inside union()/
+            // coalesce() are opaque to it), forcing the filter through unfolded — which must
+            // now be rejected, "rank" being reserved.
+            let unmerged = read.g().V([1]).union([__().outE(["knows"])]).has("rank", 5i32).count().next();
+            assert!(unmerged.is_err(), "unfolded has(\"rank\", ..) should be rejected — use hasRank() instead");
+
+            // `.hasRank()` is the dedicated replacement, and works correctly in the same
+            // unmerged-via-union() position — including width-insensitive comparison
+            // against the runtime `UInt16` rank value (`PrimitivePredicate::evaluate`'s
+            // `loose_eq`, the same mechanism `HasPropertyStep` relied on).
             let unmerged_match =
-                read.g().V([1]).union([__().outE(["knows"])]).has("rank", 5i32).count().next().unwrap().unwrap();
+                read.g().V([1]).union([__().outE(["knows"])]).hasRank(5i32).count().next().unwrap().unwrap();
             assert_eq!(unmerged_match, Value::Int64(1));
 
             let unmerged_no_match =
-                read.g().V([1]).union([__().outE(["knows"])]).has("rank", 99i32).count().next().unwrap().unwrap();
+                read.g().V([1]).union([__().outE(["knows"])]).hasRank(99i32).count().next().unwrap().unwrap();
             assert_eq!(unmerged_no_match, Value::Int64(0));
         }
     }
@@ -1281,32 +1276,29 @@ mod integration_test {
 
         // 2. Label checks with range rejections & equality/membership
         // Range predicate must be rejected
-        let res_label_gt = read.g().V([]).has(Key::Label, gt("person")).next();
+        let res_label_gt = read.g().V([]).hasLabel(gt("person")).next();
         assert!(matches!(res_label_gt, Err(StoreError::UnsupportedOperation(_))));
 
-        let res_label_between = read.g().V([]).has(Key::Label, between("animal", "software")).next();
+        let res_label_between = read.g().V([]).hasLabel(between("animal", "software")).next();
         assert!(matches!(res_label_between, Err(StoreError::UnsupportedOperation(_))));
 
         // Equality/membership succeeds
-        assert_eq!(read.g().V([]).has(Key::Label, eq("person")).count().next().unwrap().unwrap(), Value::Int64(3));
-        assert_eq!(read.g().V([]).has(Key::Label, ne("person")).count().next().unwrap().unwrap(), Value::Int64(2));
+        assert_eq!(read.g().V([]).hasLabel(eq("person")).count().next().unwrap().unwrap(), Value::Int64(3));
+        assert_eq!(read.g().V([]).hasLabel(ne("person")).count().next().unwrap().unwrap(), Value::Int64(2));
         assert_eq!(
-            read.g().V([]).has(Key::Label, within(["person", "software"])).count().next().unwrap().unwrap(),
+            read.g().V([]).hasLabel(within(["person", "software"])).count().next().unwrap().unwrap(),
             Value::Int64(4)
         );
         assert_eq!(
-            read.g().V([]).has(Key::Label, without(["person", "software"])).count().next().unwrap().unwrap(),
+            read.g().V([]).hasLabel(without(["person", "software"])).count().next().unwrap().unwrap(),
             Value::Int64(1)
         );
 
         // 3. ID checks with various predicates
-        assert_eq!(read.g().V([]).has(Key::Id, gt(2i64)).count().next().unwrap().unwrap(), Value::Int64(3));
-        assert_eq!(read.g().V([]).has(Key::Id, between(2i64, 5i64)).count().next().unwrap().unwrap(), Value::Int64(3));
-        assert_eq!(read.g().V([]).has(Key::Id, ne(3i64)).count().next().unwrap().unwrap(), Value::Int64(4));
-        assert_eq!(
-            read.g().V([]).has(Key::Id, without([1i64, 5i64])).count().next().unwrap().unwrap(),
-            Value::Int64(3)
-        );
+        assert_eq!(read.g().V([]).hasId(gt(2i64)).count().next().unwrap().unwrap(), Value::Int64(3));
+        assert_eq!(read.g().V([]).hasId(between(2i64, 5i64)).count().next().unwrap().unwrap(), Value::Int64(3));
+        assert_eq!(read.g().V([]).hasId(ne(3i64)).count().next().unwrap().unwrap(), Value::Int64(4));
+        assert_eq!(read.g().V([]).hasId(without([1i64, 5i64])).count().next().unwrap().unwrap(), Value::Int64(3));
 
         // 4. is() step evaluation
         let ages_gt = read.g().V([]).values(["age"]).is(gt(25i32)).count().next().unwrap().unwrap();
@@ -1469,7 +1461,7 @@ mod integration_test {
         let mut read = graph.read();
 
         // Empty keys → all properties (matching `[] = all` convention).
-        let val = read.g().withProperties([] as [&str; 0]).V([1]).next().unwrap().unwrap();
+        let val = read.g().withProperties([]).V([1]).next().unwrap().unwrap();
         if let Value::Vertex(v) = val {
             assert_eq!(v.id, 1);
             assert_eq!(v.label, SmolStr::from("person"));
@@ -1520,7 +1512,7 @@ mod integration_test {
         let mut read = graph.read();
 
         // Empty keys on edge → all properties.
-        let val = read.g().withProperties([] as [&str; 0]).V([1]).outE(["knows"]).next().unwrap().unwrap();
+        let val = read.g().withProperties([]).V([1]).outE(["knows"]).next().unwrap().unwrap();
         if let Value::Edge(e) = val {
             assert_eq!(e.out_v, 1);
             assert_eq!(e.label, SmolStr::from("knows"));
@@ -1553,7 +1545,7 @@ mod integration_test {
         let mut read = graph.read();
 
         // count() returns a Scalar, unaffected by withProperties.
-        let count = read.g().withProperties([] as [&str; 0]).V([]).count().next().unwrap().unwrap();
+        let count = read.g().withProperties([]).V([]).count().next().unwrap().unwrap();
         assert_eq!(count, Value::Int64(6));
     }
 
@@ -1911,6 +1903,381 @@ mod integration_test {
         let graph = setup_modern_graph();
         let res = graph.begin().g().addE("knows").next();
         assert!(res.is_err(), "addE without from() or to() should error");
+    }
+
+    #[test]
+    fn test_mean_e2e() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+        let avg = tx.g().V([]).hasLabel(["person"]).values(["age"]).mean().next().unwrap().unwrap();
+        if let Value::Float64(f) = avg {
+            assert!((f - 30.75).abs() < 0.1);
+        }
+    }
+
+    #[test]
+    fn test_label_vertex_e2e() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+        let labels: Vec<_> = tx.g().V([]).hasLabel(["person"]).label().to_list().unwrap();
+        for l in &labels {
+            assert!(matches!(l, Value::String(s) if s.as_str() == "person"));
+        }
+    }
+
+    #[test]
+    fn test_label_edge_e2e() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+        let labels: Vec<_> = tx.g().V([1]).outE(["knows"]).label().to_list().unwrap();
+        for l in &labels {
+            assert!(matches!(l, Value::String(s) if s.as_str() == "knows"));
+        }
+    }
+
+    #[test]
+    fn test_label_on_edge_with_haslabel() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+        let labels: Vec<_> = tx.g().V([1]).outE(["knows"]).hasLabel(["knows"]).label().to_list().unwrap();
+        for l in &labels {
+            assert!(matches!(l, Value::String(s) if s.as_str() == "knows"));
+        }
+    }
+
+    #[test]
+    fn test_add_e_variable_target_constant_source() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+        let edges: Vec<_> = tx.g().V([2, 4]).addE("friends").from(1).to_list().unwrap();
+        assert_eq!(edges.len(), 2);
+    }
+
+    #[test]
+    fn test_get_or_create_vertex_and_edge_in_one_query() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+
+        // Use fresh ids that don't collide with the modern graph (ids 1-6).
+        let a: i64 = 100;
+        let b: i64 = 200;
+
+        // Upsert vertex A: if exists, read id; otherwise create.
+        tx.g()
+            .V([a])
+            .count()
+            .coalesce([
+                __().V([a]).id(),
+                __().addV("person").property("id", a).property("name", "alice").property("age", 25i32),
+            ])
+            .next()
+            .unwrap();
+
+        // Upsert vertex B.
+        tx.g()
+            .V([b])
+            .count()
+            .coalesce([
+                __().V([b]).id(),
+                __().addV("person").property("id", b).property("name", "bob").property("age", 30i32),
+            ])
+            .next()
+            .unwrap();
+
+        // Upsert edge A → B.
+        tx.g()
+            .V([a])
+            .coalesce([
+                __().outE(["knows"]).r#where(__().otherV().hasId([b])).label(),
+                __().addE("knows").from(a).to(b).property("weight", 0.5f64),
+            ])
+            .next()
+            .unwrap();
+
+        tx.commit().unwrap();
+
+        // Verify: both vertices exist.
+        let mut snap = graph.read();
+        let a_count = snap.g().V([a]).count().next().unwrap().unwrap();
+        assert!(matches!(a_count, Value::Int64(1)));
+        let b_count = snap.g().V([b]).count().next().unwrap().unwrap();
+        assert!(matches!(b_count, Value::Int64(1)));
+
+        // Verify: edge exists.
+        let edge_count = snap.g().V([a]).out(["knows"]).count().next().unwrap().unwrap();
+        assert!(matches!(edge_count, Value::Int64(1)));
+
+        // Second pass: run the same upsert again → no new elements (idempotent).
+        let mut tx2 = graph.begin();
+        tx2.g()
+            .V([a])
+            .count()
+            .coalesce([
+                __().V([a]).id(),
+                __().addV("person").property("id", a).property("name", "alice").property("age", 25i32),
+            ])
+            .next()
+            .unwrap();
+        tx2.g()
+            .V([b])
+            .count()
+            .coalesce([
+                __().V([b]).id(),
+                __().addV("person").property("id", b).property("name", "bob").property("age", 30i32),
+            ])
+            .next()
+            .unwrap();
+        tx2.g()
+            .V([a])
+            .coalesce([
+                __().outE(["knows"]).r#where(__().otherV().hasId([b])).label(),
+                __().addE("knows").from(a).to(b).property("weight", 0.5f64),
+            ])
+            .next()
+            .unwrap();
+        tx2.commit().unwrap();
+
+        // Still exactly one edge after idempotent re-run.
+        let mut snap2 = graph.read();
+        let edge_count2 = snap2.g().V([a]).out(["knows"]).count().next().unwrap().unwrap();
+        assert!(matches!(edge_count2, Value::Int64(1)));
+    }
+
+    #[test]
+    fn test_and_explain_has_children() {
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        let traversal = snap.g().V([]).and([__().has("name", "marko"), __().has("age", 29i32)]);
+        let node = traversal.explain().unwrap();
+        assert!(node.contains("AndStep"));
+    }
+
+    #[test]
+    fn test_or_explain_has_children() {
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        let traversal = snap.g().V([]).or([__().has("age", 999i32), __().has("name", "marko")]);
+        let node = traversal.explain().unwrap();
+        assert!(node.contains("OrStep"));
+    }
+
+    #[test]
+    fn test_and_where_no_traverser_matches_fully() {
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        let ct = snap
+            .g()
+            .V([])
+            .hasLabel(["person"])
+            .and([__().has("age", 27i32), __().has("name", "marko")])
+            .count()
+            .next()
+            .unwrap()
+            .unwrap();
+        assert!(matches!(ct, Value::Int64(0)));
+    }
+
+    #[test]
+    fn test_sum_on_float64_property() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+        tx.g().addV("person").property("id", 99i64).property("name", "test").property("score", 95.5f64).next().unwrap();
+        tx.commit().unwrap();
+        let mut snap = graph.read();
+        let total = snap.g().V([99]).values(["score"]).sum().next().unwrap().unwrap();
+        assert!(matches!(total, Value::Float64(f) if (f - 95.5).abs() < 0.01), "got {:?}", total);
+    }
+
+    #[test]
+    fn test_reducer_on_empty_input_returns_null() {
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        // No vertex has age 999 → empty stream → reducers return Null.
+        let sum_val = snap.g().V([]).has("age", 999i32).values(["age"]).sum().next().unwrap().unwrap();
+        let min_val = snap.g().V([]).has("age", 999i32).values(["age"]).min().next().unwrap().unwrap();
+        let max_val = snap.g().V([]).has("age", 999i32).values(["age"]).max().next().unwrap().unwrap();
+        let mean_val = snap.g().V([]).has("age", 999i32).values(["age"]).mean().next().unwrap().unwrap();
+        assert!(matches!(sum_val, Value::Null));
+        assert!(matches!(min_val, Value::Null));
+        assert!(matches!(max_val, Value::Null));
+        assert!(matches!(mean_val, Value::Null));
+    }
+
+    #[test]
+    fn test_edge_id_is_unique_string() {
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        // Marko has 2 knows edges → 2 distinct id strings.
+        let ids: Vec<_> = snap.g().V([1]).outE(["knows"]).id().to_list().unwrap();
+        assert_eq!(ids.len(), 2, "Marko should have 2 knows edges");
+        // All ids are strings, distinct, and non-empty.
+        for id in &ids {
+            if let Value::String(s) = id {
+                assert!(!s.is_empty());
+            } else {
+                panic!("expected String edge id, got {:?}", id);
+            }
+        }
+    }
+
+    #[test]
+    fn test_e_bogus_id_returns_empty() {
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        let result = snap.g().E(["not-a-valid-base64".to_string()]).next().unwrap();
+        assert!(result.is_none(), "E with bogus string should return None");
+    }
+
+    #[test]
+    fn test_e_lookup_captured_id() {
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        // Get the edge id, then look it up by g.E([captured_id]).
+        let id_val = snap.g().V([1]).outE(["knows"]).id().next().unwrap().unwrap();
+        let id_str = match id_val {
+            Value::String(s) => s,
+            _ => panic!("expected String id, got {:?}", id_val),
+        };
+        let result = snap.g().E([id_str]).next().unwrap();
+        assert!(result.is_some(), "g.E([captured_id]) should find the edge");
+    }
+
+    #[test]
+    fn test_edge_ids_are_distinct() {
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        let ids: Vec<_> = snap.g().V([1]).outE(["knows"]).id().to_list().unwrap();
+        assert_eq!(ids.len(), 2);
+        // The two ids must be distinct.
+        if let (Value::String(a), Value::String(b)) = (&ids[0], &ids[1]) {
+            assert_ne!(a, b, "two knows edges from Marko should have distinct ids");
+        }
+    }
+
+    #[test]
+    fn test_has_id_with_edge_string() {
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        let id_val = snap.g().V([1]).outE(["knows"]).id().next().unwrap().unwrap();
+        let id_str = match id_val {
+            Value::String(s) => s,
+            _ => panic!("expected String id"),
+        };
+        let count = snap.g().V([1]).outE(["knows"]).hasId([id_str.as_str()]).count().next().unwrap().unwrap();
+        assert!(matches!(count, Value::Int64(1)), "hasId with edge id string should match exactly 1 edge");
+    }
+
+    #[test]
+    fn test_out_empty_means_all_labels() {
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        // out([]) = traverse all outgoing edges regardless of label.
+        let count = snap.g().V([1]).out([]).count().next().unwrap().unwrap();
+        // Marko has: knows→2, knows→4, created→3 = 3 total out-edges.
+        assert!(matches!(count, Value::Int64(3)), "out([]) should see all out-edges, got {:?}", count);
+    }
+
+    #[test]
+    fn test_in_empty_means_all_labels() {
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        // in([]) from Lop(3): reverse of created edges.
+        let count = snap.g().V([3]).r#in([]).count().next().unwrap().unwrap();
+        // Lop has incoming created from 1, 4, 6 = 3.
+        assert!(matches!(count, Value::Int64(3)), "in([]) should see all in-edges, got {:?}", count);
+    }
+
+    #[test]
+    fn test_both_empty_means_all_labels() {
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        // both([]) from Marko(1): out knows→2,4 + out created→3 + in (none) = 3.
+        let count = snap.g().V([1]).both([]).count().next().unwrap().unwrap();
+        assert!(matches!(count, Value::Int64(3)), "both([]) should see all edges, got {:?}", count);
+    }
+
+    #[test]
+    fn test_oute_empty_means_all_labels() {
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        let count = snap.g().V([1]).outE([]).count().next().unwrap().unwrap();
+        assert!(matches!(count, Value::Int64(3)), "outE([]) should see all out-edges, got {:?}", count);
+    }
+
+    #[test]
+    fn test_ine_empty_means_all_labels() {
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        let count = snap.g().V([3]).inE([]).count().next().unwrap().unwrap();
+        assert!(matches!(count, Value::Int64(3)), "inE([]) should see all in-edges, got {:?}", count);
+    }
+
+    #[test]
+    fn test_bothe_empty_means_all_labels() {
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        let count = snap.g().V([1]).bothE([]).count().next().unwrap().unwrap();
+        assert!(matches!(count, Value::Int64(3)), "bothE([]) should see all edges, got {:?}", count);
+    }
+
+    #[test]
+    fn test_has_label_empty_returns_nothing() {
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        // hasLabel([]) → Within([]) → vacuously false. Needs an explicit type since
+        // hasLabel() now takes `impl Into<Predicate>` (restored gt/lt/between/within/
+        // without expressiveness) rather than a concrete collection Item type — the
+        // empty-array-infers-for-free trick only applies to the latter.
+        let count = snap.g().V([]).hasLabel([] as [&str; 0]).count().next().unwrap().unwrap();
+        assert!(matches!(count, Value::Int64(0)), "hasLabel([]) should match nothing, got {:?}", count);
+    }
+
+    #[test]
+    fn test_properties_empty_returns_all() {
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        // properties([]) = all properties (TinkerPop convention).
+        let count = snap.g().V([1]).properties([]).count().next().unwrap().unwrap();
+        // Marko has: name, age = 2 properties.
+        assert!(matches!(count, Value::Int64(2)), "properties([]) should return all props, got {:?}", count);
+    }
+
+    #[test]
+    fn test_values_empty_returns_all() {
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        // values([]) = all property values (TinkerPop convention).
+        let count = snap.g().V([1]).values([]).count().next().unwrap().unwrap();
+        // Marko has: name="marko", age=29 = 2 values.
+        assert!(matches!(count, Value::Int64(2)), "values([]) should return all values, got {:?}", count);
+    }
+
+    #[test]
+    fn test_values_all_excludes_reserved_keys() {
+        let graph = setup_modern_graph();
+        let mut snap = graph.read();
+        // values([]) should NOT include id, label, or rank.
+        let values: Vec<_> = snap.g().V([1]).values([]).to_list().unwrap();
+        // Marko has 2 ordinary properties: name="marko", age=29.
+        assert_eq!(values.len(), 2, "values([]) should only return ordinary properties");
+        // Neither "person" (label string) nor 1 (id) should appear.
+        for v in &values {
+            if let Value::String(s) = v {
+                assert_ne!(s.as_str(), "person", "label should not appear in values([])");
+            }
+            if let Value::Int64(n) = v {
+                assert_ne!(*n, 1, "vertex id should not appear in values([])");
+            }
+        }
+    }
+
+    #[test]
+    fn test_reject_label_as_property() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+        // property("label", ...) should always be rejected.
+        let res = tx.g().V([1]).property("label", "person").next();
+        assert!(res.is_err(), "property('label', ...) should be rejected");
     }
 
     #[test]

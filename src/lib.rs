@@ -83,9 +83,7 @@ pub use api::{Graph, ReadSession, TxSession};
 pub use gremlin::traversal::GraphTraversal;
 pub use gremlin::{
     traversal::{BuiltTraversal, ReadTraversal, TraversalBuilder, WriteTraversal, __},
-    value::{
-        between, eq, gt, gte, lt, lte, ne, within, without, Edge, Key, Map, Path, Predicate, Property, Value, Vertex,
-    },
+    value::{between, eq, gt, gte, lt, lte, ne, within, without, Edge, Map, Path, Predicate, Property, Value, Vertex},
 };
 pub use types::StoreError;
 

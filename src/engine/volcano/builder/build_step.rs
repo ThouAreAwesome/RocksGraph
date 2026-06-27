@@ -117,6 +117,24 @@ pub(super) fn resolve_write_prop_key(
     schema_lock.write().unwrap().resolve_prop_key(name, inferred_type)
 }
 
+/// Rejects `"id"`/`"label"`/`"rank"` reaching a generic property-access step
+/// (`HasProperty`/`Values`/`Properties`) unfolded. These three are read exclusively
+/// through dedicated steps (`id()`/`label()`/`rank()`, `hasId()`/`hasLabel()`/`hasRank()`)
+/// — see `docs/design_reserved_keys.md`. Optimizer-folded uses (e.g. `.outE(...).has("rank",
+/// N)` immediately after an edge-traversal step) never reach this check: `apply_rules` runs
+/// before physical build and removes the step entirely, folding it into the traversal step's
+/// structural field instead.
+fn reject_reserved_key(key: &str) -> Result<(), StoreError> {
+    if key == ID || key == LABEL || key == RANK {
+        return Err(StoreError::SchemaViolation(format!(
+            "'{}' is a reserved key — use id()/label()/rank() to extract it, or \
+             hasId()/hasLabel()/hasRank() to filter by it, instead of values()/properties()/has().",
+            key
+        )));
+    }
+    Ok(())
+}
+
 // ── build_step ───────────────────────────────────────────────────────────────
 
 impl PhysicalPlanBuilder {
@@ -248,6 +266,7 @@ impl PhysicalPlanBuilder {
                 )
             }
             LogicalStep::HasProperty(s) => {
+                reject_reserved_key(&s.key)?;
                 let prop_key_id = if let Some(id) = schema.prop_key_id(&s.key) {
                     id
                 } else {
@@ -357,6 +376,7 @@ impl PhysicalPlanBuilder {
                     .property_keys
                     .iter()
                     .map(|k| {
+                        reject_reserved_key(k)?;
                         if let Some(id) = schema.prop_key_id(k) {
                             Ok((k.clone(), id))
                         } else {
@@ -380,6 +400,7 @@ impl PhysicalPlanBuilder {
                     .property_keys
                     .iter()
                     .map(|k| {
+                        reject_reserved_key(k)?;
                         if let Some(id) = schema.prop_key_id(k) {
                             Ok((k.clone(), id))
                         } else {
@@ -681,6 +702,16 @@ impl PhysicalPlanBuilder {
             }
             LogicalStep::Label(_) => {
                 wire_required!(BufferedStep::new(steps::label_step::LabelStep::default()), upstream, "LabelStep")
+            }
+            LogicalStep::Rank(_) => {
+                wire_required!(BufferedStep::new(steps::rank_step::RankStep::default()), upstream, "RankStep")
+            }
+            LogicalStep::HasRank(s) => {
+                wire_required!(
+                    BufferedStep::new(steps::has_rank::HasRankStep::new(s.pred.clone())),
+                    upstream,
+                    "HasRankStep"
+                )
             }
             LogicalStep::Local(s) => {
                 drop(schema);

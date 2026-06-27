@@ -1,6 +1,11 @@
 # Design: Vertex label fast-path via edge value encoding
 
-Status: proposal. Not implemented.
+Status: implemented.
+
+## Goals & non-goals
+
+- **Goals:** Store destination/source vertex labels in edge value prefixes to eliminate vertex value reads during edge traversals; cache labels in per-transaction overlay; provide `LabelOnly` vertex state for zero-I/O label access.
+- **Non-goals:** Promote vertex label to the storage key (see `design_vertex_label.md`); change the edge key encoding; eliminate vertex reads for property access (only label reads are optimized).
 
 ## Problem
 
@@ -63,7 +68,7 @@ Three coordinated changes:
 
 `add_edge` already calls `get_vertex_degree` for both endpoints to check
 existence and bump degree counters
-([`graph.rs:764-765`](../src/graph.rs)):
+(`LogicalGraph::add_edge` in [`graph/logical.rs`](../src/graph/logical.rs)):
 
 ```rust
 let (mut src_out, src_in) = self.get_vertex_degree(cek.src_id)?.ok_or(StoreError::NotFound)?;
@@ -71,13 +76,13 @@ let (dst_out, mut dst_in) = self.get_vertex_degree(cek.dst_id)?.ok_or(StoreError
 ```
 
 Extending `get_vertex_degree`'s return shape to `(u32, u32, LabelId)` (set once at
-`add_vertex` time, [`graph.rs:701`](../src/graph.rs), and never updated again — no
-"change vertex label" operation exists) gives `add_edge` both `src_label` and
-`dst_label` with no extra I/O.
+`add_vertex` time, in `LogicalGraph::add_vertex` ([`graph/logical.rs`](../src/graph/logical.rs)),
+and never updated again — no "change vertex label" operation exists) gives `add_edge`
+both `src_label` and `dst_label` with no extra I/O.
 
 Each *physical* edge record only needs one of them: a logical edge is written
 twice at commit — once to `edges_out` and once to `edges_in`
-([`graph.rs:1018-1019`](../src/graph.rs)) — and for the `edges_out` row the
+(`LogicalGraph::add_edge`'s commit path, [`graph/logical.rs`](../src/graph/logical.rs)) — and for the `edges_out` row the
 relevant "other vertex" is `dst`, while for the `edges_in` row it's `src`. So
 `Edge` ([`types/element.rs:166`](../src/types/element.rs)) gains two fields:
 
@@ -268,7 +273,8 @@ fn cache_vertex_label(&mut self, id: VertexKey, label_id: LabelId) {
 ```
 
 (mirrors the existing "don't clobber a richer entry" pattern already used for
-the edges overlay, [`graph.rs:349`](../src/graph.rs):
+the edges overlay in `LogicalGraph`/`LogicalSnapshot`
+(`src/graph/logical.rs`, `src/graph/snapshot.rs`):
 `self.edges.entry(cek).or_insert(edge)`.) Called as:
 
 ```rust
@@ -276,11 +282,10 @@ if let Some(l) = edge.src_label { self.cache_vertex_label(edge.src_id, l); }
 if let Some(l) = edge.dst_label { self.cache_vertex_label(edge.dst_id, l); }
 ```
 
-right after each edge is obtained in `get_adjacent_edges`
-([`graph.rs:339-404`](../src/graph.rs)), `get_edge`
-([`graph.rs:271`](../src/graph.rs)), and `get_edges`
-([`graph.rs:313`](../src/graph.rs)) — and the same in `LogicalSnapshot`'s mirrored
-methods. The methods' return types and the `GraphCtx` trait are untouched; this
+right after each edge is obtained in `get_adjacent_edges`, `get_edge`, and
+`get_edges` — in both `LogicalGraph` ([`graph/logical.rs`](../src/graph/logical.rs))
+and `LogicalSnapshot`'s mirrored methods ([`graph/snapshot.rs`](../src/graph/snapshot.rs)).
+The methods' return types and the `GraphCtx` trait are untouched; this
 is purely an internal side effect.
 
 ### Auditing every existing "is it cached" check
@@ -290,15 +295,18 @@ This is the part that must be done carefully: several existing call sites treat
 mutate directly." A `LabelOnly` entry now also "exists" but is not safe for
 either of those without an upgrade first. Each needs to be checked:
 
+All call sites below are duplicated between `LogicalGraph` ([`graph/logical.rs`](../src/graph/logical.rs))
+and `LogicalSnapshot` ([`graph/snapshot.rs`](../src/graph/snapshot.rs)); both copies need the fix.
+
 | Call site | Currently checks | Needs to become |
 |---|---|---|
-| `get_vertex` ([`graph.rs:254`](../src/graph.rs)) — existence only | `!contains_key` → fetch | **No change.** A `LabelOnly` entry already correctly proves existence. |
-| `get_vertices` ([`graph.rs:288`](../src/graph.rs)) — existence only | `!contains_key` → fetch | **No change**, same reasoning. |
-| `get_property` / `get_value` ([`graph.rs:530,564`](../src/graph.rs)) | calls `get_vertex` then delegates straight to the cached `Vertex` | For any `prop_key_id` other than `ID_KEY_ID`/`LABEL_KEY_ID`, upgrade first if `is_label_only()` |
-| `get_all_props` ([`graph.rs:586`](../src/graph.rs)) | calls `get_vertex` then delegates | Always upgrade first if `is_label_only()` — "all" can never be answered from a label-only entry |
-| `set_property` ([`graph.rs:816`](../src/graph.rs)) | `!contains_key` → fetch, else mutate in place | `!contains_key || is_label_only()` → fetch-and-replace, *then* mutate — otherwise a `props_mut()` call on a `LabelOnly` entry silently treats unread properties as nonexistent and the write would discard them |
-| `drop_property` ([`graph.rs:864`](../src/graph.rs)) | same pattern as `set_property` | same fix |
-| `scan_vertices` batch entry insertion ([`graph.rs:424`](../src/graph.rs), mirrored in `LogicalSnapshot` at [`graph.rs:1250`](../src/graph.rs)) | `self.vertices.entry(vt.id).or_insert(vt)` | **Needs a fix.** `scan_vertices` always does a real fetch (it's a full scan, not conditional on cache state) and `vt` always arrives `Raw`/`Decoded`. But `or_insert` refuses to overwrite *any* existing entry — including a `LabelOnly` one — so a vertex already cached as `LabelOnly` from an earlier edge read stays `LabelOnly` even though the scan just fetched its full record and is about to throw that result away. Not a correctness bug (a later access still upgrades on demand per the rows above) but it silently wastes the read `scan_vertices` already paid for. Needs to upgrade-in-place instead of unconditionally refusing to overwrite: `match self.vertices.entry(vt.id) { Entry::Vacant(e) => { e.insert(vt); } Entry::Occupied(mut e) if e.get().is_label_only() => { e.insert(vt); } Entry::Occupied(_) => {} }` |
+| `get_vertex` — existence only | `!contains_key` → fetch | **No change.** A `LabelOnly` entry already correctly proves existence. |
+| `get_vertices` — existence only | `!contains_key` → fetch | **No change**, same reasoning. |
+| `get_property` / `get_value` | calls `get_vertex` then delegates straight to the cached `Vertex` | For any `prop_key_id` other than `ID_KEY_ID`/`LABEL_KEY_ID`, upgrade first if `is_label_only()` |
+| `get_all_props` | calls `get_vertex` then delegates | Always upgrade first if `is_label_only()` — "all" can never be answered from a label-only entry |
+| `set_property` (`LogicalGraph` only — write path) | `!contains_key` → fetch, else mutate in place | `!contains_key || is_label_only()` → fetch-and-replace, *then* mutate — otherwise a `props_mut()` call on a `LabelOnly` entry silently treats unread properties as nonexistent and the write would discard them |
+| `drop_property` (`LogicalGraph` only — write path) | same pattern as `set_property` | same fix |
+| `scan_vertices` batch entry insertion | `self.vertices.entry(vt.id).or_insert(vt)` | **Needs a fix.** `scan_vertices` always does a real fetch (it's a full scan, not conditional on cache state) and `vt` always arrives `Raw`/`Decoded`. But `or_insert` refuses to overwrite *any* existing entry — including a `LabelOnly` one — so a vertex already cached as `LabelOnly` from an earlier edge read stays `LabelOnly` even though the scan just fetched its full record and is about to throw that result away. Not a correctness bug (a later access still upgrades on demand per the rows above) but it silently wastes the read `scan_vertices` already paid for. Needs to upgrade-in-place instead of unconditionally refusing to overwrite: `match self.vertices.entry(vt.id) { Entry::Vacant(e) => { e.insert(vt); } Entry::Occupied(mut e) if e.get().is_label_only() => { e.insert(vt); } Entry::Occupied(_) => {} }` |
 
 The upgrade itself reuses the existing full fetch — no new store primitive:
 
@@ -356,7 +364,7 @@ same transaction — not only the step immediately producing the vertex:
 | `store/traits.rs` | `GraphStore::get_vertex_degree`/`put_vertex_degree` signatures (+`LabelId`) and no-op impls |
 | `store/rocks/transaction.rs` | `get_vertex_degree`/`put_vertex_degree` impls; `put_edge` takes `end_vertex_label`; commit path passes `dst_label`/`src_label` per direction |
 | `store/rocks/admin.rs` | Edge-value write path (admin/test insertion) |
-| `graph.rs` | `vertex_degree` overlay value type → `(u32,u32,LabelId)`; `add_vertex`, `add_edge`; `get_adjacent_edges`/`get_edge`/`get_edges` gain the `cache_vertex_label` side effect; `get_property`/`get_value`/`get_all_props`/`set_property`/`drop_property` gain the upgrade check per the audit table above — in both `LogicalGraph` and `LogicalSnapshot` |
+| `graph/logical.rs`, `graph/snapshot.rs` | `vertex_degree` overlay value type → `(u32,u32,LabelId)`; `add_vertex`, `add_edge` (logical.rs only — write path); `get_adjacent_edges`/`get_edge`/`get_edges` gain the `cache_vertex_label` side effect; `get_property`/`get_value`/`get_all_props`/`set_property`/`drop_property` gain the upgrade check per the audit table above — in both `LogicalGraph` and `LogicalSnapshot` |
 | Everything engine-facing — `engine/context.rs` (`GraphCtx` trait), `types/gvalue.rs`, `engine/traverser.rs`, `has_label.rs`, `in_out.rs`, `both.rs`, `get_e.rs`, `in_v_out_v.rs`, `other_v.rs`, `v.rs` | **No changes.** The cache is invisible above `LogicalGraph`/`LogicalSnapshot`. |
 
 ## Implementation plan
@@ -368,7 +376,7 @@ same transaction — not only the step immediately producing the vertex:
 2. `EdgeValue` gains the 2-byte prefix; `encode`/`decode` per the snippet above.
 3. `VertexDegree` → 10 bytes, unconditionally.
 
-**Phase 2 — write path** (`graph.rs`, `store/traits.rs`, `transaction.rs`)
+**Phase 2 — write path** (`graph/logical.rs`, `store/traits.rs`, `transaction.rs`)
 4. `add_vertex` stores the label in the `vertex_degree` overlay entry.
 5. `get_vertex_degree`/`put_vertex_degree` (trait + impls + overlay map) carry
    `LabelId` alongside the two counters.
@@ -385,7 +393,7 @@ same transaction — not only the step immediately producing the vertex:
    same transaction — exactly the kind of gap that doesn't show up until much
    later.
 
-**Phase 3 — the vertex cache** (`types/element.rs`, `graph.rs`)
+**Phase 3 — the vertex cache** (`types/element.rs`, `graph/logical.rs`, `graph/snapshot.rs`)
 8. `Vertex`'s `label_only` field, `label_only()` constructor, `is_label_only()`.
 9. `get_adjacent_edges`/`get_edge`/`get_edges` populate `cache_vertex_label` for
    both `LogicalGraph` and `LogicalSnapshot`.
@@ -396,6 +404,12 @@ same transaction — not only the step immediately producing the vertex:
 **Phase 4 — tests** — see "Test plan" below; treat it as a checklist, not a
 summary, since most of these scenarios exist specifically because they were
 *not* obvious from reading the implementation once.
+
+## Constraints / invariants
+
+- Vertex label must never be read through `get_all_props` on the store path — it must come from the edge value prefix or overlay cache.
+- `ensure_vertex_props_loaded` must return `CorruptData` if a `LabelOnly`-cached vertex is unexpectedly `None` in the store.
+- Edge value encodes `end_vertex_label` as 2-byte big-endian — must not grow with future `LabelId` width changes.
 
 ## Test plan
 
@@ -496,7 +510,8 @@ per-transaction caching.
     precedent.
 12. **Cache state doesn't leak across a `Transaction` reuse.** `commit()`
     resets and reuses the same `Transaction`/`LogicalGraph` instance
-    ([`graph.rs:1104,1145`](../src/graph.rs): `self.vertices.clear()`).
+    (`self.vertices.clear()` in [`graph/logical.rs`](../src/graph/logical.rs) and
+    [`graph/snapshot.rs`](../src/graph/snapshot.rs)).
     Populate a `LabelOnly` entry, commit, then in the *same* reused instance
     immediately read a different vertex — confirm no leftover entry from the
     previous transaction is visible (`vertices.clear()` already does this; the

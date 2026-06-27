@@ -383,7 +383,7 @@ fn test_edge_property_type_mismatch_rejected() {
 /// whole suite.
 #[test]
 fn test_concurrent_auto_mode_writes_do_not_starve_schema_lock() {
-    use crate::{api::TxSession, gremlin::traversal::__, gremlin::value::Key};
+    use crate::{api::TxSession, gremlin::traversal::__};
 
     // Mirrors `bench_write`'s upsert pattern: a `.coalesce([check, addV/addE])` so build_step
     // resolves names for *both* branches every call, plus an `outE().where(otherV().hasId(..))`
@@ -394,7 +394,7 @@ fn test_concurrent_auto_mode_writes_do_not_starve_schema_lock() {
             .V([vertex_id])
             .count()
             .coalesce([
-                __().V([vertex_id]).values([Key::Id]),
+                __().V([vertex_id]).id(),
                 __().addV("person").property("id", vertex_id).property("name", "x").property("age", 30i32),
             ])
             .next()
@@ -404,7 +404,7 @@ fn test_concurrent_auto_mode_writes_do_not_starve_schema_lock() {
         tx.g()
             .V([src])
             .coalesce([
-                __().outE(["knows"]).r#where(__().otherV().hasId([dst])).values([Key::Label]),
+                __().outE(["knows"]).r#where(__().otherV().hasId([dst])).label(),
                 __().addE("knows").from(src).to(dst).property("weight", 1.0f64).property("since", 0i64),
             ])
             .next()

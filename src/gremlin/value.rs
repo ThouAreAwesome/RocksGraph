@@ -22,14 +22,16 @@
 //! The same literal that appears in an input step appears as the same variant
 //! in the output, so no conversion is needed on the caller side.
 //!
-//! # Key
+//! # Reserved keys
 //!
-//! [`Key`] distinguishes system attributes (`id`, `label`) from user-defined
-//! property names.  This lets the same key be used symmetrically in input
-//! steps and output extraction:
+//! `"id"`, `"label"`, and `"rank"` are reserved — `.has()`/`.values()`/`.properties()`
+//! reject them. Use the dedicated steps instead: [`id()`](crate::TraversalBuilder::id) /
+//! [`hasId()`](crate::TraversalBuilder::hasId), [`label()`](crate::TraversalBuilder::label) /
+//! [`hasLabel()`](crate::TraversalBuilder::hasLabel), [`rank()`](crate::TraversalBuilder::rank) /
+//! [`hasRank()`](crate::TraversalBuilder::hasRank). See `docs/design_reserved_keys.md`.
 //!
 //! ```
-//! # use rocksgraph::{Graph, Key, TraversalBuilder, Value};
+//! # use rocksgraph::{Graph, TraversalBuilder, Value};
 //! # let dir = tempfile::tempdir().unwrap();
 //! # let graph = Graph::open(dir.path()).unwrap();
 //! # let mut tx = graph.begin();
@@ -37,9 +39,9 @@
 //! # tx.commit().unwrap();
 //! let mut snap = graph.read();
 //! // filter by id
-//! snap.g().V([]).has(Key::Id, 42i64).next().unwrap();
+//! snap.g().V([]).hasId([42i64]).next().unwrap();
 //! // extract id as a scalar
-//! let id = snap.g().V([42]).values([Key::Id]).next().unwrap();
+//! let id = snap.g().V([42]).id().next().unwrap();
 //! assert_eq!(id, Some(Value::Int64(42)));
 //! # graph.close().unwrap();
 //! ```
@@ -53,47 +55,6 @@
 use crate::types::StoreError;
 use smol_str::SmolStr;
 use std::collections::HashMap;
-
-// ── Key ───────────────────────────────────────────────────────────────────────
-
-/// A step key: either a system attribute or a user-defined property name.
-///
-/// Used in `.has(key, pred)` and `.values(keys)`.
-/// `Key::Property("name")` can be constructed directly from `&str`, `String`, or `SmolStr`
-/// via the `From` impls, so callers rarely need to write `Key::Property(...)`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Key {
-    /// The element's system identifier (vertex `id`, or an edge's composite key).
-    Id,
-    /// The element's label, decoded to its string name (e.g. `"person"`) via the
-    /// schema registry. Internally stored as a numeric `label_id`, but `.values([Key::Label])`
-    /// / `.has(Key::Label, "person")` always see the decoded string, matching `hasLabel`.
-    Label,
-    /// A user-defined property name.
-    ///
-    /// `SmolStr` rather than `String`, matching `.property()`/`.properties()`/`.hasLabel()`
-    /// and the materialized `Property.key`/`Vertex.properties`/`Edge.properties` key type —
-    /// resolving a `Key::Property` never needs more than a clone, not a fresh allocation.
-    Property(SmolStr),
-}
-
-impl From<&str> for Key {
-    fn from(s: &str) -> Self {
-        Key::Property(SmolStr::new(s))
-    }
-}
-
-impl From<String> for Key {
-    fn from(s: String) -> Self {
-        Key::Property(SmolStr::from(s))
-    }
-}
-
-impl From<SmolStr> for Key {
-    fn from(s: SmolStr) -> Self {
-        Key::Property(s)
-    }
-}
 
 // ── Predicate ─────────────────────────────────────────────────────────────────
 
@@ -171,6 +132,22 @@ pub fn without(vs: impl IntoIterator<Item = impl Into<Value>>) -> Predicate {
 impl<T: Into<Value>> From<T> for Predicate {
     fn from(v: T) -> Self {
         Predicate::Eq(v.into())
+    }
+}
+
+/// A fixed-size array of scalars converts to [`Predicate::Eq`] (one element) or
+/// [`Predicate::Within`] (more than one) — the same collapsing rule `hasId()`/
+/// `hasLabel()`/`hasRank()` used internally before they accepted a full `Predicate`,
+/// now expressed once, here. Lets `.hasId([1, 2, 3])` keep working unchanged while
+/// `.hasId(gt(2))`/`.hasId(within([...]))`/etc. also become valid.
+impl<T: Into<Value>, const N: usize> From<[T; N]> for Predicate {
+    fn from(vs: [T; N]) -> Self {
+        let mut values: Vec<Value> = vs.into_iter().map(Into::into).collect();
+        if values.len() == 1 {
+            Predicate::Eq(values.pop().unwrap())
+        } else {
+            Predicate::Within(values)
+        }
     }
 }
 
@@ -320,7 +297,7 @@ impl From<u128> for Value {
 ///
 /// `label` is the label's string name (e.g. `"person"`), already resolved from the
 /// internal numeric `label_id` via the schema registry at materialization time —
-/// consistent with `Key::Label` / `.values([Key::Label])`.
+/// consistent with what `.label()` returns.
 ///
 /// `label` and the `properties` keys are [`SmolStr`] rather than `String`: both are drawn
 /// from the schema's interned label/property-key registry (crate-internal), so materializing a
@@ -351,6 +328,7 @@ pub struct Vertex {
 /// no widening through `Int32`/`Int64` at any point.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Edge {
+    pub id: String,
     pub out_v: i64,
     pub in_v: i64,
     pub label: SmolStr,
@@ -670,18 +648,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_key_conversions() {
-        let k1 = Key::from("name");
-        assert_eq!(k1, Key::Property("name".into()));
-
-        let k2 = Key::from("name".to_string());
-        assert_eq!(k2, Key::Property("name".into()));
-
-        let k3 = Key::from(smol_str::SmolStr::new("name"));
-        assert_eq!(k3, Key::Property("name".into()));
-    }
-
-    #[test]
     fn test_predicate_constructors() {
         assert_eq!(eq(10i32), Predicate::Eq(Value::Int32(10)));
         assert_eq!(ne(10i32), Predicate::Ne(Value::Int32(10)));
@@ -791,7 +757,7 @@ mod tests {
         assert_eq!(ev.as_vertex(), Some(&v));
         assert_eq!(Value::Null.as_vertex(), None);
 
-        let e = Edge { out_v: 1, in_v: 2, label: "knows".into(), rank: 0, properties: HashMap::new() };
+        let e = Edge { id: "".into(), out_v: 1, in_v: 2, label: "knows".into(), rank: 0, properties: HashMap::new() };
         let ee = Value::Edge(e.clone());
         assert_eq!(ee.as_edge(), Some(&e));
         assert_eq!(Value::Null.as_edge(), None);
@@ -829,7 +795,7 @@ mod tests {
         assert_eq!(Vertex::try_from(Value::Vertex(v.clone())).unwrap(), v);
         assert!(Vertex::try_from(Value::Null).is_err());
 
-        let e = Edge { out_v: 1, in_v: 2, label: "knows".into(), rank: 0, properties: HashMap::new() };
+        let e = Edge { id: "".into(), out_v: 1, in_v: 2, label: "knows".into(), rank: 0, properties: HashMap::new() };
         assert_eq!(Edge::try_from(Value::Edge(e.clone())).unwrap(), e);
         assert!(Edge::try_from(Value::Null).is_err());
 

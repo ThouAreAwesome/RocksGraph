@@ -66,22 +66,22 @@ use crate::{
     engine::{volcano::builder::PhysicalPlanBuilder, GraphCtx},
     gremlin::{
         type_bridge,
-        type_bridge::{key_to_prop_key, push_has_step, value_to_primitive},
-        value::{Key, Predicate, Value},
+        type_bridge::{push_has_step, value_to_primitive},
+        value::{Predicate, Value},
     },
     planner::{
         apply_rules,
         logical_step::{
             AddEStep, AddVStep, AndStep, AsStep, BothEStep, BothStep, ChooseStep, CoalesceStep, ConstantStep,
             CountStep, CyclicPathStep, DedupStep, DropStep, EStep, EmitSpec, FoldStep, FromStep, GroupCountStep,
-            GroupStep, HasIdStep, HasLabelStep, IdStep, IdentityStep, InEStep, InStep, InVStep, LabelStep, LimitStep,
-            LocalStep, LogicalPlan, LogicalStep, MaxStep, MeanStep, MinStep, NotStep, OrStep, Order, OrderKey,
-            OrderKeySpec, OrderStep, OtherVStep, OutEStep, OutStep, OutVStep, PathStep, PropertiesStep, PropertyStep,
-            RangeStep, RepeatStep, ScalarFilterStep, SelectStep, SimplePathStep, SkipStep, SumStep, TailStep, ToStep,
-            UnfoldStep, UnionStep, ValuesStep, WhereStep,
+            GroupStep, HasIdStep, HasLabelStep, HasRankStep, IdStep, IdentityStep, InEStep, InStep, InVStep, LabelStep,
+            LimitStep, LocalStep, LogicalPlan, LogicalStep, MaxStep, MeanStep, MinStep, NotStep, OrStep, Order,
+            OrderKey, OrderKeySpec, OrderStep, OtherVStep, OutEStep, OutStep, OutVStep, PathStep, PropertiesStep,
+            PropertyStep, RangeStep, RankStep, RepeatStep, ScalarFilterStep, SelectStep, SimplePathStep, SkipStep,
+            SumStep, TailStep, ToStep, UnfoldStep, UnionStep, ValuesStep, WhereStep,
         },
     },
-    types::{keys::EdgeKey, prop_key::LABEL, StoreError},
+    types::{prop_key::LABEL, StoreError},
 };
 
 pub(crate) mod built;
@@ -276,40 +276,53 @@ pub trait TraversalBuilder: PlanAppender {
         self
     }
 
+    /// Look up edges by their canonical id string (from `.id()`), or scan all edges with `E([])`.
+    ///
+    /// Takes `String` rather than `impl Into<SmolStr>` — edge ids are always 30 Base64
+    /// characters, well past `SmolStr`'s 23-byte inline cap, so there's no inlining benefit
+    /// to preserve, and a concrete `Item` type is what lets `E([])` (empty = "all edges",
+    /// matching `V([])`) infer without a type-annotation error. Pass owned `String`s — e.g.
+    /// the value captured from `.id()` — or `.to_string()` a literal.
     #[allow(non_snake_case)]
-    fn E(mut self, keys: impl IntoIterator<Item = EdgeKey>) -> Self {
+    fn E(mut self, keys: impl IntoIterator<Item = String>) -> Self {
         self.push_step(LogicalStep::E(EStep { keys: keys.into_iter().collect() }));
         self
     }
 
-    fn out(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
+    /// Takes `&'a str` rather than `impl Into<SmolStr>` so a bare `out([])` (empty =
+    /// no label filter, matching `V([])`'s `[] = all` convention) infers without a
+    /// type-annotation error — a concrete `Item` type is what makes that work, the
+    /// same reason `V()`/`E()` use concrete types. Every real label list is a literal
+    /// or `&str` constant already, so this costs nothing at existing call sites; an
+    /// owned `String`/`SmolStr` needs `.as_str()` first.
+    fn out<'a>(mut self, labels: impl IntoIterator<Item = &'a str>) -> Self {
         self.push_step(LogicalStep::Out(OutStep {
-            labels: labels.into_iter().map(Into::into).collect(),
+            labels: labels.into_iter().map(SmolStr::from).collect(),
             end_vertex_ids: None,
         }));
         self
     }
 
-    fn r#in(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
+    fn r#in<'a>(mut self, labels: impl IntoIterator<Item = &'a str>) -> Self {
         self.push_step(LogicalStep::In(InStep {
-            labels: labels.into_iter().map(Into::into).collect(),
+            labels: labels.into_iter().map(SmolStr::from).collect(),
             end_vertex_ids: None,
         }));
         self
     }
 
-    fn both(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
+    fn both<'a>(mut self, labels: impl IntoIterator<Item = &'a str>) -> Self {
         self.push_step(LogicalStep::Both(BothStep {
-            labels: labels.into_iter().map(Into::into).collect(),
+            labels: labels.into_iter().map(SmolStr::from).collect(),
             end_vertex_ids: None,
         }));
         self
     }
 
     #[allow(non_snake_case)]
-    fn outE(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
+    fn outE<'a>(mut self, labels: impl IntoIterator<Item = &'a str>) -> Self {
         self.push_step(LogicalStep::OutE(OutEStep {
-            labels: labels.into_iter().map(Into::into).collect(),
+            labels: labels.into_iter().map(SmolStr::from).collect(),
             end_vertex_ids: None,
             rank: None,
         }));
@@ -317,9 +330,9 @@ pub trait TraversalBuilder: PlanAppender {
     }
 
     #[allow(non_snake_case)]
-    fn inE(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
+    fn inE<'a>(mut self, labels: impl IntoIterator<Item = &'a str>) -> Self {
         self.push_step(LogicalStep::InE(InEStep {
-            labels: labels.into_iter().map(Into::into).collect(),
+            labels: labels.into_iter().map(SmolStr::from).collect(),
             end_vertex_ids: None,
             rank: None,
         }));
@@ -327,9 +340,9 @@ pub trait TraversalBuilder: PlanAppender {
     }
 
     #[allow(non_snake_case)]
-    fn bothE(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
+    fn bothE<'a>(mut self, labels: impl IntoIterator<Item = &'a str>) -> Self {
         self.push_step(LogicalStep::BothE(BothEStep {
-            labels: labels.into_iter().map(Into::into).collect(),
+            labels: labels.into_iter().map(SmolStr::from).collect(),
             end_vertex_ids: None,
             rank: None,
         }));
@@ -354,23 +367,30 @@ pub trait TraversalBuilder: PlanAppender {
         self
     }
 
-    /// Filter by a property key and predicate.
+    /// Filter by a user-defined property key and predicate.
     ///
-    /// `key` accepts `&str` / `String` (→ `Key::Property`), `Key::Id`, or `Key::Label`.
+    /// `key` is a plain property name — `"id"`/`"label"`/`"rank"` are rejected (use
+    /// `hasId()`/`hasLabel()`/`hasRank()` instead; see `docs/design_reserved_keys.md`).
     /// `pred` accepts any scalar (→ `Predicate::Eq`) or an explicit predicate from
     /// [`eq`](crate::gremlin::value::eq), [`gt`](crate::gremlin::value::gt), etc.
-    fn has(mut self, key: impl Into<Key>, pred: impl Into<Predicate>) -> Self {
+    fn has(mut self, key: impl Into<SmolStr>, pred: impl Into<Predicate>) -> Self {
         if let Err(err) = push_has_step(self.plan_mut().steps.as_mut(), key.into(), pred.into()) {
             self.record_error(err);
         }
         self
     }
 
+    /// `pred` accepts a bare label name (→ `Eq`), a fixed-size array of names (→ `Eq`/
+    /// `Within`, e.g. `hasLabel(["person", "software"])`), or an explicit predicate —
+    /// `eq`/`ne`/`within`/`without` are supported; range predicates (`gt`/`lt`/`between`)
+    /// are rejected, since lexicographic ordering on label names isn't a meaningful query.
     #[allow(non_snake_case)]
-    fn hasLabel(mut self, labels: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
-        let labels_vec: Vec<Value> = labels.into_iter().map(|l| Value::String(l.into().to_string())).collect();
-        let pred =
-            if labels_vec.len() == 1 { Predicate::Eq(labels_vec[0].clone()) } else { Predicate::Within(labels_vec) };
+    fn hasLabel(mut self, pred: impl Into<Predicate>) -> Self {
+        let pred = pred.into();
+        if let Err(err) = type_bridge::validate_label_predicate(&pred) {
+            self.record_error(err);
+            return self;
+        }
         match type_bridge::predicate_to_primitive_predicate(pred) {
             Ok(prim_pred) => self.push_step(LogicalStep::HasLabel(HasLabelStep { pred: prim_pred })),
             Err(err) => self.record_error(err),
@@ -378,12 +398,29 @@ pub trait TraversalBuilder: PlanAppender {
         self
     }
 
+    /// `pred` accepts a bare id (vertex `i64` or edge `String`, → `Eq`), a fixed-size
+    /// array (→ `Eq`/`Within`, e.g. `hasId([1, 2, 3])`), or an explicit predicate —
+    /// `eq`/`ne`/`gt`/`lt`/`between`/`within`/`without` all work for vertex ids; edge
+    /// ids are opaque strings, so only `eq`/`ne`/`within`/`without` are meaningful there
+    /// (`gt`/`lt`/`between` on an edge id never matches — see `HasIdStep`'s
+    /// `EdgeIdPredicate`). `hasId([])` is unsupported (same `[]`-inference error the
+    /// other collection-taking methods had before their fix) — a documented, deliberate
+    /// latent gap, not yet hit by any real caller.
     #[allow(non_snake_case)]
-    fn hasId(mut self, ids: impl IntoIterator<Item = i64>) -> Self {
-        let ids_vec: Vec<Value> = ids.into_iter().map(Value::Int64).collect();
-        let pred = if ids_vec.len() == 1 { Predicate::Eq(ids_vec[0].clone()) } else { Predicate::Within(ids_vec) };
-        match type_bridge::predicate_to_primitive_predicate(pred) {
+    fn hasId(mut self, pred: impl Into<Predicate>) -> Self {
+        match type_bridge::predicate_to_primitive_predicate(pred.into()) {
             Ok(prim_pred) => self.push_step(LogicalStep::HasId(HasIdStep { pred: prim_pred })),
+            Err(err) => self.record_error(err),
+        }
+        self
+    }
+
+    /// Filter by the rank of the current edge. Edge-only — a vertex traverser
+    /// never matches (consistent with `hasLabel`'s type-mismatch handling).
+    #[allow(non_snake_case)]
+    fn hasRank(mut self, pred: impl Into<Predicate>) -> Self {
+        match type_bridge::predicate_to_primitive_predicate(pred.into()) {
+            Ok(prim_pred) => self.push_step(LogicalStep::HasRank(HasRankStep { pred: prim_pred })),
             Err(err) => self.record_error(err),
         }
         self
@@ -435,20 +472,24 @@ pub trait TraversalBuilder: PlanAppender {
         self
     }
 
-    /// Extract scalar values for the given keys (including `Key::Id` and `Key::Label`).
-    fn values(mut self, keys: impl IntoIterator<Item = impl Into<Key>>) -> Self {
+    /// Extract scalar property values for the given keys.
+    ///
+    /// `"id"`/`"label"`/`"rank"` are rejected (use `id()`/`label()`/`rank()` instead;
+    /// see `docs/design_reserved_keys.md`). Plain `&'a str` rather than `impl Into<SmolStr>`
+    /// so `values([])` infers without a type annotation, matching `out()`/`properties()`.
+    fn values<'a>(mut self, keys: impl IntoIterator<Item = &'a str>) -> Self {
         self.push_step(LogicalStep::Values(ValuesStep {
-            property_keys: keys.into_iter().map(|k| key_to_prop_key(k.into())).collect(),
+            property_keys: keys.into_iter().map(SmolStr::from).collect(),
         }));
         self
     }
 
-    /// Extract [`Property`](crate::gremlin::value::Property) elements for user-defined keys only.
+    /// Extract [`Property`](crate::gremlin::value::Property) elements for user-defined keys.
     ///
-    /// `Key::Id` and `Key::Label` are not property elements — use `.values()` for those.
-    fn properties(mut self, keys: impl IntoIterator<Item = impl Into<SmolStr>>) -> Self {
+    /// `"id"`/`"label"`/`"rank"` are rejected (use `id()`/`label()`/`rank()` instead).
+    fn properties<'a>(mut self, keys: impl IntoIterator<Item = &'a str>) -> Self {
         self.push_step(LogicalStep::Properties(PropertiesStep {
-            property_keys: keys.into_iter().map(Into::into).collect(),
+            property_keys: keys.into_iter().map(SmolStr::from).collect(),
         }));
         self
     }
@@ -632,6 +673,13 @@ pub trait TraversalBuilder: PlanAppender {
 
     fn label(mut self) -> Self {
         self.push_step(LogicalStep::Label(LabelStep {}));
+        self
+    }
+
+    /// Extract the rank of the current edge. Edge-only — errors if the upstream
+    /// traverser is a vertex (vertices have no rank).
+    fn rank(mut self) -> Self {
+        self.push_step(LogicalStep::Rank(RankStep {}));
         self
     }
 

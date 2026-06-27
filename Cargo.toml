@@ -23,6 +23,7 @@ tracing = ["dep:tracing"]
 [dependencies]
 # Compact inline strings (≤22 bytes stack-allocated)
 smol_str = "0.2"
+base64 = "0.21"
 
 # Inline vec for Traverser labels: stack-allocates ≤2 label strings with no heap
 smallvec = "1"

@@ -26,9 +26,20 @@ have no path to that today.
 
 ---
 
-## Goal
+## Goals & non-goals
 
-Two first-class **schema modes**, selected per `Graph`:
+- **Goals:** Two first-class schema modes (`SchemaMode::Auto`, `SchemaMode::Strict`)
+  selected per `Graph`; a shared JanusGraph-style `SchemaManagement` interface for both
+  modes; durable schema that survives restarts, with the same optimistic-concurrency
+  discipline (`StoreError::Conflict` on a stale read) already used for ordinary data
+  writes.
+- **Non-goals:** Per-edge-label multiplicity (that is `EdgeMode`, not schema mode);
+  auto-migration of existing data between modes; schema validation at the transaction
+  level beyond what `LogicalGraph` already enforces.
+
+## Design
+
+### Two schema modes
 
 - **`SchemaMode::Auto`** (default) — labels and property keys are registered automatically
   on the first write that introduces them. The user never calls anything explicitly; they
@@ -48,8 +59,6 @@ This interface is *mandatory* in `Strict` mode and *optional but available* in `
 The schema is durable in both modes — it survives restarts. Schema changes are themselves
 transactional, with the same optimistic-concurrency discipline (`StoreError::Conflict` on a
 stale read) already used for ordinary data writes — see §4.
-
----
 
 ## Architecture overview
 
@@ -396,7 +405,7 @@ GraphCtx trait
 ```
 
 `GraphCtx::schema()` is the **only** new method on the trait. `GraphTraversal::build`
-([`src/gremlin/traversal.rs:173`](../src/gremlin/traversal.rs#L173)) calls it once, up
+([`src/gremlin/traversal/mod.rs`](../src/gremlin/traversal/mod.rs)) calls it once, up
 front, and passes the `Arc<RwLock<Schema>>` into `PhysicalPlanBuilder::build`/`build_step` as
 a plain parameter — not `&mut dyn GraphCtx` at all, since the builder needs nothing else
 from `GraphCtx` (§6). Inside `build_step`, resolution is just calling `Schema`'s *existing*
@@ -690,7 +699,7 @@ that the *key itself* exist somewhere in the schema.
 
 Today, **no conversion exists anywhere in the code**: `addV`/`addE`/`out`/`hasLabel`
 already take a raw `LabelId`/`u16` directly at the Gremlin layer
-([`src/gremlin/traversal.rs:194-273`](../src/gremlin/traversal.rs#L194)), and
+(`src/gremlin/traversal/mod.rs`), and
 `LogicalStep::AddV`/`AddE` already store `label_id: LabelId`
 ([`src/planner/logical_step/mod.rs:314-332`](../src/planner/logical_step/mod.rs#L314)).
 There is no string anywhere in the pipeline to convert — yet. Two earlier drafts of this
@@ -726,7 +735,7 @@ already the correct point per the documented lazy-execution model (`src/api.rs`:
 happens until a terminal call) — but it runs **before any physical step is constructed**,
 i.e. before any element is scanned or written. It gains a `schema: Arc<RwLock<Schema>>`
 parameter — not `&mut dyn GraphCtx`, since resolution is all it needs (§3) — obtained once
-by its caller, [`GraphTraversal::build`](../src/gremlin/traversal.rs#L173), via
+by its caller, [`GraphTraversal::build`](../src/gremlin/traversal/mod.rs), via
 `ctx.schema()`. For each `LogicalStep` that names a label or property key, `build_step`
 calls `Schema`'s own methods (§5) directly before building the matching physical step:
 
@@ -816,9 +825,9 @@ if that ever shows up as real contention, a transaction-local snapshot of the id
 treatment at two points, both already inside a `GraphCtx` implementation (so no new trait
 method is needed beyond `schema()`, §3):
 
-- **`get_all_props`** ([`src/graph.rs:546`](../src/graph.rs#L546)) — backs full
+- **`get_all_props`** (`src/graph/logical.rs`, `src/graph/snapshot.rs`) — backs full
   `Vertex`/`Edge` materialization (`g.V().next()`'s property map, and `materialize`'s
-  `GValue::Vertex`/`GValue::Edge` arms in [`src/gremlin/traversal.rs:79`](../src/gremlin/traversal.rs#L79)).
+  `GValue::Vertex`/`GValue::Edge` arms in [`src/gremlin/traversal/built.rs`](../src/gremlin/traversal/built.rs)).
   Since `LogicalGraph`/`LogicalSnapshot` already own `schema: Arc<RwLock<Schema>>` directly,
   `get_all_props` decodes every `prop_key_id` to a string *internally* before returning —
   its signature (`Vec<(PropKey, Primitive)>`) stays exactly as it is today; only the
@@ -828,7 +837,7 @@ method is needed beyond `schema()`, §3):
   just the property keys, was still left numeric on the public `Value::Vertex`/`Value::Edge`
   (`label_id: u16`) until a follow-up fix decoded it to `label: String` in `materialize`'s
   `GValue::Vertex`/`GValue::Edge` arms, matching `Key::Label`'s decode behavior.
-- **`materialize`'s `GValue::Property` arm** ([`src/gremlin/traversal.rs:100`](../src/gremlin/traversal.rs#L100))
+- **`materialize`'s `GValue::Property` arm** (`src/gremlin/traversal/built.rs`)
   — backs `.properties(...)`-style results, where the physical step already carries the
   original string next to the id it resolved (see "Where encoding happens" above) for the
   *known-key* case, so no decode is needed there at all. The one place a real decode is still
@@ -908,7 +917,7 @@ operation.
 
 ---
 
-## Consistency guarantees
+## Constraints / invariants
 
 | Scenario | Behaviour |
 |----------|-----------|
@@ -928,7 +937,7 @@ is ~98k entries, well within RocksDB's efficient range.
 
 ---
 
-## Implementation order
+## Implementation plan
 
 **Phase 1 — core schema registry + persistence (mode-independent)**
 
@@ -942,7 +951,7 @@ is ~98k entries, well within RocksDB's efficient range.
    (`design_multiple_edges.md`). `load_schema` takes a `GraphOptions` used only to bootstrap
    a brand-new database's metadata entry (§0, §2) — on an existing database the persisted
    entry wins
-4. Update `LogicalGraph::add_edge` ([`src/graph.rs:672`](../src/graph.rs#L672)) to read
+4. Update `LogicalGraph::add_edge` (`src/graph/logical.rs`) to read
    `schema.edge_mode` instead of `schema.edge_config(label_id)`
 5. Thread schema-CF write bytes (including the metadata entry) through
    `LogicalGraph::add_vertex`/`add_edge`/`set_property` so registrations land in the same
@@ -956,7 +965,7 @@ is ~98k entries, well within RocksDB's efficient range.
    are unchanged — `PropKey` is already `SmolStr`, and logical steps stay string-typed
    regardless of what changes below `build_step` (§6)
 7. Change `addV`/`addE`/`out`/`in`/`hasLabel` traversal-builder methods
-   (`src/gremlin/traversal.rs`) to accept `impl Into<SmolStr>`; `property()`/`has()`/
+   (`src/gremlin/traversal/mod.rs`) to accept `impl Into<SmolStr>`; `property()`/`has()`/
    `values()` are unchanged
 8. Add `resolve_vertex_label`/`resolve_edge_label`/`resolve_prop_key` (mutating,
    `SchemaMode`-gated, bumps `version`) and `vertex_label_id`/`edge_label_id`/`prop_key_id`
@@ -969,9 +978,10 @@ is ~98k entries, well within RocksDB's efficient range.
    (`resolve_*`, `vertex_label_id`, `edge_label_id` directly on the trait), which were pure
    boilerplate for a capability only `PhysicalPlanBuilder` uses
 10. Add a `schema: Arc<RwLock<Schema>>` parameter to `PhysicalPlanBuilder::build`/
-    `build_step` (`src/engine/volcano/builder.rs`) — not `&mut dyn GraphCtx`, since
-    resolution via step 8's methods is all the builder needs. Update its one call site
-    ([`GraphTraversal::build`](../src/gremlin/traversal.rs#L173)) to call `ctx.schema()`
+    `build_step` (`src/engine/volcano/builder/mod.rs`, `build_step.rs`) — not
+    `&mut dyn GraphCtx`, since resolution via step 8's methods is all the builder needs.
+    Update its one call site
+    ([`GraphTraversal::build`](../src/gremlin/traversal/mod.rs)) to call `ctx.schema()`
     once and pass the result through. For each `LogicalStep` naming a label *or property
     key*, call the matching method from step 8 directly on `schema` *before* constructing
     the physical step, and pass the resolved id into the **existing, unchanged** constructor
@@ -999,11 +1009,11 @@ is ~98k entries, well within RocksDB's efficient range.
     `(SmolStr, u16)` instead of `SmallVec<[PropKey; 4]>`), so it can re-attach the name to a
     `GValue::Property` without a second `Schema` lookup at `produce()` time (§6)
 15. Update `LogicalGraph::get_all_props`/`LogicalSnapshot::get_all_props`
-    ([`src/graph.rs:546`](../src/graph.rs#L546)) to decode each `prop_key_id` to a string via
-    `self.schema` before returning — the signature (`Vec<(PropKey, Primitive)>`) is
-    unchanged, only the implementation. This is the only change needed for full
+    (`src/graph/logical.rs`, `src/graph/snapshot.rs`) to decode each `prop_key_id` to a
+    string via `self.schema` before returning — the signature (`Vec<(PropKey, Primitive)>`)
+    is unchanged, only the implementation. This is the only change needed for full
     `Vertex`/`Edge` materialization (§6, §8); `materialize`
-    ([`src/gremlin/traversal.rs:76`](../src/gremlin/traversal.rs#L76)) needs no edit for its
+    (`src/gremlin/traversal/built.rs`) needs no edit for its
     `GValue::Vertex`/`GValue::Edge` arms — only `ValuesStep`'s not-yet-implemented
     all-properties branch, when it's eventually built, needs the equivalent decode
 16. Add `StoreError::SchemaViolation`, `SchemaExhausted`
@@ -1031,6 +1041,14 @@ is ~98k entries, well within RocksDB's efficient range.
 
 ---
 
+## Test plan
+
+Schema persistence and mode enforcement are tested via:
+- src/schema/tests.rs — mode transition and registration tests
+- src/store/rocks/admin.rs — on-disk schema encoding/decoding
+- src/store/rocks/transaction.rs — commit-time schema write paths
+- src/gremlin/tests.rs — e2e Auto-mode and Strict-mode integration tests
+
 ## Out of scope (future work)
 
 - **Per-label property constraints** (JanusGraph `mgmt.addProperties(label, keys...)`):
@@ -1050,7 +1068,7 @@ is ~98k entries, well within RocksDB's efficient range.
 
 ---
 
-## Affected files
+## Files changed
 
 | File | Change |
 |------|--------|
@@ -1064,11 +1082,11 @@ is ~98k entries, well within RocksDB's efficient range.
 | `src/types/element.rs` | `Property.key: PropKey` → `key: u16` (`prop_key_id`); `Vertex`/`Edge::get_property`/`get_value` take `prop_key_id: u16` instead of `&PropKey` (§6) |
 | `src/api.rs` | Add `GraphOptions`, `Graph::open_with_options()`, `Graph::open_management()` (no direct mode setters — §0) |
 | `src/engine/context.rs` | `GraphCtx` trait: add **one** new method, `fn schema(&self) -> Arc<RwLock<Schema>>` (mirrors `Graph::schema()`). `get_property`/`get_value`'s `prop: &PropKey` param becomes `prop_key_id: u16` (§6); `add_vertex`/`add_edge`/`set_property`/`get_all_props` keep their exact current signatures |
-| `src/graph.rs` | `LogicalGraph`/`LogicalSnapshot` implement `schema()` as `Arc::clone(&self.schema)`; `get_property`/`get_value` take `prop_key_id: u16`; `get_all_props` decodes `prop_key_id → PropKey` internally via `self.schema` before returning (§6, §8) — its own signature is unchanged; `add_vertex`/`add_edge`/`set_property` otherwise **unchanged**; `add_edge` reads `schema.edge_mode` (not per-label `edge_config`); fix `get_value("label")` |
+| `src/graph/logical.rs`, `src/graph/snapshot.rs` | `LogicalGraph`/`LogicalSnapshot` implement `schema()` as `Arc::clone(&self.schema)`; `get_property`/`get_value` take `prop_key_id: u16`; `get_all_props` decodes `prop_key_id → PropKey` internally via `self.schema` before returning (§6, §8) — its own signature is unchanged; `add_vertex`/`add_edge`/`set_property` otherwise **unchanged**; `add_edge` reads `schema.edge_mode` (not per-label `edge_config`); fix `get_value("label")` |
 | `src/planner/logical_step/mod.rs` | `AddVStep`/`AddEStep`/`HasLabelStep`/`InOutStep`/`BothStep` label fields: `LabelId`/`SmallVec<[LabelId;4]>` → `SmolStr`/`SmallVec<[SmolStr;4]>`. `HasPropertyStep`/`PropertyStep`/`PropertiesStep` **unchanged** — logical steps stay string-typed regardless of what changes below `build_step` |
-| `src/engine/volcano/builder.rs` | `build`/`build_step` take `schema: Arc<RwLock<Schema>>` (not `&mut dyn GraphCtx`); resolve every label *and property-key* name via `Schema`'s own methods (§5), once per `LogicalStep`, before constructing the physical step — this **is** the conversion boundary (§6) |
+| `src/engine/volcano/builder/mod.rs`, `build_step.rs` | `build`/`build_step` take `schema: Arc<RwLock<Schema>>` (not `&mut dyn GraphCtx`); resolve every label *and property-key* name via `Schema`'s own methods (§5), once per `LogicalStep`, before constructing the physical step — this **is** the conversion boundary (§6) |
 | `src/engine/volcano/steps/*.rs` | Structural steps (`AddVStep`, `HasLabelStep`, `InOutStep`, `BothStep`, ...) **unchanged**. `HasPropertyStep`/`PropertyStep` change `prop_key: PropKey` → `prop_key_id: u16`; `ValuesStep.property_keys` changes from `SmallVec<[PropKey;4]>` to a list of `(SmolStr, u16)` pairs so it can re-attach a name to `GValue::Property` without a second `Schema` lookup (§6) |
-| `src/gremlin/traversal.rs` | `addV`/`addE`/`out`/`in`/`hasLabel` accept strings; `property()`/`has()`/`values()` unchanged; `GraphTraversal::build` passes `ctx` one call deeper into `PhysicalPlanBuilder::build`; `materialize`'s `GValue::Vertex`/`GValue::Edge`/`GValue::Property` arms are **unchanged** — the property-key decode they rely on moved into `get_all_props`/the physical steps themselves (§6, §8) |
+| `src/gremlin/traversal/mod.rs`, `built.rs` | `addV`/`addE`/`out`/`in`/`hasLabel` accept strings; `property()`/`has()`/`values()` unchanged; `GraphTraversal::build` passes `ctx` one call deeper into `PhysicalPlanBuilder::build`; `materialize`'s `GValue::Vertex`/`GValue::Edge`/`GValue::Property` arms are **unchanged** — the property-key decode they rely on moved into `get_all_props`/the physical steps themselves (§6, §8) |
 | `src/gremlin/tests.rs` | Update the test at line 583 off the removed `register_edge_label_with_config` |
 | `src/store/traits.rs` | **No change** — confirms the invariant that `GraphStore`/`S::Txn`/`S::Snapshot` never reference `Schema` (§3) |
 | `docs/design_multiple_edges.md` | `EdgeConfig` per-label → `EdgeMode` graph-wide (companion update, already applied) |

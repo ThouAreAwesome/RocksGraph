@@ -79,7 +79,7 @@ mod multi_edge_integration_test {
         assert!(values.contains(&Value::String("night".into())));
 
         // 5. Verify rank property accesses return correct values (shortcut logic test)
-        let ranks = read.g().V([10]).outE(["purchased"]).values(["rank"]).to_list().unwrap();
+        let ranks = read.g().V([10]).outE(["purchased"]).rank().to_list().unwrap();
         assert_eq!(ranks.len(), 3);
         assert!(ranks.contains(&Value::UInt16(0)));
         assert!(ranks.contains(&Value::UInt16(1)));
@@ -213,7 +213,7 @@ mod multi_edge_integration_test {
 
         // Verify remaining edges (rank 0 and 2 should remain, rank 1 should be gone)
         let mut read2 = graph.read();
-        let remaining_ranks = read2.g().V([1]).outE(["knows"]).values(["rank"]).to_list().unwrap();
+        let remaining_ranks = read2.g().V([1]).outE(["knows"]).rank().to_list().unwrap();
         assert_eq!(remaining_ranks.len(), 2);
         assert!(remaining_ranks.contains(&Value::UInt16(0)));
         assert!(remaining_ranks.contains(&Value::UInt16(2)));

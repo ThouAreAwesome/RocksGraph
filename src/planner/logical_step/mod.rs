@@ -27,7 +27,7 @@
 
 use crate::types::{
     gvalue::{Primitive, PrimitivePredicate},
-    keys::{EdgeKey, Rank, VertexKey},
+    keys::{Rank, VertexKey},
     prop_key::PropKey,
     StoreError, ORDER_KEY_INLINE, PIPELINE_BATCH_INLINE, STEP_LABEL_INLINE,
 };
@@ -196,6 +196,8 @@ pub enum LogicalStep {
     GroupCount(GroupCountStep),
     Id(IdStep),
     Label(LabelStep),
+    Rank(RankStep),
+    HasRank(HasRankStep),
     Constant(ConstantStep),
     Identity(IdentityStep),
     Local(LocalStep),
@@ -454,6 +456,20 @@ impl Optimizer for IdStep {}
 #[derive(Clone, Debug)]
 pub struct LabelStep {}
 impl Optimizer for LabelStep {}
+
+/// Replaces each traverser with the rank of its element. Edge-only — rank is the
+/// structural multi-edge discriminator, vertices have no rank.
+#[derive(Clone, Debug)]
+pub struct RankStep {}
+impl Optimizer for RankStep {}
+
+/// Filters traversers by the rank of the edge they carry. Edge-only — a vertex
+/// traverser never matches.
+#[derive(Clone, Debug)]
+pub struct HasRankStep {
+    pub pred: PrimitivePredicate,
+}
+impl Optimizer for HasRankStep {}
 
 /// Replaces each traverser with a fixed constant value (Gremlin `constant()` step).
 #[derive(Clone, Debug)]
@@ -731,7 +747,7 @@ impl Optimizer for VStep {}
 
 #[derive(Clone)]
 pub struct EStep {
-    pub keys: SmallVec<[EdgeKey; 4]>,
+    pub keys: SmallVec<[String; 4]>,
 }
 
 impl Optimizer for EStep {}

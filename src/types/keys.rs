@@ -41,6 +41,11 @@
 //! suitable for storage lookups.
 
 use std::fmt::Display;
+use std::str::FromStr;
+
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+
+use crate::types::error::StoreError;
 
 /// Unique identifier for a vertex.
 pub type VertexKey = i64;
@@ -157,6 +162,41 @@ impl Display for CanonicalEdgeKey {
     }
 }
 
+impl CanonicalEdgeKey {
+    /// Encode as Base64 (URL-safe, no padding) of `[src_id:8B][label_id:4B][dst_id:8B][rank:2B]` big-endian.
+    pub fn to_id_string(self) -> String {
+        let mut buf = [0u8; 22];
+        buf[0..8].copy_from_slice(&self.src_id.to_be_bytes());
+        buf[8..12].copy_from_slice(&self.label_id.to_be_bytes());
+        buf[12..20].copy_from_slice(&self.dst_id.to_be_bytes());
+        buf[20..22].copy_from_slice(&self.rank.to_be_bytes());
+        URL_SAFE_NO_PAD.encode(buf)
+    }
+}
+
+impl FromStr for CanonicalEdgeKey {
+    type Err = StoreError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let bytes = URL_SAFE_NO_PAD
+            .decode(s)
+            .map_err(|_| StoreError::UnexpectedDataType(format!("invalid edge id '{}': not valid base64", s)))?;
+        if bytes.len() != 22 {
+            return Err(StoreError::UnexpectedDataType(format!(
+                "invalid edge id '{}': expected 22 decoded bytes, got {}",
+                s,
+                bytes.len()
+            )));
+        }
+        Ok(CanonicalEdgeKey {
+            src_id: i64::from_be_bytes(bytes[0..8].try_into().unwrap()),
+            label_id: i32::from_be_bytes(bytes[8..12].try_into().unwrap()),
+            dst_id: i64::from_be_bytes(bytes[12..20].try_into().unwrap()),
+            rank: u16::from_be_bytes(bytes[20..22].try_into().unwrap()),
+        })
+    }
+}
+
 // ── EdgeKey ───────────────────────────────────────────────────────────────────
 
 /// A directed edge key carried by traversers.
@@ -216,6 +256,12 @@ impl EdgeKey {
         let out = self.canonical();
         CanonicalEdgeKey { src_id: out.primary_id, label_id: out.label_id, rank: out.rank, dst_id: out.secondary_id }
     }
+
+    /// Stable globally-unique string id: Base64 of the packed CanonicalEdgeKey.
+    #[inline]
+    pub fn to_id_string(self) -> String {
+        self.canonical_edge_key().to_id_string()
+    }
 }
 
 // ── CanonicalKey ──────────────────────────────────────────────────────────────
@@ -230,4 +276,34 @@ pub enum CanonicalKey {
     Empty,
     Vertex(VertexKey),
     Edge(CanonicalEdgeKey),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_edge_id_round_trip() {
+        let cek = CanonicalEdgeKey { src_id: 1, label_id: 3, dst_id: 2, rank: 0 };
+        let s = cek.to_id_string();
+        assert_eq!(s.len(), 30, "Base64 edge id must be 30 chars");
+        let parsed: CanonicalEdgeKey = s.parse().unwrap();
+        assert_eq!(parsed, cek);
+
+        // Large values
+        let big = CanonicalEdgeKey { src_id: i64::MAX, label_id: i32::MAX, dst_id: i64::MIN, rank: u16::MAX };
+        let s2 = big.to_id_string();
+        assert_eq!(s2.len(), 30);
+        assert_eq!(s2.parse::<CanonicalEdgeKey>().unwrap(), big);
+    }
+
+    #[test]
+    fn test_edge_id_from_str_rejects_bad_input() {
+        assert!("".parse::<CanonicalEdgeKey>().is_err());
+        assert!("too-short".parse::<CanonicalEdgeKey>().is_err());
+        assert!("not-valid-base64!!!".parse::<CanonicalEdgeKey>().is_err());
+        // Valid base64 but wrong byte length (e.g. 4 bytes → 6 chars after decode?)
+        // Actually URL_SAFE_NO_PAD.decode of "" gives 0 bytes → fails the len check
+        // A 30-char string that decodes to 22 bytes → should work.
+    }
 }

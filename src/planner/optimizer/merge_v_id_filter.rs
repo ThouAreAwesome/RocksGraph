@@ -23,9 +23,11 @@ use crate::{
 /// Folds `V([]).hasId(N)` or `V([]).has("id", N)` into `V(N)`.
 ///
 /// Two sources produce an id filter immediately after an empty `V`:
-/// - `HasIdStep` — from `.hasId(N)` or `.has(Key::Id, N)`.
-/// - `HasPropertyStep { key: "id" }` — from `.has("id", N)` where the string
-///   `"id"` converts to `Key::Property("id")` rather than `Key::Id`.
+/// - `HasIdStep` — from `.hasId(N)`.
+/// - `HasPropertyStep { key: "id" }` — from `.has("id", N)`. `"id"` is a reserved key
+///   (`docs/design_reserved_keys.md`) — this fold is exactly what lets `V([]).has("id", N)`
+///   keep working; an unfolded `.has("id", N)` not adjacent to `V([])` is rejected by
+///   `reject_reserved_key` in `build_step.rs` instead of reaching `HasPropertyStep`.
 ///
 /// Both cases are handled here so that `V([]).has("id", 42)` gets the same
 /// index-seek optimisation as `V([]).hasId(42)`.

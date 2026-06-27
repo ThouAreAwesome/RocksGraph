@@ -69,7 +69,7 @@ fn test_id_step_edge() {
     step.add_upper(src.clone() as StepRef);
     let mut ctx = NoopCtx;
     let res = step.produce(&mut ctx).unwrap().unwrap();
-    assert_eq!(res[0].value, GValue::Scalar(Primitive::Int64(99)));
+    assert_eq!(res[0].value, GValue::Scalar(Primitive::String(SmolStr::from("AAAAAAAAAGMAAAABAAAAAAAAAAAAAA"))));
 }
 
 #[test]

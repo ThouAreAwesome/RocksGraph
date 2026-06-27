@@ -15,14 +15,17 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
-//! Folds `hasLabel` / `has("label", …)` / `has(Key::Label, …)` into a
-//! preceding `outE` / `inE` / `bothE` step when the edge step carries no
-//! label restriction yet.
+//! Folds `hasLabel` / `has("label", …)` into a preceding `outE` / `inE` /
+//! `bothE` step when the edge step carries no label restriction yet.
+//!
+//! `"label"` is a reserved key (`docs/design_reserved_keys.md`) — this fold is what lets
+//! `.outE().has("label", N)` keep working; an unfolded `.has("label", …)` not adjacent to
+//! an edge-traversal step is rejected by `reject_reserved_key` in `build_step.rs` instead
+//! of reaching `HasPropertyStep`.
 //!
 //! ```text
 //! outE().hasLabel("knows")          → outE("knows")
 //! bothE().has("label", "knows")     → bothE("knows")
-//! inE().has(Key::Label, "created")  → inE("created")
 //! ```
 //!
 //! Only `Eq` and `Within` predicates are folded; range predicates (`Gt`,

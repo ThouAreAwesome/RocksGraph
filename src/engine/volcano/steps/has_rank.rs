@@ -15,32 +15,37 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::types::PIPELINE_BATCH_INLINE;
 use std::rc::Rc;
 
 use smallvec::{smallvec, SmallVec};
 
-use crate::types::PIPELINE_BATCH_INLINE;
+use crate::engine::volcano::steps::traits::ExplainNode;
 use crate::{
     engine::{
         context::GraphCtx,
         traverser::Traverser,
-        volcano::steps::traits::{CoreStep, ExplainNode, StepRef},
+        volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{
-        error::StoreError,
-        gvalue::{GValue, Primitive},
-    },
+    types::{error::StoreError, GValue, Primitive, PrimitivePredicate},
 };
 
-/// Extracts the id of the current element.  For vertices returns `Int64(vk)`,
-/// for edges returns `Int64(primary_id)`.  All other traverser values pass
-/// through unchanged.
-#[derive(Debug, Default)]
-pub struct IdStep {
+/// A physical step that filters traversers by the rank of the edge they carry.
+/// Edge-only — rank has no meaning for vertices, so a vertex traverser never
+/// matches (consistent with `HasLabelStep`'s type-mismatch handling, not an error).
+#[derive(Debug)]
+pub struct HasRankStep {
     upstream: Option<StepRef>,
+    pred: PrimitivePredicate,
 }
 
-impl CoreStep for IdStep {
+impl HasRankStep {
+    pub fn new(pred: PrimitivePredicate) -> Self {
+        Self { upstream: None, pred }
+    }
+}
+
+impl CoreStep for HasRankStep {
     fn add_upper(&mut self, upstream: StepRef) {
         self.upstream = Some(upstream);
     }
@@ -49,18 +54,17 @@ impl CoreStep for IdStep {
         &mut self,
         ctx: &mut dyn GraphCtx,
     ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
-        let Some(upstream) = self.upstream.as_ref() else {
-            return Ok(None);
-        };
-        let Some(t) = upstream.next(ctx)? else {
-            return Ok(None);
-        };
-        let id_value = match &t.value {
-            GValue::Vertex(vk) => GValue::Scalar(Primitive::Int64(*vk)),
-            GValue::Edge(ek) => GValue::Scalar(Primitive::String(ek.to_id_string().into())),
-            _ => return Ok(Some(smallvec![t])),
-        };
-        Ok(Some(smallvec![Traverser::new_rc(id_value)]))
+        loop {
+            let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
+            let Some(t) = upstream.next(ctx)? else { return Ok(None) };
+            let matched = match &t.value {
+                GValue::Edge(ek) => self.pred.evaluate(&Primitive::UInt16(ek.rank)),
+                _ => false,
+            };
+            if matched {
+                return Ok(Some(smallvec![t]));
+            }
+        }
     }
 
     fn reset(&mut self) {
@@ -74,6 +78,7 @@ impl CoreStep for IdStep {
     }
 
     fn explain(&self) -> ExplainNode {
-        ExplainNode::new("IdStep")
+        let params = vec![("pred", format!("{:?}", self.pred))];
+        ExplainNode::new("HasRankStep").with_params(params)
     }
 }

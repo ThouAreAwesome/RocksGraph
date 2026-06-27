@@ -1,5 +1,10 @@
 # Design: `repeat()` / `until()` / `emit()`
 
+## Goals & non-goals
+
+- **Goals:** Implement `repeat()` with `until()` termination and `emit()` for intermediate results; track path history within repeat loops for cycle detection; support `times(n)` shorthand.
+- **Non-goals:** Nested `repeat()` inside `repeat()`; `emit()` with a sub-traversal condition in the initial implementation; full Gremlin `loops()` step.
+
 ## 1. Problem Statement
 
 `docs/TODO.md` lists `repeat()`/`until()`/`emit()` as the top P0 gap in step coverage: without
@@ -139,13 +144,13 @@ loop {
 `reset()` resets `upstream`, `body`, `until` (if any), the `If` plan inside `emit` (if any), and
 clears `frontier`/`ready`/`body_active`/`current_iter_count`.
 
-`build_step` in `engine/volcano/builder.rs` gets a new arm for `LogicalStep::Repeat`: a
+`build_step` in `engine/volcano/builder/build_step.rs` gets a new arm for `LogicalStep::Repeat`: a
 defensive check that `until`/`times` isn't both-absent (the DSL layer already prevents this,
 but `build_step` is also reachable from hand-built `LogicalPlan`s in tests, same as `WhereStep`'s
 empty-sub-plan check), then recursively builds `body`/`until`/the `If` plan the same way the
 `Union`/`Coalesce` arms do.
 
-### 4.3 DSL layer (`src/gremlin/traversal.rs`)
+### 4.3 DSL layer (`src/gremlin/traversal/mod.rs`)
 
 This is where "repeat + until + emit is really one compound construct" gets resolved, via a
 **pending builder flushed on the next step** — the same shape `error: Option<StoreError>`
@@ -180,6 +185,12 @@ struct RepeatBuilder {
   `.repeat(...).until(...)` at the very end of a chain still gets finalized.
 
 ---
+
+## Constraints / invariants
+
+- `RepeatStep` must reset its body and until sub-plans on every loop iteration.
+- Path tracking inside repeat loops uses the same `Rc<Traverser>` parent chain as `path()`/`simplePath()`.
+- `emit()` with `If` must evaluate the emit sub-traversal independently from the until check.
 
 ## 5. Testing Strategy
 

@@ -1,6 +1,11 @@
 # Design: `explain()` — physical plan pretty-printing
 
-Status: proposal. Not implemented.
+Status: implemented.
+
+## Goals & non-goals
+
+- **Goals:** Provide a human-readable tree rendering of the physical plan for every traversal via an `.explain()` terminal; per-step `ExplainNode` with name, params, and children; reuse existing optimizer test infrastructure for regression coverage.
+- **Non-goals:** Pretty-print the logical plan (that stays opaque); replace or modify the physical plan structure; expose explain output format as a stable API contract.
 
 ## Problem
 
@@ -229,6 +234,12 @@ output flows into the count, not into the union's branches.
   after building it.  No traversers are injected into `VecSourceStep`.
 - The `Debug` impl on `PhysicalPlan` is kept as-is (useful for internal
   debugging).  `explain()` is the user-facing path.
+
+## Constraints / invariants
+
+- `PhysicalPlan::explain()` must use `Rc::ptr_eq` to stop at the injection point — never walk into `VecSourceStep`.
+- Every `CoreStep::explain()` impl must produce a valid `ExplainNode` — no panics, no `unimplemented!()`.
+- `ExplainNode` is `pub(crate)` — not exposed through the public API surface.
 
 ## Test plan
 

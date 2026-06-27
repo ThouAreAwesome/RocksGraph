@@ -29,36 +29,30 @@ use crate::{
     },
     types::{
         error::StoreError,
-        keys::{CanonicalEdgeKey, EdgeKey},
+        keys::{CanonicalEdgeKey, Direction, EdgeKey},
         BatchScenario, GValue,
     },
 };
 
-/// A physical step that acts as a source, emitting traversers for specified edge keys or scanning all edges.
+/// A physical source step: emits edges for specified id strings or scans all edges.
 #[derive(Debug)]
 pub struct EStep {
-    // ── Static/Fixed configuration ──
-    /// Specific edge keys to look up. If empty, scans all edges in the database.
-    keys: SmallVec<[EdgeKey; PIPELINE_BATCH_INLINE]>,
-
-    // ── Dynamic/Runtime execution state ──
-    /// The index of the current key being processed in `keys` (only used when lookup keys are specified).
+    /// Canonical id strings to look up.  Empty = scan all edges.
+    keys: SmallVec<[String; PIPELINE_BATCH_INLINE]>,
+    /// Index into `keys` for the next string to resolve.
     current_idx: usize,
-    /// Internal buffer caching the fetched edge keys in a batch.
+    /// Buffer of fetched edge keys.
     buffer: Vec<EdgeKey>,
     /// Index of the next edge key to yield from `buffer`.
     buffer_idx: usize,
-    /// Cursor for database scan pagination.
+    /// Cursor for scan pagination.
     cursor: Option<CanonicalEdgeKey>,
-    /// Tracks if database scan has started.
     scan_started: bool,
-    /// Tracks if database scan has finished (no more edges to retrieve).
     scan_finished: bool,
 }
 
-/// Creates a new `EStep` with a list of edge keys to emit or scan.
 impl EStep {
-    pub fn new(keys: SmallVec<[EdgeKey; PIPELINE_BATCH_INLINE]>) -> Self {
+    pub fn new(keys: SmallVec<[String; PIPELINE_BATCH_INLINE]>) -> Self {
         Self {
             keys,
             current_idx: 0,
@@ -81,17 +75,28 @@ impl CoreStep for EStep {
         ctx: &mut dyn GraphCtx,
     ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_BATCH_INLINE]>>, StoreError> {
         if !self.keys.is_empty() {
-            if self.buffer.is_empty() && self.current_idx == 0 {
-                let fetched = ctx.get_edges(&self.keys)?;
-                self.buffer = fetched;
-            }
-            if self.buffer_idx < self.buffer.len() {
-                let ek = self.buffer[self.buffer_idx];
-                self.buffer_idx += 1;
-                return Ok(Some(smallvec![Traverser::new_rc(GValue::Edge(ek))]));
+            // Look up by id string — resolve one at a time, skip malformed.
+            while self.current_idx < self.keys.len() {
+                let key_str = &self.keys[self.current_idx];
+                self.current_idx += 1;
+                if let Ok(cek) = key_str.parse::<CanonicalEdgeKey>() {
+                    let ek = EdgeKey {
+                        primary_id: cek.src_id,
+                        direction: Direction::OUT,
+                        label_id: cek.label_id,
+                        secondary_id: cek.dst_id,
+                        rank: cek.rank,
+                    };
+                    let edges = ctx.get_edges(&[ek])?;
+                    if !edges.is_empty() {
+                        return Ok(Some(edges.into_iter().map(|e| Traverser::new_rc(GValue::Edge(e))).collect()));
+                    }
+                }
+                // malformed → skip
             }
             Ok(None)
         } else {
+            // Scan all edges.
             if self.scan_finished {
                 return Ok(None);
             }
@@ -100,21 +105,17 @@ impl CoreStep for EStep {
                     self.scan_finished = true;
                     return Ok(None);
                 }
-
                 let limit = ctx.batch_size(BatchScenario::ScanEdges);
                 let (ekeys, next_cursor) = ctx.scan_edges(None, self.cursor, limit)?;
                 self.scan_started = true;
-
                 if ekeys.is_empty() {
                     self.scan_finished = true;
                     return Ok(None);
                 }
-
                 self.buffer = ekeys;
                 self.buffer_idx = 0;
                 self.cursor = next_cursor;
             }
-
             let ek = self.buffer[self.buffer_idx];
             self.buffer_idx += 1;
             Ok(Some(smallvec![Traverser::new_rc(GValue::Edge(ek))]))

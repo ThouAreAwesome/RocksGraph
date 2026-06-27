@@ -967,7 +967,9 @@ fn test_values_step() {
 }
 
 #[test]
-fn test_properties_step() {
+fn test_properties_step_rejects_reserved_keys() {
+    // LABEL/ID/RANK reaching Properties/Values/HasProperty unfolded is rejected at
+    // physical-build time — see `reject_reserved_key` in `builder/build_step.rs`.
     let (store, _dir) = open_rocks_store();
     let mut graph = create_tinkerpop_modern_graph(&store);
     let marko_id = graph.get_vertex(1).unwrap().unwrap();
@@ -981,15 +983,32 @@ fn test_properties_step() {
         ],
     };
     let mut builder: PhysicalPlanBuilder = Default::default();
+    assert!(builder.build(&logical_plan, &graph.schema).is_err());
+}
+
+#[test]
+fn test_properties_step() {
+    let (store, _dir) = open_rocks_store();
+    let mut graph = create_tinkerpop_modern_graph(&store);
+    let marko_id = graph.get_vertex(1).unwrap().unwrap();
+
+    let logical_plan = LogicalPlan {
+        steps: vec![
+            LogicalStep::V(LogicalVStep { ids: smallvec![marko_id] }),
+            LogicalStep::Properties(LogicalPropertiesStep {
+                property_keys: smallvec![SmolStr::new("name"), SmolStr::new("age")],
+            }),
+        ],
+    };
+    let mut builder: PhysicalPlanBuilder = Default::default();
     let physical_plan = builder.build(&logical_plan, &graph.schema).unwrap();
     let mut results = Vec::new();
     while let Ok(Some(t)) = physical_plan.next(&mut graph) {
         results.push(t.as_ref().value.clone());
     }
-    assert_eq!(results.len(), 3);
+    assert_eq!(results.len(), 2);
     assert!(matches!(results[0], GValue::Property(_)));
     assert!(matches!(results[1], GValue::Property(_)));
-    assert!(matches!(results[2], GValue::Property(_)));
     let keys: Vec<SmolStr> = results
         .iter()
         .map(|p| match p {
@@ -1001,7 +1020,6 @@ fn test_properties_step() {
         .collect();
     assert!(keys.contains(&SmolStr::new("name")));
     assert!(keys.contains(&SmolStr::new("age")));
-    assert!(keys.contains(&LABEL));
 
     let owners: Vec<CanonicalKey> = results
         .iter()
@@ -1010,10 +1028,7 @@ fn test_properties_step() {
             _ => unreachable!("unexpecte result"),
         })
         .collect();
-    assert_eq!(
-        owners.as_slice(),
-        &[CanonicalKey::Vertex(marko_id), CanonicalKey::Vertex(marko_id), CanonicalKey::Vertex(marko_id)]
-    )
+    assert_eq!(owners.as_slice(), &[CanonicalKey::Vertex(marko_id), CanonicalKey::Vertex(marko_id)])
 }
 
 #[test]
@@ -2276,13 +2291,8 @@ fn test_additional_physical_steps_coverage() {
 
         // Lookup a real edge: Marko (1) -> created -> Lop (3)
         let created_label_id = graph.schema.read().unwrap().edge_label_id("created").unwrap();
-        let mut step = EStep::new(smallvec![EdgeKey {
-            primary_id: 1,
-            direction: Direction::OUT,
-            label_id: created_label_id,
-            secondary_id: 3,
-            rank: 0,
-        }]);
+        let cek = CanonicalEdgeKey { src_id: 1, label_id: created_label_id, dst_id: 3, rank: 0 };
+        let mut step = EStep::new(smallvec![cek.to_id_string()]);
         let res = step.produce(&mut graph).unwrap().unwrap();
         assert_eq!(res.len(), 1);
         assert!(step.produce(&mut graph).unwrap().is_none());

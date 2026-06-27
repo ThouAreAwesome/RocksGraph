@@ -416,6 +416,12 @@ impl Schema {
 
     /// Declare property key by name (explicit management).
     pub fn declare_prop_key(&mut self, name: &str, data_type: DataType) -> Result<u16, crate::types::StoreError> {
+        if name == "id" || name == "label" || name == "rank" {
+            return Err(crate::types::StoreError::SchemaViolation(format!(
+                "'{}' is a system-reserved key and cannot be used as an ordinary property",
+                name
+            )));
+        }
         if let Some(id) = self.prop_key_id(name) {
             if let Some(config) = self.prop_key_types.get(&id) {
                 if config.data_type != data_type {
