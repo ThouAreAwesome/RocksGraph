@@ -67,7 +67,7 @@ impl CoreStep for PathStep {
         let mut paths = SmallVec::new();
         while let Some(t) = upstream.next(ctx)? {
             let path_gvalues: Vec<(GValue, Option<SmallVec<[SmolStr; STEP_LABEL_INLINE]>>)> = t.collect_path();
-            paths.push(Traverser::new_rc(GValue::Path(path_gvalues)));
+            paths.push(Traverser::new_rc_conditional(GValue::Path(path_gvalues), &t, true));
         }
 
         self.emitted = true;

@@ -76,7 +76,12 @@ impl CoreStep for ValuesStep {
             let canonical_key = match &t.value {
                 GValue::Vertex(vt) => CanonicalKey::Vertex(*vt),
                 GValue::Edge(eg) => CanonicalKey::Edge(eg.canonical_edge_key()),
-                _ => continue,
+                other => {
+                    return Err(StoreError::UnexpectedDataType(format!(
+                        "values() expects a Vertex or Edge, got {:?}",
+                        other
+                    )))
+                }
             };
 
             if self.property_keys.is_empty() {

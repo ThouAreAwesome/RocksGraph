@@ -2038,7 +2038,7 @@ fn test_step_edge_cases_with_graph() {
         src.inner.borrow_mut().core.inject(smallvec![Rc::new(Traverser::new(GValue::Scalar(Primitive::Int32(42))))]);
         let mut step = InVOutVStep::new(Direction::OUT, true);
         step.add_upper(src.clone() as StepRef);
-        assert!(step.produce(&mut graph).unwrap().is_none());
+        assert!(step.produce(&mut graph).is_err());
     }
 
     // 5. OtherVStep unexpected datatype
@@ -2047,7 +2047,7 @@ fn test_step_edge_cases_with_graph() {
         src.inner.borrow_mut().core.inject(smallvec![Rc::new(Traverser::new(GValue::Scalar(Primitive::Int32(42))))]);
         let mut step = OtherVStep::new(true);
         step.add_upper(src.clone() as StepRef);
-        assert!(step.produce(&mut graph).unwrap().is_none());
+        assert!(step.produce(&mut graph).is_err());
     }
 
     // 6. PropertyStep unexpected datatype (skipped)
@@ -2056,7 +2056,7 @@ fn test_step_edge_cases_with_graph() {
         src.inner.borrow_mut().core.inject(smallvec![Rc::new(Traverser::new(GValue::Scalar(Primitive::Int32(42))))]);
         let mut step = PropertyStep::new(1u16, Primitive::Int32(1));
         step.add_upper(src.clone() as StepRef);
-        assert!(step.produce(&mut graph).unwrap().is_none());
+        assert!(step.produce(&mut graph).is_err());
     }
 
     // 7. WhereStep non-matching sub-plan
@@ -2432,7 +2432,7 @@ fn test_additional_physical_steps_coverage() {
         src.inner.borrow_mut().core.inject(smallvec![Rc::new(Traverser::new(GValue::Scalar(Primitive::Int32(10)))),]);
         let mut step = OtherVStep::new(true);
         step.add_upper(src.clone() as StepRef);
-        assert!(step.produce(&mut graph).unwrap().is_none());
+        assert!(step.produce(&mut graph).is_err());
 
         step.reset();
         assert!(step.upper().is_some());
@@ -2462,7 +2462,7 @@ fn test_additional_physical_steps_coverage() {
         src.inner.borrow_mut().core.inject(smallvec![Rc::new(Traverser::new(GValue::Scalar(Primitive::Int32(10)))),]);
         let mut step = PropertyStep::new(1, Primitive::Int32(1));
         step.add_upper(src.clone() as StepRef);
-        assert!(step.produce(&mut graph).unwrap().is_none());
+        assert!(step.produce(&mut graph).is_err());
 
         step.reset();
         assert!(step.upper().is_some());

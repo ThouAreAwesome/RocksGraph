@@ -45,6 +45,13 @@ use crate::{
 #[derive(Debug, Default)]
 pub struct LabelStep {
     upstream: Option<StepRef>,
+    track_path: bool,
+}
+
+impl LabelStep {
+    pub fn new(track_path: bool) -> Self {
+        Self { upstream: None, track_path }
+    }
 }
 
 impl CoreStep for LabelStep {
@@ -80,7 +87,11 @@ impl CoreStep for LabelStep {
                 }
             };
 
-            batch.push(Traverser::new_rc_conditional(GValue::Scalar(Primitive::String(label_str)), &t, true));
+            batch.push(Traverser::new_rc_conditional(
+                GValue::Scalar(Primitive::String(label_str)),
+                &t,
+                self.track_path,
+            ));
         }
         if batch.is_empty() {
             Ok(None)

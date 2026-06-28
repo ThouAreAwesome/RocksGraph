@@ -54,7 +54,7 @@ fn edge_t(primary_id: i64, label_id: LabelId) -> Rc<Traverser> {
 fn test_id_step_vertex() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![vertex_t(42)]);
-    let mut step = IdStep::default();
+    let mut step = IdStep::new(false);
     step.add_upper(src.clone() as StepRef);
     let mut ctx = NoopCtx;
     let res = step.produce(&mut ctx).unwrap().unwrap();
@@ -65,7 +65,7 @@ fn test_id_step_vertex() {
 fn test_id_step_edge() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![edge_t(99, 1)]);
-    let mut step = IdStep::default();
+    let mut step = IdStep::new(false);
     step.add_upper(src.clone() as StepRef);
     let mut ctx = NoopCtx;
     let res = step.produce(&mut ctx).unwrap().unwrap();
@@ -77,7 +77,7 @@ fn test_id_step_scalar_passthrough() {
     // id() on a non-element should error, not silently pass through.
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![scalar_t(7)]);
-    let mut step = IdStep::default();
+    let mut step = IdStep::new(false);
     step.add_upper(src.clone() as StepRef);
     let mut ctx = NoopCtx;
     assert!(step.produce(&mut ctx).is_err());
@@ -85,7 +85,7 @@ fn test_id_step_scalar_passthrough() {
 
 #[test]
 fn test_id_step_no_upstream() {
-    let mut step = IdStep::default();
+    let mut step = IdStep::new(false);
     let mut ctx = NoopCtx;
     assert!(step.produce(&mut ctx).unwrap().is_none());
 }
@@ -94,7 +94,7 @@ fn test_id_step_no_upstream() {
 fn test_id_step_reset() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![vertex_t(1)]);
-    let mut step = IdStep::default();
+    let mut step = IdStep::new(false);
     step.add_upper(src.clone() as StepRef);
     let mut ctx = NoopCtx;
     assert!(step.produce(&mut ctx).unwrap().is_some());
@@ -104,14 +104,14 @@ fn test_id_step_reset() {
 #[test]
 fn test_id_step_upper() {
     let src = BufferedStep::new(VecSourceStep::empty());
-    let mut step = IdStep::default();
+    let mut step = IdStep::new(false);
     step.add_upper(src.clone() as StepRef);
     assert!(step.upper().is_some());
 }
 
 #[test]
 fn test_id_step_explain() {
-    let step = IdStep::default();
+    let step = IdStep::new(false);
     let node = step.explain();
     assert_eq!(node.name, "IdStep");
 }
@@ -167,7 +167,7 @@ fn test_identity_step_explain() {
 fn test_constant_step_emits_fixed_value() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![scalar_t(1)]);
-    let mut step = ConstantStep::new(Primitive::Int64(99));
+    let mut step = ConstantStep::new(Primitive::Int64(99), false);
     step.add_upper(src.clone() as StepRef);
     let mut ctx = NoopCtx;
     let res = step.produce(&mut ctx).unwrap().unwrap();
@@ -176,7 +176,7 @@ fn test_constant_step_emits_fixed_value() {
 
 #[test]
 fn test_constant_step_no_upstream() {
-    let mut step = ConstantStep::new(Primitive::Int64(0));
+    let mut step = ConstantStep::new(Primitive::Int64(0), false);
     let mut ctx = NoopCtx;
     assert!(step.produce(&mut ctx).unwrap().is_none());
 }
@@ -185,7 +185,7 @@ fn test_constant_step_no_upstream() {
 fn test_constant_step_reset() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![scalar_t(1)]);
-    let mut step = ConstantStep::new(Primitive::Int64(42));
+    let mut step = ConstantStep::new(Primitive::Int64(42), false);
     step.add_upper(src.clone() as StepRef);
     let mut ctx = NoopCtx;
     assert!(step.produce(&mut ctx).unwrap().is_some());
@@ -195,14 +195,14 @@ fn test_constant_step_reset() {
 #[test]
 fn test_constant_step_upper() {
     let src = BufferedStep::new(VecSourceStep::empty());
-    let mut step = ConstantStep::new(Primitive::Int64(0));
+    let mut step = ConstantStep::new(Primitive::Int64(0), false);
     step.add_upper(src.clone() as StepRef);
     assert!(step.upper().is_some());
 }
 
 #[test]
 fn test_constant_step_explain() {
-    let step = ConstantStep::new(Primitive::Int64(99));
+    let step = ConstantStep::new(Primitive::Int64(99), false);
     let node = step.explain();
     assert_eq!(node.name, "ConstantStep");
     assert!(node.params.iter().any(|(k, _)| *k == "value"));
@@ -317,7 +317,7 @@ fn test_decode_label_unknown_falls_back() {
 
 #[test]
 fn test_label_step_explain() {
-    let step = crate::engine::volcano::steps::label_step::LabelStep::default();
+    let step = crate::engine::volcano::steps::label_step::LabelStep::new(false);
     let node = step.explain();
     assert_eq!(node.name, "LabelStep");
 }
@@ -436,7 +436,7 @@ fn test_label_step_vertex_label() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![vertex_t(42)]);
 
-    let mut step = LabelStep::default();
+    let mut step = LabelStep::new(false);
     step.add_upper(src.clone() as StepRef);
 
     let mut ctx = LabelCtx::new(schema).with_vertex(42, 1);
@@ -455,7 +455,7 @@ fn test_label_step_edge_label() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![edge_t(99, 1)]);
 
-    let mut step = LabelStep::default();
+    let mut step = LabelStep::new(false);
     step.add_upper(src.clone() as StepRef);
 
     let mut ctx = LabelCtx::new(schema);
@@ -472,7 +472,7 @@ fn test_label_step_scalar_passthrough() {
     let schema = Schema::default();
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![scalar_t(7)]);
-    let mut step = LabelStep::default();
+    let mut step = LabelStep::new(false);
     step.add_upper(src.clone() as StepRef);
     let mut ctx = LabelCtx::new(schema);
     assert!(step.produce(&mut ctx).is_err());
@@ -481,7 +481,7 @@ fn test_label_step_scalar_passthrough() {
 #[test]
 fn test_label_step_no_upstream() {
     let schema = Schema::default();
-    let mut step = LabelStep::default();
+    let mut step = LabelStep::new(false);
     let mut ctx = LabelCtx::new(schema);
     assert!(step.produce(&mut ctx).unwrap().is_none());
 }

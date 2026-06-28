@@ -49,6 +49,7 @@ pub struct AddEStep {
     properties: SmallVec<[Property; VERTEX_PROPS_LENGTH]>,
     rank: Rank,
     upstream: Option<StepRef>,
+    track_path: bool,
     emitted: bool,
 }
 
@@ -59,6 +60,7 @@ impl AddEStep {
         in_v_id: Option<VertexKey>,
         properties: HashMap<u16, Primitive>,
         rank: Option<Rank>,
+        track_path: bool,
     ) -> Self {
         let final_rank = rank.unwrap_or(DEFAULT_RANK);
         let properties = properties
@@ -74,7 +76,7 @@ impl AddEStep {
                 value,
             })
             .collect::<SmallVec<[Property; VERTEX_PROPS_LENGTH]>>();
-        Self { label_id, out_v_id, in_v_id, properties, rank: final_rank, upstream: None, emitted: false }
+        Self { label_id, out_v_id, in_v_id, properties, rank: final_rank, upstream: None, track_path, emitted: false }
     }
 }
 
@@ -129,7 +131,7 @@ impl CoreStep for AddEStep {
             ctx.set_property(&prop)?;
         }
         if let Some(ref parent) = parent_traverser {
-            Ok(Some(smallvec![Traverser::new_rc_conditional(GValue::Edge(new_edge), parent, true)]))
+            Ok(Some(smallvec![Traverser::new_rc_conditional(GValue::Edge(new_edge), parent, self.track_path)]))
         } else {
             Ok(Some(smallvec![Traverser::new_rc(GValue::Edge(new_edge))]))
         }

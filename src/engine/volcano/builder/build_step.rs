@@ -480,6 +480,7 @@ impl PhysicalPlanBuilder {
                     s.in_v_id,
                     resolved_props,
                     s.rank,
+                    track_path,
                 ));
                 if needs_upstream {
                     wire_required!(phys, upstream, "AddEStep")
@@ -713,7 +714,7 @@ impl PhysicalPlanBuilder {
             }
             LogicalStep::Id(_) => {
                 drop(schema);
-                wire_required!(BufferedStep::new(steps::id_step::IdStep::default()), upstream, "IdStep")
+                wire_required!(BufferedStep::new(steps::id_step::IdStep::new(track_path)), upstream, "IdStep")
             }
             LogicalStep::Identity(_) => {
                 drop(schema);
@@ -722,16 +723,16 @@ impl PhysicalPlanBuilder {
             LogicalStep::Constant(s) => {
                 drop(schema);
                 wire_required!(
-                    BufferedStep::new(steps::constant::ConstantStep::new(s.value.clone())),
+                    BufferedStep::new(steps::constant::ConstantStep::new(s.value.clone(), track_path)),
                     upstream,
                     "ConstantStep"
                 )
             }
             LogicalStep::Label(_) => {
-                wire_required!(BufferedStep::new(steps::label_step::LabelStep::default()), upstream, "LabelStep")
+                wire_required!(BufferedStep::new(steps::label_step::LabelStep::new(track_path)), upstream, "LabelStep")
             }
             LogicalStep::Rank(_) => {
-                wire_required!(BufferedStep::new(steps::rank_step::RankStep::default()), upstream, "RankStep")
+                wire_required!(BufferedStep::new(steps::rank_step::RankStep::new(track_path)), upstream, "RankStep")
             }
             LogicalStep::HasRank(s) => {
                 wire_required!(

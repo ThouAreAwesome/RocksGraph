@@ -62,8 +62,13 @@ impl CoreStep for OtherVStep {
         let mut batch = SmallVec::with_capacity(PIPELINE_PRODUCE_SIZE);
         while batch.len() < PIPELINE_PRODUCE_SIZE {
             let Some(t) = upstream.next(ctx)? else { break };
-            if let GValue::Edge(ek) = &t.value {
-                batch.push(Traverser::new_rc_conditional(GValue::Vertex(ek.secondary_id), &t, self.track_path));
+            match &t.value {
+                GValue::Edge(ek) => {
+                    batch.push(Traverser::new_rc_conditional(GValue::Vertex(ek.secondary_id), &t, self.track_path))
+                }
+                other => {
+                    return Err(StoreError::UnexpectedDataType(format!("otherV() expects an Edge, got {:?}", other)))
+                }
             }
         }
         if batch.is_empty() {

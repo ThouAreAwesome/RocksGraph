@@ -38,6 +38,13 @@ use crate::{
 #[derive(Debug, Default)]
 pub struct IdStep {
     upstream: Option<StepRef>,
+    track_path: bool,
+}
+
+impl IdStep {
+    pub fn new(track_path: bool) -> Self {
+        Self { upstream: None, track_path }
+    }
 }
 
 impl CoreStep for IdStep {
@@ -65,7 +72,7 @@ impl CoreStep for IdStep {
                     )));
                 }
             };
-            batch.push(Traverser::new_rc_conditional(id_value, &t, true));
+            batch.push(Traverser::new_rc_conditional(id_value, &t, self.track_path));
         }
         if batch.is_empty() {
             Ok(None)

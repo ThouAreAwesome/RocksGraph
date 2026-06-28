@@ -34,11 +34,12 @@ use crate::{
 pub struct ConstantStep {
     upstream: Option<StepRef>,
     value: Primitive,
+    track_path: bool,
 }
 
 impl ConstantStep {
-    pub fn new(value: Primitive) -> Self {
-        Self { upstream: None, value }
+    pub fn new(value: Primitive, track_path: bool) -> Self {
+        Self { upstream: None, value, track_path }
     }
 }
 
@@ -54,10 +55,14 @@ impl CoreStep for ConstantStep {
         let Some(upstream) = self.upstream.as_ref() else {
             return Ok(None);
         };
-        let Some(_t) = upstream.next(ctx)? else {
+        let Some(t) = upstream.next(ctx)? else {
             return Ok(None);
         };
-        Ok(Some(smallvec![Traverser::new_rc(crate::types::GValue::Scalar(self.value.clone()))]))
+        Ok(Some(smallvec![Traverser::new_rc_conditional(
+            crate::types::GValue::Scalar(self.value.clone()),
+            &t,
+            self.track_path
+        )]))
     }
 
     fn reset(&mut self) {

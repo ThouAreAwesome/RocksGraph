@@ -67,7 +67,12 @@ impl CoreStep for PropertyStep {
             let canonical_key = match &t.value {
                 GValue::Vertex(vt) => CanonicalKey::Vertex(*vt),
                 GValue::Edge(eg) => CanonicalKey::Edge(eg.canonical_edge_key()),
-                _ => continue,
+                other => {
+                    return Err(StoreError::UnexpectedDataType(format!(
+                        "property() expects a Vertex or Edge, got {:?}",
+                        other
+                    )))
+                }
             };
             let mut prop = self.prop.clone();
             prop.owner = canonical_key;

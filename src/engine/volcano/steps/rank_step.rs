@@ -39,6 +39,13 @@ use crate::{
 #[derive(Debug, Default)]
 pub struct RankStep {
     upstream: Option<StepRef>,
+    track_path: bool,
+}
+
+impl RankStep {
+    pub fn new(track_path: bool) -> Self {
+        Self { upstream: None, track_path }
+    }
 }
 
 impl CoreStep for RankStep {
@@ -67,7 +74,7 @@ impl CoreStep for RankStep {
                     return Err(StoreError::UnexpectedDataType(format!("rank() expects an Edge, got {:?}", other)));
                 }
             };
-            batch.push(Traverser::new_rc_conditional(rank_value, &t, true));
+            batch.push(Traverser::new_rc_conditional(rank_value, &t, self.track_path));
         }
         if batch.is_empty() {
             Ok(None)

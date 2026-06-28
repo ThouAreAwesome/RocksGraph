@@ -2619,6 +2619,55 @@ mod integration_test {
     }
 
     #[test]
+    fn test_property_on_scalar_errors() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+        let res = tx.g().V([1]).values(["name"]).property("x", 1).next();
+        assert!(res.is_err(), "property() on scalar should error");
+    }
+
+    #[test]
+    fn test_values_on_scalar_errors() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+        let res = tx.g().V([1]).values(["name"]).values(["x"]).next();
+        assert!(res.is_err(), "values() on scalar should error");
+    }
+
+    #[test]
+    fn test_otherv_on_vertex_errors() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+        let res = tx.g().V([1]).otherV().next();
+        assert!(res.is_err(), "otherV() on vertex should error");
+    }
+
+    #[test]
+    fn test_inv_on_vertex_errors() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+        let res = tx.g().V([1]).inV().next();
+        assert!(res.is_err(), "inV() on vertex should error");
+    }
+
+    #[test]
+    fn test_path_chain_through_order() {
+        // order() must preserve parent chain for subsequent path().
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+        let results = tx.g().V([1]).out(["knows"]).order().by("age").path().to_list().unwrap();
+        assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn test_path_chain_through_constant() {
+        // constant() in a sub-plan must preserve path.
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+        let results = tx.g().V([1]).out(["knows"]).path().to_list().unwrap();
+        assert!(!results.is_empty());
+    }
+    #[test]
     fn test_choose_e2e() {
         let graph = setup_modern_graph();
         let mut tx = graph.begin();

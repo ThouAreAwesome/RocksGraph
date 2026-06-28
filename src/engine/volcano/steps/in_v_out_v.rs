@@ -66,12 +66,20 @@ impl CoreStep for InVOutVStep {
         let mut batch = SmallVec::with_capacity(PIPELINE_PRODUCE_SIZE);
         while batch.len() < PIPELINE_PRODUCE_SIZE {
             let Some(t) = upstream.next(ctx)? else { break };
-            if let GValue::Edge(ek) = &t.value {
-                let cek = ek.canonical_edge_key();
-                if self.direction == Direction::OUT {
-                    batch.push(Traverser::new_rc_conditional(GValue::Vertex(cek.src_id), &t, self.track_path));
-                } else {
-                    batch.push(Traverser::new_rc_conditional(GValue::Vertex(cek.dst_id), &t, self.track_path));
+            match &t.value {
+                GValue::Edge(ek) => {
+                    let cek = ek.canonical_edge_key();
+                    if self.direction == Direction::OUT {
+                        batch.push(Traverser::new_rc_conditional(GValue::Vertex(cek.src_id), &t, self.track_path));
+                    } else {
+                        batch.push(Traverser::new_rc_conditional(GValue::Vertex(cek.dst_id), &t, self.track_path));
+                    }
+                }
+                other => {
+                    return Err(StoreError::UnexpectedDataType(format!(
+                        "inV()/outV() expects an Edge, got {:?}",
+                        other
+                    )))
                 }
             }
         }
