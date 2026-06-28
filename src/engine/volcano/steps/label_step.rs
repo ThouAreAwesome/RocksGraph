@@ -72,13 +72,15 @@ impl CoreStep for LabelStep {
                     decode_label(label_id, true, ctx.schema())
                 }
                 GValue::Edge(ek) => decode_label(ek.label_id, false, ctx.schema()),
-                _ => {
-                    batch.push(t);
-                    continue;
+                other => {
+                    return Err(StoreError::UnexpectedDataType(format!(
+                        "label() expects a Vertex or Edge, got {:?}",
+                        other
+                    )));
                 }
             };
 
-            batch.push(Traverser::new_rc(GValue::Scalar(Primitive::String(label_str))));
+            batch.push(Traverser::new_rc_conditional(GValue::Scalar(Primitive::String(label_str)), &t, true));
         }
         if batch.is_empty() {
             Ok(None)

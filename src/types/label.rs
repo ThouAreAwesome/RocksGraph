@@ -19,16 +19,16 @@
 //!
 //! Labels are the user-facing names for element types (e.g. `"person"`, `"knows"`).
 //! Internally the engine maps each label to a compact [`LabelId`](crate::types::LabelId)
-//! (a `u16`) via the schema registry; `Label` is only used at the API boundary where
+//! (an `i32`) via the schema registry; `Label` is only used at the API boundary where
 //! users specify labels by name.
 //!
-//! `Label` wraps [`SmolStr`], so strings up to 22 bytes are stack-allocated with no
+//! `Label` wraps [`SmolStr`], so strings up to 23 bytes are stack-allocated with no
 //! heap allocation.
 
 use smol_str::SmolStr;
 
 /// Human-readable label for a vertex or edge (e.g. `"person"`, `"knows"`).
-/// Stack-allocated for strings up to 22 bytes.
+/// Stack-allocated for strings up to 23 bytes.
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Label(pub SmolStr);

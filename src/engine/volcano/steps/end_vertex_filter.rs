@@ -21,12 +21,14 @@ use std::rc::Rc;
 use smallvec::SmallVec;
 
 use crate::engine::volcano::steps::traits::ExplainNode;
+use crate::types::prop_key::LABEL_KEY_ID;
 use crate::{
     engine::{
         context::GraphCtx,
         traverser::Traverser,
         volcano::steps::{CoreStep, StepRef},
     },
+    types::keys::CanonicalKey,
     types::{GValue, StoreError, VertexKey},
 };
 
@@ -80,10 +82,10 @@ impl CoreStep for EndVertexFilterStep {
                 }
                 // Label and property filters on the other vertex.
                 if !self.label_preds.is_empty() || !self.property_preds.is_empty() {
-                    let ck = crate::types::keys::CanonicalKey::Vertex(dst_id);
+                    let ck = CanonicalKey::Vertex(dst_id);
                     let mut skip = false;
                     for lp in &self.label_preds {
-                        if let Some(v) = ctx.get_value(&ck, crate::types::prop_key::LABEL_KEY_ID)? {
+                        if let Some(v) = ctx.get_value(&ck, LABEL_KEY_ID)? {
                             if !lp.evaluate(&v) {
                                 skip = true;
                                 break;

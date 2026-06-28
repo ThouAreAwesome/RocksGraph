@@ -2476,6 +2476,149 @@ mod integration_test {
     }
 
     #[test]
+    fn test_add_e_path_chain_preserves_parent() {
+        // Regression: addE used Traverser::new_rc (no parent), cutting the
+        // parent chain for path().  Now it uses new_rc_conditional — the path
+        // must trace through addE to every ancestor.
+        //
+        // g.V(1).out("knows").addE("friends").to(3).property(0.5).otherV().path()
+        //
+        // Expected path shape: [V(1), V(2|4), Edge, V(3)] — 4 objects.
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+        let results: Vec<_> = tx
+            .g()
+            .V([1])
+            .out(["knows"])
+            .addE("friends")
+            .to(3)
+            .property("weight", 0.5f64)
+            .otherV()
+            .path()
+            .to_list()
+            .unwrap();
+        assert_eq!(results.len(), 2, "one path per knows target (Vadas=2, Josh=4)");
+        for r in &results {
+            if let Value::Path(p) = r {
+                assert_eq!(p.len(), 4, "expected [V(1), V(2|4), Edge, V(3)], got {} objects", p.len());
+                // [0] = V(1)=Marko
+                match &p.objects[0] {
+                    Value::Vertex(v) => assert_eq!(v.id, 1),
+                    _ => panic!(),
+                }
+                // [1] = V(2)=Vadas or V(4)=Josh
+                match &p.objects[1] {
+                    Value::Vertex(v) => assert!(v.id == 2 || v.id == 4),
+                    _ => panic!(),
+                }
+                // [2] = edge
+                assert!(matches!(p.objects[2], Value::Edge(_)));
+                // [3] = V(3)=Lop
+                match &p.objects[3] {
+                    Value::Vertex(v) => assert_eq!(v.id, 3),
+                    _ => panic!(),
+                }
+            } else {
+                panic!("expected Path, got {:?}", r);
+            }
+        }
+    }
+
+    #[test]
+    fn test_id_on_scalar_errors() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+        // id() after values() — scalar input — should error.
+        let res = tx.g().V([1]).values(["name"]).id().next();
+        assert!(res.is_err(), "id() on scalar should error");
+    }
+
+    #[test]
+    fn test_label_on_scalar_errors() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+        let res = tx.g().V([1]).values(["name"]).label().next();
+        assert!(res.is_err(), "label() on scalar should error");
+    }
+
+    #[test]
+    fn test_rank_on_scalar_errors() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+        let res = tx.g().V([1]).values(["name"]).rank().next();
+        assert!(res.is_err(), "rank() on scalar should error");
+    }
+
+    #[test]
+    fn test_rank_on_vertex_errors() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+        let res = tx.g().V([1]).rank().next();
+        assert!(res.is_err(), "rank() on vertex should error");
+    }
+
+    #[test]
+    fn test_path_through_id_label_rank() {
+        // Path tracking must survive through id(), label(), rank().
+        // Each path should be [V(1), knows-edge, extracted-scalar].
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+
+        // --- id() path: [V(1), Edge, Scalar] ---
+        let results = tx.g().V([1]).outE(["knows"]).limit(1).id().path().to_list().unwrap();
+        assert_eq!(results.len(), 1, "limit(1) — one result for id() path");
+        if let Value::Path(p) = &results[0] {
+            assert_eq!(p.len(), 3);
+            match &p.objects[0] {
+                Value::Vertex(v) => assert_eq!(v.id, 1),
+                _ => panic!("[0] should be V(1)"),
+            }
+            assert!(matches!(p.objects[1], Value::Edge(_)), "[1] should be Edge");
+            assert!(matches!(p.objects[2], Value::String(_)), "[2] should be String (edge id)");
+        } else {
+            panic!("expected Path");
+        }
+
+        // --- label() path: [V(1), Edge, "knows"] ---
+        let results = tx.g().V([1]).outE(["knows"]).limit(1).label().path().to_list().unwrap();
+        assert_eq!(results.len(), 1);
+        if let Value::Path(p) = &results[0] {
+            assert_eq!(p.len(), 3);
+            match &p.objects[0] {
+                Value::Vertex(v) => assert_eq!(v.id, 1),
+                _ => panic!(),
+            }
+            assert!(matches!(p.objects[1], Value::Edge(_)));
+            if let Value::String(s) = &p.objects[2] {
+                assert_eq!(s.as_str(), "knows", "label should be 'knows'");
+            } else {
+                panic!("[2] should be String('knows')");
+            }
+        } else {
+            panic!("expected Path");
+        }
+
+        // --- rank() path: [V(1), Edge, 0u16] ---
+        let results = tx.g().V([1]).outE(["knows"]).limit(1).rank().path().to_list().unwrap();
+        assert_eq!(results.len(), 1);
+        if let Value::Path(p) = &results[0] {
+            assert_eq!(p.len(), 3);
+            match &p.objects[0] {
+                Value::Vertex(v) => assert_eq!(v.id, 1),
+                _ => panic!(),
+            }
+            assert!(matches!(p.objects[1], Value::Edge(_)));
+            if let Value::UInt16(r) = &p.objects[2] {
+                assert_eq!(*r, 0, "default rank is 0");
+            } else {
+                panic!("[2] should be UInt16 rank");
+            }
+        } else {
+            panic!("expected Path");
+        }
+    }
+
+    #[test]
     fn test_choose_e2e() {
         let graph = setup_modern_graph();
         let mut tx = graph.begin();

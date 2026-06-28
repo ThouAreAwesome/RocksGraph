@@ -328,7 +328,7 @@ pub struct Vertex {
 /// no widening through `Int32`/`Int64` at any point.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Edge {
-    pub id: String,
+    pub id: SmolStr,
     pub out_v: i64,
     pub in_v: i64,
     pub label: SmolStr,

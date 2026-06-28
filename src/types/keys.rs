@@ -44,6 +44,7 @@ use std::fmt::Display;
 use std::str::FromStr;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use smol_str::SmolStr;
 
 use crate::types::error::StoreError;
 
@@ -61,6 +62,11 @@ pub type Rank = u16;
 
 /// Default rank for single-edge mode and default relationships.
 pub const DEFAULT_RANK: Rank = 0;
+
+/// Byte width of the packed `[src_id][label_id][dst_id][rank]` encoding used by
+/// `CanonicalEdgeKey`/`EdgeKey::to_id_string`: `src_id (i64, 8B) + label_id (i32, 4B)
+/// + dst_id (i64, 8B) + rank (u16, 2B)`.
+const EDGE_ID_ENCODED_LEN: usize = 8 + 4 + 8 + 2;
 
 // ── Direction ─────────────────────────────────────────────────────────────────
 
@@ -165,7 +171,7 @@ impl Display for CanonicalEdgeKey {
 impl CanonicalEdgeKey {
     /// Encode as Base64 (URL-safe, no padding) of `[src_id:8B][label_id:4B][dst_id:8B][rank:2B]` big-endian.
     pub fn to_id_string(self) -> String {
-        let mut buf = [0u8; 22];
+        let mut buf = [0u8; EDGE_ID_ENCODED_LEN];
         buf[0..8].copy_from_slice(&self.src_id.to_be_bytes());
         buf[8..12].copy_from_slice(&self.label_id.to_be_bytes());
         buf[12..20].copy_from_slice(&self.dst_id.to_be_bytes());
@@ -181,9 +187,9 @@ impl FromStr for CanonicalEdgeKey {
         let bytes = URL_SAFE_NO_PAD
             .decode(s)
             .map_err(|_| StoreError::UnexpectedDataType(format!("invalid edge id '{}': not valid base64", s)))?;
-        if bytes.len() != 22 {
+        if bytes.len() != EDGE_ID_ENCODED_LEN {
             return Err(StoreError::UnexpectedDataType(format!(
-                "invalid edge id '{}': expected 22 decoded bytes, got {}",
+                "invalid edge id '{}': expected {EDGE_ID_ENCODED_LEN} decoded bytes, got {}",
                 s,
                 bytes.len()
             )));
@@ -271,17 +277,17 @@ impl EdgeKey {
 
     /// Stable globally-unique string id: Base64 of the packed CanonicalEdgeKey.
     #[inline]
-    pub fn to_id_string(self) -> String {
+    pub fn to_id_string(self) -> SmolStr {
         let (src, dst) = match self.direction {
             Direction::OUT => (self.primary_id, self.secondary_id),
             Direction::IN => (self.secondary_id, self.primary_id),
         };
-        let mut buf = [0u8; 22];
+        let mut buf = [0u8; EDGE_ID_ENCODED_LEN];
         buf[0..8].copy_from_slice(&src.to_be_bytes());
         buf[8..12].copy_from_slice(&self.label_id.to_be_bytes());
         buf[12..20].copy_from_slice(&dst.to_be_bytes());
         buf[20..22].copy_from_slice(&self.rank.to_be_bytes());
-        URL_SAFE_NO_PAD.encode(buf)
+        URL_SAFE_NO_PAD.encode(buf).into()
     }
 }
 

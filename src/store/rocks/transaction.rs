@@ -59,7 +59,7 @@ use crate::{
         rocks::encoding::{
             build_lazy_edge, build_lazy_vertex, decode_edge_key, decode_vertex_key, edge_scan_prefix, encode_edge_key,
             encode_props, encode_schema_key, encode_vertex_key, prefix_upper_bound, EdgeValue, VertexDegree,
-            VertexValue, CF_EDGES_IN, CF_EDGES_OUT, CF_SCHEMA, CF_VERTEX_DEGREE, CF_VERTICES,
+            VertexValue, CF_EDGES_IN, CF_EDGES_OUT, CF_SCHEMA, CF_VERTEX_DEGREE, CF_VERTICES, EDGE_KEY_SIZE,
         },
         traits::GraphTransaction,
     },
@@ -254,7 +254,7 @@ impl GraphTransaction for Transaction {
         }
 
         let seek_key = if let Some(cursor) = opts.start_from {
-            let mut key = Vec::with_capacity(20);
+            let mut key = Vec::with_capacity(EDGE_KEY_SIZE);
             key.extend_from_slice(&encode_vertex_key(vertex));
             key.extend_from_slice(&cursor.label_id.to_be_bytes());
             key.extend_from_slice(&encode_vertex_key(cursor.secondary_id));

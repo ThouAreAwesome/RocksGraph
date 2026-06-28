@@ -18,7 +18,7 @@
 //! [`PropKey`] — the property key type — and the built-in reserved keys.
 //!
 //! Property keys are plain strings (e.g. `"name"`, `"age"`).  They are represented
-//! as [`SmolStr`], which stack-allocates strings up to 22 bytes and avoids heap
+//! as [`SmolStr`], which stack-allocates strings up to 23 bytes and avoids heap
 //! allocation for the vast majority of real-world keys.
 //!
 //! # Built-in keys
@@ -40,7 +40,7 @@ use smol_str::SmolStr;
 
 /// Name of a property key.
 ///
-/// Stack-allocated for strings up to 22 bytes; heap-allocated only for
+/// Stack-allocated for strings up to 23 bytes; heap-allocated only for
 /// unusually long key names.  No interning or numeric mapping — the raw
 /// string is the identity.
 pub type PropKey = SmolStr;

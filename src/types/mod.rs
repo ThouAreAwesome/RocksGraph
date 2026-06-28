@@ -39,7 +39,7 @@
 //! └── EdgeKey                     ← directed (primary_id, direction, label, rank, secondary_id)
 //!
 //! Identifiers
-//! ├── LabelId = u16               ← numeric label id (schema registry maps Label ↔ LabelId)
+//! ├── LabelId = i32               ← numeric label id (schema registry maps Label ↔ LabelId)
 //! ├── Label(SmolStr)              ← human-readable label string ("person", "knows")
 //! └── PropKey = SmolStr           ← property key string ("name", "age")
 //! ```
@@ -106,6 +106,5 @@ pub(crate) const PIPELINE_PRODUCE_SIZE: usize = 8;
 /// Inline capacity for vertex property lists in `addV()`.
 pub(crate) const VERTEX_PROPS_LENGTH: usize = 8;
 
-#[cfg(test)]
 #[cfg(test)]
 mod tests;

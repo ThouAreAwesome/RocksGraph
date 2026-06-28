@@ -31,6 +31,10 @@ use crate::{
     types::StoreError,
 };
 
+/// Bloom filter bits-per-key for both edge and vertex block-based tables.
+/// 10 bits/key is RocksDB's own documented default, giving a ~1% false-positive rate.
+const BLOOM_FILTER_BITS_PER_KEY: f64 = 10.0;
+
 /// RocksDB-backed graph store using `OptimisticTransactionDB`.
 /// This struct owns the underlying RocksDB database handle.
 /// Call the `begin` method to start a new transaction against this store.
@@ -60,14 +64,14 @@ impl RocksStorage {
         edge_cf_opts.set_prefix_extractor(SliceTransform::create_fixed_prefix(EDGE_PREFIX_LENGTH));
         let mut edge_block_opts = BlockBasedOptions::default();
         // full filter (not block-based) so prefix seeks hit the bloom filter
-        edge_block_opts.set_bloom_filter(10.0, false);
+        edge_block_opts.set_bloom_filter(BLOOM_FILTER_BITS_PER_KEY, false);
         edge_cf_opts.set_block_based_table_factory(&edge_block_opts);
         // bloom filter in memtable for in-flight writes
         edge_cf_opts.set_memtable_prefix_bloom_ratio(0.1);
 
         // ── Vertex CFs: point-lookup bloom filter ─────────────────────────────
         let mut vertex_block_opts = BlockBasedOptions::default();
-        vertex_block_opts.set_bloom_filter(10.0, false);
+        vertex_block_opts.set_bloom_filter(BLOOM_FILTER_BITS_PER_KEY, false);
         let mut vertex_cf_opts = Options::default();
         vertex_cf_opts.set_block_based_table_factory(&vertex_block_opts);
 

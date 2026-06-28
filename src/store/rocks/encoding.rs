@@ -71,7 +71,7 @@ pub(crate) const EDGE_PREFIX_LENGTH: usize = 8;
 /// [`prefix_upper_bound`] or clone it into a `Vec<u8>` for RocksDB keys.
 pub fn edge_scan_prefix(vertex: VertexKey, label: Option<LabelId>) -> SmallVec<[u8; SCAN_PREFIX_LENGTH]> {
     let mut prefix = SmallVec::<[u8; SCAN_PREFIX_LENGTH]>::new();
-    prefix.extend_from_slice(&(vertex ^ (1 << 63)).to_be_bytes());
+    prefix.extend_from_slice(&flip_sign_bit(vertex).to_be_bytes());
     if let Some(lbl) = label {
         prefix.extend_from_slice(&lbl.to_be_bytes());
     }
@@ -122,8 +122,8 @@ pub fn encode_schema_key(kind: u8, name: &str) -> Vec<u8> {
 }
 
 #[inline]
-pub fn encode_schema_meta(version: u64, edge_mode: u8, schema_mode: u8) -> [u8; 10] {
-    let mut bytes = [0u8; 10];
+pub fn encode_schema_meta(version: u64, edge_mode: u8, schema_mode: u8) -> [u8; SCHEMA_META_SIZE] {
+    let mut bytes = [0u8; SCHEMA_META_SIZE];
     bytes[0..8].copy_from_slice(&version.to_be_bytes());
     bytes[8] = edge_mode;
     bytes[9] = schema_mode;
@@ -132,7 +132,7 @@ pub fn encode_schema_meta(version: u64, edge_mode: u8, schema_mode: u8) -> [u8; 
 
 #[inline]
 pub fn decode_schema_meta(bytes: &[u8]) -> Option<(u64, u8, u8)> {
-    if bytes.len() < 10 {
+    if bytes.len() < SCHEMA_META_SIZE {
         return None;
     }
     let version = u64::from_be_bytes(bytes[0..8].try_into().ok()?);
@@ -152,8 +152,8 @@ pub fn decode_schema_label_value(bytes: &[u8]) -> Option<LabelId> {
 }
 
 #[inline]
-pub fn encode_schema_prop_value(id: u16, data_type: u8) -> [u8; 3] {
-    let mut bytes = [0u8; 3];
+pub fn encode_schema_prop_value(id: u16, data_type: u8) -> [u8; SCHEMA_PROP_VALUE_SIZE] {
+    let mut bytes = [0u8; SCHEMA_PROP_VALUE_SIZE];
     bytes[0..2].copy_from_slice(&id.to_be_bytes());
     bytes[2] = data_type;
     bytes
@@ -161,7 +161,7 @@ pub fn encode_schema_prop_value(id: u16, data_type: u8) -> [u8; 3] {
 
 #[inline]
 pub fn decode_schema_prop_value(bytes: &[u8]) -> Option<(u16, u8)> {
-    if bytes.len() < 3 {
+    if bytes.len() < SCHEMA_PROP_VALUE_SIZE {
         return None;
     }
     let id = u16::from_be_bytes(bytes[0..2].try_into().ok()?);
@@ -175,21 +175,35 @@ pub const VERTEX_KEY_SIZE: usize = 8;
 /// Edge key: 8 (vertex) + 4 (label) + 8 (vertex) + 2 (rank) = 22 bytes.
 /// No direction byte is included; each Column Family (CF) encodes direction implicitly.
 pub const EDGE_KEY_SIZE: usize = 22;
+/// `schema` CF meta-entry value: 8 (version:u64) + 1 (edge_mode:u8) + 1 (schema_mode:u8).
+const SCHEMA_META_SIZE: usize = 10;
+/// `schema` CF property-key entry value: 2 (id:u16) + 1 (data_type:u8).
+const SCHEMA_PROP_VALUE_SIZE: usize = 3;
+/// `vertex_degree` CF value: 4 (vertex_label_id:LabelId) + 4 (out_e_cnt:u32) + 4 (in_e_cnt:u32).
+const VERTEX_DEGREE_SIZE: usize = 12;
 /// Inline capacity for RocksDB key-prefix buffers (vertex ID + optional label ID).
 const SCAN_PREFIX_LENGTH: usize = 8 + 4;
+
+/// Flips the sign bit of a signed `i64` so big-endian byte order matches numeric
+/// order (RocksDB compares keys lexicographically). Self-inverse: applying it
+/// twice returns the original value, so the same function encodes and decodes.
+#[inline]
+const fn flip_sign_bit(v: i64) -> i64 {
+    v ^ (1i64 << 63)
+}
 
 // ── VertexKey encoding ────────────────────────────────────────────────────────
 
 /// Encodes a `VertexKey` (i64) into an 8-byte big-endian array.
-/// The `^ (1 << 63)` operation is used to ensure lexicographical ordering matches numerical order for signed integers.
+/// See [`flip_sign_bit`] for why the sign bit is flipped before encoding.
 #[inline]
 pub fn encode_vertex_key(key: VertexKey) -> [u8; VERTEX_KEY_SIZE] {
-    (key ^ (1 << 63)).to_be_bytes()
+    flip_sign_bit(key).to_be_bytes()
 }
 
 #[inline]
 pub fn decode_vertex_key(bytes: &[u8]) -> Option<VertexKey> {
-    Some(i64::from_be_bytes(bytes.try_into().ok()?) ^ (1 << 63))
+    Some(flip_sign_bit(i64::from_be_bytes(bytes.try_into().ok()?)))
 }
 
 // ── Edge key encoding ─────────────────────────────────────────────────────────
@@ -203,9 +217,9 @@ pub fn decode_vertex_key(bytes: &[u8]) -> Option<VertexKey> {
 #[inline]
 pub fn encode_edge_key(k: &EdgeKey) -> [u8; EDGE_KEY_SIZE] {
     let mut buf = [0u8; EDGE_KEY_SIZE];
-    buf[0..8].copy_from_slice(&(k.primary_id ^ (1 << 63)).to_be_bytes());
+    buf[0..8].copy_from_slice(&flip_sign_bit(k.primary_id).to_be_bytes());
     buf[8..12].copy_from_slice(&k.label_id.to_be_bytes());
-    buf[12..20].copy_from_slice(&(k.secondary_id ^ (1 << 63)).to_be_bytes());
+    buf[12..20].copy_from_slice(&flip_sign_bit(k.secondary_id).to_be_bytes());
     buf[20..22].copy_from_slice(&k.rank.to_be_bytes());
     buf
 }
@@ -217,10 +231,10 @@ pub fn decode_edge_key(bytes: &[u8], dir: Direction) -> Option<EdgeKey> {
         return None;
     }
     Some(EdgeKey {
-        primary_id: i64::from_be_bytes(bytes[0..8].try_into().ok()?) ^ (1 << 63),
+        primary_id: flip_sign_bit(i64::from_be_bytes(bytes[0..8].try_into().ok()?)),
         direction: dir,
         label_id: LabelId::from_be_bytes(bytes[8..12].try_into().ok()?),
-        secondary_id: i64::from_be_bytes(bytes[12..20].try_into().ok()?) ^ (1 << 63),
+        secondary_id: flip_sign_bit(i64::from_be_bytes(bytes[12..20].try_into().ok()?)),
         rank: u16::from_be_bytes(bytes[20..22].try_into().ok()?) as Rank,
     })
 }
@@ -275,9 +289,10 @@ pub struct VertexDegree {
 }
 
 impl VertexDegree {
-    /// Encodes the `VertexDegree` into a 12-byte array.
-    pub fn encode(&self) -> [u8; 12] {
-        let mut buf = [0u8; 12];
+    /// Encodes the `VertexDegree` into a fixed-size array (see [`VERTEX_DEGREE_SIZE`]).
+    #[inline]
+    pub fn encode(&self) -> [u8; VERTEX_DEGREE_SIZE] {
+        let mut buf = [0u8; VERTEX_DEGREE_SIZE];
         buf[0..4].copy_from_slice(&self.vertex_label_id.to_be_bytes());
         buf[4..8].copy_from_slice(&self.out_e_cnt.to_be_bytes());
         buf[8..12].copy_from_slice(&self.in_e_cnt.to_be_bytes());
@@ -285,8 +300,9 @@ impl VertexDegree {
     }
 
     /// Decodes a byte slice into a `VertexDegree`.
+    #[inline]
     pub fn decode(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() != 12 {
+        if bytes.len() != VERTEX_DEGREE_SIZE {
             return None;
         }
         let vertex_label_id = LabelId::from_be_bytes(bytes[0..4].try_into().ok()?);

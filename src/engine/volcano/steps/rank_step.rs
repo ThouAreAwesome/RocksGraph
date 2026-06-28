@@ -63,12 +63,11 @@ impl CoreStep for RankStep {
                         "rank() is edge-only — vertices have no rank".to_string(),
                     ));
                 }
-                _ => {
-                    batch.push(t);
-                    continue;
+                other => {
+                    return Err(StoreError::UnexpectedDataType(format!("rank() expects an Edge, got {:?}", other)));
                 }
             };
-            batch.push(Traverser::new_rc(rank_value));
+            batch.push(Traverser::new_rc_conditional(rank_value, &t, true));
         }
         if batch.is_empty() {
             Ok(None)

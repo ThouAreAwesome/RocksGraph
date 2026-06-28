@@ -33,7 +33,7 @@ use crate::{
 };
 
 /// Extracts the id of the current element.  For vertices returns `Int64(vk)`,
-/// for edges returns `Int64(primary_id)`.  All other traverser values pass
+/// for edges returns the Base64-encoded canonical edge key.  Any other traverser value causes an `UnexpectedDataType` error
 /// through unchanged.
 #[derive(Debug, Default)]
 pub struct IdStep {
@@ -57,13 +57,15 @@ impl CoreStep for IdStep {
             let Some(t) = upstream.next(ctx)? else { break };
             let id_value = match &t.value {
                 GValue::Vertex(vk) => GValue::Scalar(Primitive::Int64(*vk)),
-                GValue::Edge(ek) => GValue::Scalar(Primitive::String(ek.to_id_string().into())),
-                _ => {
-                    batch.push(Rc::clone(&t));
-                    continue;
+                GValue::Edge(ek) => GValue::Scalar(Primitive::String(ek.to_id_string())),
+                other => {
+                    return Err(StoreError::UnexpectedDataType(format!(
+                        "id() expects a Vertex or Edge, got {:?}",
+                        other
+                    )));
                 }
             };
-            batch.push(Traverser::new_rc(id_value));
+            batch.push(Traverser::new_rc_conditional(id_value, &t, true));
         }
         if batch.is_empty() {
             Ok(None)

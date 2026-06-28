@@ -74,13 +74,13 @@ fn test_id_step_edge() {
 
 #[test]
 fn test_id_step_scalar_passthrough() {
+    // id() on a non-element should error, not silently pass through.
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![scalar_t(7)]);
     let mut step = IdStep::default();
     step.add_upper(src.clone() as StepRef);
     let mut ctx = NoopCtx;
-    let res = step.produce(&mut ctx).unwrap().unwrap();
-    assert_eq!(res[0].value, GValue::Scalar(Primitive::Int64(7)));
+    assert!(step.produce(&mut ctx).is_err());
 }
 
 #[test]
@@ -468,16 +468,14 @@ fn test_label_step_edge_label() {
 
 #[test]
 fn test_label_step_scalar_passthrough() {
+    // label() on a non-element should error, not silently pass through.
     let schema = Schema::default();
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![scalar_t(7)]);
-
     let mut step = LabelStep::default();
     step.add_upper(src.clone() as StepRef);
-
     let mut ctx = LabelCtx::new(schema);
-    let traversers = step.produce(&mut ctx).unwrap().unwrap();
-    assert_eq!(traversers[0].value, GValue::Scalar(Primitive::Int64(7)));
+    assert!(step.produce(&mut ctx).is_err());
 }
 
 #[test]

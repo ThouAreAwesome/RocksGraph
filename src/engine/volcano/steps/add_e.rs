@@ -90,7 +90,7 @@ impl CoreStep for AddEStep {
         if self.emitted && self.upstream.is_none() {
             return Ok(None);
         }
-        let (out_v_id, in_v_id) = if let Some(ref upstream) = self.upstream {
+        let (out_v_id, in_v_id, parent_traverser) = if let Some(ref upstream) = self.upstream {
             let Some(t) = upstream.next(ctx)? else {
                 self.emitted = true;
                 return Ok(None);
@@ -104,12 +104,13 @@ impl CoreStep for AddEStep {
                     )));
                 }
             };
-            (self.out_v_id.unwrap_or(vk), self.in_v_id.unwrap_or(vk))
+            (self.out_v_id.unwrap_or(vk), self.in_v_id.unwrap_or(vk), Some(t))
         } else {
             self.emitted = true;
             (
                 self.out_v_id.expect("out_v_id required for source AddEStep"),
                 self.in_v_id.expect("in_v_id required for source AddEStep"),
+                None,
             )
         };
 
@@ -127,7 +128,11 @@ impl CoreStep for AddEStep {
             prop.owner = canonical_key;
             ctx.set_property(&prop)?;
         }
-        Ok(Some(smallvec![Traverser::new_rc(GValue::Edge(new_edge))]))
+        if let Some(ref parent) = parent_traverser {
+            Ok(Some(smallvec![Traverser::new_rc_conditional(GValue::Edge(new_edge), parent, true)]))
+        } else {
+            Ok(Some(smallvec![Traverser::new_rc(GValue::Edge(new_edge))]))
+        }
     }
 
     fn reset(&mut self) {
