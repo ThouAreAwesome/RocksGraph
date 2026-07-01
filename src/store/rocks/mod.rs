@@ -21,4 +21,4 @@ mod snapshot;
 mod store;
 mod transaction;
 
-pub use store::RocksStorage;
+pub use store::{RocksOptions, RocksStorage};

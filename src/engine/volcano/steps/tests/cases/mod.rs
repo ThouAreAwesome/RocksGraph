@@ -63,7 +63,7 @@ pub(super) const FRIENDS_LABEL_ID: LabelId = 6;
 /// Opens a new `RocksStorage` instance in a temporary directory for testing.
 pub(super) fn open_rocks_store() -> (RocksStorage, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
-    let store = RocksStorage::open(dir.path()).unwrap();
+    let store = RocksStorage::open(dir.path(), &Default::default()).unwrap();
     (store, dir)
 }
 

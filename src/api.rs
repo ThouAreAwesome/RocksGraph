@@ -58,7 +58,7 @@ use crate::{
     graph::{LogicalGraph, LogicalSnapshot},
     gremlin::traversal::{ReadTraversal, WriteTraversal},
     schema::{GraphOptions, Schema, SchemaManagement},
-    store::{traits::GraphStore, RocksStorage},
+    store::{traits::GraphStore, RocksOptions, RocksStorage},
     types::{BatchScenario, StoreError},
 };
 
@@ -91,10 +91,10 @@ impl Graph {
     /// [`SchemaMode::Auto`]: crate::schema::SchemaMode::Auto
     /// [`EdgeMode::Single`]: crate::schema::EdgeMode::Single
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
-        Self::open_with_options(path, GraphOptions::default())
+        Self::open_with_rocksdb_options(path, GraphOptions::default(), RocksOptions::default())
     }
 
-    /// Open (or create) the graph database at `path` with custom options.
+    /// Open (or create) the graph database at `path` with custom schema options.
     ///
     /// `options.mode` controls how vertex labels, edge labels, and property keys used by
     /// traversals are registered:
@@ -102,14 +102,54 @@ impl Graph {
     /// - [`SchemaMode::Strict`] — must be declared first via [`open_management`](Self::open_management); see
     ///   [`SchemaManagement`] for a worked example.
     ///
-    /// Options are only applied the first time a database is created; reopening an existing
-    /// database always uses its persisted settings, ignoring `options`.
+    /// Schema options are only applied the first time a database is created; reopening an
+    /// existing database always uses its persisted settings, ignoring `options`.
+    ///
+    /// To also tune RocksDB storage parameters (write buffer size, block cache size),
+    /// use [`open_with_rocksdb_options`](Self::open_with_rocksdb_options) instead.
     ///
     /// [`SchemaMode::Auto`]: crate::schema::SchemaMode::Auto
     /// [`SchemaMode::Strict`]: crate::schema::SchemaMode::Strict
     pub fn open_with_options(path: impl AsRef<Path>, options: GraphOptions) -> Result<Self, StoreError> {
-        let store = Arc::new(RocksStorage::open(path)?);
-        let schema = store.load_schema(options)?;
+        Self::open_with_rocksdb_options(path, options, RocksOptions::default())
+    }
+
+    /// Open (or create) the graph database with full control over both schema
+    /// behaviour and RocksDB storage tuning.
+    ///
+    /// `schema_options` controls schema registration mode (Auto vs Strict) and edge
+    /// multiplicity (Single vs Multi); these are persisted on first create and ignored
+    /// on subsequent opens.
+    ///
+    /// `rocksdb_options` controls in-memory storage parameters such as the per-CF
+    /// write buffer size and the shared block cache size; these are applied **every**
+    /// time the database is opened and are never persisted to disk.
+    ///
+    /// # Example
+    /// ```
+    /// # use rocksgraph::{Graph, RocksOptions};
+    /// # use rocksgraph::schema::GraphOptions;
+    /// # let dir = tempfile::tempdir().unwrap();
+    /// let graph = Graph::open_with_rocksdb_options(
+    ///     dir.path(),
+    ///     GraphOptions::default(),
+    ///     RocksOptions {
+    ///         block_cache_size:         5 * 1024 * 1024 * 1024, // 5 GiB (small prod)
+    ///         write_buffer_size:        256 * 1024 * 1024,       // 256 MiB
+    ///         max_background_jobs:      4,
+    ///         ..RocksOptions::default()
+    ///     },
+    /// )?;
+    /// # graph.close().unwrap();
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn open_with_rocksdb_options(
+        path: impl AsRef<Path>,
+        schema_options: GraphOptions,
+        rocksdb_options: RocksOptions,
+    ) -> Result<Self, StoreError> {
+        let store = Arc::new(RocksStorage::open(path, &rocksdb_options)?);
+        let schema = store.load_schema(schema_options)?;
         Ok(Self { store, schema: Arc::new(RwLock::new(schema)) })
     }
 

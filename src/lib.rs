@@ -77,6 +77,7 @@ pub(crate) mod types;
 
 // ── User-facing re-exports ────────────────────────────────────────────────────
 pub use api::{Graph, ReadSession, TxSession};
+pub use store::RocksOptions;
 // GraphTraversal is doc-hidden but must be pub so users can pass `__()` values
 // to where/coalesce/union without naming the type.
 #[doc(hidden)]

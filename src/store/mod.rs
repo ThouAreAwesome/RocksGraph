@@ -23,4 +23,4 @@
 pub mod rocks;
 pub mod traits;
 
-pub use rocks::RocksStorage;
+pub use rocks::{RocksOptions, RocksStorage};

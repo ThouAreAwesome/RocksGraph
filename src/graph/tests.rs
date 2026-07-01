@@ -34,7 +34,7 @@ use crate::{
 
 fn open() -> (RocksStorage, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
-    let store = RocksStorage::open(dir.path()).unwrap();
+    let store = RocksStorage::open(dir.path(), &Default::default()).unwrap();
     {
         let loaded = store.load_schema(crate::schema::GraphOptions::default()).unwrap();
         let schema = std::sync::Arc::new(std::sync::RwLock::new(loaded));

@@ -392,7 +392,7 @@ mod tests {
 
     fn open_temp_store() -> (RocksStorage, TempDir) {
         let dir = tempfile::tempdir().unwrap();
-        let store = RocksStorage::open(dir.path()).unwrap();
+        let store = RocksStorage::open(dir.path(), &Default::default()).unwrap();
         (store, dir)
     }
 

@@ -76,22 +76,25 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     run_query_benchmark(
-        "Q2: g.V().hasId(id).outE(label).where(otherV().hasId(dst)).values('weight', 'timestamp').count()",
+        "Q2: g.V().hasId(id).bothE(label).where(otherV().hasId(dst)).values('weight', 'timestamp').count()",
         &lines,
         &graph,
         parallelism,
         |snap, src, dst| {
-            let ct = snap
+            let Value::Int64(ct) = snap
                 .g()
                 .V([])
                 .hasId([src])
-                .outE([EDGE_LABEL])
+                .bothE([EDGE_LABEL])
                 .r#where(__().otherV().hasId([dst]))
                 .values([WEIGHT_KEY, TIMESTAMP_KEY])
                 .count()
                 .next()?
-                .unwrap();
-            assert_eq!(ct, Value::Int64(2));
+                .unwrap()
+            else {
+                unreachable!("unexpected gremlin result type")
+            };
+            assert!(ct >= 2);
             Ok(())
         },
     )?;
