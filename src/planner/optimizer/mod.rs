@@ -15,6 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
+pub mod degree_pushdown;
 pub mod extract_end_vertex_filter;
 pub mod merge_adde_ids;
 pub mod merge_end_vertex_filter;

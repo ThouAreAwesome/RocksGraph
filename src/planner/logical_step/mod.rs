@@ -27,7 +27,7 @@
 
 use crate::types::{
     gvalue::{Primitive, PrimitivePredicate},
-    keys::{Rank, VertexKey},
+    keys::{DegreeDirection, Rank, VertexKey},
     prop_key::PropKey,
     StoreError, ORDER_KEY_INLINE, SMALL_VECTOR_LENGTH, STEP_LABEL_INLINE,
 };
@@ -145,6 +145,7 @@ pub enum LogicalStep {
     Both(BothStep),
     BothE(BothEStep),
     Count(CountStep),
+    Degree(DegreeStep),
     HasLabel(HasLabelStep),
     HasProperty(HasPropertyStep),
     In(InStep),
@@ -549,6 +550,16 @@ impl Optimizer for CoalesceStep {
 pub struct CountStep {}
 
 impl Optimizer for CountStep {}
+
+/// Internal-only step produced by the `degree_pushdown` optimizer.
+/// Reads the per-vertex degree from the `vertex_degree` CF overlay — O(1), no adjacency scan.
+/// Not user-visible; never produced by the traversal builder.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DegreeStep {
+    pub direction: DegreeDirection,
+}
+
+impl Optimizer for DegreeStep {}
 #[derive(Clone)]
 /// Represents a logical `both` step, traversing both incoming and outgoing edges.
 pub struct BothStep {

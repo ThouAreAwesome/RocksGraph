@@ -45,6 +45,11 @@ pub(crate) struct LogicalSnapshot<S: GraphStore> {
     store: S::Snapshot,
     vertices: HashMap<VertexKey, Vertex>,
     edges: HashMap<CanonicalEdgeKey, Edge>,
+    /// Read-through cache for `(out_e_cnt, in_e_cnt, vertex_label_id)` from the
+    /// `vertex_degree` CF. Mirrors `LogicalGraph::vertex_degree`. Safe to keep
+    /// across `clear_caches()` calls since the underlying snapshot is frozen —
+    /// the data cannot change for the lifetime of this `LogicalSnapshot`.
+    vertex_degree: HashMap<VertexKey, (u32, u32, LabelId)>,
     pub(crate) scan_config: ScanConfig,
     pub(crate) schema: std::sync::Arc<std::sync::RwLock<crate::schema::Schema>>,
 }
@@ -55,6 +60,7 @@ impl<S: GraphStore> LogicalSnapshot<S> {
             store: snapshot,
             vertices: HashMap::new(),
             edges: HashMap::new(),
+            vertex_degree: HashMap::new(),
             scan_config: ScanConfig::default(),
             schema,
         }
@@ -66,6 +72,9 @@ impl<S: GraphStore> LogicalSnapshot<S> {
     /// scoped to a single traversal rather than growing across all `g()` calls
     /// on the same session. The underlying RocksDB snapshot is not affected —
     /// all traversals on the same session still see the same consistent view.
+    ///
+    /// `vertex_degree` is intentionally NOT cleared here — the snapshot is frozen,
+    /// so cached degree values remain valid across all traversals on this session.
     pub(crate) fn clear_caches(&mut self) {
         self.vertices.clear();
         self.edges.clear();
@@ -330,5 +339,42 @@ impl<S: GraphStore> LogicalSnapshot<S> {
             }
             CanonicalKey::Empty => Err(StoreError::TraversalError("Element key cannot be empty".to_string())),
         }
+    }
+
+    /// O(1) read of per-vertex degree counters from the snapshot store.
+    /// Returns `Ok(0)` for a missing vertex.
+    /// Read-through cache for the `vertex_degree` CF — mirrors
+    /// `LogicalGraph::get_vertex_degree`.  Returns `None` for a missing vertex.
+    fn get_vertex_degree(&mut self, key: VertexKey) -> Result<Option<(u32, u32, LabelId)>, StoreError> {
+        if let Some(&cached) = self.vertex_degree.get(&key) {
+            return Ok(Some(cached));
+        }
+        match self.store.get_vertex_degree(key)? {
+            None => Ok(None),
+            Some(t) => {
+                self.vertex_degree.insert(key, t);
+                Ok(Some(t))
+            }
+        }
+    }
+
+    pub(crate) fn get_degree(
+        &mut self,
+        key: VertexKey,
+        direction: crate::types::DegreeDirection,
+    ) -> Result<u64, StoreError> {
+        let (out_cnt, in_cnt, label_id) = match self.get_vertex_degree(key)? {
+            Some(t) => t,
+            None => return Ok(0),
+        };
+        // Cache the vertex label learned for free from the degree record,
+        // matching LogicalGraph::get_degree — avoids a future vertices CF lookup
+        // if hasLabel() is called on the same vertex later in this traversal.
+        self.cache_vertex_label(key, label_id);
+        Ok(match direction {
+            crate::types::DegreeDirection::Out => out_cnt as u64,
+            crate::types::DegreeDirection::In => in_cnt as u64,
+            crate::types::DegreeDirection::Both => out_cnt as u64 + in_cnt as u64,
+        })
     }
 }

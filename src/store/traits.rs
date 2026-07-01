@@ -110,6 +110,10 @@ pub trait GraphSnapshot {
         start_from: Option<CanonicalEdgeKey>,
         limit: u32,
     ) -> Result<(Vec<Edge>, Option<CanonicalEdgeKey>), StoreError>;
+
+    /// Read the per-vertex degree counters `(out_e_cnt, in_e_cnt, label_id)` from the
+    /// `vertex_degree` CF. Returns `None` if the vertex does not exist.
+    fn get_vertex_degree(&mut self, key: VertexKey) -> Result<Option<(u32, u32, LabelId)>, StoreError>;
 }
 
 // ── GraphTransaction ──────────────────────────────────────────────────────────
@@ -312,6 +316,9 @@ mod tests {
             _limit: u32,
         ) -> Result<(Vec<Edge>, Option<CanonicalEdgeKey>), StoreError> {
             Err(StoreError::UnsupportedOperation("MockSnapshot does not support scan_edges".to_string()))
+        }
+        fn get_vertex_degree(&mut self, _key: VertexKey) -> Result<Option<(u32, u32, LabelId)>, StoreError> {
+            Ok(None)
         }
     }
 

@@ -75,19 +75,22 @@ impl EdgeMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum DataType {
-    Bool = 0,
-    Int32 = 1,
-    Int64 = 2,
-    Float32 = 3,
-    Float64 = 4,
-    String = 5,
-    Uuid = 6,
-    UInt16 = 7,
+    Null = 0,
+    Bool = 1,
+    Int32 = 2,
+    Int64 = 3,
+    Float32 = 4,
+    Float64 = 5,
+    String = 6,
+    Uuid = 7,
+    UInt16 = 8,
+    Bytes = 9,
 }
 
 impl DataType {
     pub fn from_primitive(val: &Primitive) -> Self {
         match val {
+            Primitive::Null => DataType::Null,
             Primitive::Bool(_) => DataType::Bool,
             Primitive::Int32(_) => DataType::Int32,
             Primitive::Int64(_) => DataType::Int64,
@@ -96,7 +99,7 @@ impl DataType {
             Primitive::Float64(_) => DataType::Float64,
             Primitive::String(_) => DataType::String,
             Primitive::Uuid(_) => DataType::Uuid,
-            Primitive::Null => DataType::String,
+            Primitive::Bytes(_) => DataType::Bytes,
         }
     }
 
@@ -106,14 +109,16 @@ impl DataType {
 
     pub fn from_u8(v: u8) -> Option<Self> {
         match v {
-            0 => Some(DataType::Bool),
-            1 => Some(DataType::Int32),
-            2 => Some(DataType::Int64),
-            3 => Some(DataType::Float32),
-            4 => Some(DataType::Float64),
-            5 => Some(DataType::String),
-            6 => Some(DataType::Uuid),
-            7 => Some(DataType::UInt16),
+            0 => Some(DataType::Null),
+            1 => Some(DataType::Bool),
+            2 => Some(DataType::Int32),
+            3 => Some(DataType::Int64),
+            4 => Some(DataType::Float32),
+            5 => Some(DataType::Float64),
+            6 => Some(DataType::String),
+            7 => Some(DataType::Uuid),
+            8 => Some(DataType::UInt16),
+            9 => Some(DataType::Bytes),
             _ => None,
         }
     }
@@ -416,6 +421,11 @@ impl Schema {
 
     /// Declare property key by name (explicit management).
     pub fn declare_prop_key(&mut self, name: &str, data_type: DataType) -> Result<u16, crate::types::StoreError> {
+        if data_type == DataType::Null {
+            return Err(crate::types::StoreError::SchemaViolation(
+                "'Null' is not a valid declared property type".to_string(),
+            ));
+        }
         if name == "id" || name == "label" || name == "rank" {
             return Err(crate::types::StoreError::SchemaViolation(format!(
                 "'{}' is a system-reserved key and cannot be used as an ordinary property",
@@ -504,6 +514,7 @@ mod tests {
     #[test]
     fn data_type_u8_roundtrip() {
         let all = [
+            DataType::Null,
             DataType::Bool,
             DataType::Int32,
             DataType::Int64,
@@ -512,10 +523,11 @@ mod tests {
             DataType::String,
             DataType::Uuid,
             DataType::UInt16,
+            DataType::Bytes,
         ];
         for dt in all {
             assert_eq!(DataType::from_u8(dt.to_u8()), Some(dt));
         }
-        assert_eq!(DataType::from_u8(8), None);
+        assert_eq!(DataType::from_u8(10), None);
     }
 }

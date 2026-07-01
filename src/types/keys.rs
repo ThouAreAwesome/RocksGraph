@@ -80,6 +80,15 @@ pub enum Direction {
     IN,
 }
 
+/// Direction for the `degree_pushdown` optimizer — extends `Direction` with a `Both` variant
+/// so that `both([]).count()` can also be rewritten to an O(1) degree lookup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DegreeDirection {
+    Out,
+    In,
+    Both,
+}
+
 /// Suffix cursor for paginating edges adjacent to a specific vertex.
 /// Represents the physical key of the last returned edge (specifically, the suffix parts).
 /// Ordered exactly as the database sorting keys: (label_id, secondary_id, rank).

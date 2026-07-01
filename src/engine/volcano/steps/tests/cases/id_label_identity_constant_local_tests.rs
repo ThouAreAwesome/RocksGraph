@@ -220,7 +220,7 @@ fn test_local_step_flatmaps() {
         .build(&LogicalPlan { steps: vec![LogicalStep::Count(LogicalCountStep {})] }, &RwLock::new(Schema::default()))
         .unwrap();
 
-    let mut step = LocalStep::new(sub_plan);
+    let mut step = LocalStep::new(sub_plan, false);
     step.add_upper(src.clone() as StepRef);
     let mut ctx = NoopCtx;
 
@@ -235,7 +235,7 @@ fn test_local_step_flatmaps() {
 #[test]
 fn test_local_step_no_upstream() {
     let sub_plan = PhysicalPlanBuilder.build(&LogicalPlan { steps: vec![] }, &RwLock::new(Schema::default())).unwrap();
-    let mut step = LocalStep::new(sub_plan);
+    let mut step = LocalStep::new(sub_plan, false);
     let mut ctx = NoopCtx;
     assert!(step.produce(&mut ctx).unwrap().is_none());
 }
@@ -249,7 +249,7 @@ fn test_local_step_reset() {
         .build(&LogicalPlan { steps: vec![LogicalStep::Count(LogicalCountStep {})] }, &RwLock::new(Schema::default()))
         .unwrap();
 
-    let mut step = LocalStep::new(sub_plan);
+    let mut step = LocalStep::new(sub_plan, false);
     step.add_upper(src.clone() as StepRef);
     let mut ctx = NoopCtx;
     assert!(step.produce(&mut ctx).unwrap().is_some());
@@ -259,7 +259,7 @@ fn test_local_step_reset() {
 #[test]
 fn test_local_step_upper() {
     let sub_plan = PhysicalPlanBuilder.build(&LogicalPlan { steps: vec![] }, &RwLock::new(Schema::default())).unwrap();
-    let mut step = LocalStep::new(sub_plan);
+    let mut step = LocalStep::new(sub_plan, false);
     let src: StepRef = BufferedStep::new(VecSourceStep::empty());
     step.add_upper(src.clone());
     assert!(step.upper().is_some());
@@ -268,7 +268,7 @@ fn test_local_step_upper() {
 #[test]
 fn test_local_step_explain() {
     let sub_plan = PhysicalPlanBuilder.build(&LogicalPlan { steps: vec![] }, &RwLock::new(Schema::default())).unwrap();
-    let step = LocalStep::new(sub_plan);
+    let step = LocalStep::new(sub_plan, false);
     let node = step.explain();
     assert_eq!(node.name, "LocalStep");
 }
@@ -422,6 +422,13 @@ impl GraphCtx for LabelCtx {
     }
     fn batch_size(&self, _scenario: BatchScenario) -> u32 {
         1
+    }
+    fn get_degree(
+        &mut self,
+        _key: crate::types::VertexKey,
+        _direction: crate::types::DegreeDirection,
+    ) -> Result<u64, StoreError> {
+        Ok(0)
     }
     fn schema(&self) -> Arc<RwLock<Schema>> {
         self.schema.clone()

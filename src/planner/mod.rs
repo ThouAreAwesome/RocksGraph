@@ -28,8 +28,8 @@ use crate::{
     planner::{
         logical_step::{LogicalPlan, Optimizer, OptimizerRule},
         optimizer::{
-            extract_end_vertex_filter, merge_adde_ids, merge_end_vertex_filter, merge_haslabel_into_edge,
-            merge_property_into_add, merge_v_id_filter, normalize_inv_outv, reorder_filter,
+            degree_pushdown, extract_end_vertex_filter, merge_adde_ids, merge_end_vertex_filter,
+            merge_haslabel_into_edge, merge_property_into_add, merge_v_id_filter, normalize_inv_outv, reorder_filter,
         },
     },
     types::StoreError,
@@ -46,6 +46,9 @@ pub fn apply_rules(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
         extract_end_vertex_filter::extract_end_vertex_filter,
         merge_end_vertex_filter::merge_end_vertex_filter,
         merge_haslabel_into_edge::merge_haslabel_into_edge,
+        // degree_pushdown must run AFTER all filter-folding rules so that folded
+        // predicates (e.g. labels merged into the edge step) are visible to Rule A's guard.
+        degree_pushdown::degree_pushdown,
     ];
     let mut plan_changed = true;
     while plan_changed {

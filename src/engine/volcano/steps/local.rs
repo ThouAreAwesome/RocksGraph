@@ -44,11 +44,17 @@ pub struct LocalStep {
     buffer: VecDeque<Rc<Traverser>>,
     /// True once the upstream has been fully consumed and the buffer is drained.
     exhausted: bool,
+    /// When true, each sub-plan result is re-wrapped with the outer traverser
+    /// as parent so `path()` sees `[outer_element, sub_result]` rather than
+    /// only `[sub_result]`.  Matches TinkerPop `local()` path semantics:
+    /// the outer traverser contributes one path step; the sub-traversal's
+    /// intermediate steps do not.
+    track_path: bool,
 }
 
 impl LocalStep {
-    pub fn new(sub_plan: PhysicalPlan) -> Self {
-        Self { upstream: None, sub_plan, buffer: VecDeque::new(), exhausted: false }
+    pub fn new(sub_plan: PhysicalPlan, track_path: bool) -> Self {
+        Self { upstream: None, sub_plan, buffer: VecDeque::new(), exhausted: false, track_path }
     }
 }
 
@@ -91,7 +97,23 @@ impl CoreStep for LocalStep {
             self.sub_plan.reset();
             self.sub_plan.inject(smallvec![Rc::clone(&t)]);
             while let Some(result) = self.sub_plan.next(ctx)? {
-                self.buffer.push_back(result);
+                // Path-tracking triage:
+                //
+                // • Streaming sub-plans (e.g. outE().otherV()): every step uses
+                //   new_rc_conditional so result.parent is Some(upstream_t). The
+                //   chain already runs through `t` back to the outer ancestors.
+                //   Pass the result through unchanged to preserve intermediate steps
+                //   (Edge etc.) in the path.
+                //
+                // • Barrier sub-plans (e.g. count(), sum()): these steps use
+                //   new_rc (no parent), so result.parent is None.  Re-wrap with
+                //   `t` as parent so path() sees [outer_element, barrier_result].
+                let out = if self.track_path && result.parent.is_none() {
+                    Traverser::new_rc_conditional(result.value.clone(), &t, true)
+                } else {
+                    result
+                };
+                self.buffer.push_back(out);
             }
             // Loop back to drain buffer.
         }

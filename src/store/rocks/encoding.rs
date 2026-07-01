@@ -352,17 +352,17 @@ impl EdgeValue {
 // ── Property codec ────────────────────────────────────────────────────────────
 
 /// Wire-format type tags for `Primitive`, written as the byte preceding each
-/// property's value in `encode_props`/`decode_props`. Stable on disk — do not
-/// renumber existing tags; append new ones instead.
-const TAG_BOOL: u8 = 0;
-const TAG_INT32: u8 = 1;
-const TAG_INT64: u8 = 2;
-const TAG_FLOAT32: u8 = 3;
-const TAG_FLOAT64: u8 = 4;
-const TAG_STRING: u8 = 5;
-const TAG_UUID: u8 = 6;
-const TAG_NULL: u8 = 7;
+/// property's value in `encode_props`/`decode_props`.
+const TAG_NULL: u8 = 0;
+const TAG_BOOL: u8 = 1;
+const TAG_INT32: u8 = 2;
+const TAG_INT64: u8 = 3;
+const TAG_FLOAT32: u8 = 4;
+const TAG_FLOAT64: u8 = 5;
+const TAG_STRING: u8 = 6;
+const TAG_UUID: u8 = 7;
 const TAG_UINT16: u8 = 8;
+const TAG_BYTES: u8 = 9;
 
 /// Serializes a property list to a binary format.
 pub(super) fn encode_props(props: &[Property]) -> Vec<u8> {
@@ -407,6 +407,12 @@ pub(super) fn encode_props(props: &[Property]) -> Vec<u8> {
             }
             Primitive::Null => {
                 buf.push(TAG_NULL);
+            }
+            Primitive::Bytes(b) => {
+                assert!(b.len() <= u16::MAX as usize, "Bytes property exceeds 65535-byte limit");
+                buf.push(TAG_BYTES);
+                buf.extend_from_slice(&(b.len() as u16).to_be_bytes());
+                buf.extend_from_slice(b);
             }
         }
     }
@@ -564,6 +570,19 @@ pub(crate) fn decode_props(blob: &[u8], owner: CanonicalKey) -> Option<Vec<Prope
                 Primitive::Uuid(u)
             }
             TAG_NULL => Primitive::Null,
+            TAG_BYTES => {
+                if pos + 2 > blob.len() {
+                    return None;
+                }
+                let len = u16::from_be_bytes(blob[pos..pos + 2].try_into().ok()?) as usize;
+                pos += 2;
+                if pos + len > blob.len() {
+                    return None;
+                }
+                let b = blob[pos..pos + len].to_vec();
+                pos += len;
+                Primitive::Bytes(b)
+            }
             _ => return None,
         };
         out.push(Property { owner, key, value: val });
@@ -587,13 +606,17 @@ mod tests {
 
     fn encode_props(props: &[(u16, Primitive)]) -> Vec<u8> {
         use super::{
-            TAG_BOOL, TAG_FLOAT32, TAG_FLOAT64, TAG_INT32, TAG_INT64, TAG_NULL, TAG_STRING, TAG_UINT16, TAG_UUID,
+            TAG_BOOL, TAG_BYTES, TAG_FLOAT32, TAG_FLOAT64, TAG_INT32, TAG_INT64, TAG_NULL, TAG_STRING, TAG_UINT16,
+            TAG_UUID,
         };
         let mut buf = Vec::new();
         buf.extend_from_slice(&(props.len() as u16).to_be_bytes());
         for (key, val) in props {
             buf.extend_from_slice(&key.to_be_bytes());
             match val {
+                Primitive::Null => {
+                    buf.push(TAG_NULL);
+                }
                 Primitive::Bool(b) => {
                     buf.push(TAG_BOOL);
                     buf.push(*b as u8);
@@ -628,8 +651,11 @@ mod tests {
                     buf.push(TAG_UUID);
                     buf.extend_from_slice(&u.to_be_bytes());
                 }
-                Primitive::Null => {
-                    buf.push(TAG_NULL);
+                Primitive::Bytes(b) => {
+                    assert!(b.len() <= u16::MAX as usize, "Bytes property exceeds 65535-byte limit");
+                    buf.push(TAG_BYTES);
+                    buf.extend_from_slice(&(b.len() as u16).to_be_bytes());
+                    buf.extend_from_slice(b);
                 }
             }
         }
@@ -639,7 +665,8 @@ mod tests {
     /// Decodes a property blob into a vector of (u16, Primitive) tuples.
     fn decode_props(blob: &[u8]) -> Vec<(u16, Primitive)> {
         use super::{
-            TAG_BOOL, TAG_FLOAT32, TAG_FLOAT64, TAG_INT32, TAG_INT64, TAG_NULL, TAG_STRING, TAG_UINT16, TAG_UUID,
+            TAG_BOOL, TAG_BYTES, TAG_FLOAT32, TAG_FLOAT64, TAG_INT32, TAG_INT64, TAG_NULL, TAG_STRING, TAG_UINT16,
+            TAG_UUID,
         };
         let mut pos = 0;
         let count = u16::from_be_bytes(blob[pos..pos + 2].try_into().unwrap()) as usize;
@@ -651,6 +678,7 @@ mod tests {
             let tag = blob[pos];
             pos += 1;
             let val = match tag {
+                TAG_NULL => Primitive::Null,
                 TAG_BOOL => {
                     let b = blob[pos] != 0;
                     pos += 1;
@@ -665,11 +693,6 @@ mod tests {
                     let n = i64::from_be_bytes(blob[pos..pos + 8].try_into().unwrap());
                     pos += 8;
                     Primitive::Int64(n)
-                }
-                TAG_UINT16 => {
-                    let n = u16::from_be_bytes(blob[pos..pos + 2].try_into().unwrap());
-                    pos += 2;
-                    Primitive::UInt16(n)
                 }
                 TAG_FLOAT32 => {
                     let bits = u32::from_be_bytes(blob[pos..pos + 4].try_into().unwrap());
@@ -693,7 +716,18 @@ mod tests {
                     pos += 16;
                     Primitive::Uuid(u)
                 }
-                TAG_NULL => Primitive::Null,
+                TAG_UINT16 => {
+                    let n = u16::from_be_bytes(blob[pos..pos + 2].try_into().unwrap());
+                    pos += 2;
+                    Primitive::UInt16(n)
+                }
+                TAG_BYTES => {
+                    let len = u16::from_be_bytes(blob[pos..pos + 2].try_into().unwrap()) as usize;
+                    pos += 2;
+                    let b = blob[pos..pos + len].to_vec();
+                    pos += len;
+                    Primitive::Bytes(b)
+                }
                 t => panic!("unknown prop tag {t}"),
             };
             out.push((key, val));
@@ -879,19 +913,21 @@ mod tests {
     #[test]
     fn all_primitive_types_roundtrip() {
         let raw: Vec<(u16, Primitive)> = vec![
-            (1, Primitive::Bool(true)),
-            (2, Primitive::Int32(-100)),
-            (3, Primitive::Int64(i64::MAX)),
-            (4, Primitive::Float32(f32::MIN_POSITIVE)),
-            (5, Primitive::Float64(f64::MIN_POSITIVE)),
-            (6, Primitive::String(SmolStr::new("hello"))),
-            (7, Primitive::Uuid(u128::MAX)),
-            (8, Primitive::Null),
+            (1, Primitive::Null),
+            (2, Primitive::Bool(true)),
+            (3, Primitive::Int32(-100)),
+            (4, Primitive::Int64(i64::MAX)),
+            (5, Primitive::Float32(f32::MIN_POSITIVE)),
+            (6, Primitive::Float64(f64::MIN_POSITIVE)),
+            (7, Primitive::String(SmolStr::new("hello"))),
+            (8, Primitive::Uuid(u128::MAX)),
             (9, Primitive::UInt16(u16::MAX)),
+            (10, Primitive::Bytes(vec![])),
+            (11, Primitive::Bytes(vec![0xFF; 100])),
         ];
         let blob = encode_props(&raw);
         let dec = decode_props(&blob);
-        assert_eq!(dec.len(), 9);
+        assert_eq!(dec.len(), raw.len());
         for (i, (k, v)) in dec.iter().enumerate() {
             assert_eq!(k, &raw[i].0);
             assert_eq!(v, &raw[i].1);

@@ -318,12 +318,13 @@ mod tests {
 
         #[test]
         fn test_print_v_hasid_oute_count() {
+            // degree_pushdown rewrites unfiltered OutE([]).Count → DegreeStep+SumStep
             let steps = vec![
                 LogicalStep::V(VStep { ids: smallvec![1] }),
                 LogicalStep::OutE(OutEStep { labels: smallvec![], end_vertex_ids: None, rank: None }),
                 LogicalStep::Count(CountStep {}),
             ];
-            assert_plan_contains_in_order(steps, &["VStep", "InOutStep", "CountStep"]);
+            assert_plan_contains_in_order(steps, &["VStep", "DegreeStep", "SumStep"]);
         }
 
         #[test]
@@ -740,6 +741,117 @@ mod tests {
             assert_names_absent(&out, &[]);
         }
 
+        #[test]
+        fn oute_label_has_edgeproperty_no_fold() {
+            // Edge-property filter (not other-vertex) stays as HasPropertyStep.
+            let steps = vec![
+                LogicalStep::V(VStep { ids: smallvec![1] }),
+                LogicalStep::OutE(OutEStep { labels: smallvec!["123".into()], end_vertex_ids: None, rank: None }),
+                LogicalStep::HasProperty(HasPropertyStep {
+                    key: "weight".into(),
+                    pred: PrimitivePredicate::Gt(Primitive::Float64(0.5)),
+                }),
+            ];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep", "InOutStep", "HasPropertyStep"]);
+        }
+
+        #[test]
+        fn oute_where_otherv_haslabel_partial_extraction() {
+            // hasLabel on otherV extracts to EndVertexFilter but label predicates
+            // stay as a residual WhereStep (can't fold into edge step labels).
+            let where_plan = LogicalPlan {
+                steps: vec![
+                    LogicalStep::OtherV(OtherVStep {}),
+                    LogicalStep::HasLabel(HasLabelStep { pred: PrimitivePredicate::Eq(Primitive::Int32(1)) }),
+                ],
+            };
+            let steps = vec![
+                LogicalStep::V(VStep { ids: smallvec![1] }),
+                LogicalStep::OutE(OutEStep { labels: smallvec!["123".into()], end_vertex_ids: None, rank: None }),
+                LogicalStep::Where(WhereStep { plan: where_plan }),
+            ];
+            let out = explain_str(steps);
+            // hasLabel on the other vertex extracts to EndVertexFilterStep.
+            // The WhereStep is eliminated; hasLabel becomes label_preds in EndVertexFilter.
+            assert_names_in_order(&out, &["PhysicalPlan", "VStep"]);
+            assert_contains(&out, "EndVertexFilterStep");
+        }
+
+        // ── Group 3: addV + property("id") folding ───────────────────────
+
+        #[test]
+        fn addv_property_id_folds() {
+            // Post-optimization: id was folded into the AddVStep by merge_property_into_add.
+            let steps = vec![LogicalStep::AddV(AddVStep {
+                label: "person".into(),
+                vertex_id: Some(1),
+                properties: std::collections::HashMap::new(),
+            })];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "AddVStep"]);
+            assert_contains(&out, "id=1");
+        }
+
+        #[test]
+        fn addv_property_name_then_id_folds() {
+            // Post-optimization: id and non-id property both folded into AddVStep.
+            let mut props = std::collections::HashMap::new();
+            props.insert("name".into(), Primitive::String("alice".into()));
+            let steps =
+                vec![LogicalStep::AddV(AddVStep { label: "person".into(), vertex_id: Some(1), properties: props })];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "AddVStep"]);
+            assert_names_absent(&out, &["PropertyStep"]);
+            assert_contains(&out, "id=1");
+        }
+
+        #[test]
+        fn addv_no_id_property_no_fold() {
+            let mut props = std::collections::HashMap::new();
+            props.insert("name".into(), Primitive::String("alice".into()));
+            let steps =
+                vec![LogicalStep::AddV(AddVStep { label: "person".into(), vertex_id: Some(42), properties: props })];
+            let out = explain_str(steps);
+            assert_contains(&out, "AddVStep");
+        }
+
+        // ── Group 4: addE + from/to/rank folding ─────────────────────────
+
+        #[test]
+        fn adde_from_to_merged() {
+            // Post-optimization: from/to folded into AddEStep by merge_adde_ids.
+            let steps = vec![LogicalStep::AddE(AddEStep {
+                label: "knows".into(),
+                out_v_id: Some(1),
+                in_v_id: Some(2),
+                properties: std::collections::HashMap::new(),
+                rank: None,
+            })];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "AddEStep"]);
+            assert_contains(&out, "from=Some(1)");
+            assert_contains(&out, "to=Some(2)");
+        }
+
+        #[test]
+        fn adde_from_to_rank_all_merged() {
+            // Post-optimization: from/to/rank all folded into AddEStep.
+            let steps = vec![LogicalStep::AddE(AddEStep {
+                label: "knows".into(),
+                out_v_id: Some(1),
+                in_v_id: Some(2),
+                properties: std::collections::HashMap::new(),
+                rank: Some(5),
+            })];
+            let out = explain_str(steps);
+            assert_names_in_order(&out, &["PhysicalPlan", "AddEStep"]);
+            assert_names_absent(&out, &["PropertyStep"]);
+            assert_contains(&out, "from=Some(1)");
+            assert_contains(&out, "to=Some(2)");
+            assert_contains(&out, "rank=5");
+        }
+
         // ── Group 5: branching operators ──────────────────────────────────
 
         #[test]
@@ -976,6 +1088,9 @@ mod tests {
 
         #[test]
         fn plan_with_many_steps_all_present() {
+            // degree_pushdown converts the final Out([]).Count pair to DegreeStep+SumStep.
+            // The other 9 Out([]) steps remain as InOutStep since they are not immediately
+            // followed by Count.
             let mut steps = Vec::new();
             steps.push(LogicalStep::V(VStep { ids: smallvec![1] }));
             for _ in 0..10 {
@@ -983,7 +1098,9 @@ mod tests {
             }
             steps.push(LogicalStep::Count(CountStep {}));
             let out = explain_str(steps);
-            for name in &["VStep", "InOutStep", "CountStep"] {
+            // VStep and InOutStep (from the first 9 Out steps) are still present.
+            // The last Out+Count pair becomes DegreeStep+SumStep.
+            for name in &["VStep", "InOutStep", "DegreeStep", "SumStep"] {
                 assert_contains(&out, name);
             }
         }

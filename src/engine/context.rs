@@ -32,7 +32,8 @@ use crate::{
         element::Property,
         gvalue::Primitive,
         keys::{
-            AdjacentEdgeCursor, AdjacentEdgesOptions, BatchScenario, CanonicalEdgeKey, CanonicalKey, LabelId, VertexKey,
+            AdjacentEdgeCursor, AdjacentEdgesOptions, BatchScenario, CanonicalEdgeKey, CanonicalKey, DegreeDirection,
+            LabelId, VertexKey,
         },
         prop_key::PropKey,
         Direction, EdgeKey, StoreError,
@@ -132,6 +133,11 @@ pub trait GraphCtx {
     /// Configured batch size for a given scan or query scenario.
     fn batch_size(&self, scenario: BatchScenario) -> u32;
 
+    /// O(1) read of the per-vertex degree counters stored in the `vertex_degree` CF overlay.
+    /// Returns `Ok(0)` for a missing vertex, consistent with `out([]).count()` returning 0
+    /// for a vertex with no edges.
+    fn get_degree(&mut self, key: VertexKey, direction: DegreeDirection) -> Result<u64, StoreError>;
+
     /// Handle to the shared schema registry — used by `PhysicalPlanBuilder` at build time
     /// (e.g. to check a label's single-/multi-edge mode before choosing `GetEStep`), never
     /// from inside a volcano step's `produce()`.
@@ -215,6 +221,9 @@ impl GraphCtx for NoopCtx {
     fn batch_size(&self, _scenario: BatchScenario) -> u32 {
         1000
     }
+    fn get_degree(&mut self, _key: VertexKey, _direction: DegreeDirection) -> Result<u64, StoreError> {
+        Err(StoreError::UnsupportedOperation("NoopCtx does not support get_degree".to_string()))
+    }
     fn schema(&self) -> Arc<RwLock<Schema>> {
         Arc::new(RwLock::new(Schema::new()))
     }
@@ -296,6 +305,9 @@ impl<S: GraphStore> GraphCtx for LogicalGraph<S> {
             BatchScenario::ScanEdges => self.scan_config.scan_edges_batch_size,
             BatchScenario::GetAdjacentEdges => self.scan_config.get_adjacent_edges_batch_size,
         }
+    }
+    fn get_degree(&mut self, key: VertexKey, _direction: DegreeDirection) -> Result<u64, StoreError> {
+        self.get_degree(key, _direction)
     }
     fn schema(&self) -> Arc<RwLock<Schema>> {
         Arc::clone(&self.schema)
@@ -379,6 +391,9 @@ impl<S: GraphStore> GraphCtx for LogicalSnapshot<S> {
             BatchScenario::GetAdjacentEdges => self.scan_config.get_adjacent_edges_batch_size,
         }
     }
+    fn get_degree(&mut self, key: VertexKey, direction: DegreeDirection) -> Result<u64, StoreError> {
+        self.get_degree(key, direction)
+    }
     fn schema(&self) -> Arc<RwLock<Schema>> {
         Arc::clone(&self.schema)
     }
@@ -430,6 +445,7 @@ mod tests {
 
         assert!(ctx.get_all_props(&canon).is_err());
         assert_eq!(ctx.batch_size(BatchScenario::ScanVertices), 1000);
+        assert!(ctx.get_degree(1, crate::types::DegreeDirection::Out).is_err());
         let _ = ctx.schema();
     }
 }

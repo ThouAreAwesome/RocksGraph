@@ -40,6 +40,7 @@ pub mod coalesce;
 pub mod constant;
 pub mod count;
 pub mod dedup;
+pub mod degree;
 pub mod drop;
 pub mod e;
 pub mod end_vertex_filter;

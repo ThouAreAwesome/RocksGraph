@@ -1,5 +1,16 @@
 # rocksdb 0.22 + macOS ARM: `scan_edges` pagination hang
 
+**Update 2026-07-01**: Option A was applied — `rocksdb` upgraded to **0.24.0**
+(`librocksdb-sys 0.17.3+10.4.2`, wrapping **RocksDB C++ 10.4.2**).
+`test_scan_edges_paginates_across_src_id_prefixes` ran 15 consecutive times without hanging
+on the same ARM64 / macOS machine that previously reproduced the issue.  No API breakage
+from 0.22→0.24 (verified via `cargo build --lib` clean + 694/694 tests passing).
+Also applied: `BLOCK_FORMAT_VERSION = 6` pinned in `store.rs` so future crate upgrades
+cannot silently change on-disk format behavior.  Downgrading from this point would
+invalidate any SST files written with format_version 6 (readable by RocksDB ≥ 8.6 only).
+
+---
+
 ## Problem
 
 `test_scan_edges_paginates_across_src_id_prefixes` (in `src/store/rocks/snapshot.rs:474`

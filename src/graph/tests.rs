@@ -2338,3 +2338,38 @@ fn labelonly_cache_cleared_on_commit_reuse() {
     let v = c.add_vertex(300, 1).unwrap();
     assert_eq!(c.get_vertex(v).unwrap(), Some(v));
 }
+
+#[test]
+fn test_self_loop_degree_correct() {
+    // Regression: add_edge(V→V) used two independent reads of vertex_degree[V]
+    // before either insert. The second read returned the pre-increment value,
+    // so the first insert's out_e_cnt was silently overwritten. Result: a self-loop
+    // vertex reported out_e_cnt=0 but had 1 edge in edges_out CF.
+    let (store, _dir) = open();
+    let mut c = ctx(&store);
+
+    // Add two vertices, then a self-loop on vertex 1.
+    c.add_vertex(1, 1).unwrap();
+    c.add_vertex(2, 1).unwrap();
+
+    // Self-loop: src == dst
+    let self_loop = cek(1, 10, 1); // V1 → V1
+    c.add_edge(&self_loop.out_key()).unwrap();
+
+    // Also a normal edge V1 → V2 to verify non-self-loop still works.
+    let normal = cek(1, 10, 2); // V1 → V2
+    c.add_edge(&normal.out_key()).unwrap();
+
+    c.commit().unwrap();
+
+    // After commit, verify degree via the CF.
+    let mut r = ctx(&store);
+    let (out1, in1, _) = r.vertex_degree_for_test(1).unwrap().unwrap();
+    // V1 has 2 out-edges (self-loop + normal) and 1 in-edge (self-loop back to itself).
+    assert_eq!(out1, 2, "V1 out-degree should be 2 (self-loop + normal edge)");
+    assert_eq!(in1, 1, "V1 in-degree should be 1 (self-loop)");
+
+    let (out2, in2, _) = r.vertex_degree_for_test(2).unwrap().unwrap();
+    assert_eq!(out2, 0, "V2 out-degree should be 0");
+    assert_eq!(in2, 1, "V2 in-degree should be 1 (normal edge from V1)");
+}

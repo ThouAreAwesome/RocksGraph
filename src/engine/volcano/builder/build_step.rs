@@ -48,6 +48,7 @@ use crate::engine::volcano::steps::has_label::UNRESOLVED_LABEL_ID;
 pub(super) fn primitive_data_type(val: &crate::types::gvalue::Primitive) -> DataType {
     use crate::types::gvalue::Primitive;
     match val {
+        Primitive::Null => DataType::Null,
         Primitive::Bool(_) => DataType::Bool,
         Primitive::Int32(_) => DataType::Int32,
         Primitive::Int64(_) => DataType::Int64,
@@ -56,7 +57,7 @@ pub(super) fn primitive_data_type(val: &crate::types::gvalue::Primitive) -> Data
         Primitive::Float64(_) => DataType::Float64,
         Primitive::String(_) => DataType::String,
         Primitive::Uuid(_) => DataType::Uuid,
-        Primitive::Null => DataType::String,
+        Primitive::Bytes(_) => DataType::Bytes,
     }
 }
 
@@ -236,6 +237,13 @@ impl PhysicalPlanBuilder {
             }
             LogicalStep::Count(_) => {
                 wire_required!(BufferedStep::new(steps::count::CountStep::default()), upstream, "CountStep")
+            }
+            LogicalStep::Degree(s) => {
+                wire_required!(
+                    BufferedStep::new(steps::degree::DegreeStep::new(s.direction, track_path)),
+                    upstream,
+                    "DegreeStep"
+                )
             }
             LogicalStep::HasLabel(s) => {
                 if schema.mode == SchemaMode::Strict {
@@ -744,7 +752,11 @@ impl PhysicalPlanBuilder {
             LogicalStep::Local(s) => {
                 drop(schema);
                 let physical_plan = self.build_steps(&s.plan, schema_lock, track_path)?;
-                wire_required!(BufferedStep::new(steps::local::LocalStep::new(physical_plan)), upstream, "LocalStep")
+                wire_required!(
+                    BufferedStep::new(steps::local::LocalStep::new(physical_plan, track_path)),
+                    upstream,
+                    "LocalStep"
+                )
             }
             LogicalStep::From(_) | LogicalStep::To(_) => Err(StoreError::UnsupportedOperation(
                 "From/To steps are optimizer-internal and should be eliminated before physical build.".to_string(),

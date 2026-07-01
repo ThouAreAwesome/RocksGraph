@@ -78,6 +78,7 @@ pub(crate) fn value_to_primitive(v: Value) -> Option<Primitive> {
         Value::Float64(f) => Some(Primitive::Float64(f)),
         Value::String(s) => Some(Primitive::String(SmolStr::from(s))),
         Value::Uuid(u) => Some(Primitive::Uuid(u)),
+        Value::Bytes(b) => Some(Primitive::Bytes(b)),
         _ => None,
     }
 }
@@ -94,6 +95,7 @@ pub(crate) fn primitive_to_value(p: Primitive) -> Value {
         Primitive::Float64(f) => Value::Float64(f),
         Primitive::String(s) => Value::String(s.to_string()),
         Primitive::Uuid(u) => Value::Uuid(u),
+        Primitive::Bytes(b) => Value::Bytes(b),
     }
 }
 
@@ -188,6 +190,8 @@ mod tests {
         assert_eq!(value_to_primitive(Value::Float64(1.23)), Some(Primitive::Float64(1.23)));
         assert_eq!(value_to_primitive(Value::String("hello".to_string())), Some(Primitive::String("hello".into())));
         assert_eq!(value_to_primitive(Value::Uuid(123)), Some(Primitive::Uuid(123)));
+        assert_eq!(value_to_primitive(Value::Bytes(vec![1, 2, 3])), Some(Primitive::Bytes(vec![1, 2, 3])));
+        assert_eq!(value_to_primitive(Value::Bytes(vec![])), Some(Primitive::Bytes(vec![])));
 
         // Non-scalar
         assert_eq!(value_to_primitive(Value::List(vec![])), None);
@@ -204,6 +208,8 @@ mod tests {
         assert_eq!(primitive_to_value(Primitive::Float64(1.23)), Value::Float64(1.23));
         assert_eq!(primitive_to_value(Primitive::String("hello".into())), Value::String("hello".to_string()));
         assert_eq!(primitive_to_value(Primitive::Uuid(123)), Value::Uuid(123));
+        assert_eq!(primitive_to_value(Primitive::Bytes(vec![1, 2, 3])), Value::Bytes(vec![1, 2, 3]));
+        assert_eq!(primitive_to_value(Primitive::Bytes(vec![])), Value::Bytes(vec![]));
     }
 
     #[test]

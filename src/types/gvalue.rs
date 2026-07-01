@@ -51,6 +51,7 @@ use crate::types::{
 /// A scalar value that can appear as a property value or standalone scalar.
 #[derive(Debug, Clone)]
 pub enum Primitive {
+    Null,
     Bool(bool),
     Int32(i32),
     Int64(i64),
@@ -59,13 +60,14 @@ pub enum Primitive {
     Float64(f64),
     String(SmolStr),
     Uuid(u128),
-    Null,
+    Bytes(Vec<u8>),
 }
 
 impl PartialEq for Primitive {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
+            (Self::Null, Self::Null) => true,
             (Self::Bool(a), Self::Bool(b)) => a == b,
             (Self::Int32(a), Self::Int32(b)) => a == b,
             (Self::Int64(a), Self::Int64(b)) => a == b,
@@ -74,7 +76,7 @@ impl PartialEq for Primitive {
             (Self::Float64(a), Self::Float64(b)) => a.to_bits() == b.to_bits(),
             (Self::String(a), Self::String(b)) => a == b,
             (Self::Uuid(a), Self::Uuid(b)) => a == b,
-            (Self::Null, Self::Null) => true,
+            (Self::Bytes(a), Self::Bytes(b)) => a == b,
             _ => false,
         }
     }
@@ -142,10 +144,11 @@ impl PartialOrd for Primitive {
             return self.to_f64().unwrap().partial_cmp(&other.to_f64().unwrap());
         }
         match (self, other) {
+            (Self::Null, Self::Null) => Some(std::cmp::Ordering::Equal),
             (Self::Bool(a), Self::Bool(b)) => a.partial_cmp(b),
             (Self::String(a), Self::String(b)) => a.partial_cmp(b),
             (Self::Uuid(a), Self::Uuid(b)) => a.partial_cmp(b),
-            (Self::Null, Self::Null) => Some(std::cmp::Ordering::Equal),
+            (Self::Bytes(a), Self::Bytes(b)) => a.partial_cmp(b),
             _ => None,
         }
     }
@@ -156,6 +159,7 @@ impl Hash for Primitive {
     fn hash<H: Hasher>(&self, state: &mut H) {
         std::mem::discriminant(self).hash(state);
         match self {
+            Self::Null => {}
             Self::Bool(v) => v.hash(state),
             Self::Int32(v) => v.hash(state),
             Self::Int64(v) => v.hash(state),
@@ -164,7 +168,7 @@ impl Hash for Primitive {
             Self::Float64(v) => v.to_bits().hash(state),
             Self::String(v) => v.hash(state),
             Self::Uuid(v) => v.hash(state),
-            Self::Null => {}
+            Self::Bytes(v) => v.hash(state),
         }
     }
 }

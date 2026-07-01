@@ -177,6 +177,8 @@ pub enum Value {
     Float64(f64),
     String(String),
     Uuid(u128),
+    /// Raw binary blob. Ordering is byte-lexicographic.
+    Bytes(Vec<u8>),
 
     // ── Graph elements ────────────────────────────────────────────────────────
     /// A fully materialized vertex. Produced by `.V()`, `.out()`, etc.
@@ -238,6 +240,7 @@ impl PartialOrd for Value {
             (Self::String(a), Self::String(b)) => a.partial_cmp(b),
             (Self::Uuid(a), Self::Uuid(b)) => a.partial_cmp(b),
             (Self::Null, Self::Null) => Some(std::cmp::Ordering::Equal),
+            (Self::Bytes(a), Self::Bytes(b)) => a.partial_cmp(b),
             _ => None,
         }
     }
@@ -288,6 +291,16 @@ impl From<String> for Value {
 impl From<u128> for Value {
     fn from(v: u128) -> Self {
         Value::Uuid(v)
+    }
+}
+impl From<Vec<u8>> for Value {
+    fn from(b: Vec<u8>) -> Self {
+        Value::Bytes(b)
+    }
+}
+impl From<&[u8]> for Value {
+    fn from(b: &[u8]) -> Self {
+        Value::Bytes(b.to_vec())
     }
 }
 

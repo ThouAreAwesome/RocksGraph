@@ -95,6 +95,26 @@ impl<S: GraphStore> LogicalGraph<S> {
         })
     }
 
+    /// O(1) read of the per-vertex degree counters via the in-memory overlay.
+    /// Also caches the vertex label learned for free from the degree record.
+    /// Returns `Ok(0)` for a missing vertex — consistent with `out([]).count()` returning 0.
+    pub(crate) fn get_degree(
+        &mut self,
+        key: VertexKey,
+        direction: crate::types::DegreeDirection,
+    ) -> Result<u64, StoreError> {
+        let (out_cnt, in_cnt, label_id) = match self.get_vertex_degree(key)? {
+            Some(t) => t,
+            None => return Ok(0),
+        };
+        self.cache_vertex_label(key, label_id);
+        Ok(match direction {
+            crate::types::DegreeDirection::Out => out_cnt as u64,
+            crate::types::DegreeDirection::In => in_cnt as u64,
+            crate::types::DegreeDirection::Both => out_cnt as u64 + in_cnt as u64,
+        })
+    }
+
     /// Records an element's mutation state in the query-scoped overlay.
     ///
     /// If the element was already modified in this transaction, its state is
@@ -705,18 +725,33 @@ impl<S: GraphStore> LogicalGraph<S> {
             return Err(StoreError::DuplicateEdge(cek));
         }
 
-        // Verify both endpoints exist (overlay-first via get_vertex_degree, then store).
-        let (mut src_out, src_in, src_label_id) = self.get_vertex_degree(cek.src_id)?.ok_or(StoreError::NotFound)?;
-        let (dst_out, mut dst_in, dst_label_id) = self.get_vertex_degree(cek.dst_id)?.ok_or(StoreError::NotFound)?;
-
-        src_out += 1;
-        dst_in += 1;
-
-        self.vertex_degree.insert(cek.src_id, (src_out, src_in, src_label_id));
-        self.mark_dirty(CanonicalKey::Vertex(cek.src_id), Existence::CounterOnly);
-
-        self.vertex_degree.insert(cek.dst_id, (dst_out, dst_in, dst_label_id));
-        self.mark_dirty(CanonicalKey::Vertex(cek.dst_id), Existence::CounterOnly);
+        // Verify both endpoints exist and update degree counters.
+        //
+        // Self-loop guard: when src_id == dst_id, two independent reads before
+        // either insert both return the pre-increment value, so the second insert
+        // silently overwrites the first and the out_e_cnt increment is lost.
+        // Fix: read once, increment both counters atomically, write once.
+        let (src_label_id, dst_label_id) = if cek.src_id == cek.dst_id {
+            let (mut out_cnt, mut in_cnt, label_id) =
+                self.get_vertex_degree(cek.src_id)?.ok_or(StoreError::NotFound)?;
+            out_cnt += 1;
+            in_cnt += 1;
+            self.vertex_degree.insert(cek.src_id, (out_cnt, in_cnt, label_id));
+            self.mark_dirty(CanonicalKey::Vertex(cek.src_id), Existence::CounterOnly);
+            (label_id, label_id)
+        } else {
+            let (mut src_out, src_in, src_label_id) =
+                self.get_vertex_degree(cek.src_id)?.ok_or(StoreError::NotFound)?;
+            let (dst_out, mut dst_in, dst_label_id) =
+                self.get_vertex_degree(cek.dst_id)?.ok_or(StoreError::NotFound)?;
+            src_out += 1;
+            dst_in += 1;
+            self.vertex_degree.insert(cek.src_id, (src_out, src_in, src_label_id));
+            self.mark_dirty(CanonicalKey::Vertex(cek.src_id), Existence::CounterOnly);
+            self.vertex_degree.insert(cek.dst_id, (dst_out, dst_in, dst_label_id));
+            self.mark_dirty(CanonicalKey::Vertex(cek.dst_id), Existence::CounterOnly);
+            (src_label_id, dst_label_id)
+        };
 
         // 2. insert new edge into overlay and mark dirty.  The store is not touched until commit.
         self.edges.insert(

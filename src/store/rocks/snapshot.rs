@@ -40,8 +40,8 @@ use crate::{
     store::{
         rocks::encoding::{
             build_lazy_edge, build_lazy_vertex, decode_edge_key, decode_vertex_key, edge_scan_prefix, encode_edge_key,
-            encode_vertex_key, prefix_upper_bound, EdgeValue, VertexValue, CF_EDGES_IN, CF_EDGES_OUT, CF_VERTICES,
-            EDGE_KEY_SIZE,
+            encode_vertex_key, prefix_upper_bound, EdgeValue, VertexDegree, VertexValue, CF_EDGES_IN, CF_EDGES_OUT,
+            CF_VERTEX_DEGREE, CF_VERTICES, EDGE_KEY_SIZE,
         },
         traits::GraphSnapshot,
     },
@@ -363,6 +363,19 @@ impl GraphSnapshot for Snapshot {
         let next_cursor = if result.len() >= limit as usize { result.last().map(|e| e.canonical_key()) } else { None };
 
         Ok((result, next_cursor))
+    }
+
+    fn get_vertex_degree(&mut self, key: VertexKey) -> Result<Option<(u32, u32, LabelId)>, StoreError> {
+        let cf_degree = self.db.cf_handle(CF_VERTEX_DEGREE).ok_or(StoreError::MissingColumnFamily("vertex_degree"))?;
+        let raw =
+            self.db.get_cf_opt(&cf_degree, encode_vertex_key(key), &self.read_opts()).map_err(StoreError::RocksDb)?;
+        match raw {
+            Some(bytes) => {
+                let vd = VertexDegree::decode(&bytes).ok_or(StoreError::CorruptData("vertex degree"))?;
+                Ok(Some((vd.out_e_cnt, vd.in_e_cnt, vd.vertex_label_id)))
+            }
+            None => Ok(None),
+        }
     }
 }
 

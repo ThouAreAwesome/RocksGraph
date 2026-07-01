@@ -210,6 +210,13 @@ impl GraphCtx for PropTestCtx {
     fn batch_size(&self, _s: crate::types::BatchScenario) -> u32 {
         1
     }
+    fn get_degree(
+        &mut self,
+        _key: crate::types::VertexKey,
+        _direction: crate::types::DegreeDirection,
+    ) -> Result<u64, StoreError> {
+        Ok(0)
+    }
     fn schema(&self) -> Arc<std::sync::RwLock<Schema>> {
         self.schema.clone()
     }
