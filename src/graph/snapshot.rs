@@ -261,12 +261,12 @@ impl<S: GraphStore> LogicalSnapshot<S> {
                     if prop_key_id != ID_KEY_ID && prop_key_id != LABEL_KEY_ID {
                         self.ensure_vertex_props_loaded(vk)?;
                     }
-                    Ok(self.vertices.get_mut(&vk).unwrap().get_property(prop_key_id))
+                    Ok(self.vertices.get(&vk).unwrap().get_property(prop_key_id))
                 } else {
                     Ok(None)
                 }
             }
-            CanonicalKey::Edge(ek) => Ok(self.edges.get_mut(&ek).and_then(|eg| eg.get_property(prop_key_id))),
+            CanonicalKey::Edge(ek) => Ok(self.edges.get(&ek).and_then(|eg| eg.get_property(prop_key_id))),
             CanonicalKey::Empty => Err(StoreError::TraversalError("Property owner cannot be empty".to_string())),
         }
     }
@@ -278,12 +278,12 @@ impl<S: GraphStore> LogicalSnapshot<S> {
                     if prop_key_id != ID_KEY_ID && prop_key_id != LABEL_KEY_ID {
                         self.ensure_vertex_props_loaded(vk)?;
                     }
-                    Ok(self.vertices.get_mut(&vk).unwrap().get_value(prop_key_id))
+                    Ok(self.vertices.get(&vk).unwrap().get_value(prop_key_id))
                 } else {
                     Ok(None)
                 }
             }
-            CanonicalKey::Edge(ek) => Ok(self.edges.get_mut(&ek).and_then(|eg| eg.get_value(prop_key_id))),
+            CanonicalKey::Edge(ek) => Ok(self.edges.get(&ek).and_then(|eg| eg.get_value(prop_key_id))),
             CanonicalKey::Empty => {
                 Err(StoreError::UnexpectedDataType("expected Vertex or Edge for get property value".to_string()))
             }
@@ -305,14 +305,14 @@ impl<S: GraphStore> LogicalSnapshot<S> {
                 let label_id = vt.label_id;
                 let schema = self.schema.read().unwrap();
                 let props = vt
-                    .all_props()
+                    .props()
                     .iter()
-                    .map(|p| {
+                    .map(|(&k, v)| {
                         let name = schema
-                            .prop_key_str(p.key)
+                            .prop_key_str(k)
                             .cloned()
-                            .unwrap_or_else(|| smol_str::SmolStr::from(format!("__key_{}", p.key)));
-                        (name, p.value.clone())
+                            .unwrap_or_else(|| smol_str::SmolStr::from(format!("__key_{}", k)));
+                        (name, v.clone())
                     })
                     .collect();
                 Ok(Some((label_id, props)))
@@ -325,14 +325,14 @@ impl<S: GraphStore> LogicalSnapshot<S> {
                 let label_id = eg.label_id;
                 let schema = self.schema.read().unwrap();
                 let props = eg
-                    .all_props()
+                    .props()
                     .iter()
-                    .map(|p| {
+                    .map(|(&k, v)| {
                         let name = schema
-                            .prop_key_str(p.key)
+                            .prop_key_str(k)
                             .cloned()
-                            .unwrap_or_else(|| smol_str::SmolStr::from(format!("__key_{}", p.key)));
-                        (name, p.value.clone())
+                            .unwrap_or_else(|| smol_str::SmolStr::from(format!("__key_{}", k)));
+                        (name, v.clone())
                     })
                     .collect();
                 Ok(Some((label_id, props)))

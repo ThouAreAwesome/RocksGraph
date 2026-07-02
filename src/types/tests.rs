@@ -21,30 +21,15 @@ mod type_tests {
         keys::{CanonicalEdgeKey, CanonicalKey},
     };
 
-    fn mock_decoder(blob: &[u8], owner: CanonicalKey) -> Option<Vec<Property>> {
-        let val = if !blob.is_empty() && blob[0] == 42 { Primitive::Int32(42) } else { Primitive::Null };
-        Some(vec![Property { owner, key: 10, value: val }])
-    }
-
     #[test]
     fn test_vertex_equality_ignores_properties() {
-        let v1 = Vertex::with_props(
-            1,
-            2,
-            vec![Property { owner: CanonicalKey::Vertex(1), key: 10, value: Primitive::Int32(42) }],
-        );
+        let v1 = Vertex::with_props(1, 2, [(10u16, Primitive::Int32(42))].into());
+        let v2 = Vertex::with_props(1, 2, [(10u16, Primitive::String("different".into()))].into());
+        // v3: blob state
+        let blob = crate::types::prop_codec::encode_props(&[(10u16, Primitive::Int32(42))].into());
+        let v3 = Vertex::from_raw(1, 2, blob.into_boxed_slice());
 
-        let v2 = Vertex::with_props(
-            1,
-            2,
-            vec![Property { owner: CanonicalKey::Vertex(1), key: 10, value: Primitive::String("different".into()) }],
-        );
-
-        let v3 = Vertex::from_raw(1, 2, vec![42].into_boxed_slice(), mock_decoder);
-
-        // Equality is identity-only by design (see `PartialEq for Vertex` doc comment): v1/v2
-        // share an id+label_id but disagree on the "key 10" property's value, and v3 carries no
-        // decoded properties at all. All three must still compare equal.
+        // Equality is identity-only (see `PartialEq for Vertex`): id+label_id only.
         assert_eq!(v1, v2);
         assert_eq!(v1, v3);
         assert_eq!(v2, v3);
@@ -53,31 +38,14 @@ mod type_tests {
     #[test]
     fn test_edge_equality_ignores_properties() {
         let cek = CanonicalEdgeKey { src_id: 1, label_id: 2, dst_id: 3, rank: 0 };
-        let e1 = Edge::with_props(
-            1,
-            2,
-            3,
-            0,
-            vec![Property { owner: CanonicalKey::Edge(cek), key: 10, value: Primitive::Int32(42) }],
-            None,
-            None,
-        );
+        let e1 = Edge::with_props(1, 2, 3, 0, [(10u16, Primitive::Int32(42))].into(), None, None);
+        let e2 = Edge::with_props(1, 2, 3, 0, [(10u16, Primitive::String("different".into()))].into(), None, None);
+        let _ = cek; // keep cek in scope for documentation
+                     // e3: blob state
+        let blob = crate::types::prop_codec::encode_props(&[(10u16, Primitive::Int32(42))].into());
+        let e3 = Edge::from_raw(1, 2, 3, 0, blob.into_boxed_slice(), None, None);
 
-        let e2 = Edge::with_props(
-            1,
-            2,
-            3,
-            0,
-            vec![Property { owner: CanonicalKey::Edge(cek), key: 10, value: Primitive::String("different".into()) }],
-            None,
-            None,
-        );
-
-        let e3 = Edge::from_raw(1, 2, 3, 0, vec![42].into_boxed_slice(), mock_decoder, None, None);
-
-        // Equality is identity-only by design (see `PartialEq for Edge` doc comment): e1/e2
-        // share the full identity tuple but disagree on the "key 10" property's value, and e3
-        // carries no decoded properties at all. All three must still compare equal.
+        // Equality is identity-only (see `PartialEq for Edge`): src+label+rank+dst only.
         assert_eq!(e1, e2);
         assert_eq!(e1, e3);
         assert_eq!(e2, e3);

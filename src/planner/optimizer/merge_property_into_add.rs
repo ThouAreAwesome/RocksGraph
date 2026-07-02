@@ -51,9 +51,7 @@ pub fn merge_property_into_add(plan: &mut LogicalPlan) -> Result<bool, StoreErro
         }
 
         let action = match (&plan.steps[i], &plan.steps[j]) {
-            (LogicalStep::AddV(_), LogicalStep::Property(PropertyStep { prop_key, prop_value }))
-                if ID == *prop_key  =>
-            {
+            (LogicalStep::AddV(_), LogicalStep::Property(PropertyStep { prop_key, prop_value })) if ID == *prop_key => {
                 let id = match prop_value {
                     Primitive::Int32(v) => *v as i64,
                     Primitive::Int64(v) => *v,
@@ -62,7 +60,7 @@ pub fn merge_property_into_add(plan: &mut LogicalPlan) -> Result<bool, StoreErro
                 Some(Action::Id(id))
             }
             (LogicalStep::AddE(_), LogicalStep::Property(PropertyStep { prop_key, prop_value }))
-                if  RANK == *prop_key =>
+                if RANK == *prop_key =>
             {
                 Some(Action::Rank(primitive_to_rank(prop_value)?))
             }
@@ -151,10 +149,7 @@ mod tests {
     use smol_str::SmolStr;
 
     /// Linear search in the SmallVec properties list.
-    fn find_prop<'a>(
-        props: &'a [(SmolStr, Primitive)],
-        key: &str,
-    ) -> Option<&'a Primitive> {
+    fn find_prop<'a>(props: &'a [(SmolStr, Primitive)], key: &str) -> Option<&'a Primitive> {
         props.iter().find(|(k, _)| k.as_str() == key).map(|(_, v)| v)
     }
 

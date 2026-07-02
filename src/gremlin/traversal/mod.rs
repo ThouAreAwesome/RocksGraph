@@ -58,7 +58,6 @@
 //! If `GraphTraversal` appears in a compiler error, it's the hidden type behind
 //! `__()` — the same way the compiler prints `[closure@…]` for anonymous functions.
 
-
 use smol_str::SmolStr;
 
 use crate::{

@@ -55,7 +55,7 @@ back-off.
 
 | Query | Mutations/s | Total | p50 (μs) | p90 (μs) | p95 (μs) | p99 (μs) | max (μs) |
 |-------|------------:|------:|--------:|--------:|--------:|--------:|---------:|
-| Upsert (2V + 1E) | 69,444 | 1,000,000 | 41.087 | 47.391 | 50.335 | 91.967 | 31,916.0 |
+| Upsert (2V + 1E) | 90,909 | 1,000,000 | 33.2 | 37.9 | 39.5 | 46.3 | 7,156 |
 
 ---
 
@@ -83,47 +83,39 @@ chunk (snapshot pinned at session creation). Caches are cleared between queries 
 
 | Query | Ops/s | Queries | Duration | p50 (μs) | p90 (μs) | p95 (μs) | p99 (μs) | max (μs) |
 |-------|------:|-------:|--------:|--------:|--------:|--------:|--------:|--------:|
-| Q1 | 839,962 | 1,000,000 | 1.19 s | 3.42 | 3.75 | 3.88 | 5.88 | 265.7 |
-| Q2 | 351,225 | 1,000,000 | 2.85 s | 7.34 | 8.63 | 10.17 | 19.55 | 78,774 |
-| Q3 | 290,995 | 1,000,000 | 3.44 s | 9.26 | 12.50 | 14.22 | 19.47 | 1,938 |
-| Q4 | 188,644 | 1,000,000 | 5.30 s | 12.54 | 23.17 | 29.42 | 50.72 | 3,154 |
-| Q5 | 138,423 | 1,000,000 | 7.22 s | 14.26 | 36.06 | 51.39 | 90.56 | 3,656 |
-| Q6 | 125,755 | 1,000,000 | 7.95 s | 15.50 | 39.78 | 56.93 | 101.50 | 20,185 |
-| Q7 | 3.37 | 5 | 1.48 s | 240,124 | 300,941 | 300,941 | 300,941 | 300,941 |
-| Q8 | 2.64 | 5 | 1.89 s | 313,000 | 416,023 | 416,023 | 416,023 | 416,023 |
+| Q1 | 871,114 | 1,000,000 | 1.15 s | 3.38 | 3.75 | 3.96 | 6.04 | 262.7 |
+| Q2 | 379,669 | 1,000,000 | 2.63 s | 7.25 | 7.92 | 8.46 | 14.42 | 1,159 |
+| Q3 | 295,365 | 1,000,000 | 3.39 s | 9.22 | 12.26 | 13.80 | 19.14 | 373.5 |
+| Q4 | 194,232 | 1,000,000 | 5.15 s | 12.71 | 22.88 | 28.80 | 47.97 | 792.1 |
+| Q5 | 137,899 | 1,000,000 | 7.25 s | 14.38 | 36.35 | 51.94 | 91.01 | 2,103 |
+| Q6 | 129,741 | 1,000,000 | 7.71 s | 15.34 | 38.88 | 55.68 | 98.37 | 27,083 |
+| Q7 | 3.63 | 5 | 1.38 s | 228,983 | 301,203 | 301,203 | 301,203 | 301,203 |
+| Q8 | 2.76 | 5 | 1.81 s | 311,427 | 439,353 | 439,353 | 439,353 | 439,353 |
 
 #### RocksDB storage profile (`--features rocksdb-stats`)
 
 | Metric | Value | Interpretation |
 |--------|------:|----------------|
 | Block cache capacity | 256 MB | Shared across all 4 data CFs |
-| Data block hit rate | 99.8% | Working set fits in cache |
-| Bloom filter skip rate | 48.0% (10,021,629 useful / 20,852,266 total) | Half of point lookups skip disk reads entirely |
-| Bloom false-positive rate | <0.1% (96,119 / 10,853,266) | Filter accuracy is excellent |
-| L0 files per CF | 1 each (~25–28 MB) | Data is uncompacted; all records are in a single L0 SST file per CF |
-| SST file read P50 | < 1 µs (vertices, edges_out) | Reads served from OS page cache or block cache |
+| Data block hit rate | 99.7% (23,756,373 hits / 68,785 misses) | Working set fits in block cache |
+| Bloom filter skip rate | 8.3% (972,034 useful / 10,763,484 full positive) | Low skip — dense working set; bloom filter checks are always true-positive |
+| Bloom false-positive rate | <0.09% (9,612 / 10,763,484) | Filter accuracy is excellent |
+| L0 files per CF | 1 each (~25–28 MB) | Data is uncompacted; all records in a single L0 SST file per CF |
+| SST file read P50 | < 1 µs (vertices, edges_out, edges_in) | Reads served from OS page cache or block cache |
 | Compaction | 0 bytes written | No compaction has run since data was loaded |
 
 #### Notes
 
-- **Q1 p50 at 3.9 µs**: sub-4 µs for a full vertex point-lookup + two-property decode is
-  essentially in-memory speed — the 256 MB block cache and OS page cache together hold the
-  entire 1 M vertex working set.
-- **Q2 max at 39 ms**: the `GetEStep` point-lookup is fast for most edges, but a small
-  number of (src, label, dst) combinations touch cold SST blocks and incur a full disk
-  read. The `edges_in` CF file read latency histogram shows one outlier at ~39 ms
-  (matching the Q2 max), confirming this is a cold-block event, not a systemic issue.
-- **Q5–Q6 max at 20–22 ms**: the LiveJournal graph follows a power-law degree distribution.
-  A small fraction of hub vertices have thousands of out-edges; traversing two hops from
-  them touches proportionally more data blocks. This is an intrinsic property of the
-  dataset.
-- **Q7/Q8 full scans at 274–360 ms**: each CF has exactly one uncompacted L0 file.
-  Full scans read the entire file sequentially; the latency reflects raw sequential I/O
-  bandwidth rather than random-access overhead. Running a force compaction after bulk load
-  would merge flushes and improve scan locality. Run `scripts/bench_integrity.sh` before
-  compacting to confirm degree-counter correctness.
-- **Bloom filter skip rate (8.3%)**: lower than typical because the 1 M vertex/edge
-  working set fits almost entirely in a single L0 SST file per CF, meaning nearly every
-  bloom-filter-positive check finds the key (true positive). Skip rate will improve
-  significantly as the dataset grows beyond the block cache and requires multi-level
+- **Q1 p50 at 3.4 µs**: sub-4 µs for a full vertex point-lookup plus two-property decode.  The v2
+  offset-index blob format and `PropertyMap` enable O(log P) single-key lookups without full
+  property materialization.
+- **Write throughput at 90.9 K/s**: upsert-heavy workload (3 OCC operations per edge: 2 vertex
+  coalesce + 1 edge write).  p50 latency at 33 µs is bounded by RocksDB write + OCC validation.
+- **Q5–Q6 max at 2–27 ms**: the LiveJournal graph follows a power-law degree distribution.
+  Hub vertices with thousands of out-edges cause multi-hop traversals to touch proportionally
+  more data blocks.  Q6 max at 27 ms is a single outlier (one hub with an extremely high
+  out-degree).
+- **Bloom filter skip rate (8.3%)**: the 1 M working set fits in a single L0 SST file per CF.
+  Most point-lookup keys are present (true-positive bloom), so useful bloom skips are low.
+  Skip rate will improve as the dataset grows beyond the block cache and requires multi-level
   compaction.

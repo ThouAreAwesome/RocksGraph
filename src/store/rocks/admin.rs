@@ -21,15 +21,10 @@
 //! OCC conflict detection; use `LogicalGraph` for all write paths that
 //! require conflict safety.
 //!
-//! # Property codec
-//!
-//! Format: `count:u16 | (key_id:u16 | tag:u8 | value_bytes)*`
-//!
-//! `key_id` is the interned [`Schema`](crate::schema::Schema) property-key id, not the
-//! raw string name — the schema dictionary maps it back to a name on read.
-//!
-//! Tags: `0`=Bool(1B) `1`=Int32(4B) `2`=Int64(8B) `3`=Float32(4B)
-//!       `4`=Float64(8B) `5`=String(len:u16 + UTF-8) `6`=Uuid(16B) `7`=Null(0B)
+//! Property values are encoded using the v2 offset-index blob format defined in
+//! [`crate::types::prop_codec`]. Property key IDs are interned via the
+//! [`Schema`](crate::schema::Schema) registry — the schema maps them back to
+//! human-readable names on read.
 
 use std::collections::HashSet;
 
@@ -38,14 +33,37 @@ use rocksdb::{Direction as ScanDir, IteratorMode, ReadOptions, WriteBatchWithTra
 use crate::{
     store::rocks::{
         encoding::{
-            build_full_edge, build_full_vertex, decode_edge_key, edge_scan_prefix, encode_edge_key, encode_props,
-            encode_vertex_key, prefix_upper_bound, EdgeValue, VertexDegree, VertexValue, CF_EDGES_IN, CF_EDGES_OUT,
-            CF_VERTEX_DEGREE, CF_VERTICES,
+            decode_edge_key, edge_scan_prefix, encode_edge_key, encode_vertex_key, prefix_upper_bound, EdgeValue,
+            VertexDegree, VertexValue, CF_EDGES_IN, CF_EDGES_OUT, CF_VERTEX_DEGREE, CF_VERTICES,
         },
         store::RocksStorage,
     },
-    types::{CanonicalEdgeKey, Direction, Edge, EdgeKey, LabelId, StoreError, Vertex, VertexKey},
+    types::{
+        prop_codec::{decode_all_to_map, encode_props},
+        CanonicalEdgeKey, Direction, Edge, EdgeKey, LabelId, StoreError, Vertex, VertexKey,
+    },
 };
+
+fn build_full_vertex(id: VertexKey, vv: &VertexValue) -> Vertex {
+    Vertex::with_props(id, vv.label_id, decode_all_to_map(&vv.property_blob))
+}
+
+fn build_full_edge(ek: &EdgeKey, ev: &EdgeValue) -> Edge {
+    let cek = ek.canonical_edge_key();
+    let (src_label, dst_label) = match ek.direction {
+        Direction::OUT => (None, Some(ev.end_vertex_label)),
+        Direction::IN => (Some(ev.end_vertex_label), None),
+    };
+    Edge::with_props(
+        cek.src_id,
+        cek.label_id,
+        cek.dst_id,
+        cek.rank,
+        decode_all_to_map(&ev.property_blob),
+        src_label,
+        dst_label,
+    )
+}
 
 #[allow(dead_code)]
 type EdgeKeyDecoder = fn(&[u8]) -> Option<CanonicalEdgeKey>;
@@ -63,7 +81,7 @@ impl RocksStorage {
         match vv_raw {
             Some(vv_bytes) => {
                 let vv = VertexValue::decode(&vv_bytes).ok_or(StoreError::CorruptData("vertex value"))?;
-                Ok(Some(build_full_vertex(key, &vv)?))
+                Ok(Some(build_full_vertex(key, &vv)))
             }
             _ => Ok(None),
         }
@@ -76,7 +94,7 @@ impl RocksStorage {
             let vv_raw = self.db.get_cf(&cf_vertices, encode_vertex_key(key)).map_err(StoreError::RocksDb)?;
             if let Some(vv_bytes) = vv_raw {
                 let vv = VertexValue::decode(&vv_bytes).ok_or(StoreError::CorruptData("vertex value"))?;
-                result.push(build_full_vertex(key, &vv)?);
+                result.push(build_full_vertex(key, &vv));
             }
         }
         Ok(result)
@@ -93,7 +111,7 @@ impl RocksStorage {
             None => Ok(None),
             Some(raw) => {
                 let ev = EdgeValue::decode(&raw).ok_or(StoreError::CorruptData("edge value"))?;
-                Ok(Some(build_full_edge(key, &ev)?))
+                Ok(Some(build_full_edge(key, &ev)))
             }
         }
     }
@@ -135,7 +153,7 @@ impl RocksStorage {
                 }
             }
             let ev = EdgeValue::decode(&val_bytes).ok_or(StoreError::CorruptData("edge value"))?;
-            result.push(build_full_edge(&ek, &ev)?);
+            result.push(build_full_edge(&ek, &ev));
             if let Some(max) = limit {
                 if result.len() >= max as usize {
                     break;
@@ -155,7 +173,7 @@ impl RocksStorage {
         let cf_degree = self.db.cf_handle(CF_VERTEX_DEGREE).ok_or(StoreError::MissingColumnFamily("vertex_degree"))?;
         let mut batch = WriteBatchWithTransaction::<true>::default();
         for vv in vertices {
-            let val = VertexValue { label_id: vv.label_id, property_blob: encode_props(vv.all_props()) };
+            let val = VertexValue { label_id: vv.label_id, property_blob: encode_props(vv.props()) };
             let degree = VertexDegree { vertex_label_id: vv.label_id, out_e_cnt: 0, in_e_cnt: 0 };
             batch.put_cf(&cf_vertices, encode_vertex_key(vv.id), val.encode());
             batch.put_cf(&cf_degree, encode_vertex_key(vv.id), degree.encode());
@@ -175,7 +193,7 @@ impl RocksStorage {
                 Direction::OUT => encode_edge_key(&ev.edge_key_out()),
                 Direction::IN => encode_edge_key(&ev.edge_key_in()),
             };
-            let bytes = EdgeValue { end_vertex_label: 0, property_blob: encode_props(ev.all_props()) }.encode();
+            let bytes = EdgeValue { end_vertex_label: 0, property_blob: encode_props(ev.props()) }.encode();
             batch.put_cf(&cf, key_bytes, &bytes);
         }
         self.db.write(batch).map_err(StoreError::RocksDb)
@@ -215,9 +233,9 @@ mod tests {
     use crate::{
         store::rocks::store::RocksStorage,
         types::{
-            element::{Edge, Property, Vertex},
+            element::{Edge, Vertex},
             gvalue::Primitive,
-            CanonicalEdgeKey, CanonicalKey, Direction,
+            CanonicalEdgeKey, Direction,
         },
     };
 
@@ -228,21 +246,11 @@ mod tests {
     }
 
     fn make_vertex(id: i64, label_id: LabelId, props: Vec<(u16, Primitive)>) -> Vertex {
-        let owner = CanonicalKey::Vertex(id);
-        Vertex::with_props(id, label_id, props.into_iter().map(|(k, v)| Property { owner, key: k, value: v }).collect())
+        Vertex::with_props(id, label_id, props.into_iter().collect())
     }
 
     fn make_edge(cek: CanonicalEdgeKey, props: Vec<(u16, Primitive)>) -> Edge {
-        let owner = CanonicalKey::Edge(cek);
-        Edge::with_props(
-            cek.src_id,
-            cek.label_id,
-            cek.dst_id,
-            cek.rank,
-            props.into_iter().map(|(k, v)| Property { owner, key: k, value: v }).collect(),
-            None,
-            None,
-        )
+        Edge::with_props(cek.src_id, cek.label_id, cek.dst_id, cek.rank, props.into_iter().collect(), None, None)
     }
 
     fn cek(src: i64, label: LabelId, dst: i64) -> CanonicalEdgeKey {
@@ -257,11 +265,9 @@ mod tests {
         let mut fv = store.get_vertex(1).unwrap().unwrap();
         assert_eq!(fv.id, 1);
         assert_eq!(fv.label_id, 3);
-        assert_eq!(fv.all_props().len(), 2);
-        assert_eq!(fv.all_props()[0].key, 1u16);
-        assert_eq!(fv.all_props()[0].value, Primitive::String(SmolStr::new("Alice")));
-        assert_eq!(fv.all_props()[0].owner, CanonicalKey::Vertex(1));
-        assert_eq!(fv.all_props()[1].value, Primitive::Int32(30));
+        assert_eq!(fv.props().len(), 2);
+        assert_eq!(fv.props().get(&1u16), Some(&Primitive::String(SmolStr::new("Alice"))));
+        assert_eq!(fv.props().get(&2u16), Some(&Primitive::Int32(30)));
     }
 
     #[test]
@@ -276,7 +282,7 @@ mod tests {
         store.insert_vertices(&mut [make_vertex(42, 1, vec![])]).unwrap();
         let mut fv = store.get_vertex(42).unwrap().unwrap();
         assert_eq!(fv.label_id, 1);
-        assert!(fv.all_props().is_empty());
+        assert!(fv.props().is_empty());
     }
 
     #[test]
@@ -286,7 +292,7 @@ mod tests {
         store.insert_vertices(&mut [make_vertex(1, 2, vec![(2u16, Primitive::Int32(99))])]).unwrap();
         let mut fv = store.get_vertex(1).unwrap().unwrap();
         assert_eq!(fv.label_id, 2);
-        assert_eq!(fv.all_props()[0].value, Primitive::Int32(99));
+        assert_eq!(fv.props().get(&2u16), Some(&Primitive::Int32(99)));
     }
 
     #[test]
@@ -328,8 +334,8 @@ mod tests {
         assert_eq!(fe.src_id, 1);
         assert_eq!(fe.dst_id, 2);
         assert_eq!(fe.label_id, 5);
-        assert_eq!(fe.all_props()[0].value, Primitive::Float64(1.5));
-        assert_eq!(fe.all_props()[0].owner, CanonicalKey::Edge(k));
+        assert_eq!(fe.props().get(&1u16), Some(&Primitive::Float64(1.5)));
+        // owner is implicit (the edge key k), not stored in the map
     }
 
     #[test]

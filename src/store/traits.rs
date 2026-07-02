@@ -41,8 +41,10 @@
 //! it only touches `LogicalGraph`. Backend details (RocksDB CFs, OCC, encoding)
 //! never cross the `GraphTransaction` boundary.
 
+use std::collections::HashMap;
+
 use crate::types::{
-    element::Property, AdjacentEdgeCursor, AdjacentEdgesOptions, CanonicalEdgeKey, Direction, Edge, EdgeKey, LabelId,
+    gvalue::Primitive, AdjacentEdgeCursor, AdjacentEdgesOptions, CanonicalEdgeKey, Direction, Edge, EdgeKey, LabelId,
     StoreError, Vertex, VertexKey,
 };
 
@@ -203,8 +205,13 @@ pub trait GraphTransaction {
 
     // ── Writes ────────────────────────────────────────────────────────────────
 
-    /// Upsert a vertex record with explicit key, label, and full property list.
-    fn put_vertex(&mut self, key: VertexKey, label_id: LabelId, props: &[Property]) -> Result<(), StoreError>;
+    /// Upsert a vertex record with explicit key, label, and property map.
+    fn put_vertex(
+        &mut self,
+        key: VertexKey,
+        label_id: LabelId,
+        props: &HashMap<u16, Primitive>,
+    ) -> Result<(), StoreError>;
     /// Upsert the vertex degree record (label, out-degree, and in-degree).
     fn put_vertex_degree(
         &mut self,
@@ -216,7 +223,12 @@ pub trait GraphTransaction {
     /// Upsert a single edge record in the specified physical direction index.
     /// `end_vertex_label` is the label of the vertex at the *other* end of the
     /// physical row — `dst_label` for `edges_out`, `src_label` for `edges_in`.
-    fn put_edge(&mut self, key: &EdgeKey, end_vertex_label: LabelId, props: &[Property]) -> Result<(), StoreError>;
+    fn put_edge(
+        &mut self,
+        key: &EdgeKey,
+        end_vertex_label: LabelId,
+        props: &HashMap<u16, Primitive>,
+    ) -> Result<(), StoreError>;
     /// Delete a vertex metadata record.
     fn delete_vertex(&mut self, key: VertexKey) -> Result<(), StoreError>;
     /// Delete the vertex degree record.
@@ -277,7 +289,7 @@ mod tests {
                 return Err(StoreError::TraversalError("test vertex error".to_string()));
             }
             if key == 1 {
-                Ok(Some(Vertex::with_props(1, 2, vec![])))
+                Ok(Some(Vertex::new(1, 2)))
             } else {
                 Ok(None)
             }
@@ -287,7 +299,7 @@ mod tests {
                 return Err(StoreError::TraversalError("test edge error".to_string()));
             }
             if key.primary_id == 1 {
-                Ok(Some(Edge::with_props(1, 2, 3, 0, vec![], None, None)))
+                Ok(Some(Edge::new(1, 2, 3, 0, None, None)))
             } else {
                 Ok(None)
             }
@@ -329,7 +341,7 @@ mod tests {
                 return Err(StoreError::TraversalError("test vertex error".to_string()));
             }
             if key == 1 {
-                Ok(Some(Vertex::with_props(1, 2, vec![])))
+                Ok(Some(Vertex::new(1, 2)))
             } else {
                 Ok(None)
             }
@@ -342,7 +354,7 @@ mod tests {
                 return Err(StoreError::TraversalError("test edge error".to_string()));
             }
             if key.primary_id == 1 {
-                Ok(Some(Edge::with_props(1, 2, 3, 0, vec![], None, None)))
+                Ok(Some(Edge::new(1, 2, 3, 0, None, None)))
             } else {
                 Ok(None)
             }
@@ -372,7 +384,12 @@ mod tests {
         ) -> Result<(Vec<Edge>, Option<CanonicalEdgeKey>), StoreError> {
             Err(StoreError::UnsupportedOperation("MockTxn does not support scan_edges".to_string()))
         }
-        fn put_vertex(&mut self, _key: VertexKey, _label_id: LabelId, _props: &[Property]) -> Result<(), StoreError> {
+        fn put_vertex(
+            &mut self,
+            _key: VertexKey,
+            _label_id: LabelId,
+            _props: &HashMap<u16, Primitive>,
+        ) -> Result<(), StoreError> {
             Ok(())
         }
         fn put_vertex_degree(
@@ -388,7 +405,7 @@ mod tests {
             &mut self,
             _key: &EdgeKey,
             _end_vertex_label: LabelId,
-            _props: &[Property],
+            _props: &HashMap<u16, Primitive>,
         ) -> Result<(), StoreError> {
             Ok(())
         }
@@ -481,9 +498,9 @@ mod tests {
             )
             .is_ok());
         assert!(txn.get_vertex_degree(1).is_ok());
-        assert!(txn.put_vertex(1, 1, &[]).is_ok());
+        assert!(txn.put_vertex(1, 1, &HashMap::new()).is_ok());
         assert!(txn.put_vertex_degree(1, 0, 0, 0).is_ok());
-        assert!(txn.put_edge(&ek1, 0, &[]).is_ok());
+        assert!(txn.put_edge(&ek1, 0, &HashMap::new()).is_ok());
         assert!(txn.delete_vertex(1).is_ok());
         assert!(txn.delete_vertex_degree(1).is_ok());
         assert!(txn.delete_edge(&ek1).is_ok());

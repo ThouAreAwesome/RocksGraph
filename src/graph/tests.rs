@@ -670,8 +670,8 @@ fn commit_persists_vertex_to_store() {
 
     let mut fv = store.get_vertex(id).unwrap().unwrap();
     assert_eq!(fv.label_id, 7);
-    assert_eq!(fv.all_props().len(), 1);
-    assert_eq!(fv.all_props()[0].value, Primitive::String(SmolStr::new("Alice")));
+    assert_eq!(fv.props().len(), 1);
+    assert_eq!(fv.props().get(&5u16), Some(&Primitive::String(SmolStr::new("Alice"))));
 }
 
 #[test]
@@ -696,8 +696,8 @@ fn commit_persists_edge_to_store() {
     let mut edges = store.get_edges(v1, Direction::OUT, None, None, None).unwrap();
     assert_eq!(edges.len(), 1);
     let e = &mut edges[0];
-    assert_eq!(e.all_props().len(), 1);
-    assert_eq!(e.all_props()[0].value, Primitive::Int32(99));
+    assert_eq!(e.props().len(), 1);
+    assert_eq!(e.props().get(&11u16), Some(&Primitive::Int32(99)));
 }
 
 #[test]
@@ -2372,4 +2372,126 @@ fn test_self_loop_degree_correct() {
     let (out2, in2, _) = r.vertex_degree_for_test(2).unwrap().unwrap();
     assert_eq!(out2, 0, "V2 out-degree should be 0");
     assert_eq!(in2, 1, "V2 in-degree should be 1 (normal edge from V1)");
+}
+
+// ── Gap coverage: G16-G21 (Blob-state mutation and commit invariants) ─────────
+
+#[test]
+fn g16_set_property_on_blob_vertex() {
+    // Load a vertex from store (Blob state), mutate it, commit, verify.
+    let (store, _dir) = open();
+    let id = {
+        let mut c = ctx(&store);
+        let key = c.add_vertex(1, 5).unwrap();
+        c.set_property(&Property { owner: CanonicalKey::Vertex(key), key: 20, value: Primitive::Int32(30) }).unwrap();
+        c.commit().unwrap();
+        key
+    };
+    // tx2: vertex loads as Blob; mutation triggers Blob → Map.
+    {
+        let mut c = ctx(&store);
+        c.set_property(&Property { owner: CanonicalKey::Vertex(id), key: 20, value: Primitive::Int32(31) }).unwrap();
+        c.commit().unwrap();
+    }
+    let mut fv = store.get_vertex(id).unwrap().unwrap();
+    assert_eq!(fv.props().get(&20), Some(&Primitive::Int32(31)));
+}
+
+#[test]
+fn g17_drop_property_on_blob_vertex() {
+    // Load vertex from store (Blob state), drop a property, commit, verify gone.
+    let (store, _dir) = open();
+    let id = {
+        let mut c = ctx(&store);
+        let key = c.add_vertex(1, 5).unwrap();
+        c.set_property(&Property { owner: CanonicalKey::Vertex(key), key: 20, value: Primitive::Int32(99) }).unwrap();
+        c.set_property(&Property { owner: CanonicalKey::Vertex(key), key: 21, value: Primitive::Int32(88) }).unwrap();
+        c.commit().unwrap();
+        key
+    };
+    {
+        let mut c = ctx(&store);
+        c.drop_property(&Property { owner: CanonicalKey::Vertex(id), key: 20, value: Primitive::Null }).unwrap();
+        c.commit().unwrap();
+    }
+    let mut fv = store.get_vertex(id).unwrap().unwrap();
+    assert_eq!(fv.props().get(&20), None);
+    assert_eq!(fv.props().get(&21), Some(&Primitive::Int32(88)));
+}
+
+#[test]
+fn g18_set_property_on_empty_property_vertex() {
+    // Vertex with no user properties — add the first one.
+    let (store, _dir) = open();
+    let id = {
+        let mut c = ctx(&store);
+        let key = c.add_vertex(1, 5).unwrap();
+        c.commit().unwrap();
+        key
+    };
+    {
+        let mut c = ctx(&store);
+        c.set_property(&Property { owner: CanonicalKey::Vertex(id), key: 30, value: Primitive::Int64(42) }).unwrap();
+        c.commit().unwrap();
+    }
+    let mut fv = store.get_vertex(id).unwrap().unwrap();
+    assert_eq!(fv.props().get(&30), Some(&Primitive::Int64(42)));
+}
+
+#[test]
+fn g19_get_value_on_empty_property_vertex_returns_none() {
+    // Vertex with no user properties — get_value for any user key returns None.
+    let (store, _dir) = open();
+    let id = {
+        let mut c = ctx(&store);
+        let key = c.add_vertex(1, 5).unwrap();
+        c.commit().unwrap();
+        key
+    };
+    let mut c = ctx(&store);
+    assert_eq!(c.get_value(&CanonicalKey::Vertex(id), 99).unwrap(), None);
+}
+
+#[test]
+fn g20_get_value_nonexistent_key_on_loaded_vertex() {
+    // Request a key that doesn't exist in the stored blob → None, no error.
+    let (store, _dir) = open();
+    // prop key 20 is not pre-registered in open()'s schema (open() types keys 4–12 only).
+    let present_key: u16 = 20;
+    let absent_key: u16 = 21;
+    let id = {
+        let mut c = ctx(&store);
+        let key = c.add_vertex(100, 1).unwrap();
+        c.set_property(&Property { owner: CanonicalKey::Vertex(key), key: present_key, value: Primitive::Int32(42) })
+            .unwrap();
+        c.commit().unwrap();
+        key
+    };
+    let mut c = ctx(&store);
+    // present_key exists in the blob, absent_key does not — both return correct answers.
+    assert_eq!(c.get_value(&CanonicalKey::Vertex(id), present_key).unwrap(), Some(Primitive::Int32(42)));
+    assert_eq!(c.get_value(&CanonicalKey::Vertex(id), absent_key).unwrap(), None);
+}
+
+#[test]
+fn g21_blob_vertex_not_dirtied_by_read() {
+    // Reading a vertex (Blob state) must not mark it dirty; commit must not rewrite it.
+    let (store, _dir) = open();
+    let id = {
+        let mut c = ctx(&store);
+        let key = c.add_vertex(1, 5).unwrap();
+        c.set_property(&Property { owner: CanonicalKey::Vertex(key), key: 10, value: Primitive::Int32(7) }).unwrap();
+        c.commit().unwrap();
+        key
+    };
+    {
+        let mut c = ctx(&store);
+        let _ = c.get_vertex(id).unwrap(); // loads as Blob
+                                           // Blob-state reads must never mark the element dirty.
+        assert!(!c.dirty.contains_key(&CanonicalKey::Vertex(id)));
+        c.commit().unwrap(); // no-op for this vertex
+    }
+    // Vertex must be readable and correct after the no-op commit.
+    let mut c = ctx(&store);
+    assert_eq!(c.get_value(&CanonicalKey::Vertex(id), 10).unwrap(), Some(Primitive::Int32(7)));
 }

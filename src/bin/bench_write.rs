@@ -146,10 +146,7 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
 
     let is_hotspot = mode == "hotspot";
 
-    let graph = Graph::open_with_options(
-        &data_dir,
-        GraphOptions { mode: SchemaMode::Strict, ..Default::default() },
-    )?;
+    let graph = Graph::open_with_options(&data_dir, GraphOptions { mode: SchemaMode::Strict, ..Default::default() })?;
     {
         let mut mgmt = graph.open_management();
         mgmt.make_vertex_label(VERTEX_LABEL).make();

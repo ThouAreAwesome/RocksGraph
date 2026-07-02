@@ -134,7 +134,6 @@ pub(crate) fn render_explain(
 
 // ── PhysicalPlanBuilder ───────────────────────────────────────────────────────
 
-
 #[derive(Default)]
 pub struct PhysicalPlanBuilder {
     /// Per-build cache: label name → resolved LabelId.  Avoids repeated

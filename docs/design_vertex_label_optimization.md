@@ -2,6 +2,10 @@
 
 Status: implemented.
 
+> **Note:** This doc was written against the pre-`PropertyMap` element API (`raw_props`, `PropDecoder`,
+> `ensure_decoded`, `Vec<Property>`). The implementation has since been refactored — see
+> `src/types/element.rs` (`PropertyMap`) and `src/types/prop_codec.rs` for the current API.
+
 ## Goals & non-goals
 
 - **Goals:** Store destination/source vertex labels in edge value prefixes to eliminate vertex value reads during edge traversals; cache labels in per-transaction overlay; provide `LabelOnly` vertex state for zero-I/O label access.

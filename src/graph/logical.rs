@@ -37,7 +37,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use super::helpers::{edge_matches, upsert_prop};
+use super::helpers::edge_matches;
 use super::{Existence, ScanConfig, StagedSchema};
 
 // ── LogicalGraph ──────────────────────────────────────────────────────────────
@@ -494,7 +494,7 @@ impl<S: GraphStore> LogicalGraph<S> {
                     if prop_key_id != ID_KEY_ID && prop_key_id != LABEL_KEY_ID {
                         self.ensure_vertex_props_loaded(vk)?;
                     }
-                    Ok(self.vertices.get_mut(&vk).unwrap().get_property(prop_key_id))
+                    Ok(self.vertices.get(&vk).unwrap().get_property(prop_key_id))
                 } else {
                     Ok(None)
                 }
@@ -503,7 +503,7 @@ impl<S: GraphStore> LogicalGraph<S> {
                 if self.dirty.get(key) == Some(&Existence::Tombstone) {
                     return Ok(None);
                 }
-                Ok(self.edges.get_mut(&ek).unwrap().get_property(prop_key_id))
+                Ok(self.edges.get(&ek).unwrap().get_property(prop_key_id))
             }
             CanonicalKey::Empty => Err(StoreError::TraversalError("Property owner cannot be empty".to_string())),
         }
@@ -527,7 +527,7 @@ impl<S: GraphStore> LogicalGraph<S> {
                     if prop_key_id != ID_KEY_ID && prop_key_id != LABEL_KEY_ID {
                         self.ensure_vertex_props_loaded(vk)?;
                     }
-                    Ok(self.vertices.get_mut(&vk).unwrap().get_value(prop_key_id))
+                    Ok(self.vertices.get(&vk).unwrap().get_value(prop_key_id))
                 } else {
                     Ok(None)
                 }
@@ -536,14 +536,14 @@ impl<S: GraphStore> LogicalGraph<S> {
                 if self.dirty.get(key) == Some(&Existence::Tombstone) {
                     return Ok(None);
                 }
-                Ok(self.edges.get_mut(&ek).unwrap().get_value(prop_key_id))
+                Ok(self.edges.get(&ek).unwrap().get_value(prop_key_id))
             }
             CanonicalKey::Empty => {
                 Err(StoreError::UnexpectedDataType("expected Vertex or Edge for get property value".to_string()))
             }
         }
     }
-    #[allow(clippy::type_complexity)]
+
     #[allow(clippy::type_complexity)]
     pub(crate) fn get_all_props(
         &mut self,
@@ -560,14 +560,14 @@ impl<S: GraphStore> LogicalGraph<S> {
                 let label_id = vt.label_id;
                 let schema = self.schema.read().unwrap();
                 let props = vt
-                    .all_props()
+                    .props()
                     .iter()
-                    .map(|p| {
+                    .map(|(&k, v)| {
                         let name = schema
-                            .prop_key_str(p.key)
+                            .prop_key_str(k)
                             .cloned()
-                            .unwrap_or_else(|| smol_str::SmolStr::from(format!("__key_{}", p.key)));
-                        (name, p.value.clone())
+                            .unwrap_or_else(|| smol_str::SmolStr::from(format!("__key_{}", k)));
+                        (name, v.clone())
                     })
                     .collect();
                 Ok(Some((label_id, props)))
@@ -580,14 +580,14 @@ impl<S: GraphStore> LogicalGraph<S> {
                 let label_id = eg.label_id;
                 let schema = self.schema.read().unwrap();
                 let props = eg
-                    .all_props()
+                    .props()
                     .iter()
-                    .map(|p| {
+                    .map(|(&k, v)| {
                         let name = schema
-                            .prop_key_str(p.key)
+                            .prop_key_str(k)
                             .cloned()
-                            .unwrap_or_else(|| smol_str::SmolStr::from(format!("__key_{}", p.key)));
-                        (name, p.value.clone())
+                            .unwrap_or_else(|| smol_str::SmolStr::from(format!("__key_{}", k)));
+                        (name, v.clone())
                     })
                     .collect();
                 Ok(Some((label_id, props)))
@@ -647,7 +647,7 @@ impl<S: GraphStore> LogicalGraph<S> {
     ///
     /// # Locking
     /// No lock is acquired. The new vertex's `props` field is an empty
-    /// `Vec<Property>`.
+    /// `HashMap<u16, Primitive>`.
     pub(crate) fn add_vertex(&mut self, id: VertexKey, label_id: LabelId) -> Result<VertexKey, StoreError> {
         // Single-call check: covers both overlay (vertex_degree map) and store.
         if self.get_vertex_degree(id)?.is_some() {
@@ -661,7 +661,7 @@ impl<S: GraphStore> LogicalGraph<S> {
             }
         }
 
-        let vertex = Vertex::with_props(id, label_id, Vec::new());
+        let vertex = Vertex::new(id, label_id);
         self.vertices.insert(id, vertex);
         self.vertex_degree.insert(id, (0, 0, label_id));
         self.mark_dirty(CanonicalKey::Vertex(id), Existence::New);
@@ -756,15 +756,7 @@ impl<S: GraphStore> LogicalGraph<S> {
         // 2. insert new edge into overlay and mark dirty.  The store is not touched until commit.
         self.edges.insert(
             cek,
-            Edge::with_props(
-                cek.src_id,
-                cek.label_id,
-                cek.dst_id,
-                cek.rank,
-                Vec::new(),
-                Some(src_label_id),
-                Some(dst_label_id),
-            ),
+            Edge::new(cek.src_id, cek.label_id, cek.dst_id, cek.rank, Some(src_label_id), Some(dst_label_id)),
         );
         self.mark_dirty(CanonicalKey::Edge(cek), Existence::New);
         Ok(cek.out_key())
@@ -816,7 +808,7 @@ impl<S: GraphStore> LogicalGraph<S> {
                 }
                 {
                     let vt = self.vertices.get_mut(&id).expect("just loaded");
-                    upsert_prop(vt.props_mut(), prop);
+                    vt.props_mut().insert(prop.key, prop.value.clone());
                 }
                 self.mark_dirty(key, Existence::Modified);
             }
@@ -827,7 +819,7 @@ impl<S: GraphStore> LogicalGraph<S> {
                 match self.edges.get_mut(&ek) {
                     None => return Err(StoreError::NotFound),
                     Some(eg) => {
-                        upsert_prop(eg.props_mut(), prop);
+                        eg.props_mut().insert(prop.key, prop.value.clone());
                     }
                 }
                 self.mark_dirty(key, Existence::Modified);
@@ -865,7 +857,7 @@ impl<S: GraphStore> LogicalGraph<S> {
                 }
                 {
                     let vt = self.vertices.get_mut(&id).expect("just loaded");
-                    vt.props_mut().retain(|p| p.key != prop.key);
+                    vt.props_mut().remove(&prop.key);
                 }
                 self.mark_dirty(key, Existence::Modified);
             }
@@ -876,7 +868,7 @@ impl<S: GraphStore> LogicalGraph<S> {
                 match self.edges.get_mut(&ek) {
                     None => return Err(StoreError::NotFound),
                     Some(eg) => {
-                        eg.props_mut().retain(|p| p.key != prop.key);
+                        eg.props_mut().remove(&prop.key);
                     }
                 }
                 self.mark_dirty(key, Existence::Modified);
@@ -982,13 +974,13 @@ impl<S: GraphStore> LogicalGraph<S> {
             match (key, existence) {
                 (CanonicalKey::Vertex(id), Existence::New) => {
                     let v = self.vertices.get_mut(&id).expect("dirty vertex key not in vertices");
-                    self.store.put_vertex(id, v.label_id, v.all_props())?;
+                    self.store.put_vertex(id, v.label_id, v.props())?;
                     let (out_e, in_e, label_id) = self.vertex_degree[&id];
                     self.store.put_vertex_degree(id, out_e, in_e, label_id)?;
                 }
                 (CanonicalKey::Vertex(id), Existence::Modified) => {
                     let v = self.vertices.get_mut(&id).expect("dirty vertex key not in vertices");
-                    self.store.put_vertex(id, v.label_id, v.all_props())?;
+                    self.store.put_vertex(id, v.label_id, v.props())?;
                 }
                 (CanonicalKey::Vertex(id), Existence::CounterOnly) => {
                     let (out_e, in_e, label_id) = self.vertex_degree[&id];
@@ -996,7 +988,7 @@ impl<S: GraphStore> LogicalGraph<S> {
                 }
                 (CanonicalKey::Vertex(id), Existence::ModifiedWithCounter) => {
                     let v = self.vertices.get_mut(&id).expect("dirty vertex key not in vertices");
-                    self.store.put_vertex(id, v.label_id, v.all_props())?;
+                    self.store.put_vertex(id, v.label_id, v.props())?;
                     let (out_e, in_e, label_id) = self.vertex_degree[&id];
                     self.store.put_vertex_degree(id, out_e, in_e, label_id)?;
                 }
@@ -1031,9 +1023,18 @@ impl<S: GraphStore> LogicalGraph<S> {
                         None => self.get_vertex_degree(src_id)?.map(|(_, _, l)| l).ok_or(StoreError::NotFound)?,
                     };
 
-                    let e = self.edges.get_mut(&ek).expect("dirty edge key not in edges");
-                    self.store.put_edge(&ek.out_key(), dst_label, e.all_props())?;
-                    self.store.put_edge(&ek.in_key(), src_label, e.all_props())?;
+                    // Clone is required: `all_props()` borrows `self.edges` and
+                    // `put_edge` needs `&mut self.store` — disjoint fields but the
+                    // borrow checker can't prove it across the two calls. Both OUT
+                    // and IN rows share the same props, so one clone covers both.
+                    // Future: take the HashMap by move at commit time (edges are
+                    // not re-used after commit) to eliminate this allocation.
+                    let props = {
+                        let e = self.edges.get_mut(&ek).expect("dirty edge key not in edges");
+                        e.props().clone()
+                    };
+                    self.store.put_edge(&ek.out_key(), dst_label, &props)?;
+                    self.store.put_edge(&ek.in_key(), src_label, &props)?;
                 }
                 (CanonicalKey::Edge(cek), Existence::Tombstone) => {
                     self.store.delete_edge(&cek.out_key())?;

@@ -85,8 +85,7 @@ pub fn extract_end_vertex_filter(plan: &mut LogicalPlan) -> Result<bool, StoreEr
         }
 
         if all_filters {
-            plan.steps[i] =
-                LogicalStep::EndVertexFilter(EndVertexFilter { ids, label_preds, property_preds });
+            plan.steps[i] = LogicalStep::EndVertexFilter(EndVertexFilter { ids, label_preds, property_preds });
             changed = true;
         }
     }

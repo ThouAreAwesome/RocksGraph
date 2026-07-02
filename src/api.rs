@@ -175,13 +175,7 @@ impl Graph {
     /// complete authoritative list.  In [`SchemaMode::Auto`](crate::schema::SchemaMode::Auto)
     /// it reflects whatever labels have been auto-registered by writes so far.
     pub fn edge_label_names(&self) -> Vec<String> {
-        self.schema
-            .read()
-            .unwrap()
-            .edge_labels
-            .iter()
-            .map(|(_, n)| n.to_string())
-            .collect()
+        self.schema.read().unwrap().edge_labels.iter().map(|(_, n)| n.to_string()).collect()
     }
 
     /// Open a read-only snapshot session pinned to the current committed state.

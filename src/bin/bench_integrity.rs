@@ -25,9 +25,7 @@
 //!   `DegreeStep` (reads the CF directly); the ground-truth query does a real
 //!   adjacency scan using all known edge labels (bypassing the degree optimizer).
 
-use rocksgraph::{
-    Graph, TraversalBuilder, Value, __,
-};
+use rocksgraph::{Graph, TraversalBuilder, Value, __};
 
 use std::{collections::HashMap, env};
 
@@ -160,19 +158,15 @@ fn check_degree(name: &str, opt_paths: Vec<Value>, scan_paths: Vec<Value>) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rocksgraph::schema::{GraphOptions, SchemaMode};
     use tempfile::tempdir;
-    use rocksgraph::{
-    schema::{GraphOptions, SchemaMode},
-    };
 
     #[test]
     fn test_bench_integrity_clean_graph() {
         let dir = tempdir().unwrap();
-        let graph = Graph::open_with_options(
-            dir.path(),
-            GraphOptions { mode: SchemaMode::Strict, ..Default::default() },
-        )
-        .unwrap();
+        let graph =
+            Graph::open_with_options(dir.path(), GraphOptions { mode: SchemaMode::Strict, ..Default::default() })
+                .unwrap();
         // Declare schema explicitly — required in Strict mode.
         {
             let mut mgmt = graph.open_management();
@@ -196,11 +190,9 @@ mod tests {
     #[test]
     fn test_bench_integrity_self_loop() {
         let dir = tempdir().unwrap();
-        let graph = Graph::open_with_options(
-            dir.path(),
-            GraphOptions { mode: SchemaMode::Strict, ..Default::default() },
-        )
-        .unwrap();
+        let graph =
+            Graph::open_with_options(dir.path(), GraphOptions { mode: SchemaMode::Strict, ..Default::default() })
+                .unwrap();
         {
             let mut mgmt = graph.open_management();
             mgmt.make_vertex_label(VERTEX_LABEL).make();

@@ -402,11 +402,11 @@ mod tests {
 
         // 1. Seed initial data
         let mut txn = store.begin();
-        txn.put_vertex(1, 1, &[]).unwrap();
-        txn.put_vertex(2, 1, &[]).unwrap();
+        txn.put_vertex(1, 1, &std::collections::HashMap::new()).unwrap();
+        txn.put_vertex(2, 1, &std::collections::HashMap::new()).unwrap();
         txn.put_vertex_degree(1, 1, 0, 0).unwrap();
         let ek_seed = EdgeKey::out_e(1, 10, 2, 0);
-        txn.put_edge(&ek_seed, 0, &[]).unwrap();
+        txn.put_edge(&ek_seed, 0, &std::collections::HashMap::new()).unwrap();
         txn.commit().unwrap();
 
         // 2. Capture a DB snapshot
@@ -414,11 +414,11 @@ mod tests {
 
         // 3. Concurrently modify the DB in a transaction and commit
         let mut txn2 = store.begin();
-        txn2.put_vertex(3, 100, &[]).unwrap();
-        txn2.put_vertex(1, 99, &[]).unwrap();
+        txn2.put_vertex(3, 100, &std::collections::HashMap::new()).unwrap();
+        txn2.put_vertex(1, 99, &std::collections::HashMap::new()).unwrap();
         txn2.put_vertex_degree(1, 1, 1, 0).unwrap();
         let ek_new = EdgeKey::out_e(1, 20, 3, 0);
-        txn2.put_edge(&ek_new, 0, &[]).unwrap();
+        txn2.put_edge(&ek_new, 0, &std::collections::HashMap::new()).unwrap();
         txn2.commit().unwrap();
 
         // 4. Verify snapshot isolation (repeatable reads) for all GraphSnapshot read interfaces:
@@ -495,7 +495,7 @@ mod tests {
         let src_ids: Vec<i64> = (1..=50).collect();
         for &src in &src_ids {
             let mut txn = store.begin();
-            txn.put_edge(&EdgeKey::out_e(src, 10, 100, 0), 0, &[]).unwrap();
+            txn.put_edge(&EdgeKey::out_e(src, 10, 100, 0), 0, &std::collections::HashMap::new()).unwrap();
             txn.commit().unwrap();
             store.db.flush_cf(&cf).unwrap();
         }

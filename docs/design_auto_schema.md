@@ -1,5 +1,9 @@
 # Design: Schema Management & Schema Modes
 
+> **Note:** References to `encode_props`/`decode_props`, `ensure_decoded`, and `Vec<Property>`
+> in this doc reflect the pre-`PropertyMap` element API. The implementation has since been
+> refactored — see `src/types/element.rs` and `src/types/prop_codec.rs` for the current API.
+
 ## Problem
 
 The engine has a `Schema` struct ([`src/schema/definition.rs`](../src/schema/definition.rs)) that

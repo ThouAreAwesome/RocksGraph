@@ -15,160 +15,184 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
-//! Graph element records: [`Vertex`], [`Edge`], and [`Property`].
+//! Graph element records: [`Vertex`], [`Edge`], [`Property`], and [`PropertyMap`].
 //!
-//! These structs represent the in-memory state of a graph element as it flows
-//! through the engine.  Properties are decoded lazily: a vertex or edge loaded
-//! from the store carries the raw property blob in `raw_props` and only
-//! deserializes it on first access via one of the public property accessors.
-//! For elements created in-memory (mutations), the decoded `props` vec is
-//! populated directly and `raw_props` is `None`.
+//! # Property storage — two-state design
 //!
-//! A vertex can also enter a third state: [`Vertex::label_only`], where
-//! `label_id` is known (learned for free from an adjacent edge's value prefix)
-//! but no properties have been loaded yet.  Access beyond `id`/`label` requires
-//! an upgrade via `ensure_vertex_props_loaded` on the owning [`LogicalGraph`]
-//! or [`LogicalSnapshot`](crate::graph::LogicalSnapshot).
+//! Properties on an element live in one of three states via [`PropertyMap`]:
+//!
+//! - **`LabelOnly`** — only `label_id` is known (learned for free from an adjacent
+//!   edge's value prefix). No property data has been loaded. Access beyond `id`/`label`
+//!   requires an upgrade via `ensure_vertex_props_loaded` on the owning [`LogicalGraph`].
+//!
+//! - **`Blob`** — the raw v1 offset-index bytes from the store. Reads go through a
+//!   binary search on the sorted directory: O(log P), zero allocation. The element
+//!   stays in Blob state until the first mutation.
+//!
+//! - **`Map`** — a `HashMap<u16, Primitive>` produced on the first mutation.
+//!   All subsequent reads and writes are O(1). This is also the initial state for
+//!   newly created elements (`addV`/`addE`), which have no raw bytes.
+//!
+//! Only Map-state elements ever appear in the dirty map, so the commit path only
+//! calls `encode_props` on Maps — never re-encodes an unchanged Blob.
 //!
 //! # Relationship to keys
 //!
-//! The traversal pipeline usually carries lightweight *keys* ([`VertexKey`],
-//! [`EdgeKey`]) inside [`GValue`](crate::types::GValue), and only calls
-//! `ctx.get_vertex` / `ctx.get_edges` to obtain the full element record when
-//! property data is actually required.  This keeps hot traversal paths allocation-free.
+//! The traversal pipeline usually carries lightweight *keys* ([`VertexKey`], [`EdgeKey`])
+//! inside [`GValue`](crate::types::GValue), and only fetches full element records when
+//! property data is actually required.
 //!
-//! # Property access
+//! # `Property` at the API boundary
 //!
-//! Both [`Vertex`] and [`Edge`] expose accessors:
-//!
-//! - `get_property` — returns a [`Property`] wrapper (needed when the property itself must flow downstream as a
-//!   `GValue::Property`).
-//! - `get_value` — returns the bare [`Primitive`] scalar (cheaper when only the value is needed, e.g. in `values()`
-//!   steps).
-//! - `all_props` — returns a shared view of all properties.
-//! - `props_mut` — returns a mutable view of all properties.
-//!
-//! All accessors take `&mut self` and decode the property blob automatically on
-//! first call. No explicit decoding call is required from callers.
-//!
-//! The reserved keys `"id"` and `"label"` are synthesized on-the-fly rather than
-//! stored in `props`, so they are always available.
+//! [`Property`] (wrapping `owner + key + value`) is the public type used by [`GraphCtx`]
+//! method signatures (`get_property`, `set_property`, `drop_property`). It is NOT stored
+//! inside the overlay — the overlay uses `HashMap<u16, Primitive>` and synthesizes a
+//! `Property` on demand when callers need the full wrapper.
+
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::sync::OnceLock;
 
 use crate::types::{
     gvalue::Primitive,
     keys::{CanonicalEdgeKey, CanonicalKey, LabelId, Rank, VertexKey},
-    EdgeKey,
+    prop_codec, EdgeKey,
 };
 
-use std::hash::{Hash, Hasher};
+// ── Shared empty-map sentinel ─────────────────────────────────────────────────
 
-pub type PropDecoder = fn(blob: &[u8], owner: CanonicalKey) -> Option<Vec<Property>>;
+/// Returned by `props()` when the element is in `LabelOnly` state.
+static EMPTY_PROPS: OnceLock<HashMap<u16, Primitive>> = OnceLock::new();
 
-// ── Vertex ────────────────────────────────────────────────────────────────
+#[inline]
+fn empty_props() -> &'static HashMap<u16, Primitive> {
+    EMPTY_PROPS.get_or_init(HashMap::new)
+}
+
+// ── PropertyMap ───────────────────────────────────────────────────────────────
+
+/// Two-state (three-variant) property storage for an element in the overlay.
+///
+/// See the module-level documentation for the state-transition diagram.
+/// Decoding is handled directly by [`prop_codec`] — no function pointers needed.
+#[derive(Debug)]
+pub(crate) enum PropertyMap {
+    /// Only `label_id` is known — no property bytes loaded yet.
+    LabelOnly,
+    /// Raw v1 offset-index bytes from the store. Reads use binary search; no allocation.
+    Blob(Box<[u8]>),
+    /// Mutable property map — after the first mutation, or for new elements.
+    Map(HashMap<u16, Primitive>),
+}
+
+impl PropertyMap {
+    #[inline]
+    pub(crate) fn is_label_only(&self) -> bool {
+        matches!(self, PropertyMap::LabelOnly)
+    }
+
+    /// Look up a single property value without triggering a full decode.
+    ///
+    /// - `LabelOnly` → `None`
+    /// - `Blob` → O(log P) binary search, zero allocation
+    /// - `Map` → O(1) hash lookup
+    #[inline]
+    pub(crate) fn get_value(&self, key: u16) -> Option<Primitive> {
+        match self {
+            PropertyMap::LabelOnly => None,
+            PropertyMap::Blob(bytes) => prop_codec::decode_prop_by_key(bytes, key),
+            PropertyMap::Map(map) => map.get(&key).cloned(),
+        }
+    }
+
+    /// Transition `Blob → Map` by fully decoding the blob.
+    ///
+    /// No-op if already in `Map` or `LabelOnly` state.
+    /// For `LabelOnly`, the overlay must load the element from the store before
+    /// calling `ensure_map`.
+    #[inline]
+    pub(crate) fn ensure_map(&mut self) {
+        if let PropertyMap::Blob(bytes) = self {
+            let map = prop_codec::decode_all_to_map(bytes);
+            *self = PropertyMap::Map(map);
+        }
+    }
+
+    /// Returns a reference to the underlying `HashMap`, or `None` if not in Map state.
+    #[inline]
+    pub(crate) fn as_map(&self) -> Option<&HashMap<u16, Primitive>> {
+        match self {
+            PropertyMap::Map(m) => Some(m),
+            _ => None,
+        }
+    }
+
+    /// Returns a mutable reference to the underlying `HashMap`, or `None` if not in Map state.
+    #[inline]
+    pub(crate) fn as_map_mut(&mut self) -> Option<&mut HashMap<u16, Primitive>> {
+        match self {
+            PropertyMap::Map(m) => Some(m),
+            _ => None,
+        }
+    }
+}
+
+// ── Vertex ────────────────────────────────────────────────────────────────────
 
 /// The ground-truth vertex record crossing the store ↔ context boundary.
 ///
-/// Returned by `GraphTransaction::get_vertex` and stored inside `LogicalGraph`s
-/// overlay.  Properties are decoded lazily on first access via `get_property`,
-/// `get_value`, `all_props`, or `props_mut`.
+/// Returned by `GraphTransaction::get_vertex` / `GraphSnapshot::get_vertex` and stored
+/// inside the `LogicalGraph` overlay. Properties are accessed through [`PropertyMap`].
 #[derive(Debug)]
 pub struct Vertex {
     pub id: VertexKey,
     pub label_id: LabelId,
-    /// `true` when only `label_id` is known — learned for free from an
-    /// adjacent edge's value. `raw_props`/`props` are both empty placeholders
-    /// in this state, not real data — any access beyond `id`/`label` needs a
-    /// real fetch first.
-    label_only: bool,
-    /// Raw property blob from the store. `Some` until first decode, then `None`.
-    raw_props: Option<(Box<[u8]>, PropDecoder)>,
-    /// Decoded properties. Empty until decoded on first property accessor call (or `None`
-    /// raw_props means this was constructed with known props already).
-    props: Vec<Property>,
+    pub(crate) props: PropertyMap,
 }
 
 impl Vertex {
-    /// Construct a vertex with already-decoded properties (mutation / admin path).
+    /// New element created in-memory (`addV`). Starts in empty Map state.
     #[inline]
-    pub fn with_props(id: VertexKey, label_id: LabelId, props: Vec<Property>) -> Self {
-        Vertex { id, label_id, label_only: false, raw_props: None, props }
+    pub fn new(id: VertexKey, label_id: LabelId) -> Self {
+        Vertex { id, label_id, props: PropertyMap::Map(HashMap::new()) }
     }
 
-    /// Construct a vertex from raw store bytes (lazy-decode path).
+    /// Construct a vertex with pre-populated properties.
+    /// Used in tests and admin paths.
+    #[inline]
+    pub(crate) fn with_props(id: VertexKey, label_id: LabelId, props: HashMap<u16, Primitive>) -> Self {
+        Vertex { id, label_id, props: PropertyMap::Map(props) }
+    }
+
+    /// Construct a vertex from raw v1 blob bytes (lazy-decode path).
     ///
-    /// `props` starts empty and is decoded lazily on first property access.
+    /// The element stays in `Blob` state until the first mutation or `props()` call.
     #[inline]
-    pub fn from_raw(id: VertexKey, label_id: LabelId, raw: Box<[u8]>, decoder: PropDecoder) -> Self {
-        Vertex { id, label_id, label_only: false, raw_props: Some((raw, decoder)), props: Vec::new() }
+    pub(crate) fn from_raw(id: VertexKey, label_id: LabelId, bytes: Box<[u8]>) -> Self {
+        Vertex { id, label_id, props: PropertyMap::Blob(bytes) }
     }
 
-    /// Construct a label-only vertex — `label_id` is known (from an adjacent edge's
-    /// value prefix), but no property data has been loaded yet. Access to any
-    /// property beyond `id`/`label` requires an upgrade via `ensure_vertex_props_loaded`.
+    /// Construct a label-only vertex (label learned from an adjacent edge value prefix).
+    ///
+    /// Access beyond `id`/`label` requires an upgrade via `ensure_vertex_props_loaded`.
     #[inline]
     pub fn label_only(id: VertexKey, label_id: LabelId) -> Self {
-        Vertex { id, label_id, label_only: true, raw_props: None, props: Vec::new() }
+        Vertex { id, label_id, props: PropertyMap::LabelOnly }
     }
 
     /// Returns `true` if this vertex carries only a label (no property data).
     #[inline]
     pub fn is_label_only(&self) -> bool {
-        self.label_only
+        self.props.is_label_only()
     }
 
-    #[inline]
-    fn ensure_decoded(&mut self) {
-        if let Some((raw, decoder)) = self.raw_props.take() {
-            let owner = CanonicalKey::Vertex(self.id);
-            self.props = decoder(&raw, owner).unwrap_or_default();
-        }
-    }
-
-    /// Returns a shared view of all decoded properties, triggering decoding on first call.
-    #[inline]
-    pub fn all_props(&mut self) -> &[Property] {
-        self.ensure_decoded();
-        &self.props
-    }
-
-    /// Returns a mutable view of all decoded properties, triggering decoding on first call.
-    #[inline]
-    pub fn props_mut(&mut self) -> &mut Vec<Property> {
-        self.ensure_decoded();
-        &mut self.props
-    }
-
-    /// Returns a [`Property`] wrapper for `prop_key_id`, or `None` if not present.
+    /// Returns the value of property `prop_key_id`, or `None` if not present.
     ///
-    /// Decodes the property blob on first call; subsequent calls are O(props) scans.
-    /// The reserved keys `"id"` and `"label"` are synthesized without a `props` scan.
+    /// - In `Blob` state: O(log P) binary search, no allocation.
+    /// - In `Map` state: O(1) hash lookup.
+    /// - `ID_KEY_ID` and `LABEL_KEY_ID` are synthesized without touching the blob.
     #[inline]
-    pub fn get_property(&mut self, prop_key_id: u16) -> Option<Property> {
-        use crate::types::prop_key::{ID_KEY_ID, LABEL_KEY_ID};
-        if prop_key_id == ID_KEY_ID {
-            return Some(Property {
-                owner: CanonicalKey::Vertex(self.id),
-                key: ID_KEY_ID,
-                value: Primitive::Int64(self.id),
-            });
-        }
-        if prop_key_id == LABEL_KEY_ID {
-            return Some(Property {
-                owner: CanonicalKey::Vertex(self.id),
-                key: LABEL_KEY_ID,
-                value: Primitive::Int32(self.label_id),
-            });
-        }
-        self.ensure_decoded();
-        self.props.iter().find(|p| p.key == prop_key_id).cloned()
-    }
-
-    /// Returns the bare [`Primitive`] scalar for `prop_key_id`, or `None` if not present.
-    ///
-    /// Decodes the property blob on first call; cheaper than [`get_property`](Vertex::get_property)
-    /// when the `Property` wrapper is not needed downstream.
-    #[inline]
-    pub fn get_value(&mut self, prop_key_id: u16) -> Option<Primitive> {
+    pub fn get_value(&self, prop_key_id: u16) -> Option<Primitive> {
         use crate::types::prop_key::{ID_KEY_ID, LABEL_KEY_ID};
         if prop_key_id == ID_KEY_ID {
             return Some(Primitive::Int64(self.id));
@@ -176,98 +200,133 @@ impl Vertex {
         if prop_key_id == LABEL_KEY_ID {
             return Some(Primitive::Int32(self.label_id));
         }
-        self.ensure_decoded();
-        self.props.iter().find(|p| p.key == prop_key_id).map(|p| p.value.clone())
+        self.props.get_value(prop_key_id)
+    }
+
+    /// Returns a [`Property`] wrapper for `prop_key_id`, or `None` if not present.
+    #[inline]
+    pub fn get_property(&self, prop_key_id: u16) -> Option<Property> {
+        let value = self.get_value(prop_key_id)?;
+        Some(Property { owner: CanonicalKey::Vertex(self.id), key: prop_key_id, value })
+    }
+
+    /// Returns all properties as a `HashMap`, triggering `Blob → Map` if needed.
+    ///
+    /// **`LabelOnly` state**: returns a shared empty map. The overlay must call
+    /// `ensure_vertex_props_loaded` before this method on a `LabelOnly` vertex;
+    /// calling `props_mut()` on `LabelOnly` panics.
+    #[inline]
+    pub(crate) fn props(&mut self) -> &HashMap<u16, Primitive> {
+        self.props.ensure_map();
+        self.props.as_map().unwrap_or_else(|| empty_props())
+    }
+
+    /// Returns a mutable reference to the property map.
+    ///
+    /// Triggers `Blob → Map` if needed. Panics if the vertex is in `LabelOnly` state
+    /// (the overlay must call `ensure_vertex_props_loaded` first).
+    #[inline]
+    pub(crate) fn props_mut(&mut self) -> &mut HashMap<u16, Primitive> {
+        self.props.ensure_map();
+        self.props.as_map_mut().expect("props_mut called on LabelOnly vertex")
     }
 }
 
-// ── Edge ──────────────────────────────────────────────────────────────────
+// ── Edge ──────────────────────────────────────────────────────────────────────
 
 /// The ground-truth edge record crossing the store ↔ context boundary.
 ///
-/// Always in canonical `Out` orientation.  Properties are decoded lazily on first
-/// access via `get_property`, `get_value`, `all_props`, or `props_mut`.
+/// Always in canonical `Out` orientation. Properties are accessed through [`PropertyMap`].
 #[derive(Debug)]
 pub struct Edge {
     pub src_id: VertexKey,
     pub label_id: LabelId,
     pub dst_id: VertexKey,
     pub rank: Rank,
-    /// Label of the source vertex, when known from the edge's value prefix
-    /// (IN-direction reads give this the src label; OUT-direction reads give this the dst label).
+    /// Label of the source vertex when known from the edge's value prefix.
     pub src_label: Option<LabelId>,
-    /// Label of the destination vertex, when known from the edge's value prefix.
+    /// Label of the destination vertex when known from the edge's value prefix.
     pub dst_label: Option<LabelId>,
-    /// Raw property blob from the store. `Some` until first decode, then `None`.
-    raw_props: Option<(Box<[u8]>, PropDecoder)>,
-    /// Decoded properties. Empty until decoded on first property accessor call.
-    props: Vec<Property>,
+    pub(crate) props: PropertyMap,
 }
 
 impl Edge {
-    /// Construct an edge with already-decoded properties (mutation / admin path).
+    /// New element created in-memory (`addE`). Starts in empty Map state.
     #[inline]
-    pub fn with_props(
+    pub fn new(
         src_id: VertexKey,
         label_id: LabelId,
         dst_id: VertexKey,
         rank: Rank,
-        props: Vec<Property>,
         src_label: Option<LabelId>,
         dst_label: Option<LabelId>,
     ) -> Self {
-        Edge { src_id, label_id, dst_id, rank, src_label, dst_label, raw_props: None, props }
+        Edge { src_id, label_id, dst_id, rank, src_label, dst_label, props: PropertyMap::Map(HashMap::new()) }
     }
 
-    /// Construct an edge from raw store bytes (lazy-decode path).
+    /// Construct an edge with pre-populated properties.
+    /// Used in tests and admin paths.
+    #[inline]
+    pub(crate) fn with_props(
+        src_id: VertexKey,
+        label_id: LabelId,
+        dst_id: VertexKey,
+        rank: Rank,
+        props: HashMap<u16, Primitive>,
+        src_label: Option<LabelId>,
+        dst_label: Option<LabelId>,
+    ) -> Self {
+        Edge { src_id, label_id, dst_id, rank, src_label, dst_label, props: PropertyMap::Map(props) }
+    }
+
+    /// Construct an edge from raw v1 blob bytes (lazy-decode path).
+    #[inline]
+    pub(crate) fn from_raw(
+        src_id: VertexKey,
+        label_id: LabelId,
+        dst_id: VertexKey,
+        rank: Rank,
+        bytes: Box<[u8]>,
+        src_label: Option<LabelId>,
+        dst_label: Option<LabelId>,
+    ) -> Self {
+        Edge { src_id, label_id, dst_id, rank, src_label, dst_label, props: PropertyMap::Blob(bytes) }
+    }
+
+    /// Returns the value of property `prop_key_id`, or `None` if not present.
     ///
-    /// `props` starts empty and is decoded lazily on first property access.
+    /// `LABEL_KEY_ID` and `RANK_KEY_ID` are synthesized without touching the blob.
     #[inline]
-    #[allow(clippy::too_many_arguments)]
-    pub fn from_raw(
-        src_id: VertexKey,
-        label_id: LabelId,
-        dst_id: VertexKey,
-        rank: Rank,
-        raw: Box<[u8]>,
-        decoder: PropDecoder,
-        src_label: Option<LabelId>,
-        dst_label: Option<LabelId>,
-    ) -> Self {
-        Edge {
-            src_id,
-            label_id,
-            dst_id,
-            rank,
-            src_label,
-            dst_label,
-            raw_props: Some((raw, decoder)),
-            props: Vec::new(),
+    pub fn get_value(&self, prop_key_id: u16) -> Option<Primitive> {
+        use crate::types::prop_key::{LABEL_KEY_ID, RANK_KEY_ID};
+        if prop_key_id == LABEL_KEY_ID {
+            return Some(Primitive::Int32(self.label_id));
         }
-    }
-
-    #[inline]
-    fn ensure_decoded(&mut self) {
-        if let Some((raw, decoder)) = self.raw_props.take() {
-            let cek =
-                CanonicalEdgeKey { src_id: self.src_id, label_id: self.label_id, rank: self.rank, dst_id: self.dst_id };
-            let owner = CanonicalKey::Edge(cek);
-            self.props = decoder(&raw, owner).unwrap_or_default();
+        if prop_key_id == RANK_KEY_ID {
+            return Some(Primitive::UInt16(self.rank));
         }
+        self.props.get_value(prop_key_id)
     }
 
-    /// Returns a shared view of all decoded properties, triggering decoding on first call.
+    /// Returns a [`Property`] wrapper for `prop_key_id`, or `None` if not present.
     #[inline]
-    pub fn all_props(&mut self) -> &[Property] {
-        self.ensure_decoded();
-        &self.props
+    pub fn get_property(&self, prop_key_id: u16) -> Option<Property> {
+        let value = self.get_value(prop_key_id)?;
+        Some(Property { owner: CanonicalKey::Edge(self.canonical_key()), key: prop_key_id, value })
     }
 
-    /// Returns a mutable view of all decoded properties, triggering decoding on first call.
+    /// Returns all properties as a `HashMap`, triggering `Blob → Map` if needed.
     #[inline]
-    pub fn props_mut(&mut self) -> &mut Vec<Property> {
-        self.ensure_decoded();
-        &mut self.props
+    pub(crate) fn props(&mut self) -> &HashMap<u16, Primitive> {
+        self.props.ensure_map();
+        self.props.as_map().unwrap_or_else(|| empty_props())
+    }
+
+    /// Returns a mutable reference to the property map, triggering `Blob → Map` if needed.
+    #[inline]
+    pub(crate) fn props_mut(&mut self) -> &mut HashMap<u16, Primitive> {
+        self.props.ensure_map();
+        self.props.as_map_mut().expect("props_mut called on LabelOnly edge")
     }
 
     /// Extract the direction-free canonical key (same as the `edges_out` CF key).
@@ -297,55 +356,8 @@ impl Edge {
             rank: self.rank,
         }
     }
-
-    /// Returns a [`Property`] wrapper for `prop_key_id`, or `None` if not present.
-    ///
-    /// Decodes the property blob on first call. The reserved key `"label"` is
-    /// synthesized without a `props` scan.
-    #[inline]
-    pub fn get_property(&mut self, prop_key_id: u16) -> Option<Property> {
-        use crate::types::prop_key::{LABEL_KEY_ID, RANK_KEY_ID};
-        if LABEL_KEY_ID == prop_key_id {
-            return Some(Property {
-                owner: CanonicalKey::Edge(self.canonical_key()),
-                key: LABEL_KEY_ID,
-                value: Primitive::Int32(self.label_id),
-            });
-        }
-        if RANK_KEY_ID == prop_key_id {
-            return Some(Property {
-                owner: CanonicalKey::Edge(self.canonical_key()),
-                key: RANK_KEY_ID,
-                value: Primitive::UInt16(self.rank),
-            });
-        }
-        self.ensure_decoded();
-        self.props.iter().find(|p| p.key == prop_key_id).cloned()
-    }
-
-    /// Returns the bare [`Primitive`] scalar for `prop_key_id`, or `None` if not present.
-    ///
-    /// Decodes the property blob on first call; cheaper than [`get_property`](Edge::get_property)
-    /// when the `Property` wrapper is not needed downstream.
-    #[inline]
-    pub fn get_value(&mut self, prop_key_id: u16) -> Option<Primitive> {
-        use crate::types::prop_key::{LABEL_KEY_ID, RANK_KEY_ID};
-        if LABEL_KEY_ID == prop_key_id {
-            return Some(Primitive::Int32(self.label_id));
-        }
-        if RANK_KEY_ID == prop_key_id {
-            return Some(Primitive::UInt16(self.rank));
-        }
-        self.ensure_decoded();
-        self.props.iter().find(|p| prop_key_id == p.key).map(|p| p.value.clone())
-    }
 }
 
-/// Identity-only equality: two `Vertex` handles are the same vertex iff `id` and `label_id`
-/// match, regardless of their property contents. This is deliberate, not an oversight —
-/// properties are excluded so that comparing a vertex fetched before a property update against
-/// one fetched after still reports them as the same vertex, matching how callers reason about
-/// graph identity (a vertex doesn't become "a different vertex" because a property changed).
 impl PartialEq for Vertex {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
@@ -355,9 +367,6 @@ impl PartialEq for Vertex {
 
 impl Eq for Vertex {}
 
-/// Identity-only equality, mirroring [`Vertex`]'s rationale above: `src_id` + `label_id` +
-/// `rank` + `dst_id` form an edge's full identity tuple (`rank` distinguishes parallel edges in
-/// multi-edge mode); properties are intentionally excluded.
 impl PartialEq for Edge {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
@@ -370,12 +379,85 @@ impl PartialEq for Edge {
 
 impl Eq for Edge {}
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn label_only_props_is_empty() {
+        let mut v = Vertex::label_only(1, 7);
+        assert!(v.is_label_only());
+        assert!(v.props().is_empty(), "LabelOnly props should return empty map");
+        // G10: props() on LabelOnly must leave the element in LabelOnly state (ensure_map is a no-op).
+        assert!(v.is_label_only(), "props() must not transition LabelOnly to Map");
+        // get_value for id/label still works without loading props
+        assert_eq!(v.get_value(crate::types::prop_key::ID_KEY_ID), Some(Primitive::Int64(1)));
+        assert_eq!(v.get_value(crate::types::prop_key::LABEL_KEY_ID), Some(Primitive::Int32(7)));
+        // any user property is absent
+        assert_eq!(v.get_value(100), None);
+    }
+
+    #[test]
+    fn label_only_stays_label_only_after_get_value() {
+        let v = Vertex::label_only(42, 3);
+        // get_value never transitions state
+        let _ = v.get_value(100);
+        assert!(v.is_label_only());
+    }
+
+    // ── Gap coverage: G9, G11, G12, G14 ──────────────────────────────────────
+
+    #[test]
+    fn g9_props_idempotent_on_map_state() {
+        // Calling props() twice on a Map-state vertex must be a no-op — no panic, same result.
+        let m: HashMap<u16, Primitive> = [(10u16, Primitive::Int32(42))].into();
+        let mut v = Vertex::with_props(1, 1, m);
+        assert_eq!(v.props().get(&10), Some(&Primitive::Int32(42)));
+        assert_eq!(v.props().get(&10), Some(&Primitive::Int32(42))); // second call
+        assert!(matches!(v.props, PropertyMap::Map(_)));
+    }
+
+    #[test]
+    fn g11_props_mut_on_blob_transitions_to_map() {
+        // props_mut() calls ensure_map() internally — Blob → Map, no panic.
+        let blob = crate::types::prop_codec::encode_props(&[(5u16, Primitive::Bool(true))].into());
+        let mut v = Vertex::from_raw(1, 1, blob.into_boxed_slice());
+        assert!(matches!(v.props, PropertyMap::Blob(_)));
+        v.props_mut().insert(6, Primitive::Int32(99));
+        assert!(matches!(v.props, PropertyMap::Map(_)));
+        assert_eq!(v.props_mut().get(&5), Some(&Primitive::Bool(true))); // original prop preserved
+        assert_eq!(v.props_mut().get(&6), Some(&Primitive::Int32(99))); // new prop present
+    }
+
+    #[test]
+    #[should_panic(expected = "props_mut called on LabelOnly vertex")]
+    fn g12_props_mut_on_label_only_panics() {
+        let mut v = Vertex::label_only(1, 1);
+        let _ = v.props_mut(); // must panic
+    }
+
+    #[test]
+    fn g14_props_on_blob_transitions_to_map() {
+        // props() triggers Blob → Map; as_map() returns Some afterward.
+        let blob = crate::types::prop_codec::encode_props(&[(10u16, Primitive::Int64(7))].into());
+        let mut v = Vertex::from_raw(1, 1, blob.into_boxed_slice());
+        assert!(matches!(v.props, PropertyMap::Blob(_)));
+        let map = v.props();
+        assert_eq!(map.get(&10), Some(&Primitive::Int64(7)));
+        // State must now be Map.
+        assert!(matches!(v.props, PropertyMap::Map(_)));
+        // as_map() must return Some.
+        assert!(v.props.as_map().is_some());
+    }
+}
+
 // ── Property ─────────────────────────────────────────────────────────────────
 
 /// A single property value together with its owning element.
 ///
-/// `owner` identifies the vertex or edge this property belongs to.  The engine
-/// uses `owner` to call mutation methods on the transaction (e.g. for `drop()`).
+/// Used at the [`GraphCtx`] API boundary (`get_property`, `set_property`,
+/// `drop_property`, `ValuesStep` with `emit_property=true`). Not stored in the
+/// overlay — synthesized on demand from the `HashMap<u16, Primitive>` in Map state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Property {
     pub owner: CanonicalKey,

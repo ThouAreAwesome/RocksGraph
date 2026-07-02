@@ -54,18 +54,20 @@ use std::{collections::HashSet, sync::Arc};
 
 use rocksdb::{Direction as ScanDir, IteratorMode, OptimisticTransactionDB, ReadOptions};
 
+use std::collections::HashMap;
+
 use crate::{
     store::{
         rocks::encoding::{
             build_lazy_edge, build_lazy_vertex, decode_edge_key, decode_vertex_key, edge_scan_prefix, encode_edge_key,
-            encode_props, encode_schema_key, encode_vertex_key, prefix_upper_bound, EdgeValue, VertexDegree,
-            VertexValue, CF_EDGES_IN, CF_EDGES_OUT, CF_SCHEMA, CF_VERTEX_DEGREE, CF_VERTICES, EDGE_KEY_SIZE,
+            encode_schema_key, encode_vertex_key, prefix_upper_bound, EdgeValue, VertexDegree, VertexValue,
+            CF_EDGES_IN, CF_EDGES_OUT, CF_SCHEMA, CF_VERTEX_DEGREE, CF_VERTICES, EDGE_KEY_SIZE,
         },
         traits::GraphTransaction,
     },
     types::{
-        element::Property, AdjacentEdgeCursor, AdjacentEdgesOptions, CanonicalEdgeKey, Direction, Edge, EdgeKey,
-        LabelId, Rank, StoreError, Vertex, VertexKey,
+        prop_codec::encode_props, AdjacentEdgeCursor, AdjacentEdgesOptions, CanonicalEdgeKey, Direction, Edge, EdgeKey,
+        LabelId, Primitive, Rank, StoreError, Vertex, VertexKey,
     },
 };
 
@@ -429,7 +431,12 @@ impl GraphTransaction for Transaction {
     }
 
     /// Inserts or updates a vertex record with its label and properties.
-    fn put_vertex(&mut self, key: VertexKey, label_id: LabelId, props: &[Property]) -> Result<(), StoreError> {
+    fn put_vertex(
+        &mut self,
+        key: VertexKey,
+        label_id: LabelId,
+        props: &HashMap<u16, Primitive>,
+    ) -> Result<(), StoreError> {
         let txn = self.db_txn.as_ref().expect("no active transaction");
         let cf_vertices = self.db.cf_handle(CF_VERTICES).ok_or(StoreError::MissingColumnFamily("vertices"))?;
         let vv = VertexValue { label_id, property_blob: encode_props(props) };
@@ -453,7 +460,12 @@ impl GraphTransaction for Transaction {
     /// Inserts or updates a single edge record (either `edges_out` or `edges_in`).
     /// `end_vertex_label` is the label of the vertex at the *other* end of the
     /// physical row: `dst_label` for `edges_out`, `src_label` for `edges_in`.
-    fn put_edge(&mut self, key: &EdgeKey, end_vertex_label: LabelId, props: &[Property]) -> Result<(), StoreError> {
+    fn put_edge(
+        &mut self,
+        key: &EdgeKey,
+        end_vertex_label: LabelId,
+        props: &HashMap<u16, Primitive>,
+    ) -> Result<(), StoreError> {
         let txn = self.db_txn.as_ref().expect("no active transaction");
         let cf_name = match key.direction {
             Direction::OUT => CF_EDGES_OUT,
@@ -582,6 +594,8 @@ impl GraphTransaction for Transaction {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use rocksdb::{DBCommon, OptimisticTransactionDB, Options, SingleThreaded, DB};
     use smol_str::SmolStr;
 
@@ -590,10 +604,7 @@ mod tests {
             traits::{GraphStore, GraphTransaction},
             RocksStorage,
         },
-        types::{
-            AdjacentEdgesOptions, CanonicalKey, Direction, Edge, EdgeKey, LabelId, Primitive, Property, Vertex,
-            VertexKey,
-        },
+        types::{AdjacentEdgesOptions, Direction, Edge, EdgeKey, LabelId, Primitive, Vertex, VertexKey},
     };
     /// This test simulates a read-write conflict between two transactions (`txn1` and `txn2`) on the same keys in a
     /// RocksDB database using `OptimisticTransactionDB`. The test verifies that if `txn2` commits first after
@@ -678,14 +689,12 @@ mod tests {
         .0
     }
 
-    // Helper to create a simple vertex
     fn create_test_vertex(id: i64, label_id: LabelId) -> Vertex {
-        Vertex::with_props(id, label_id, vec![])
+        Vertex::new(id, label_id)
     }
 
-    // Helper to create a simple edge
     fn create_test_edge(src: i64, label: LabelId, dst: i64, _dir: Direction) -> Edge {
-        Edge::with_props(src, label, dst, 0, vec![], None, None)
+        Edge::new(src, label, dst, 0, None, None)
     }
 
     #[test]
@@ -694,14 +703,14 @@ mod tests {
         let mut txn = ctx(&store);
         // Test with positive ID
         let mut v_pos = create_test_vertex(1, 100);
-        txn.put_vertex(v_pos.id, v_pos.label_id, v_pos.all_props()).unwrap();
+        txn.put_vertex(v_pos.id, v_pos.label_id, v_pos.props()).unwrap();
         let fetched_v_pos = txn.get_vertex(v_pos.id).unwrap().unwrap();
         assert_eq!(fetched_v_pos.id, v_pos.id);
         assert_eq!(fetched_v_pos.label_id, v_pos.label_id);
 
         // Test with negative ID
         let mut v_neg = create_test_vertex(-2, 200);
-        txn.put_vertex(v_neg.id, v_neg.label_id, v_neg.all_props()).unwrap();
+        txn.put_vertex(v_neg.id, v_neg.label_id, v_neg.props()).unwrap();
         let fetched_v_neg = txn.get_vertex(v_neg.id).unwrap().unwrap();
         assert_eq!(fetched_v_neg.id, v_neg.id);
         assert_eq!(fetched_v_neg.label_id, v_neg.label_id);
@@ -755,7 +764,7 @@ mod tests {
         // Test with positive IDs
         let ek_pos = EdgeKey::out_e(1, 100, 2, 0);
         let mut e_pos = create_test_edge(1, 100, 2, Direction::OUT);
-        txn.put_edge(&ek_pos, 0, e_pos.all_props()).unwrap();
+        txn.put_edge(&ek_pos, 0, e_pos.props()).unwrap();
         let fetched_e_pos = txn.get_edge(&ek_pos).unwrap().unwrap();
         assert_eq!(fetched_e_pos.src_id, ek_pos.primary_id);
         assert_eq!(fetched_e_pos.dst_id, ek_pos.secondary_id);
@@ -763,7 +772,7 @@ mod tests {
         // Test with negative IDs
         let ek_neg = EdgeKey::in_e(-3, 200, -4, 0);
         let mut e_neg = create_test_edge(-3, 200, -4, Direction::IN);
-        txn.put_edge(&ek_neg, 0, e_neg.all_props()).unwrap();
+        txn.put_edge(&ek_neg, 0, e_neg.props()).unwrap();
         let fetched_e_neg = txn.get_edge(&ek_neg).unwrap().unwrap();
         assert_eq!(fetched_e_neg.src_id, ek_neg.secondary_id); // For IN edge, primary_id is dst, secondary_id is src
         assert_eq!(fetched_e_neg.dst_id, ek_neg.primary_id);
@@ -778,19 +787,19 @@ mod tests {
         let (store, _dir) = open_temp_store();
         let mut txn = ctx(&store);
         // Add some vertices
-        txn.put_vertex(1, 1, &[]).unwrap();
-        txn.put_vertex(2, 1, &[]).unwrap();
-        txn.put_vertex(3, 1, &[]).unwrap();
-        txn.put_vertex(-1, 1, &[]).unwrap();
-        txn.put_vertex(-2, 1, &[]).unwrap();
+        txn.put_vertex(1, 1, &HashMap::new()).unwrap();
+        txn.put_vertex(2, 1, &HashMap::new()).unwrap();
+        txn.put_vertex(3, 1, &HashMap::new()).unwrap();
+        txn.put_vertex(-1, 1, &HashMap::new()).unwrap();
+        txn.put_vertex(-2, 1, &HashMap::new()).unwrap();
 
         // Add some edges
-        txn.put_edge(&EdgeKey::out_e(1, 10, 2, 0), 0, &[]).unwrap(); // 1 --10--> 2
-        txn.put_edge(&EdgeKey::out_e(1, 10, 3, 0), 0, &[]).unwrap(); // 1 --10--> 3
-        txn.put_edge(&EdgeKey::out_e(1, 20, 2, 0), 0, &[]).unwrap(); // 1 --20--> 2
-        txn.put_edge(&EdgeKey::in_e(1, 10, 2, 0), 0, &[]).unwrap(); // 1 --10--> 2 (in-direction for 2)
-        txn.put_edge(&EdgeKey::in_e(1, 20, 2, 0), 0, &[]).unwrap(); // 1 --20--> 2 (in-direction for 2)
-        txn.put_edge(&EdgeKey::out_e(-1, 30, -2, 0), 0, &[]).unwrap(); // -1 --30--> -2
+        txn.put_edge(&EdgeKey::out_e(1, 10, 2, 0), 0, &HashMap::new()).unwrap(); // 1 --10--> 2
+        txn.put_edge(&EdgeKey::out_e(1, 10, 3, 0), 0, &HashMap::new()).unwrap(); // 1 --10--> 3
+        txn.put_edge(&EdgeKey::out_e(1, 20, 2, 0), 0, &HashMap::new()).unwrap(); // 1 --20--> 2
+        txn.put_edge(&EdgeKey::in_e(1, 10, 2, 0), 0, &HashMap::new()).unwrap(); // 1 --10--> 2 (in-direction for 2)
+        txn.put_edge(&EdgeKey::in_e(1, 20, 2, 0), 0, &HashMap::new()).unwrap(); // 1 --20--> 2 (in-direction for 2)
+        txn.put_edge(&EdgeKey::out_e(-1, 30, -2, 0), 0, &HashMap::new()).unwrap(); // -1 --30--> -2
 
         // Test get_edges with positive vertex ID, OUT direction, no filters
         let edges = get_adjacent_edges_test(&mut txn, 1, Direction::OUT, None, None, None);
@@ -826,7 +835,7 @@ mod tests {
         let mut txn = ctx(&store);
         // Add and delete positive ID vertex
         let mut v_pos = create_test_vertex(1, 100);
-        txn.put_vertex(v_pos.id, v_pos.label_id, v_pos.all_props()).unwrap();
+        txn.put_vertex(v_pos.id, v_pos.label_id, v_pos.props()).unwrap();
         txn.put_vertex_degree(v_pos.id, 0, 0, 0).unwrap();
         assert!(txn.get_vertex(v_pos.id).unwrap().is_some());
         txn.delete_vertex(v_pos.id).unwrap();
@@ -836,7 +845,7 @@ mod tests {
 
         // Add and delete negative ID vertex
         let mut v_neg = create_test_vertex(-2, 200);
-        txn.put_vertex(v_neg.id, v_neg.label_id, v_neg.all_props()).unwrap();
+        txn.put_vertex(v_neg.id, v_neg.label_id, v_neg.props()).unwrap();
         txn.put_vertex_degree(v_neg.id, 0, 0, 0).unwrap();
         assert!(txn.get_vertex(v_neg.id).unwrap().is_some());
         txn.delete_vertex(v_neg.id).unwrap();
@@ -852,7 +861,7 @@ mod tests {
         // Add and delete positive ID edge
         let ek_pos = EdgeKey::out_e(1, 100, 2, 0);
         let mut e_pos = create_test_edge(1, 100, 2, Direction::OUT);
-        txn.put_edge(&ek_pos, 0, e_pos.all_props()).unwrap();
+        txn.put_edge(&ek_pos, 0, e_pos.props()).unwrap();
         assert!(txn.get_edge(&ek_pos).unwrap().is_some());
         txn.delete_edge(&ek_pos).unwrap();
         assert!(txn.get_edge(&ek_pos).unwrap().is_none());
@@ -860,7 +869,7 @@ mod tests {
         // Add and delete negative ID edge
         let ek_neg = EdgeKey::in_e(-3, 200, -4, 0);
         let mut e_neg = create_test_edge(-3, 200, -4, Direction::IN);
-        txn.put_edge(&ek_neg, 0, e_neg.all_props()).unwrap();
+        txn.put_edge(&ek_neg, 0, e_neg.props()).unwrap();
         assert!(txn.get_edge(&ek_neg).unwrap().is_some());
         txn.delete_edge(&ek_neg).unwrap();
         assert!(txn.get_edge(&ek_neg).unwrap().is_none());
@@ -873,7 +882,7 @@ mod tests {
 
         // Test commit
         let mut v1 = create_test_vertex(1, 1);
-        txn.put_vertex(v1.id, v1.label_id, v1.all_props()).unwrap();
+        txn.put_vertex(v1.id, v1.label_id, v1.props()).unwrap();
         txn.commit().unwrap();
 
         // Verify committed data in a new transaction from the same store
@@ -882,7 +891,7 @@ mod tests {
 
         // Test abort
         let mut v2 = create_test_vertex(2, 2);
-        txn.put_vertex(v2.id, v2.label_id, v2.all_props()).unwrap();
+        txn.put_vertex(v2.id, v2.label_id, v2.props()).unwrap();
         txn.abort();
         // After abort, txn is reset, so we can use it again.
         // Verify aborted data is not present
@@ -900,20 +909,18 @@ mod tests {
 
         let v1_id = 1;
         let v1_label = 10;
-        let props = vec![
-            Property { owner: CanonicalKey::Vertex(v1_id), key: 1, value: Primitive::String(SmolStr::new("Alice")) },
-            Property { owner: CanonicalKey::Vertex(v1_id), key: 2, value: Primitive::Int32(30) },
-        ];
+        let props: HashMap<u16, Primitive> =
+            [(1u16, Primitive::String(SmolStr::new("Alice"))), (2u16, Primitive::Int32(30))].into();
 
         txn.put_vertex(v1_id, v1_label, &props).unwrap();
         let mut fetched_v = txn.get_vertex(v1_id).unwrap().unwrap();
 
         assert_eq!(fetched_v.id, v1_id);
         assert_eq!(fetched_v.label_id, v1_label);
-        let fetched_props = fetched_v.all_props();
+        let fetched_props = fetched_v.props();
         assert_eq!(fetched_props.len(), 2);
-        assert!(fetched_props.contains(&props[0]));
-        assert!(fetched_props.contains(&props[1]));
+        assert_eq!(fetched_props.get(&1u16), Some(&Primitive::String(SmolStr::new("Alice"))));
+        assert_eq!(fetched_props.get(&2u16), Some(&Primitive::Int32(30)));
     }
 
     // ── Gap coverage ─────────────────────────────────────────────────────────
@@ -924,9 +931,9 @@ mod tests {
         let mut txn = ctx(&store);
 
         // Store in-edges for vertex 5: two with label 10, one with label 20
-        txn.put_edge(&EdgeKey::in_e(1, 10, 5, 0), 0, &[]).unwrap(); // 1 --10--> 5
-        txn.put_edge(&EdgeKey::in_e(2, 10, 5, 0), 0, &[]).unwrap(); // 2 --10--> 5
-        txn.put_edge(&EdgeKey::in_e(3, 20, 5, 0), 0, &[]).unwrap(); // 3 --20--> 5
+        txn.put_edge(&EdgeKey::in_e(1, 10, 5, 0), 0, &HashMap::new()).unwrap(); // 1 --10--> 5
+        txn.put_edge(&EdgeKey::in_e(2, 10, 5, 0), 0, &HashMap::new()).unwrap(); // 2 --10--> 5
+        txn.put_edge(&EdgeKey::in_e(3, 20, 5, 0), 0, &HashMap::new()).unwrap(); // 3 --20--> 5
 
         // Label filter on IN direction
         let by_label = get_adjacent_edges_test(&mut txn, 5, Direction::IN, Some(10), None, None);
@@ -955,7 +962,7 @@ mod tests {
 
         // Seed a vertex that both transactions will read
         let mut seed = ctx(&store);
-        seed.put_vertex(42, 1, &[]).unwrap();
+        seed.put_vertex(42, 1, &HashMap::new()).unwrap();
         seed.commit().unwrap();
 
         // txn1 reads vertex 42 (enrolls it in its OCC read-set)
@@ -964,11 +971,11 @@ mod tests {
 
         // txn2 overwrites vertex 42 and commits first
         let mut txn2 = ctx(&store);
-        txn2.put_vertex(42, 2, &[]).unwrap();
+        txn2.put_vertex(42, 2, &HashMap::new()).unwrap();
         txn2.commit().unwrap();
 
         // txn1 now writes and tries to commit — must see Conflict
-        txn1.put_vertex(42, 3, &[]).unwrap();
+        txn1.put_vertex(42, 3, &HashMap::new()).unwrap();
         assert!(matches!(txn1.commit(), Err(crate::types::StoreError::Conflict)));
     }
 
@@ -977,13 +984,31 @@ mod tests {
         let (store, _dir) = open_temp_store();
         let mut txn = ctx(&store);
 
-        txn.put_vertex(7, 1, &[]).unwrap();
+        txn.put_vertex(7, 1, &HashMap::new()).unwrap();
         let first = txn.get_vertex(7).unwrap().unwrap();
         assert_eq!(first.label_id, 1);
 
-        txn.put_vertex(7, 99, &[]).unwrap();
+        txn.put_vertex(7, 99, &HashMap::new()).unwrap();
         let second = txn.get_vertex(7).unwrap().unwrap();
         assert_eq!(second.label_id, 99);
+    }
+
+    #[test]
+    fn g25_put_empty_props_get_value_returns_none() {
+        // Vertex stored with zero user properties: any user-key get_value returns None.
+        let (store, _dir) = open_temp_store();
+        let mut txn = ctx(&store);
+        txn.put_vertex(1, 5, &HashMap::new()).unwrap();
+        txn.commit().unwrap();
+
+        let mut txn2 = ctx(&store);
+        let mut v = txn2.get_vertex(1).unwrap().unwrap();
+        // User-defined key not present.
+        assert_eq!(v.get_value(10), None);
+        // label still synthesized correctly.
+        assert_eq!(v.label_id, 5);
+        // props() is empty.
+        assert!(v.props().is_empty());
     }
 
     #[test]
@@ -992,20 +1017,16 @@ mod tests {
         let mut txn = ctx(&store);
 
         let ek = EdgeKey::out_e(1, 10, 2, 0);
-        txn.put_edge(&ek, 0, &[]).unwrap();
+        txn.put_edge(&ek, 0, &HashMap::new()).unwrap();
         let mut first = txn.get_edge(&ek).unwrap().unwrap();
-        assert_eq!(first.all_props().len(), 0);
+        assert_eq!(first.props().len(), 0);
 
-        let props = vec![Property {
-            owner: crate::types::CanonicalKey::Edge(ek.canonical_edge_key()),
-            key: 1,
-            value: Primitive::Int32(7),
-        }];
+        let props: HashMap<u16, Primitive> = [(1u16, Primitive::Int32(7))].into();
         txn.put_edge(&ek, 0, &props).unwrap();
         let mut second = txn.get_edge(&ek).unwrap().unwrap();
-        let second_props = second.all_props();
+        let second_props = second.props();
         assert_eq!(second_props.len(), 1);
-        assert_eq!(second_props[0].value, Primitive::Int32(7));
+        assert_eq!(second_props.get(&1u16), Some(&Primitive::Int32(7)));
     }
 
     #[test]
@@ -1016,8 +1037,8 @@ mod tests {
         // Two parallel edges between the same vertices — differ only by rank
         let ek0 = EdgeKey::out_e(1, 10, 2, 0);
         let ek1 = EdgeKey::out_e(1, 10, 2, 1);
-        txn.put_edge(&ek0, 0, &[]).unwrap();
-        txn.put_edge(&ek1, 0, &[]).unwrap();
+        txn.put_edge(&ek0, 0, &HashMap::new()).unwrap();
+        txn.put_edge(&ek1, 0, &HashMap::new()).unwrap();
 
         // Both are distinct keys and are independently readable
         assert!(txn.get_edge(&ek0).unwrap().is_some());
@@ -1039,10 +1060,7 @@ mod tests {
         let mut txn = ctx(&store);
 
         let ek = EdgeKey::out_e(1, 100, 2, 0);
-        let props = vec![
-            Property { owner: CanonicalKey::Edge(ek.canonical_edge_key()), key: 1, value: Primitive::Float64(0.5) },
-            Property { owner: CanonicalKey::Edge(ek.canonical_edge_key()), key: 2, value: Primitive::Int64(12345) },
-        ];
+        let props: HashMap<u16, Primitive> = [(1u16, Primitive::Float64(0.5)), (2u16, Primitive::Int64(12345))].into();
 
         txn.put_edge(&ek, 0, &props).unwrap();
         let mut fetched_e = txn.get_edge(&ek).unwrap().unwrap();
@@ -1050,10 +1068,10 @@ mod tests {
         assert_eq!(fetched_e.src_id, ek.primary_id);
         assert_eq!(fetched_e.dst_id, ek.secondary_id);
         assert_eq!(fetched_e.label_id, ek.label_id);
-        let fetched_props = fetched_e.all_props();
+        let fetched_props = fetched_e.props();
         assert_eq!(fetched_props.len(), 2);
-        assert!(fetched_props.contains(&props[0]));
-        assert!(fetched_props.contains(&props[1]));
+        assert_eq!(fetched_props.get(&1u16), Some(&Primitive::Float64(0.5)));
+        assert_eq!(fetched_props.get(&2u16), Some(&Primitive::Int64(12345)));
     }
 
     #[test]
@@ -1062,11 +1080,11 @@ mod tests {
 
         // 1. Seed initial data
         let mut seed = ctx(&store);
-        seed.put_vertex(1, 1, &[]).unwrap();
-        seed.put_vertex(2, 1, &[]).unwrap();
+        seed.put_vertex(1, 1, &HashMap::new()).unwrap();
+        seed.put_vertex(2, 1, &HashMap::new()).unwrap();
         seed.put_vertex_degree(1, 1, 0, 0).unwrap();
         let ek_seed = EdgeKey::out_e(1, 10, 2, 0);
-        seed.put_edge(&ek_seed, 0, &[]).unwrap();
+        seed.put_edge(&ek_seed, 0, &HashMap::new()).unwrap();
         seed.commit().unwrap();
 
         // 2. Start Transaction 1 (captures snapshot)
@@ -1075,14 +1093,14 @@ mod tests {
         // 3. Start Transaction 2 concurrently, perform updates, and commit
         let mut txn2 = ctx(&store);
         // Insert new vertex 3
-        txn2.put_vertex(3, 100, &[]).unwrap();
+        txn2.put_vertex(3, 100, &HashMap::new()).unwrap();
         // Update existing vertex 1's label
-        txn2.put_vertex(1, 99, &[]).unwrap();
+        txn2.put_vertex(1, 99, &HashMap::new()).unwrap();
         // Update vertex 1's degree
         txn2.put_vertex_degree(1, 1, 1, 0).unwrap();
         // Insert new edge 1 --20--> 3
         let ek_new = EdgeKey::out_e(1, 20, 3, 0);
-        txn2.put_edge(&ek_new, 0, &[]).unwrap();
+        txn2.put_edge(&ek_new, 0, &HashMap::new()).unwrap();
         txn2.commit().unwrap();
 
         // 4. In Transaction 1, verify strict snapshot isolation (repeatable reads)
@@ -1161,7 +1179,7 @@ mod tests {
 
         for src in [1i64, 2, 3, 4, 5] {
             let mut txn = ctx(&store);
-            txn.put_edge(&EdgeKey::out_e(src, 10, 100, 0), 0, &[]).unwrap();
+            txn.put_edge(&EdgeKey::out_e(src, 10, 100, 0), 0, &HashMap::new()).unwrap();
             txn.commit().unwrap();
             store.db.flush_cf(&cf).unwrap();
         }

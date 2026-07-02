@@ -16,21 +16,11 @@
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 use crate::types::{
-    element::{Edge, Property},
+    element::Edge,
     keys::{Direction, LabelId, VertexKey},
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-/// Updates a property in-place if its key exists, otherwise appends it to the list.
-#[inline]
-pub(crate) fn upsert_prop(props: &mut Vec<Property>, prop: &Property) {
-    if let Some(p) = props.iter_mut().find(|p| p.key == prop.key) {
-        p.value = prop.value.clone();
-    } else {
-        props.push(prop.clone());
-    }
-}
 
 /// Evaluates whether an edge matches the specified traversal filters.
 ///

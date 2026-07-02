@@ -32,8 +32,9 @@ use crate::{
     },
     schema::Schema,
     types::{
-        gvalue::GValue,
+        gvalue::{GValue, Primitive},
         keys::{CanonicalKey, LabelId, VertexKey},
+        prop_key::{ID_KEY_ID, LABEL_KEY_ID, RANK_KEY_ID},
         StoreError,
     },
 };
@@ -139,21 +140,22 @@ pub(crate) fn materialize(
 fn materialize_vertex(
     vk: VertexKey,
     ctx: &mut dyn crate::engine::GraphCtx,
-    _schema: &Schema,
+    schema: &Schema,
     cache: &LabelCache,
     prop_keys: Option<&[SmolStr]>,
 ) -> Result<Value, StoreError> {
     match prop_keys {
-        // Default: id + label only, skip properties.
-        None => match ctx.get_all_props(&CanonicalKey::Vertex(vk))? {
+        // Default: id + label only — read the synthesized LABEL_KEY_ID, no blob decode.
+        None => match ctx.get_value(&CanonicalKey::Vertex(vk), LABEL_KEY_ID)? {
             None => Err(StoreError::NotFound),
-            Some((label_id, _props)) => Ok(Value::Vertex(UserVertex {
+            Some(Primitive::Int32(label_id)) => Ok(Value::Vertex(UserVertex {
                 id: vk,
                 label: cache.vertex_label(label_id).clone(),
                 properties: HashMap::new(),
             })),
+            _ => Err(StoreError::CorruptData("vertex label_id not Int32")),
         },
-        // All properties — existing behavior.
+        // All properties — full decode path.
         Some([]) => match ctx.get_all_props(&CanonicalKey::Vertex(vk))? {
             None => Err(StoreError::NotFound),
             Some((label_id, props)) => {
@@ -165,19 +167,26 @@ fn materialize_vertex(
                 Ok(Value::Vertex(UserVertex { id: vk, label, properties }))
             }
         },
-        // Named properties only — filters on client side after fetching.
-        Some(keys) => match ctx.get_all_props(&CanonicalKey::Vertex(vk))? {
+        // Named properties only — targeted per-key lookup (O(log P) each, no HashMap build).
+        // Reserved keys (id=1, label=2, rank=3) are synthesized, not stored in the blob; skip them
+        // to preserve parity with get_all_props which only returns user-defined properties.
+        Some(keys) => match ctx.get_value(&CanonicalKey::Vertex(vk), LABEL_KEY_ID)? {
             None => Err(StoreError::NotFound),
-            Some((label_id, all_props)) => {
+            Some(Primitive::Int32(label_id)) => {
                 let label = cache.vertex_label(label_id).clone();
                 let mut properties: HashMap<SmolStr, Vec<Value>> = HashMap::new();
-                for (prop_name, prim) in all_props {
-                    if keys.iter().any(|k| k.as_str() == prop_name.as_str()) {
-                        properties.entry(prop_name).or_default().push(primitive_to_value(prim));
+                for key in keys {
+                    let Some(prop_key_id) = schema.prop_key_id(key) else { continue };
+                    if matches!(prop_key_id, ID_KEY_ID | LABEL_KEY_ID | RANK_KEY_ID) {
+                        continue;
+                    }
+                    if let Some(val) = ctx.get_value(&CanonicalKey::Vertex(vk), prop_key_id)? {
+                        properties.entry(key.clone()).or_default().push(primitive_to_value(val));
                     }
                 }
                 Ok(Value::Vertex(UserVertex { id: vk, label, properties }))
             }
+            _ => Err(StoreError::CorruptData("vertex label_id not Int32")),
         },
     }
 }
@@ -186,7 +195,7 @@ fn materialize_vertex(
 fn materialize_edge(
     ek: crate::types::keys::EdgeKey,
     ctx: &mut dyn crate::engine::GraphCtx,
-    _schema: &Schema,
+    schema: &Schema,
     cache: &LabelCache,
     prop_keys: Option<&[SmolStr]>,
 ) -> Result<Value, StoreError> {
@@ -201,7 +210,7 @@ fn materialize_edge(
             rank: cek.rank,
             properties: HashMap::new(),
         })),
-        // All properties — existing behavior.
+        // All properties — full decode path.
         Some([]) => match ctx.get_all_props(&CanonicalKey::Edge(cek))? {
             None => Err(StoreError::NotFound),
             Some((label_id, props)) => {
@@ -220,27 +229,33 @@ fn materialize_edge(
                 }))
             }
         },
-        // Named properties only — filters on client side after fetching.
-        Some(keys) => match ctx.get_all_props(&CanonicalKey::Edge(cek))? {
-            None => Err(StoreError::NotFound),
-            Some((label_id, all_props)) => {
-                let label = cache.edge_label(label_id).clone();
-                let mut properties: HashMap<SmolStr, Value> = HashMap::new();
-                for (prop_name, prim) in all_props {
-                    if keys.iter().any(|k| k.as_str() == prop_name.as_str()) {
-                        properties.insert(prop_name, primitive_to_value(prim));
-                    }
-                }
-                Ok(Value::Edge(UserEdge {
-                    id: ek.to_id_string(),
-                    out_v: cek.src_id,
-                    in_v: cek.dst_id,
-                    label,
-                    rank: cek.rank,
-                    properties,
-                }))
+        // Named properties only — targeted per-key lookup.
+        // Edge label comes from the key (zero store reads); properties are looked up individually.
+        Some(keys) => {
+            // Ensure the edge is in the overlay before calling get_value (overlay-only for edges).
+            if ctx.get_edge(&ek)?.is_none() {
+                return Err(StoreError::NotFound);
             }
-        },
+            let label = cache.edge_label(ek.label_id).clone();
+            let mut properties: HashMap<SmolStr, Value> = HashMap::new();
+            for key in keys {
+                let Some(prop_key_id) = schema.prop_key_id(key) else { continue };
+                if matches!(prop_key_id, ID_KEY_ID | LABEL_KEY_ID | RANK_KEY_ID) {
+                    continue;
+                }
+                if let Some(val) = ctx.get_value(&CanonicalKey::Edge(cek), prop_key_id)? {
+                    properties.insert(key.clone(), primitive_to_value(val));
+                }
+            }
+            Ok(Value::Edge(UserEdge {
+                id: ek.to_id_string(),
+                out_v: cek.src_id,
+                in_v: cek.dst_id,
+                label,
+                rank: cek.rank,
+                properties,
+            }))
+        }
     }
 }
 

@@ -16,9 +16,7 @@
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 use hdrhistogram::Histogram;
-use rocksgraph::{
-    Graph, ReadSession, StoreError, TraversalBuilder, Value, __,
-};
+use rocksgraph::{Graph, ReadSession, StoreError, TraversalBuilder, Value, __};
 
 use std::{
     env,
@@ -294,20 +292,16 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rocksgraph::schema::{GraphOptions, SchemaMode};
     use tempfile::tempdir;
-    use rocksgraph::{
-    schema::{GraphOptions, SchemaMode},
-    };
 
     #[test]
     fn test_bench_read() {
         let dir = tempdir().unwrap();
         {
-            let graph = Graph::open_with_options(
-                dir.path(),
-                GraphOptions { mode: SchemaMode::Strict, ..Default::default() },
-            )
-            .unwrap();
+            let graph =
+                Graph::open_with_options(dir.path(), GraphOptions { mode: SchemaMode::Strict, ..Default::default() })
+                    .unwrap();
             let mut snap = graph.begin();
             {
                 use rocksgraph::schema::DataType;
@@ -327,7 +321,13 @@ mod tests {
                 .property("age", 30i64)
                 .next()
                 .unwrap();
-            snap.g().addV(VERTEX_LABEL).property("id", 2i64).property("name", "bob").property("age", 25i64).next().unwrap();
+            snap.g()
+                .addV(VERTEX_LABEL)
+                .property("id", 2i64)
+                .property("name", "bob")
+                .property("age", 25i64)
+                .next()
+                .unwrap();
             snap.g()
                 .addE(EDGE_LABEL)
                 .from(1)

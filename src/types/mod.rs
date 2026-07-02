@@ -56,11 +56,12 @@
 //!
 //! | Sub-module | Contents |
 //! |---|---|
-//! | [`element`] | [`Vertex`], [`Edge`], [`Property`] — graph element records |
+//! | [`element`] | [`Vertex`], [`Edge`], [`Property`], [`PropertyMap`](element::PropertyMap) — graph element records |
 //! | [`gvalue`] | [`GValue`], [`Primitive`] — traversal value types |
 //! | [`keys`] | [`VertexKey`], [`EdgeKey`], [`CanonicalEdgeKey`], [`Direction`], [`CanonicalKey`] |
 //! | [`label`] | [`Label`] — human-readable label string |
 //! | [`prop_key`] | [`PropKey`], [`ID`](prop_key::ID), [`LABEL`](prop_key::LABEL) — property key type and built-in keys |
+//! | [`prop_codec`] | v1 property blob codec — `encode_props`, `decode_prop_by_key`, `decode_all_to_map` |
 //! | [`error`] | [`StoreError`] — storage and runtime errors |
 //!
 //! Most types are re-exported at the crate root for convenience.
@@ -70,6 +71,7 @@ pub mod error;
 pub mod gvalue;
 pub mod keys;
 pub mod label;
+pub(crate) mod prop_codec;
 pub mod prop_key;
 
 pub use element::{Edge, Property, Vertex};
