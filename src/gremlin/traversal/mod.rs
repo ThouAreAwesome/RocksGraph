@@ -58,7 +58,6 @@
 //! If `GraphTraversal` appears in a compiler error, it's the hidden type behind
 //! `__()` — the same way the compiler prints `[closure@…]` for anonymous functions.
 
-use std::collections::HashMap;
 
 use smol_str::SmolStr;
 
@@ -192,7 +191,7 @@ impl GraphTraversal {
         }
         apply_rules(&mut logical)?;
         let schema_lock = graph.schema();
-        let plan = PhysicalPlanBuilder {}.build(&logical, &schema_lock)?;
+        let plan = PhysicalPlanBuilder::default().build(&logical, &schema_lock)?;
         let schema = graph.schema();
         let cache = built::LabelCache::from_schema(&schema.read().unwrap());
         Ok(BuiltTraversal { graph, plan, cache, schema, prop_keys })
@@ -213,7 +212,7 @@ impl GraphTraversal {
         self.push_step(LogicalStep::AddV(AddVStep {
             label: label.into(),
             vertex_id: None,
-            properties: HashMap::new(),
+            properties: smallvec::smallvec![],
         }));
         self
     }
@@ -223,7 +222,7 @@ impl GraphTraversal {
             label: label.into(),
             out_v_id: None,
             in_v_id: None,
-            properties: HashMap::new(),
+            properties: smallvec::smallvec![],
             rank: None,
         }));
         self

@@ -72,7 +72,6 @@ mod tests {
         types::{keys::VertexKey, Primitive, PrimitivePredicate},
     };
     use smallvec::smallvec;
-    use std::collections::HashMap;
 
     fn v_all() -> LogicalStep {
         LogicalStep::V(VStep { ids: smallvec![] })
@@ -294,7 +293,7 @@ mod tests {
     fn test_add_v_id_prop_merged() {
         use crate::planner::logical_step::AddVStep;
         let steps = vec![
-            LogicalStep::AddV(AddVStep { label: "1".into(), vertex_id: None, properties: HashMap::new() }),
+            LogicalStep::AddV(AddVStep { label: "1".into(), vertex_id: None, properties: smallvec::smallvec![] }),
             prop(SmolStr::new("id"), Primitive::Int32(321)),
         ];
         let mut plan = LogicalPlan { steps };
@@ -313,7 +312,7 @@ mod tests {
     fn test_add_v_id_prop_duplicate() {
         use crate::planner::logical_step::AddVStep;
         let steps = vec![
-            LogicalStep::AddV(AddVStep { label: "1".into(), vertex_id: None, properties: HashMap::new() }),
+            LogicalStep::AddV(AddVStep { label: "1".into(), vertex_id: None, properties: smallvec::smallvec![] }),
             prop(SmolStr::new("id"), Primitive::Int64(321)),
             prop(SmolStr::new("id"), Primitive::Int32(21)),
         ];
@@ -330,7 +329,7 @@ mod tests {
                 label: "1".into(),
                 out_v_id: None,
                 in_v_id: None,
-                properties: HashMap::new(),
+                properties: smallvec::smallvec![],
                 rank: None,
             }),
             LogicalStep::From(FromStep { vertex_id: 12 }),

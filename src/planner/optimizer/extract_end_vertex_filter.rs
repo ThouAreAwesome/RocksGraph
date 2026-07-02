@@ -20,7 +20,7 @@ use smallvec::SmallVec;
 use smol_str::SmolStr;
 
 use crate::{
-    planner::logical_step::{EndVertexFilter, LogicalPlan, LogicalStep, WhereStep},
+    planner::logical_step::{EndVertexFilter, LogicalPlan, LogicalStep},
     types::{prop_key::ID, PrimitivePredicate, StoreError},
 };
 
@@ -35,76 +35,62 @@ fn intersect_option_ids(
     }
 }
 
-/// An optimizer rule that extracts filter predicates from `where(otherV()…)` sub-plans
-/// into a generalized `EndVertexFilter`.
+/// Extracts filter predicates from `where(otherV()…)` sub-plans into an
+/// `EndVertexFilter`.  The entire sub-plan must be convertible — any step
+/// that isn't a recognized filter (HasId, HasProperty(id/label/other),
+/// HasLabel) causes the `where()` to be left untouched.
 ///
-/// Any linear chain of filter steps after `OtherV` — `HasId`, `HasProperty(id)`,
-/// `HasLabel`, `HasProperty(other)` — is extracted.  The first non-filter step
-/// (e.g. `Out`, `And`, `Or`) stops extraction and leaves the entire `where()`
-/// untouched.
-///
-/// This allows subsequent optimization rules to merge the `EndVertexFilter`'s `ids`
-/// directly into edge traversal steps, while label and property predicates run
-/// through the fused `EndVertexFilterStep` at the physical level.
+/// Because the replacement is a simple in-place overwrite (no step insertion
+/// or removal), there is no need to rebuild the plan vector.
 pub fn extract_end_vertex_filter(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
     let mut changed = false;
-    let mut new_steps = Vec::with_capacity(plan.steps.len());
 
-    for step in std::mem::take(&mut plan.steps) {
-        if let LogicalStep::Where(wh) = step {
-            let mut sub = wh.plan;
-            if sub.steps.len() < 2 || !matches!(sub.steps.first(), Some(LogicalStep::OtherV(_))) {
-                new_steps.push(LogicalStep::Where(WhereStep { plan: sub }));
-                continue;
-            }
-            // Reorder the sub-plan so id filter comes first.
-            crate::planner::optimizer::reorder_filter::reorder_filters(&mut sub)?;
+    for i in 0..plan.steps.len() {
+        let LogicalStep::Where(wh) = &plan.steps[i] else { continue };
+        let mut sub = wh.plan.clone();
+        if sub.steps.len() < 2 || !matches!(sub.steps.first(), Some(LogicalStep::OtherV(_))) {
+            continue;
+        }
+        // Reorder the sub-plan so id filter comes first.
+        crate::planner::optimizer::reorder_filter::reorder_filters(&mut sub)?;
 
-            let mut ids: Option<SmallVec<[i64; SMALL_VECTOR_LENGTH]>> = None;
-            let mut label_preds: Vec<PrimitivePredicate> = Vec::new();
-            let mut property_preds: Vec<(SmolStr, PrimitivePredicate)> = Vec::new();
-            let mut all_filters = true;
+        let mut ids: Option<SmallVec<[i64; SMALL_VECTOR_LENGTH]>> = None;
+        let mut label_preds: Vec<PrimitivePredicate> = Vec::new();
+        let mut property_preds: Vec<(SmolStr, PrimitivePredicate)> = Vec::new();
+        let mut all_filters = true;
 
-            for s in &sub.steps[1..] {
-                match s {
-                    LogicalStep::HasId(hi) => {
-                        if let Some(found) = super::extract_ids_from_predicate(&hi.pred)? {
-                            intersect_option_ids(&mut ids, found);
-                        }
-                    }
-                    LogicalStep::HasProperty(hp) if hp.key.as_str() == ID => {
-                        if let Some(found) = super::extract_ids_from_predicate(&hp.pred)? {
-                            intersect_option_ids(&mut ids, found);
-                        }
-                    }
-                    LogicalStep::HasLabel(hl) => {
-                        // Label has no structural lookup-key role (unlike `ids`/edge `rank`),
-                        // so multiple label predicates on the same chain just accumulate —
-                        // ANDed, same as property_preds.
-                        label_preds.push(hl.pred.clone());
-                    }
-                    LogicalStep::HasProperty(hp) => {
-                        property_preds.push((hp.key.clone(), hp.pred.clone()));
-                    }
-                    _ => {
-                        all_filters = false;
-                        break;
+        for s in &sub.steps[1..] {
+            match s {
+                LogicalStep::HasId(hi) => {
+                    if let Some(found) = super::extract_ids_from_predicate(&hi.pred)? {
+                        intersect_option_ids(&mut ids, found);
                     }
                 }
+                LogicalStep::HasProperty(hp) if ID == hp.key => {
+                    if let Some(found) = super::extract_ids_from_predicate(&hp.pred)? {
+                        intersect_option_ids(&mut ids, found);
+                    }
+                }
+                LogicalStep::HasLabel(hl) => {
+                    label_preds.push(hl.pred.clone());
+                }
+                LogicalStep::HasProperty(hp) => {
+                    property_preds.push((hp.key.clone(), hp.pred.clone()));
+                }
+                _ => {
+                    all_filters = false;
+                    break;
+                }
             }
+        }
 
-            if all_filters {
-                new_steps.push(LogicalStep::EndVertexFilter(EndVertexFilter { ids, label_preds, property_preds }));
-                changed = true;
-            } else {
-                new_steps.push(LogicalStep::Where(WhereStep { plan: sub }));
-            }
-        } else {
-            new_steps.push(step);
+        if all_filters {
+            plan.steps[i] =
+                LogicalStep::EndVertexFilter(EndVertexFilter { ids, label_preds, property_preds });
+            changed = true;
         }
     }
 
-    plan.steps = new_steps;
     Ok(changed)
 }
 
@@ -113,7 +99,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        planner::logical_step::{HasIdStep, HasPropertyStep, OtherVStep, VStep, WhereStep},
+        planner::logical_step::{HasIdStep, HasLabelStep, HasPropertyStep, OtherVStep, VStep, WhereStep},
         types::{
             gvalue::{Primitive, PrimitivePredicate},
             keys::VertexKey,
@@ -160,10 +146,6 @@ mod tests {
             },
         })
     }
-
-    // fn has(key: &str, value: Primitive) -> LogicalStep {
-    //     LogicalStep::HasProperty(HasPropertyStep { key: SmolStr::new(key), value })
-    // }
 
     #[test]
     fn test_where_other_v_has_id_extracted() {
@@ -264,7 +246,6 @@ mod tests {
     #[test]
     fn test_where_with_extra_steps_full_extraction() {
         // where(otherV().hasId(1).hasLabel("2")) — all filters extracted into one EndVertexFilter.
-        use crate::planner::logical_step::HasLabelStep;
         let steps = vec![LogicalStep::Where(WhereStep {
             plan: LogicalPlan {
                 steps: vec![
@@ -291,7 +272,6 @@ mod tests {
     // accumulate (ANDed), not be silently dropped or block extraction of the rest of the chain.
     #[test]
     fn test_where_second_haslabel_in_same_chain_both_accumulate() {
-        use crate::planner::logical_step::HasLabelStep;
         let steps = vec![LogicalStep::Where(WhereStep {
             plan: LogicalPlan {
                 steps: vec![
@@ -320,7 +300,6 @@ mod tests {
     // label predicates all extract together into the same EndVertexFilter.
     #[test]
     fn test_where_id_and_two_haslabel_all_extracted() {
-        use crate::planner::logical_step::HasLabelStep;
         let steps = vec![LogicalStep::Where(WhereStep {
             plan: LogicalPlan {
                 steps: vec![

@@ -25,9 +25,16 @@
 //!   `DegreeStep` (reads the CF directly); the ground-truth query does a real
 //!   adjacency scan using all known edge labels (bypassing the degree optimizer).
 
-use rocksgraph::{Graph, TraversalBuilder, Value, __};
+use rocksgraph::{
+    Graph, TraversalBuilder, Value, __,
+};
 
 use std::{collections::HashMap, env};
+
+#[allow(dead_code)]
+const VERTEX_LABEL: &str = "Person";
+#[allow(dead_code)]
+const EDGE_LABEL: &str = "Knows";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
@@ -66,19 +73,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn verify_degree_integrity(graph: &Graph) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n--- Verifying degree integrity (vertex_degree CF vs adjacency scan) ---");
 
-    // Collect all edge labels so the ground-truth query cannot be rewritten to
-    // DegreeStep (non-empty labels fail Rule A's `labels.is_empty()` guard).
-    let edge_labels: Vec<String> = {
-        let mut snap = graph.read();
-        snap.g()
-            .E([])
-            .label()
-            .dedup()
-            .to_list()?
-            .into_iter()
-            .filter_map(|v| if let Value::String(s) = v { Some(s) } else { None })
-            .collect()
-    };
+    // Collect edge labels from the schema (O(#labels)) instead of scanning all
+    // edges (O(#edges)).  In Strict mode the schema is authoritative.
+    let edge_labels: Vec<String> = graph.edge_label_names();
 
     if edge_labels.is_empty() {
         println!("  No edge labels found — skipping degree integrity check.");
@@ -164,18 +161,32 @@ fn check_degree(name: &str, opt_paths: Vec<Value>, scan_paths: Vec<Value>) -> Re
 mod tests {
     use super::*;
     use tempfile::tempdir;
+    use rocksgraph::{
+    schema::{GraphOptions, SchemaMode},
+    };
 
     #[test]
     fn test_bench_integrity_clean_graph() {
         let dir = tempdir().unwrap();
-        let graph = Graph::open(dir.path()).unwrap();
+        let graph = Graph::open_with_options(
+            dir.path(),
+            GraphOptions { mode: SchemaMode::Strict, ..Default::default() },
+        )
+        .unwrap();
+        // Declare schema explicitly — required in Strict mode.
+        {
+            let mut mgmt = graph.open_management();
+            mgmt.make_vertex_label(VERTEX_LABEL).make();
+            mgmt.make_edge_label(EDGE_LABEL).make();
+            mgmt.commit().unwrap();
+        }
         let mut tx = graph.begin();
-        tx.g().addV("person").property("id", 1i64).next().unwrap();
-        tx.g().addV("person").property("id", 2i64).next().unwrap();
-        tx.g().addV("person").property("id", 3i64).next().unwrap();
-        tx.g().addE("knows").from(1).to(2).next().unwrap();
-        tx.g().addE("knows").from(2).to(3).next().unwrap();
-        tx.g().addE("knows").from(3).to(1).next().unwrap();
+        tx.g().addV(VERTEX_LABEL).property("id", 1i64).next().unwrap();
+        tx.g().addV(VERTEX_LABEL).property("id", 2i64).next().unwrap();
+        tx.g().addV(VERTEX_LABEL).property("id", 3i64).next().unwrap();
+        tx.g().addE(EDGE_LABEL).from(1).to(2).next().unwrap();
+        tx.g().addE(EDGE_LABEL).from(2).to(3).next().unwrap();
+        tx.g().addE(EDGE_LABEL).from(3).to(1).next().unwrap();
         tx.commit().unwrap();
 
         // All degrees should match — no mismatches expected.
@@ -185,12 +196,22 @@ mod tests {
     #[test]
     fn test_bench_integrity_self_loop() {
         let dir = tempdir().unwrap();
-        let graph = Graph::open(dir.path()).unwrap();
+        let graph = Graph::open_with_options(
+            dir.path(),
+            GraphOptions { mode: SchemaMode::Strict, ..Default::default() },
+        )
+        .unwrap();
+        {
+            let mut mgmt = graph.open_management();
+            mgmt.make_vertex_label(VERTEX_LABEL).make();
+            mgmt.make_edge_label(EDGE_LABEL).make();
+            mgmt.commit().unwrap();
+        }
         let mut tx = graph.begin();
-        tx.g().addV("person").property("id", 1i64).next().unwrap();
-        tx.g().addV("person").property("id", 2i64).next().unwrap();
-        tx.g().addE("knows").from(1).to(1).next().unwrap(); // self-loop
-        tx.g().addE("knows").from(1).to(2).next().unwrap();
+        tx.g().addV(VERTEX_LABEL).property("id", 1i64).next().unwrap();
+        tx.g().addV(VERTEX_LABEL).property("id", 2i64).next().unwrap();
+        tx.g().addE(EDGE_LABEL).from(1).to(1).next().unwrap(); // self-loop
+        tx.g().addE(EDGE_LABEL).from(1).to(2).next().unwrap();
         tx.commit().unwrap();
 
         // Self-loop degree should be counted correctly (was a known bug).

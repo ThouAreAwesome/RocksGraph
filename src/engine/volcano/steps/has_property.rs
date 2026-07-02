@@ -54,7 +54,7 @@ impl HasPropertyStep {
     /// Normalizes predicate for reserved keys whose runtime representation doesn't
     /// match whatever literal type a caller wrote.
     pub fn new(prop_key_id: u16, pred: PrimitivePredicate) -> Self {
-        let pred = if prop_key_id == RANK_KEY_ID {
+        let pred = if RANK_KEY_ID == prop_key_id {
             pred.map(|v| primitive_to_rank(&v).map(Primitive::UInt16).unwrap_or(v))
         } else {
             pred

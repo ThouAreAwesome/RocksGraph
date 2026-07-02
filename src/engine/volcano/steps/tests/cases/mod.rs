@@ -47,9 +47,6 @@ use crate::{
 };
 use smallvec::smallvec;
 use smol_str::SmolStr;
-use std::{
-    collections::HashMap, // For PhysicalPlan::inject
-};
 
 // Define LabelIds for common labels used across tests. Ids start at 1 (0 is reserved to
 // mean "no such label"), and a "dummy" label is registered first in every fixture below to
@@ -453,9 +450,9 @@ fn test_add_v_step_to_empty_graph() {
     let mut graph = create_logical_graph(&store);
     let test_vertex_id: VertexKey = 999; // Choose a unique ID for the test
 
-    let mut properties = HashMap::new();
-    properties.insert(SmolStr::new("name"), Primitive::String(SmolStr::new("marko")));
-    properties.insert(SmolStr::new("age"), Primitive::Int32(29));
+    let mut properties: smallvec::SmallVec<[(SmolStr, Primitive); 8]> = smallvec::smallvec![];
+    properties.push((SmolStr::new("name"), Primitive::String(SmolStr::new("marko"))));
+    properties.push((SmolStr::new("age"), Primitive::Int32(29)));
     let logical_plan = LogicalPlan {
         steps: vec![LogicalStep::AddV(LogicalAddVStep {
             label: "person".into(),
@@ -498,8 +495,8 @@ fn test_add_e_step_to_tinkerpop_modern_graph() {
     let marko_id = graph.get_vertex(1).unwrap().unwrap(); // Assuming ID 1 for marko
     let vadas_id = graph.get_vertex(2).unwrap().unwrap(); // Assuming ID 2 for vadas
 
-    let mut properties = HashMap::new();
-    properties.insert(SmolStr::new("since"), Primitive::Int32(2020));
+    let mut properties: smallvec::SmallVec<[(SmolStr, Primitive); 8]> = smallvec::smallvec![];
+    properties.push((SmolStr::new("since"), Primitive::Int32(2020)));
 
     let logical_plan = LogicalPlan {
         steps: vec![LogicalStep::AddE(LogicalAddEStep {
@@ -1095,7 +1092,7 @@ fn test_add_v_step_duplicate_vertex_returns_error() {
         steps: vec![LogicalStep::AddV(LogicalAddVStep {
             label: "person".into(),
             vertex_id: Some(1),
-            properties: HashMap::new(),
+            properties: smallvec::smallvec![],
         })],
     };
 
@@ -1117,7 +1114,7 @@ fn test_add_e_step_duplicate_edge_returns_error() {
             label: "knows".into(),
             out_v_id: Some(1),
             in_v_id: Some(2),
-            properties: HashMap::new(),
+            properties: smallvec::smallvec![],
             rank: None,
         })],
     };

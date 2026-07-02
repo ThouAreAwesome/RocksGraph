@@ -1,24 +1,24 @@
 # Public Release Checklist
 
-> Generated: 2026-06-25. Covers the gaps between RocksGraph v0.1.0 (beta) and a
-> credible public release on crates.io / GitHub. Reconciled against actual code
-> on 2026-06-27 — items confirmed done are removed rather than left to rot here;
-> only genuinely-open items remain below.
+> Updated: 2026-07-01. v0.1.0 release prep.
 
 ---
 
-No open blockers or feature gaps remain for the first publish. `valueMap()` /
-`elementMap()` and `branch()` are deliberately deferred past v0.1.0 (ergonomic gaps with
-existing workarounds, not functional blockers) — see `docs/TODO.md`'s "deferred past the
-first publish" section for the rationale and workarounds.
+## v0.1.0 — Released 2026-07
 
-## Suggested Implementation Order
+- [x] `cargo publish --dry-run` passes
+- [x] `cargo clippy --all-targets -- --deny warnings` clean
+- [x] `cargo fmt --all --check` clean
+- [x] `cargo test --all-targets` — 701 tests pass
+- [x] Doc examples compile and run (10 doctests)
+- [x] BENCHMARKS.md updated with latest numbers
+- [x] CHANGELOG.md up to date
+- [x] `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` clean
 
-```
-Release (est. 1 hour)
-  Run cargo publish --dry-run, verify all metadata
-  Tag v0.1.0, git push --tags, cargo publish
-```
+### Deferred past v0.1.0
+
+`valueMap()` / `elementMap()` and `branch()` are deliberately deferred (ergonomic gaps with
+existing workarounds, not functional blockers) — see `docs/TODO.md` for rationale.
 
 ---
 

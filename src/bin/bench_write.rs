@@ -16,7 +16,10 @@
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 use hdrhistogram::Histogram;
-use rocksgraph::{Graph, StoreError, TraversalBuilder, TxSession, Value, __};
+use rocksgraph::{
+    schema::{DataType, GraphOptions, SchemaMode},
+    Graph, StoreError, TraversalBuilder, TxSession, Value, __,
+};
 
 use rand::Rng;
 use std::{
@@ -143,10 +146,11 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
 
     let is_hotspot = mode == "hotspot";
 
-    let graph = Graph::open(&data_dir)?;
-
+    let graph = Graph::open_with_options(
+        &data_dir,
+        GraphOptions { mode: SchemaMode::Strict, ..Default::default() },
+    )?;
     {
-        use rocksgraph::schema::DataType;
         let mut mgmt = graph.open_management();
         mgmt.make_vertex_label(VERTEX_LABEL).make();
         mgmt.make_edge_label(EDGE_LABEL).make();

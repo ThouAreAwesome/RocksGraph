@@ -29,11 +29,10 @@ use crate::types::{
     gvalue::{Primitive, PrimitivePredicate},
     keys::{DegreeDirection, Rank, VertexKey},
     prop_key::PropKey,
-    StoreError, ORDER_KEY_INLINE, SMALL_VECTOR_LENGTH, STEP_LABEL_INLINE,
+    StoreError, ORDER_KEY_INLINE, SMALL_VECTOR_LENGTH, STEP_LABEL_INLINE, VERTEX_PROPS_LENGTH,
 };
 use smallvec::SmallVec;
 use smol_str::SmolStr;
-use std::collections::HashMap;
 
 // Reuse the same rewrite/optimize rule for both LogicalPlan and LogicalStep.
 pub type OptimizerRule = fn(&mut LogicalPlan) -> Result<bool, StoreError>;
@@ -715,7 +714,7 @@ impl Optimizer for UnionStep {
 pub struct AddVStep {
     pub label: SmolStr,
     pub vertex_id: Option<VertexKey>,
-    pub properties: HashMap<PropKey, Primitive>,
+    pub properties: SmallVec<[(PropKey, Primitive); VERTEX_PROPS_LENGTH]>,
 }
 
 impl Optimizer for AddVStep {}
@@ -726,7 +725,7 @@ pub struct AddEStep {
     pub label: SmolStr,
     pub out_v_id: Option<VertexKey>,
     pub in_v_id: Option<VertexKey>,
-    pub properties: HashMap<PropKey, Primitive>,
+    pub properties: SmallVec<[(PropKey, Primitive); VERTEX_PROPS_LENGTH]>,
     pub rank: Option<Rank>,
 }
 

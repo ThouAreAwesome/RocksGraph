@@ -34,7 +34,7 @@ use super::primitive_to_rank;
 /// - `id` on `addV`   → `AddVStep.vertex_id`
 /// - `rank` on `addE` → `AddEStep.rank`
 /// - `label` / `rank` on `addV` → rejected
-/// - anything else → `{AddV,AddE}Step.properties` HashMap
+/// - anything else → `{AddV,AddE}Step.properties` (SmallVec, appended in order)
 ///
 /// Because the rule stays at position `i` after each merge (it never advances
 /// past the anchor step), properties in arbitrary order are all handled in a
@@ -52,7 +52,7 @@ pub fn merge_property_into_add(plan: &mut LogicalPlan) -> Result<bool, StoreErro
 
         let action = match (&plan.steps[i], &plan.steps[j]) {
             (LogicalStep::AddV(_), LogicalStep::Property(PropertyStep { prop_key, prop_value }))
-                if prop_key.as_str() == ID =>
+                if ID == *prop_key  =>
             {
                 let id = match prop_value {
                     Primitive::Int32(v) => *v as i64,
@@ -62,7 +62,7 @@ pub fn merge_property_into_add(plan: &mut LogicalPlan) -> Result<bool, StoreErro
                 Some(Action::Id(id))
             }
             (LogicalStep::AddE(_), LogicalStep::Property(PropertyStep { prop_key, prop_value }))
-                if prop_key.as_str() == RANK =>
+                if  RANK == *prop_key =>
             {
                 Some(Action::Rank(primitive_to_rank(prop_value)?))
             }
@@ -70,7 +70,7 @@ pub fn merge_property_into_add(plan: &mut LogicalPlan) -> Result<bool, StoreErro
                 LogicalStep::AddV(_) | LogicalStep::AddE(_),
                 LogicalStep::Property(PropertyStep { prop_key, prop_value }),
             ) => {
-                if LABEL == prop_key.as_str() || RANK == prop_key.as_str() {
+                if LABEL == *prop_key || RANK == *prop_key {
                     return Err(StoreError::SchemaViolation(format!(
                         "cannot set property with reserved key '{}' on addV",
                         prop_key
@@ -96,13 +96,13 @@ pub fn merge_property_into_add(plan: &mut LogicalPlan) -> Result<bool, StoreErro
                         return Err(StoreError::SchemaViolation("rank is not a valid property for addV".into()));
                     }
                     Action::Prop { key, value } => {
-                        if av.properties.contains_key(&key) {
+                        if av.properties.iter().any(|(k, _)| k == &key) {
                             return Err(StoreError::UnsupportedOperation(format!(
                                 "cannot assign property '{}' several times",
                                 key
                             )));
                         }
-                        av.properties.insert(key, value);
+                        av.properties.push((key, value));
                     }
                 },
                 LogicalStep::AddE(ae) => match action {
@@ -116,13 +116,13 @@ pub fn merge_property_into_add(plan: &mut LogicalPlan) -> Result<bool, StoreErro
                         ae.rank = Some(r);
                     }
                     Action::Prop { key, value } => {
-                        if ae.properties.contains_key(&key) {
+                        if ae.properties.iter().any(|(k, _)| k == &key) {
                             return Err(StoreError::UnsupportedOperation(format!(
                                 "cannot assign property '{}' several times",
                                 key
                             )));
                         }
-                        ae.properties.insert(key, value);
+                        ae.properties.push((key, value));
                     }
                 },
                 _ => unreachable!(),
@@ -147,11 +147,19 @@ mod tests {
     use super::*;
     use crate::planner::logical_step::{AddEStep, AddVStep, PropertyStep};
     use crate::types::gvalue::Primitive;
+    use smallvec::smallvec;
     use smol_str::SmolStr;
-    use std::collections::HashMap;
+
+    /// Linear search in the SmallVec properties list.
+    fn find_prop<'a>(
+        props: &'a [(SmolStr, Primitive)],
+        key: &str,
+    ) -> Option<&'a Primitive> {
+        props.iter().find(|(k, _)| k.as_str() == key).map(|(_, v)| v)
+    }
 
     fn addv() -> LogicalStep {
-        LogicalStep::AddV(AddVStep { label: "person".into(), vertex_id: None, properties: HashMap::new() })
+        LogicalStep::AddV(AddVStep { label: "person".into(), vertex_id: None, properties: smallvec![] })
     }
 
     fn adde() -> LogicalStep {
@@ -159,7 +167,7 @@ mod tests {
             label: "knows".into(),
             out_v_id: None,
             in_v_id: None,
-            properties: HashMap::new(),
+            properties: smallvec![],
             rank: None,
         })
     }
@@ -193,7 +201,7 @@ mod tests {
         assert_eq!(plan.steps.len(), 1);
         if let LogicalStep::AddV(av) = &plan.steps[0] {
             assert_eq!(av.vertex_id, Some(5));
-            assert_eq!(av.properties.get("name"), Some(&Primitive::String(SmolStr::new("x"))));
+            assert_eq!(find_prop(&av.properties, "name"), Some(&Primitive::String(SmolStr::new("x"))));
         }
     }
 
@@ -213,7 +221,7 @@ mod tests {
         assert!(changed);
         assert_eq!(plan.steps.len(), 1);
         if let LogicalStep::AddV(av) = &plan.steps[0] {
-            assert_eq!(av.properties.get("name"), Some(&Primitive::String(SmolStr::new("alice"))));
+            assert_eq!(find_prop(&av.properties, "name"), Some(&Primitive::String(SmolStr::new("alice"))));
         }
     }
 
@@ -268,7 +276,7 @@ mod tests {
         assert!(changed);
         assert_eq!(plan.steps.len(), 1);
         if let LogicalStep::AddE(ae) = &plan.steps[0] {
-            assert_eq!(ae.properties.get("weight"), Some(&Primitive::Float64(0.5)));
+            assert_eq!(find_prop(&ae.properties, "weight"), Some(&Primitive::Float64(0.5)));
         }
     }
 
@@ -307,7 +315,7 @@ mod tests {
         assert_eq!(plan.steps.len(), 1);
         if let LogicalStep::AddE(ae) = &plan.steps[0] {
             assert_eq!(ae.rank, Some(5));
-            assert_eq!(ae.properties.get("weight"), Some(&Primitive::Float64(0.5)));
+            assert_eq!(find_prop(&ae.properties, "weight"), Some(&Primitive::Float64(0.5)));
         }
     }
 
@@ -359,8 +367,8 @@ mod tests {
         if let LogicalStep::AddV(av) = &plan.steps[0] {
             assert_eq!(av.vertex_id, Some(5));
             assert_eq!(av.properties.len(), 2);
-            assert_eq!(av.properties.get("name"), Some(&Primitive::String(SmolStr::new("x"))));
-            assert_eq!(av.properties.get("age"), Some(&Primitive::Int32(30)));
+            assert_eq!(find_prop(&av.properties, "name"), Some(&Primitive::String(SmolStr::new("x"))));
+            assert_eq!(find_prop(&av.properties, "age"), Some(&Primitive::Int32(30)));
         }
     }
 
@@ -369,7 +377,7 @@ mod tests {
         let mut plan = LogicalPlan {
             steps: vec![
                 addv(),
-                LogicalStep::AddV(AddVStep { label: "b".into(), vertex_id: None, properties: HashMap::new() }),
+                LogicalStep::AddV(AddVStep { label: "b".into(), vertex_id: None, properties: smallvec![] }),
                 prop("name", Primitive::String(SmolStr::new("x"))),
             ],
         };
@@ -380,7 +388,7 @@ mod tests {
             assert!(av.properties.is_empty());
         }
         if let LogicalStep::AddV(av) = &plan.steps[1] {
-            assert_eq!(av.properties.get("name"), Some(&Primitive::String(SmolStr::new("x"))));
+            assert_eq!(find_prop(&av.properties, "name"), Some(&Primitive::String(SmolStr::new("x"))));
         }
     }
 }

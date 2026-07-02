@@ -16,7 +16,9 @@
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 use hdrhistogram::Histogram;
-use rocksgraph::{Graph, ReadSession, StoreError, TraversalBuilder, Value, __};
+use rocksgraph::{
+    Graph, ReadSession, StoreError, TraversalBuilder, Value, __,
+};
 
 use std::{
     env,
@@ -293,18 +295,25 @@ where
 mod tests {
     use super::*;
     use tempfile::tempdir;
+    use rocksgraph::{
+    schema::{GraphOptions, SchemaMode},
+    };
 
     #[test]
     fn test_bench_read() {
         let dir = tempdir().unwrap();
         {
-            let graph = Graph::open(dir.path()).unwrap();
+            let graph = Graph::open_with_options(
+                dir.path(),
+                GraphOptions { mode: SchemaMode::Strict, ..Default::default() },
+            )
+            .unwrap();
             let mut snap = graph.begin();
             {
                 use rocksgraph::schema::DataType;
                 let mut mgmt = graph.open_management();
-                mgmt.make_vertex_label("Person").make();
-                mgmt.make_edge_label("Knows").make();
+                mgmt.make_vertex_label(VERTEX_LABEL).make();
+                mgmt.make_edge_label(EDGE_LABEL).make();
                 mgmt.make_property_key("name", DataType::String).make();
                 mgmt.make_property_key("age", DataType::Int64).make();
                 mgmt.make_property_key("weight", DataType::Float64).make();
@@ -312,15 +321,15 @@ mod tests {
                 mgmt.commit().unwrap();
             }
             snap.g()
-                .addV("Person")
+                .addV(VERTEX_LABEL)
                 .property("id", 1i64)
                 .property("name", "alice")
                 .property("age", 30i64)
                 .next()
                 .unwrap();
-            snap.g().addV("Person").property("id", 2i64).property("name", "bob").property("age", 25i64).next().unwrap();
+            snap.g().addV(VERTEX_LABEL).property("id", 2i64).property("name", "bob").property("age", 25i64).next().unwrap();
             snap.g()
-                .addE("Knows")
+                .addE(EDGE_LABEL)
                 .from(1)
                 .to(2)
                 .property("weight", 0.5f64)
@@ -328,7 +337,7 @@ mod tests {
                 .next()
                 .unwrap();
             snap.g()
-                .addE("Knows")
+                .addE(EDGE_LABEL)
                 .from(2)
                 .to(1)
                 .property("weight", 0.6f64)

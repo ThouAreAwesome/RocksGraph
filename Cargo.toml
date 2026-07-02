@@ -6,7 +6,8 @@ license = "GPL-2.0-or-later"
 name = "rocksgraph"
 version = "0.1.0"
 readme = "README.md"
-repository = "https://github.com/austinhan/rocksgraph"
+repository = "https://github.com/ThouAreAwesome/RocksGraph"
+documentation = "https://github.com/ThouAreAwesome/RocksGraph"
 keywords = ["graph", "gremlin", "rocksdb", "database"]
 categories = ["database-implementations"]
 rust-version = "1.80"
@@ -29,7 +30,7 @@ base64 = "0.21"
 smallvec = "1"
 
 # RocksDB storage backend
-rocksdb = "0.22"
+rocksdb = "0.24"
 
 # Bidirectional hash map — used by Schema for label_id ↔ label_string lookup
 bimap = "0.6"

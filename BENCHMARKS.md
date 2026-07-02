@@ -83,24 +83,23 @@ chunk (snapshot pinned at session creation). Caches are cleared between queries 
 
 | Query | Ops/s | Queries | Duration | p50 (μs) | p90 (μs) | p95 (μs) | p99 (μs) | max (μs) |
 |-------|------:|-------:|--------:|--------:|--------:|--------:|--------:|--------:|
-| Q1 | 699,350 | 1,000,000 | 1.43 s | 3.875 | 4.251 | 4.375 | 7.043 | 1,262.6 |
-| Q2 | 315,840 | 1,000,000 | 3.17 s | 8.375 | 9.215 | 10.335 | 22.255 | 39,452.7 |
-| Q3 | 249,691 | 1,000,000 | 4.00 s | 10.631 | 14.751 | 17.087 | 25.167 | 316.4 |
-| Q4 | 160,199 | 1,000,000 | 6.24 s | 14.335 | 27.471 | 35.967 | 64.799 | 14,049.3 |
-| Q5 | 116,431 | 1,000,000 | 8.59 s | 16.167 | 43.359 | 62.943 | 113.919 | 22,364.2 |
-| Q6 | 110,147 | 1,000,000 | 9.08 s | 17.167 | 45.887 | 66.431 | 120.127 | 20,119.6 |
-| Q7 | 2.51 | 5 | 1.99 s | 273,940 | 362,807 | 362,807 | 362,807 | 362,807 |
-| Q8 | 2.09 | 5 | 2.40 s | 359,662 | 451,412 | 451,412 | 451,412 | 451,412 |
+| Q1 | 839,962 | 1,000,000 | 1.19 s | 3.42 | 3.75 | 3.88 | 5.88 | 265.7 |
+| Q2 | 351,225 | 1,000,000 | 2.85 s | 7.34 | 8.63 | 10.17 | 19.55 | 78,774 |
+| Q3 | 290,995 | 1,000,000 | 3.44 s | 9.26 | 12.50 | 14.22 | 19.47 | 1,938 |
+| Q4 | 188,644 | 1,000,000 | 5.30 s | 12.54 | 23.17 | 29.42 | 50.72 | 3,154 |
+| Q5 | 138,423 | 1,000,000 | 7.22 s | 14.26 | 36.06 | 51.39 | 90.56 | 3,656 |
+| Q6 | 125,755 | 1,000,000 | 7.95 s | 15.50 | 39.78 | 56.93 | 101.50 | 20,185 |
+| Q7 | 3.37 | 5 | 1.48 s | 240,124 | 300,941 | 300,941 | 300,941 | 300,941 |
+| Q8 | 2.64 | 5 | 1.89 s | 313,000 | 416,023 | 416,023 | 416,023 | 416,023 |
 
 #### RocksDB storage profile (`--features rocksdb-stats`)
 
 | Metric | Value | Interpretation |
 |--------|------:|----------------|
 | Block cache capacity | 256 MB | Shared across all 4 data CFs |
-| Data block hit rate | 99.8% (24,054,019 hits / 37,481 misses) | Working set fits in cache |
-| Index/filter blocks | not in block cache | `cache_index_and_filter_blocks` is off (default); index/filter memory is separate |
-| Bloom filter skip rate | 8.3% (972,034 useful / 10,763,484 positive) | Low skip rate — most point lookups require a block read; working set is dense |
-| Bloom false-positive rate | 0.09% (9,612 / 10,763,484) | Filter accuracy is excellent |
+| Data block hit rate | 99.8% | Working set fits in cache |
+| Bloom filter skip rate | 48.0% (10,021,629 useful / 20,852,266 total) | Half of point lookups skip disk reads entirely |
+| Bloom false-positive rate | <0.1% (96,119 / 10,853,266) | Filter accuracy is excellent |
 | L0 files per CF | 1 each (~25–28 MB) | Data is uncompacted; all records are in a single L0 SST file per CF |
 | SST file read P50 | < 1 µs (vertices, edges_out) | Reads served from OS page cache or block cache |
 | Compaction | 0 bytes written | No compaction has run since data was loaded |

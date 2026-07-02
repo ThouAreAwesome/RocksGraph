@@ -35,7 +35,9 @@
 
 mod build_step;
 
-use std::{fmt, rc::Rc};
+use std::{collections::HashMap, fmt, rc::Rc};
+
+use smol_str::SmolStr;
 
 use crate::types::PIPELINE_PRODUCE_SIZE;
 use smallvec::SmallVec;
@@ -51,7 +53,7 @@ use crate::{
     },
     planner::logical_step::LogicalPlan,
     schema::Schema,
-    types::error::StoreError,
+    types::{error::StoreError, LabelId},
 };
 
 // ── PhysicalPlan ──────────────────────────────────────────────────────────────
@@ -132,8 +134,16 @@ pub(crate) fn render_explain(
 
 // ── PhysicalPlanBuilder ───────────────────────────────────────────────────────
 
+
 #[derive(Default)]
-pub struct PhysicalPlanBuilder;
+pub struct PhysicalPlanBuilder {
+    /// Per-build cache: label name → resolved LabelId.  Avoids repeated
+    /// schema-lock acquisitions when the same label name appears across
+    /// multiple LogicalSteps in one plan.
+    pub(super) label_cache: HashMap<SmolStr, LabelId>,
+    /// Per-build cache: property-key name → resolved u16 id.
+    pub(super) prop_key_cache: HashMap<SmolStr, u16>,
+}
 
 impl PhysicalPlanBuilder {
     /// Compiles a top-level [`LogicalPlan`] (or a self-contained sub-plan being compiled in
@@ -786,7 +796,7 @@ mod tests {
             let steps = vec![LogicalStep::AddV(AddVStep {
                 label: "person".into(),
                 vertex_id: Some(1),
-                properties: std::collections::HashMap::new(),
+                properties: smallvec::smallvec![],
             })];
             let out = explain_str(steps);
             assert_names_in_order(&out, &["PhysicalPlan", "AddVStep"]);
@@ -796,8 +806,8 @@ mod tests {
         #[test]
         fn addv_property_name_then_id_folds() {
             // Post-optimization: id and non-id property both folded into AddVStep.
-            let mut props = std::collections::HashMap::new();
-            props.insert("name".into(), Primitive::String("alice".into()));
+            let mut props = smallvec::smallvec![];
+            props.push(("name".into(), Primitive::String("alice".into())));
             let steps =
                 vec![LogicalStep::AddV(AddVStep { label: "person".into(), vertex_id: Some(1), properties: props })];
             let out = explain_str(steps);
@@ -808,8 +818,8 @@ mod tests {
 
         #[test]
         fn addv_no_id_property_no_fold() {
-            let mut props = std::collections::HashMap::new();
-            props.insert("name".into(), Primitive::String("alice".into()));
+            let mut props = smallvec::smallvec![];
+            props.push(("name".into(), Primitive::String("alice".into())));
             let steps =
                 vec![LogicalStep::AddV(AddVStep { label: "person".into(), vertex_id: Some(42), properties: props })];
             let out = explain_str(steps);
@@ -825,7 +835,7 @@ mod tests {
                 label: "knows".into(),
                 out_v_id: Some(1),
                 in_v_id: Some(2),
-                properties: std::collections::HashMap::new(),
+                properties: smallvec::smallvec![],
                 rank: None,
             })];
             let out = explain_str(steps);
@@ -841,7 +851,7 @@ mod tests {
                 label: "knows".into(),
                 out_v_id: Some(1),
                 in_v_id: Some(2),
-                properties: std::collections::HashMap::new(),
+                properties: smallvec::smallvec![],
                 rank: Some(5),
             })];
             let out = explain_str(steps);
@@ -879,7 +889,7 @@ mod tests {
                     LogicalStep::AddV(AddVStep {
                         label: "person".into(),
                         vertex_id: None,
-                        properties: std::collections::HashMap::new(),
+                        properties: smallvec::smallvec![],
                     }),
                     LogicalStep::Property(PropertyStep { prop_key: ID.clone(), prop_value: Primitive::Int64(99) }),
                 ],

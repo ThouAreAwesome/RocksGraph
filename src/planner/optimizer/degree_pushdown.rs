@@ -106,7 +106,7 @@ fn apply_rule_b(plan: &mut LogicalPlan) -> bool {
     let mut i = 0;
     let mut changed = false;
     while i + 1 < plan.steps.len() {
-        if matches!(plan.steps[i], LogicalStep::Degree(_)) && matches!(plan.steps[i + 1], LogicalStep::Sum(_)) {
+        if matches!((&plan.steps[i], &plan.steps[i + 1]), (LogicalStep::Degree(_), LogicalStep::Sum(_))) {
             plan.steps.remove(i + 1); // remove Sum
             changed = true;
             // Stay at i: re-examine steps[i] and new steps[i+1]

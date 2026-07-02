@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.0] — 2026-06
+## [0.1.0] — 2026-07
 
 ### Added
 - Gremlin-inspired traversal API: `V()`, `out()`, `in()`, `both()`, `outE()`, `inE()`, `bothE()`, `outV()`, `inV()`, `otherV()`
@@ -39,5 +39,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `parking_lot` dependencies, which were unused dead weight left over from a
   never-implemented `SharedStoreCache`
 
-[Unreleased]: https://github.com/austinhan1024/RocksGraph/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/austinhan1024/RocksGraph/releases/tag/v0.1.0
+[Unreleased]: https://github.com/ThouAreAwesome/RocksGraph/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/ThouAreAwesome/RocksGraph/releases/tag/v0.1.0

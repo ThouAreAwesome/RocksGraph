@@ -72,27 +72,41 @@ pub(super) fn resolve_read_edge_label(name: &str, schema: &Schema) -> Result<Opt
     }
 }
 
-/// Resolve a vertex label for a write step, taking the `Schema` write lock only on the
-/// (post-warmup, rare) path where the label is genuinely new.
+/// Resolve a vertex label for a write step, consulting the per-build cache
+/// before acquiring the schema lock.  Writes back on cache miss.
 pub(super) fn resolve_write_vertex_label(
     name: &str,
     schema_lock: &std::sync::RwLock<Schema>,
+    cache: &mut HashMap<SmolStr, LabelId>,
 ) -> Result<LabelId, StoreError> {
-    if let Some(id) = schema_lock.read().unwrap().vertex_label_id(name) {
+    if let Some(&id) = cache.get(name) {
         return Ok(id);
     }
-    schema_lock.write().unwrap().resolve_vertex_label(name)
+    if let Some(id) = schema_lock.read().unwrap().vertex_label_id(name) {
+        cache.insert(name.into(), id);
+        return Ok(id);
+    }
+    let id = schema_lock.write().unwrap().resolve_vertex_label(name)?;
+    cache.insert(name.into(), id);
+    Ok(id)
 }
 
 /// Same rationale as [`resolve_write_vertex_label`], for edge labels.
 pub(super) fn resolve_write_edge_label(
     name: &str,
     schema_lock: &std::sync::RwLock<Schema>,
+    cache: &mut HashMap<SmolStr, LabelId>,
 ) -> Result<LabelId, StoreError> {
-    if let Some(id) = schema_lock.read().unwrap().edge_label_id(name) {
+    if let Some(&id) = cache.get(name) {
         return Ok(id);
     }
-    schema_lock.write().unwrap().resolve_edge_label(name)
+    if let Some(id) = schema_lock.read().unwrap().edge_label_id(name) {
+        cache.insert(name.into(), id);
+        return Ok(id);
+    }
+    let id = schema_lock.write().unwrap().resolve_edge_label(name)?;
+    cache.insert(name.into(), id);
+    Ok(id)
 }
 
 /// Same rationale as [`resolve_write_vertex_label`], for property keys.
@@ -100,7 +114,11 @@ pub(super) fn resolve_write_prop_key(
     name: &str,
     inferred_type: DataType,
     schema_lock: &std::sync::RwLock<Schema>,
+    cache: &mut HashMap<SmolStr, u16>,
 ) -> Result<u16, StoreError> {
+    if let Some(&id) = cache.get(name) {
+        return Ok(id);
+    }
     {
         let schema = schema_lock.read().unwrap();
         if let Some(id) = schema.prop_key_id(name) {
@@ -111,11 +129,14 @@ pub(super) fn resolve_write_prop_key(
                         name, cfg.data_type, inferred_type
                     )));
                 }
+                cache.insert(name.into(), id);
                 return Ok(id);
             }
         }
     }
-    schema_lock.write().unwrap().resolve_prop_key(name, inferred_type)
+    let id = schema_lock.write().unwrap().resolve_prop_key(name, inferred_type)?;
+    cache.insert(name.into(), id);
+    Ok(id)
 }
 
 /// Rejects `"id"`/`"label"`/`"rank"` reaching a generic property-access step
@@ -455,11 +476,11 @@ impl PhysicalPlanBuilder {
                     ));
                 };
                 drop(schema);
-                let label_id = resolve_write_vertex_label(&s.label, schema_lock)?;
+                let label_id = resolve_write_vertex_label(&s.label, schema_lock, &mut self.label_cache)?;
                 let mut resolved_props = HashMap::new();
                 for (k, v) in &s.properties {
                     let inferred_type = primitive_data_type(v);
-                    let id = resolve_write_prop_key(k, inferred_type, schema_lock)?;
+                    let id = resolve_write_prop_key(k, inferred_type, schema_lock, &mut self.prop_key_cache)?;
                     resolved_props.insert(id, v.clone());
                 }
                 wire!(
@@ -475,11 +496,11 @@ impl PhysicalPlanBuilder {
                 }
                 let needs_upstream = s.out_v_id.is_none() || s.in_v_id.is_none();
                 drop(schema);
-                let label_id = resolve_write_edge_label(&s.label, schema_lock)?;
+                let label_id = resolve_write_edge_label(&s.label, schema_lock, &mut self.label_cache)?;
                 let mut resolved_props = HashMap::new();
                 for (k, v) in &s.properties {
                     let inferred_type = primitive_data_type(v);
-                    let id = resolve_write_prop_key(k, inferred_type, schema_lock)?;
+                    let id = resolve_write_prop_key(k, inferred_type, schema_lock, &mut self.prop_key_cache)?;
                     resolved_props.insert(id, v.clone());
                 }
                 let phys = BufferedStep::new(steps::add_e::AddEStep::new(
@@ -506,7 +527,7 @@ impl PhysicalPlanBuilder {
                 }
                 drop(schema);
                 let inferred_type = primitive_data_type(&s.prop_value);
-                let id = resolve_write_prop_key(&s.prop_key, inferred_type, schema_lock)?;
+                let id = resolve_write_prop_key(&s.prop_key, inferred_type, schema_lock, &mut self.prop_key_cache)?;
                 wire_required!(
                     BufferedStep::new(steps::property::PropertyStep::new(id, s.prop_value.clone())),
                     upstream,

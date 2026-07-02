@@ -18,7 +18,6 @@
 //! Terminal traversal types: [`ReadTraversal`] and [`WriteTraversal`].
 
 use super::*;
-use std::collections::HashMap;
 
 // ── ReadTraversal ─────────────────────────────────────────────────────────
 
@@ -86,7 +85,7 @@ impl<'s> ReadTraversal<'s> {
         let mut logical = self.plan;
         crate::planner::apply_rules(&mut logical)?;
         let schema_lock = self.ctx.schema();
-        let plan = crate::engine::volcano::builder::PhysicalPlanBuilder.build(&logical, &schema_lock)?;
+        let plan = crate::engine::volcano::builder::PhysicalPlanBuilder::default().build(&logical, &schema_lock)?;
         Ok(crate::engine::volcano::builder::render_explain(&plan.explain(), 0, ""))
     }
 }
@@ -136,7 +135,7 @@ impl<'s> WriteTraversal<'s> {
         self.push_step(LogicalStep::AddV(AddVStep {
             label: label.into(),
             vertex_id: None,
-            properties: HashMap::new(),
+            properties: smallvec::smallvec![],
         }));
         self
     }
@@ -147,7 +146,7 @@ impl<'s> WriteTraversal<'s> {
             label: label.into(),
             out_v_id: None,
             in_v_id: None,
-            properties: HashMap::new(),
+            properties: smallvec::smallvec![],
             rank: None,
         }));
         self
@@ -226,7 +225,7 @@ impl<'s> WriteTraversal<'s> {
         let mut logical = self.plan;
         crate::planner::apply_rules(&mut logical)?;
         let schema_lock = self.ctx.schema();
-        let plan = crate::engine::volcano::builder::PhysicalPlanBuilder.build(&logical, &schema_lock)?;
+        let plan = crate::engine::volcano::builder::PhysicalPlanBuilder::default().build(&logical, &schema_lock)?;
         Ok(crate::engine::volcano::builder::render_explain(&plan.explain(), 0, ""))
     }
 }

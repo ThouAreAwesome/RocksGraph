@@ -25,10 +25,10 @@ use crate::{
 fn filter_priority(step: &LogicalStep) -> Option<u8> {
     match step {
         LogicalStep::HasId(_) => Some(0),
-        LogicalStep::HasProperty(hp) if hp.key.as_str() == ID => Some(0),
+        LogicalStep::HasProperty(hp) if hp.key == ID => Some(0),
         LogicalStep::HasLabel(_) => Some(1),
-        LogicalStep::EndVertexFilter(_) => Some(2),
-        LogicalStep::HasRank(_) => Some(3),
+        LogicalStep::HasRank(_) => Some(2),
+        LogicalStep::EndVertexFilter(_) => Some(3),
         LogicalStep::HasProperty(_) => Some(4), // any other key
         LogicalStep::Where(_) => Some(5),
         _ => None,
@@ -37,7 +37,7 @@ fn filter_priority(step: &LogicalStep) -> Option<u8> {
 
 /// Reorder adjacent filter steps into priority order:
 ///
-/// `hasId = has("id"..) > hasLabel > EndVertexFilter > hasRank > has(not id..) > where()`
+/// `hasId = has("id"..) > hasLabel > hasRank > EndVertexFilter > has(not id..) > where()`
 ///
 /// Each maximal contiguous run of reorderable steps (everything with a priority above)
 /// is stable-sorted in one pass.  Ties (same priority between different keys) keep their
@@ -319,11 +319,11 @@ mod tests {
 
     #[test]
     fn test_has_rank_then_evf_swapped() {
-        let mut plan = LogicalPlan { steps: vec![v_all(), has_rank_eq(5), evf(vec![1])] };
+        let mut plan = LogicalPlan { steps: vec![v_all(), evf(vec![1]), has_rank_eq(5)] };
         let changed = reorder_filters(&mut plan).unwrap();
         assert!(changed);
-        assert!(matches!(plan.steps[1], LogicalStep::EndVertexFilter(_)));
-        assert!(matches!(plan.steps[2], LogicalStep::HasRank(_)));
+        assert!(matches!(plan.steps[1], LogicalStep::HasRank(_)));
+        assert!(matches!(plan.steps[2], LogicalStep::EndVertexFilter(_)));
     }
 
     #[test]
@@ -373,8 +373,8 @@ mod tests {
         // After one pass: hasId > hasLabel > EndVertexFilter > hasRank > has > where
         assert!(matches!(plan.steps[1], LogicalStep::HasId(_)));
         assert!(matches!(plan.steps[2], LogicalStep::HasLabel(_)));
-        assert!(matches!(plan.steps[3], LogicalStep::EndVertexFilter(_)));
-        assert!(matches!(plan.steps[4], LogicalStep::HasRank(_)));
+        assert!(matches!(plan.steps[3], LogicalStep::HasRank(_)));
+        assert!(matches!(plan.steps[4], LogicalStep::EndVertexFilter(_)));
         assert!(matches!(plan.steps[5], LogicalStep::HasProperty(_)));
         assert!(matches!(plan.steps[6], LogicalStep::Where(_)));
         // Second pass: no changes.
