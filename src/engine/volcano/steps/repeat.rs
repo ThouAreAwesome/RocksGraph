@@ -162,7 +162,16 @@ impl CoreStep for RepeatStep {
             if let Some((t, count)) = self.frontier.pop_front() {
                 self.current_iter_count = count;
                 self.body.reset();
-                self.body.inject(smallvec![t]);
+                let mut batch = smallvec![t];
+                while let Some((_, next_count)) = self.frontier.front() {
+                    if *next_count == count {
+                        let (next_t, _) = self.frontier.pop_front().unwrap();
+                        batch.push(next_t);
+                    } else {
+                        break;
+                    }
+                }
+                self.body.inject(batch);
                 self.body_active = true;
                 continue;
             }

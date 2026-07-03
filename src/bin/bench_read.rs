@@ -16,7 +16,7 @@
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 use hdrhistogram::Histogram;
-use rocksgraph::{Graph, ReadSession, StoreError, TraversalBuilder, Value, __};
+use rocksgraph::{ne, Graph, ReadSession, StoreError, TraversalBuilder, Value, __};
 
 use std::{
     env,
@@ -123,7 +123,31 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     run_query_benchmark(
-        "Q4: g.V().hasId(id).both(label).values('name', 'age').count()",
+        "Q4: g.V().hasId(id).bothE(label).values('weight', 'timestamp').limit(5).count()",
+        &lines,
+        &graph,
+        parallelism,
+        |snap, src, _dst| {
+            let Value::Int64(ct) = snap
+                .g()
+                .V([])
+                .hasId([src])
+                .bothE([EDGE_LABEL])
+                .values([WEIGHT_KEY, TIMESTAMP_KEY])
+                .limit(5)
+                .count()
+                .next()?
+                .unwrap()
+            else {
+                unreachable!("unexpected gremlin result type")
+            };
+            assert!(ct >= 1);
+            Ok(())
+        },
+    )?;
+
+    run_query_benchmark(
+        "Q5: g.V().hasId(id).both(label).values('name', 'age').count()",
         &lines,
         &graph,
         parallelism,
@@ -139,22 +163,7 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     run_query_benchmark(
-        "Q5: g.V(id).out(label).both(label).count()",
-        &lines,
-        &graph,
-        parallelism,
-        |snap, src, _dst| {
-            let Value::Int64(ct) = snap.g().V([src]).out([EDGE_LABEL]).both([EDGE_LABEL]).count().next()?.unwrap()
-            else {
-                unreachable!("unexpected gremlin result type")
-            };
-            assert!(ct >= 1);
-            Ok(())
-        },
-    )?;
-
-    run_query_benchmark(
-        "Q6: g.V(id).out(label).both(label).hasLabel(v_label).count()",
+        "Q6: g.V(id).out(label).hasLabel(v_label).dedup().out(label).hasLabel(v_label).dedup().hasId(not(id)).count()",
         &lines,
         &graph,
         parallelism,
@@ -163,22 +172,49 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                 .g()
                 .V([src])
                 .out([EDGE_LABEL])
-                .both([EDGE_LABEL])
                 .hasLabel([VERTEX_LABEL])
+                .dedup()
+                .out([EDGE_LABEL])
+                .hasLabel([VERTEX_LABEL])
+                .dedup()
+                .hasId(ne(src))
                 .count()
                 .next()?
                 .unwrap()
             else {
                 unreachable!("unexpected gremlin result type")
             };
-            assert!(ct >= 1);
+            assert!(ct >= 0);
+            Ok(())
+        },
+    )?;
+
+    run_query_benchmark(
+        "Q7: g.V(id).repeat(out(label).hasLabel(v_label).dedup()).times(2).hasId(not(id)).count()",
+        &lines,
+        &graph,
+        parallelism,
+        |snap, src, _dst| {
+            let Value::Int64(ct) = snap
+                .g()
+                .V([src])
+                .repeat(__().out([EDGE_LABEL]).hasLabel([VERTEX_LABEL]).dedup())
+                .times(2)
+                .hasId(ne(src))
+                .count()
+                .next()?
+                .unwrap()
+            else {
+                unreachable!("unexpected gremlin result type")
+            };
+            assert!(ct >= 0);
             Ok(())
         },
     )?;
 
     // We run the full DB scan benchmarks with 5 sequential runs to measure stable database scan latencies.
     run_query_benchmark(
-        "Q7: g.V().count() (Scan total vertices in DB)",
+        "Q8: g.V().count() (Scan total vertices in DB)",
         &Arc::new(vec!["0 0".to_string(); 5]),
         &graph,
         1,
@@ -192,7 +228,7 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     run_query_benchmark(
-        "Q8: g.E([]).count() (Scan total edges in DB)",
+        "Q9: g.E([]).count() (Scan total edges in DB)",
         &Arc::new(vec!["0 0".to_string(); 5]),
         &graph,
         1,
@@ -306,12 +342,12 @@ mod tests {
             {
                 use rocksgraph::schema::DataType;
                 let mut mgmt = graph.open_management();
-                mgmt.make_vertex_label(VERTEX_LABEL).make();
-                mgmt.make_edge_label(EDGE_LABEL).make();
-                mgmt.make_property_key("name", DataType::String).make();
-                mgmt.make_property_key("age", DataType::Int64).make();
-                mgmt.make_property_key("weight", DataType::Float64).make();
-                mgmt.make_property_key("timestamp", DataType::Int64).make();
+                mgmt.add_vertex_label(VERTEX_LABEL)
+                    .add_edge_label(EDGE_LABEL)
+                    .add_property_key("name", DataType::String)
+                    .add_property_key("age", DataType::Int64)
+                    .add_property_key("weight", DataType::Float64)
+                    .add_property_key("timestamp", DataType::Int64);
                 mgmt.commit().unwrap();
             }
             snap.g()

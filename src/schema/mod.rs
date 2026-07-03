@@ -26,6 +26,6 @@ mod tests;
 // to declare schema via `SchemaManagement`. `Schema` itself (the live registry) and
 // `PropKeyConfig` (one of its internal fields) are crate-internal — see `Graph::schema()`.
 pub use definition::{DataType, EdgeMode, GraphOptions, SchemaMode};
-pub use management::{EdgeLabelMaker, PropertyKeyMaker, SchemaManagement, VertexLabelMaker};
+pub use management::SchemaManagement;
 
 pub(crate) use definition::Schema;

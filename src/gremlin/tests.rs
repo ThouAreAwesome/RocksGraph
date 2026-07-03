@@ -648,17 +648,16 @@ mod integration_test {
         // Register keys for all 8 data types
         {
             let mut mgmt = graph.open_management();
-            mgmt.make_vertex_label("AllTypesV").make();
-            mgmt.make_edge_label("AllTypesE").make();
-
-            mgmt.make_property_key("p_bool", DataType::Bool).make();
-            mgmt.make_property_key("p_i32", DataType::Int32).make();
-            mgmt.make_property_key("p_i64", DataType::Int64).make();
-            mgmt.make_property_key("p_f32", DataType::Float32).make();
-            mgmt.make_property_key("p_f64", DataType::Float64).make();
-            mgmt.make_property_key("p_string", DataType::String).make();
-            mgmt.make_property_key("p_uuid", DataType::Uuid).make();
-            mgmt.make_property_key("p_u16", DataType::UInt16).make();
+            mgmt.add_vertex_label("AllTypesV")
+                .add_edge_label("AllTypesE")
+                .add_property_key("p_bool", DataType::Bool)
+                .add_property_key("p_i32", DataType::Int32)
+                .add_property_key("p_i64", DataType::Int64)
+                .add_property_key("p_f32", DataType::Float32)
+                .add_property_key("p_f64", DataType::Float64)
+                .add_property_key("p_string", DataType::String)
+                .add_property_key("p_uuid", DataType::Uuid)
+                .add_property_key("p_u16", DataType::UInt16);
             mgmt.commit().unwrap();
         }
 
@@ -862,13 +861,13 @@ mod integration_test {
         // Setup schema with explicit types
         {
             let mut mgmt = graph.open_management();
-            mgmt.make_vertex_label("person").make();
-            mgmt.make_property_key("p_i32", DataType::Int32).make();
-            mgmt.make_property_key("p_i64", DataType::Int64).make();
-            mgmt.make_property_key("p_f32", DataType::Float32).make();
-            mgmt.make_property_key("p_bool", DataType::Bool).make();
-            mgmt.make_property_key("p_uuid", DataType::Uuid).make();
-            mgmt.make_property_key("p_string", DataType::String).make();
+            mgmt.add_vertex_label("person")
+                .add_property_key("p_i32", DataType::Int32)
+                .add_property_key("p_i64", DataType::Int64)
+                .add_property_key("p_f32", DataType::Float32)
+                .add_property_key("p_bool", DataType::Bool)
+                .add_property_key("p_uuid", DataType::Uuid)
+                .add_property_key("p_string", DataType::String);
             mgmt.commit().unwrap();
         }
 
@@ -926,15 +925,15 @@ mod integration_test {
         // 1. Declare properties of all types
         {
             let mut mgmt = graph.open_management();
-            mgmt.make_vertex_label("Item").make();
-            mgmt.make_property_key("p_bool", DataType::Bool).make();
-            mgmt.make_property_key("p_i32", DataType::Int32).make();
-            mgmt.make_property_key("p_i64", DataType::Int64).make();
-            mgmt.make_property_key("p_f32", DataType::Float32).make();
-            mgmt.make_property_key("p_f64", DataType::Float64).make();
-            mgmt.make_property_key("p_string", DataType::String).make();
-            mgmt.make_property_key("p_uuid", DataType::Uuid).make();
-            mgmt.make_property_key("p_u16", DataType::UInt16).make();
+            mgmt.add_vertex_label("Item")
+                .add_property_key("p_bool", DataType::Bool)
+                .add_property_key("p_i32", DataType::Int32)
+                .add_property_key("p_i64", DataType::Int64)
+                .add_property_key("p_f32", DataType::Float32)
+                .add_property_key("p_f64", DataType::Float64)
+                .add_property_key("p_string", DataType::String)
+                .add_property_key("p_uuid", DataType::Uuid)
+                .add_property_key("p_u16", DataType::UInt16);
             mgmt.commit().unwrap();
         }
 
@@ -2794,9 +2793,7 @@ mod integration_test {
 
         // Declare schema in Strict mode with "blob" as Bytes type.
         let mut mgmt = graph.open_management();
-        mgmt.set_schema_mode(SchemaMode::Strict);
-        mgmt.make_vertex_label("item").make();
-        mgmt.make_property_key("blob", DataType::Bytes).make();
+        mgmt.set_schema_mode(SchemaMode::Strict).add_vertex_label("item").add_property_key("blob", DataType::Bytes);
         mgmt.commit().unwrap();
 
         // Attempting to write a String value for "blob" in Strict mode must fail.

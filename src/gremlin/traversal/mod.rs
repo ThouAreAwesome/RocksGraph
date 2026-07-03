@@ -192,8 +192,8 @@ impl GraphTraversal {
         let schema_lock = graph.schema();
         let plan = PhysicalPlanBuilder::default().build(&logical, &schema_lock)?;
         let schema = graph.schema();
-        let cache = built::LabelCache::from_schema(&schema.read().unwrap());
-        Ok(BuiltTraversal { graph, plan, cache, schema, prop_keys })
+        let cache = built::SchemaCache::from_schema(&schema.read().unwrap());
+        Ok(BuiltTraversal { graph, plan, cache, prop_keys })
     }
 
     pub(crate) fn into_plan(self) -> LogicalPlan {

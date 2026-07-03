@@ -22,7 +22,7 @@ echo "=== Running Data Integrity Check ==="
 
 cd "$PROJECT_ROOT" || exit
 
-STORE_DIR="$PROJECT_ROOT/data/rocksGraph-1M"
+STORE_DIR="$PROJECT_ROOT/data/rocksGraph-10M"
 
 cargo run --bin bench_integrity --release -- --data-dir "$STORE_DIR" "$@"
 

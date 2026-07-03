@@ -22,13 +22,12 @@ use rocksdb::{BlockBasedOptions, Cache, ColumnFamilyDescriptor, OptimisticTransa
 use crate::{
     store::{
         rocks::{
-            encoding::{CF_EDGES_IN, CF_EDGES_OUT, CF_SCHEMA, CF_VERTEX_DEGREE, CF_VERTICES, EDGE_PREFIX_LENGTH},
-            snapshot::Snapshot,
-            transaction::Transaction,
+            snapshot::Snapshot, transaction::Transaction, CF_EDGES_IN, CF_EDGES_OUT, CF_SCHEMA, CF_VERTEX_DEGREE,
+            CF_VERTICES,
         },
         traits::GraphStore,
     },
-    types::StoreError,
+    types::{kv_codec::EDGE_PREFIX_LENGTH, StoreError},
 };
 
 /// Bloom filter bits-per-key — internal only, not user-tunable.
@@ -40,11 +39,28 @@ const BLOOM_FILTER_BITS_PER_KEY: f64 = 10.0;
 /// RocksDB's recommended default since 9.0.  Readable by RocksDB >= 8.6.
 const BLOCK_FORMAT_VERSION: i32 = 6;
 
-/// Runtime storage-tuning options for the RocksDB backend.
+/// Storage-tuning options for the RocksDB backend.
 ///
-/// These settings are applied **every time** the database is opened (unlike
-/// [`GraphOptions`], which is only applied on first creation and persisted).
-/// Changing them without reopening the database has no effect.
+/// These settings are re-applied **every time** [`Graph::open`] is called
+/// (unlike [`GraphOptions`], which is persisted on first creation).
+/// Changes take effect after the next `open()` call.
+///
+/// ## When each option takes effect
+///
+/// Options differ in *how retroactively* they apply to existing on-disk data:
+///
+/// | Option | When effective | Retroactive? |
+/// |---|---|---|
+/// | `max_background_jobs` | next open | yes — live-configurable in RocksDB |
+/// | `block_cache_size` | next open | yes — controls the in-process cache |
+/// | `write_buffer_size` | next open | yes — applies to new memtables |
+/// | `max_write_buffer_number` | next open | yes — applies to new memtables |
+/// | `vertex_block_size` | next open | **no** — only new SST files; existing SSTsretain their block size |
+/// | `edge_block_size` | next open | **no** — only new SST files |
+/// | `cache_index_and_filter_blocks` | next open | **no** — only affects newly-opened block tables |
+///
+/// Block-size and index-caching changes take full effect only after the next
+/// compaction rewrites the affected SST files.
 ///
 /// # Quick Reference — size by deployment
 ///
@@ -78,21 +94,35 @@ const BLOCK_FORMAT_VERSION: i32 = 6;
 /// [`GraphOptions`]: crate::schema::GraphOptions
 #[derive(Debug, Clone)]
 pub struct RocksOptions {
-    // ── Memory ───────────────────────────────────────────────────────────────
+    // ── In-process memory (retroactive: effective immediately on next open) ──
     /// Shared LRU block cache for the vertex and edge CFs.
     ///
     /// A single cache is shared across all four data CFs so memory flows to
     /// whichever CF is actually hot, rather than being statically partitioned.
     /// This is the **single most impactful tuning knob** for read-heavy workloads.
     ///
-    /// Default: 256 MiB.  In production, set to 30–50% of available RAM.
+    /// **Retroactive**: applies immediately to all reads after the next `open()`.
+    ///
+    /// **Why 256 MiB default**: safe for a developer laptop or CI environment
+    /// (typically 8–16 GB RAM) without starving other processes. It also
+    /// comfortably holds the working set of a small graph (≤1 M edges, ~100 MB
+    /// total data) almost entirely in cache, giving near-100% hit rates during
+    /// development and tests. In production, set to 30–50% of available RAM.
     pub block_cache_size: usize,
 
     /// Per-CF memtable (write buffer) size before a flush to an SST file is
     /// triggered.  Larger values reduce the number of L0 SST files generated
     /// per unit of data written, which lowers compaction pressure.
     ///
-    /// Default: 128 MiB (2× RocksDB's own default of 64 MiB).
+    /// **Retroactive**: applies to new memtables created after the next `open()`.
+    ///
+    /// **Why 128 MiB default**: RocksDB's own built-in default is 64 MiB, which
+    /// was tuned for HDDs. On SSDs, flushing more frequently creates smaller L0
+    /// files that compact quickly but generate more compaction I/O overhead.
+    /// 128 MiB doubles the flush interval, halving the number of L0 files
+    /// produced per write volume, while staying well within the memory budget
+    /// of a development machine. Together with `max_write_buffer_number = 3`,
+    /// the peak in-memory memtable footprint per CF is 3 × 128 MiB = 384 MiB.
     pub write_buffer_size: usize,
 
     /// Maximum number of memtables (write buffers) that may be held in memory
@@ -100,10 +130,18 @@ pub struct RocksOptions {
     /// actively receiving writes; the rest are waiting to be flushed.
     /// Increasing this value absorbs write bursts without stalling.
     ///
-    /// Default: 3.  Values of 4–6 are common in production.
+    /// **Retroactive**: applies to new memtable lifecycles after the next `open()`.
+    ///
+    /// **Why 3 default**: `1` (only active memtable) would stall writes the
+    /// instant a flush is triggered. `2` gives one buffer for flushing, but
+    /// any flush latency spike immediately stalls writes. `3` adds a second
+    /// waiting memtable, which absorbs a full flush period of incoming writes
+    /// even if one flush runs slow — a practical minimum for stable throughput
+    /// under bursty write workloads. Values above 3 trade memory for resilience
+    /// against sustained flush latency.
     pub max_write_buffer_number: i32,
 
-    // ── Compaction ───────────────────────────────────────────────────────────
+    // ── Concurrency (retroactive: effective immediately on next open) ─────────
     /// Total number of background threads shared by flush and compaction across
     /// the entire database.  The most direct lever for keeping L0 SST file
     /// count low under sustained write load.
@@ -112,45 +150,79 @@ pub struct RocksOptions {
     /// increases read amplification (more files to search per point lookup)
     /// and eventually triggers write stalls.
     ///
-    /// Default: 4.  In production, set to `max(4, num_cpu_cores / 2)`.
+    /// **Retroactive**: thread count adjusts immediately after the next `open()`.
+    ///
+    /// **Why 4 default**: matches RocksDB's built-in default. With 4 data CFs
+    /// (`vertices`, `vertex_degree`, `edges_out`, `edges_in`), a single
+    /// background job per CF is the floor; 4 jobs allow simultaneous flush of
+    /// all CFs without queuing. It is also a safe minimum on any machine with
+    /// ≥ 4 CPU cores and does not over-subscribe single-core CI environments.
+    /// In production, `max(4, num_cpu_cores / 2)` is the standard formula.
     pub max_background_jobs: i32,
 
-    // ── Block layout — graph-workload-specific ────────────────────────────────
+    // ── SST block layout (NOT retroactive: only affects newly written SST files)
     /// SST data-block size for the **vertex** CFs (`vertices`, `vertex_degree`).
     ///
     /// Vertex CFs are accessed almost exclusively via point lookups (`hasId`,
-    /// `get_degree`).  Smaller blocks reduce wasted I/O: reading a 4 KB block
-    /// to retrieve one 80-byte vertex record wastes far less bandwidth than a
-    /// 32 KB block would.
+    /// `get_degree`).  A block read always fetches the full block even if only
+    /// one record is needed, so smaller blocks reduce wasted I/O bandwidth.
     ///
-    /// Default: 4 KiB (RocksDB's built-in default; optimal for point lookups).
+    /// **Not retroactive**: existing SST files keep their original block size;
+    /// the new value only applies to files written after the next compaction.
+    ///
+    /// **Why 4 KiB default**: the SSD NAND page size and OS filesystem block
+    /// size are both 4 KB on virtually all modern hardware. A 4 KB RocksDB
+    /// block maps exactly to one OS page: the read request is aligned, no
+    /// extra bytes are wasted to sub-page rounding, and the block lands cleanly
+    /// in one OS page cache entry. For a typical vertex record of ~50–100 bytes
+    /// (key + label + a few properties), a 4 KB block holds ~40–80 vertices —
+    /// dense enough to keep the SST index small (one index entry per block)
+    /// while keeping the over-read per point lookup at most 4 KB.
     pub vertex_block_size: usize,
 
     /// SST data-block size for the **edge** CFs (`edges_out`, `edges_in`).
     ///
     /// Edge CFs are accessed primarily via prefix-range scans (`outE`, `inE`,
     /// `bothE`), which read consecutive keys.  Larger blocks amortise the SST
-    /// seek overhead across more records per I/O, improving throughput on
-    /// multi-hop traversals and full-graph scans.
+    /// seek overhead and decompression cost across more records per I/O,
+    /// improving throughput on multi-hop traversals and full-graph scans.
     ///
-    /// Default: 16 KiB.  Values of 32–64 KiB are reasonable for scan-heavy
-    /// workloads.
+    /// **Not retroactive**: existing SST files keep their original block size;
+    /// the new value only applies to files written after the next compaction.
+    ///
+    /// **Why 16 KiB default**: edge records are ~30 bytes each (22-byte key +
+    /// ~8-byte value for a no-property edge). A 16 KB block holds ~500 such
+    /// records. During an `outE()` scan the engine reads edges sequentially, so
+    /// each 16 KB block read serves ~500 records before the next I/O — giving
+    /// low read-amplification for scans. 16 KB is also 4× the SSD page size,
+    /// which means each block read issues 4 consecutive SSD page reads in a
+    /// single sequential I/O — optimal for SSD prefetching. Going larger (32–64
+    /// KB) helps on scan-heavy workloads but hurts point-lookup latency when
+    /// only one edge is needed (e.g., `GetEStep`).
     pub edge_block_size: usize,
 
     /// Store index and bloom-filter blocks inside `block_cache_size` rather
     /// than in a separate, uncapped memory pool.
     ///
-    /// When `false` (the old default), index and filter blocks are allocated
-    /// outside the block cache, making total memory usage hard to bound and
-    /// invisible to cache accounting.  When `true`, they compete with data
-    /// blocks for the same budget, but cache utilisation is accurate and
+    /// When `false` (the old RocksDB default), index and filter blocks are
+    /// allocated outside the block cache, making total memory usage hard to
+    /// bound and invisible to cache accounting. When `true`, they compete with
+    /// data blocks for the same budget, but cache utilisation is accurate and
     /// total memory usage is predictable.
     ///
     /// Enabling this also activates `pin_l0_filter_and_index_blocks_in_cache`
     /// automatically, which keeps the filter/index blocks for the hottest
     /// (L0) SST files pinned and prevents their eviction.
     ///
-    /// Default: `true`.
+    /// **Not retroactive**: affects how newly-opened block tables are configured;
+    /// existing open SST table handles retain their previous setting.
+    ///
+    /// **Why `true` default**: with `false`, bloom filters for 4 data CFs can
+    /// quietly allocate hundreds of MiB outside the cache, making the effective
+    /// memory footprint unpredictable and causing OOM surprises in constrained
+    /// environments. `true` makes total memory usage bounded by `block_cache_size`
+    /// and visible. The L0 pinning compensates for the most-frequently-hit
+    /// filter/index blocks competing with data blocks for cache space.
     pub cache_index_and_filter_blocks: bool,
 }
 
@@ -259,10 +331,11 @@ impl RocksStorage {
         &self,
         defaults: crate::schema::definition::GraphOptions,
     ) -> Result<crate::schema::Schema, StoreError> {
+        use super::CF_SCHEMA;
         use crate::{
             schema::definition::{DataType, EdgeMode, PropKeyConfig, Schema, SchemaMode},
-            store::rocks::encoding::{
-                decode_schema_label_value, decode_schema_meta, decode_schema_prop_value, encode_schema_meta, CF_SCHEMA,
+            types::kv_codec::{
+                decode_schema_label_value, decode_schema_meta, decode_schema_prop_value, encode_schema_meta,
                 SCHEMA_KIND_EDGE_LABEL, SCHEMA_KIND_META, SCHEMA_KIND_PROP_KEY, SCHEMA_KIND_VERTEX_LABEL,
                 SCHEMA_META_KEY,
             },

@@ -42,11 +42,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Declare the schema before any write reaches the engine
     let mut mgmt = graph.open_management();
-    mgmt.make_vertex_label("person").make();
-    mgmt.make_edge_label("knows").make();
-    mgmt.make_property_key("name", DataType::String).make();
-    mgmt.make_property_key("age", DataType::Int32).make();
-    mgmt.make_property_key("weight", DataType::Float64).make();
+    mgmt.add_vertex_label("person")
+        .add_edge_label("knows")
+        .add_property_key("name", DataType::String)
+        .add_property_key("age", DataType::Int32)
+        .add_property_key("weight", DataType::Float64);
+
+    println!("Visualizing declared schema:\n{}", mgmt);
     mgmt.commit()?;
     println!("Schema successfully declared and committed in Strict Mode.");
 
@@ -83,6 +85,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut mgmt = graph.open_management();
     mgmt.set_edge_mode(EdgeMode::Multi);
     mgmt.commit()?;
+    println!("Visualizing updated schema:\n{}", graph.open_management());
     println!("EdgeMode upgraded to Multi successfully.");
 
     // Add first edge with default rank (0)

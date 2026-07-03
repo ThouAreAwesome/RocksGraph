@@ -10,7 +10,7 @@ Benchmark binaries use the public `Graph` / `ReadSession` / `TxSession` API:
 ```rust
 // Read benchmark: one ReadSession per thread, reused across all queries
 let mut snap = graph.read();
-snap.g().V([]).hasId([src]).outE([label]).where(__().otherV().hasId([dst])).count().next()?;
+snap.g().V([]).hasId([src]).bothE([label]).values(["weight","timestamp"]).count().next()?;
 
 // Write benchmark: one TxSession per edge (with OCC retry on conflict)
 let mut tx = graph.begin();
@@ -29,7 +29,7 @@ tx.commit()?;
 | **Binary** | `target/release/bench_read` / `bench_write` (`cargo run --release`) |
 | **Dataset** | soc-LiveJournal1, 1 M edges, shuffled (`bench_data/soc-LiveJournal1-1M.txt`) |
 | **Data dir** | `data/rocksGraph-1M` |
-| **Parallelism** | 3 concurrent workers (write and read) |
+| **Parallelism** | 5 concurrent workers (read); 3 concurrent workers (write) |
 | **Machine** | Apple M3, 16 GB, SSD |
 | **OS** | macOS 15.4 |
 | **Rust** | 1.95.0 |
@@ -70,52 +70,47 @@ chunk (snapshot pinned at session creation). Caches are cleared between queries 
 
 | ID | Traversal | Pattern |
 |----|-----------|---------|
-| Q1 | `g.V().hasId(id).values('name','age').count()` | Point lookup + property projection |
-| Q2 | `g.V().hasId(id).bothE(label).where(otherV().hasId(dst)).values('weight','timestamp').count()` | Edge point-lookup (`GetEStep`) + property projection |
-| Q3 | `g.V().hasId(id).bothE(label).values('weight','timestamp').count()` | Bidirectional edge scan + property projection |
-| Q4 | `g.V().hasId(id).both(label).values('name','age').count()` | Bidirectional neighbor scan + property projection |
-| Q5 | `g.V(id).out(label).both(label).count()` | 2-hop traversal (mixed directions) |
-| Q6 | `g.V(id).out(label).both(label).hasLabel(v_label).count()` | 2-hop traversal with endpoint label filter |
-| Q7 | `g.V().count()` | Full vertex scan (1,093,302 vertices) |
-| Q8 | `g.E().count()` | Full edge scan (1,000,000 edges) |
+| Q1 | `g.V().hasId(id).values('name','age').count()` | Point lookup + 2 vertex property reads |
+| Q2 | `g.V().hasId(id).bothE(label).where(otherV().hasId(dst)).values('weight','timestamp').count()` | Incident edge scan + endpoint filter + 2 edge property reads |
+| Q3 | `g.V().hasId(id).bothE(label).values('weight','timestamp').count()` | Full incident edge scan + 2 edge property reads (no filter) |
+| Q4 | `g.V().hasId(id).bothE(label).values('weight','timestamp').limit(5).count()` | Q3 with early termination at 5 results |
+| Q5 | `g.V().hasId(id).both(label).values('name','age').count()` | Neighbor vertex scan + 2 vertex property reads per neighbor |
+| Q6 | `g.V(id).out(label).hasLabel(v_label).dedup().out(label).hasLabel(v_label).dedup().hasId(not(id)).count()` | 2-hop outbound traversal, label filter, dedup, self-exclusion (unrolled) |
+| Q7 | `g.V(id).repeat(out(label).hasLabel(v_label).dedup()).times(2).hasId(not(id)).count()` | Same as Q6 via `repeat().times(2)` (tests loop-driver overhead) |
+| Q8 | `g.V().count()` | Full vertex scan (1,093,302 vertices) |
+| Q9 | `g.E([]).count()` | Full edge scan (1,000,000 edges) |
 
 #### Results
 
-| Query | Ops/s | Queries | Duration | p50 (μs) | p90 (μs) | p95 (μs) | p99 (μs) | max (μs) |
-|-------|------:|-------:|--------:|--------:|--------:|--------:|--------:|--------:|
-| Q1 | 871,114 | 1,000,000 | 1.15 s | 3.38 | 3.75 | 3.96 | 6.04 | 262.7 |
-| Q2 | 379,669 | 1,000,000 | 2.63 s | 7.25 | 7.92 | 8.46 | 14.42 | 1,159 |
-| Q3 | 295,365 | 1,000,000 | 3.39 s | 9.22 | 12.26 | 13.80 | 19.14 | 373.5 |
-| Q4 | 194,232 | 1,000,000 | 5.15 s | 12.71 | 22.88 | 28.80 | 47.97 | 792.1 |
-| Q5 | 137,899 | 1,000,000 | 7.25 s | 14.38 | 36.35 | 51.94 | 91.01 | 2,103 |
-| Q6 | 129,741 | 1,000,000 | 7.71 s | 15.34 | 38.88 | 55.68 | 98.37 | 27,083 |
-| Q7 | 3.63 | 5 | 1.38 s | 228,983 | 301,203 | 301,203 | 301,203 | 301,203 |
-| Q8 | 2.76 | 5 | 1.81 s | 311,427 | 439,353 | 439,353 | 439,353 | 439,353 |
-
-#### RocksDB storage profile (`--features rocksdb-stats`)
-
-| Metric | Value | Interpretation |
-|--------|------:|----------------|
-| Block cache capacity | 256 MB | Shared across all 4 data CFs |
-| Data block hit rate | 99.7% (23,756,373 hits / 68,785 misses) | Working set fits in block cache |
-| Bloom filter skip rate | 8.3% (972,034 useful / 10,763,484 full positive) | Low skip — dense working set; bloom filter checks are always true-positive |
-| Bloom false-positive rate | <0.09% (9,612 / 10,763,484) | Filter accuracy is excellent |
-| L0 files per CF | 1 each (~25–28 MB) | Data is uncompacted; all records in a single L0 SST file per CF |
-| SST file read P50 | < 1 µs (vertices, edges_out, edges_in) | Reads served from OS page cache or block cache |
-| Compaction | 0 bytes written | No compaction has run since data was loaded |
+| Query | Ops/s | Queries | p50 (μs) | p90 (μs) | p95 (μs) | p99 (μs) | max (μs) |
+|-------|------:|-------:|--------:|--------:|--------:|--------:|--------:|
+| Q1 | 855,088 | 1,000,000 | 4.5 | 9.8 | 10.7 | 12.3 | 5,001 |
+| Q2 | 442,240 | 1,000,000 | 8.6 | 18.5 | 19.8 | 33.3 | 29,164 |
+| Q3 | 338,916 | 1,000,000 | 11.3 | 23.2 | 28.8 | 49.2 | 1,710 |
+| Q4 | 394,466 | 1,000,000 | 10.4 | 20.7 | 23.4 | 29.9 | 1,761 |
+| Q5 | 237,932 | 1,000,000 | 15.2 | 32.8 | 42.6 | 74.7 | 3,207 |
+| Q6 | 233,569 | 1,000,000 | 14.7 | 33.1 | 43.7 | 79.3 | 2,476 |
+| Q7 | 230,234 | 1,000,000 | 13.8 | 32.1 | 43.1 | 79.8 | 37,323 |
+| Q8 | 2.3 | 5 | 286,786 | 408,945 | 408,945 | 408,945 | 408,945 |
+| Q9 | 2.1 | 5 | 348,914 | 451,150 | 451,150 | 451,150 | 451,150 |
 
 #### Notes
 
-- **Q1 p50 at 3.4 µs**: sub-4 µs for a full vertex point-lookup plus two-property decode.  The v2
-  offset-index blob format and `PropertyMap` enable O(log P) single-key lookups without full
-  property materialization.
-- **Write throughput at 90.9 K/s**: upsert-heavy workload (3 OCC operations per edge: 2 vertex
-  coalesce + 1 edge write).  p50 latency at 33 µs is bounded by RocksDB write + OCC validation.
-- **Q5–Q6 max at 2–27 ms**: the LiveJournal graph follows a power-law degree distribution.
-  Hub vertices with thousands of out-edges cause multi-hop traversals to touch proportionally
-  more data blocks.  Q6 max at 27 ms is a single outlier (one hub with an extremely high
-  out-degree).
-- **Bloom filter skip rate (8.3%)**: the 1 M working set fits in a single L0 SST file per CF.
-  Most point-lookup keys are present (true-positive bloom), so useful bloom skips are low.
-  Skip rate will improve as the dataset grows beyond the block cache and requires multi-level
-  compaction.
+- **Q1 at 855 K ops/s, p50 4.5 µs**: vertex point-lookup plus 2 property reads. The
+  offset-index blob format and `PropertyMap` enable O(log P) single-key lookups without
+  full property materialisation.
+- **Q2 > Q3 throughput (442 K vs 339 K)**: Q2 includes a `where(otherV().hasId(dst))` filter
+  that in practice matches only 1–2 edges per source vertex, limiting the property-read work.
+  Q3 reads all incident edges unconditionally, so it processes more properties per query.
+- **Q4 > Q3 throughput (394 K vs 339 K)**: `limit(5)` triggers early termination — most
+  vertices have more than 5 incident edges, so Q4 saves significant property-read work.
+- **Q6 ≈ Q7 throughput (234 K vs 230 K)**: `repeat().times(2)` imposes less than 2%
+  overhead over the manually unrolled 2-hop traversal, confirming the loop driver is
+  near-zero cost for small iteration counts.
+- **Q8/Q9 at ~2 ops/s (287–349 ms/scan)**: full-DB scan of 1 M+ vertices / 1 M edges.
+  All data fits in the 256 MB block cache so repeated scans are OS-cache-warm.
+- **Power-law outliers**: Q2 max at 29 ms and Q7 max at 37 ms are single-query outliers
+  caused by hub vertices with thousands of incident edges — expected for the LiveJournal
+  social graph.
+- **Write throughput at 90.9 K/s**: upsert-heavy workload (2 vertex coalesces + 1 edge
+  write per input edge). p50 at 33 µs is bounded by RocksDB write + OCC validation.

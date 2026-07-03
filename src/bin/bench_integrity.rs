@@ -170,8 +170,7 @@ mod tests {
         // Declare schema explicitly — required in Strict mode.
         {
             let mut mgmt = graph.open_management();
-            mgmt.make_vertex_label(VERTEX_LABEL).make();
-            mgmt.make_edge_label(EDGE_LABEL).make();
+            mgmt.add_vertex_label(VERTEX_LABEL).add_edge_label(EDGE_LABEL);
             mgmt.commit().unwrap();
         }
         let mut tx = graph.begin();
@@ -195,8 +194,7 @@ mod tests {
                 .unwrap();
         {
             let mut mgmt = graph.open_management();
-            mgmt.make_vertex_label(VERTEX_LABEL).make();
-            mgmt.make_edge_label(EDGE_LABEL).make();
+            mgmt.add_vertex_label(VERTEX_LABEL).add_edge_label(EDGE_LABEL);
             mgmt.commit().unwrap();
         }
         let mut tx = graph.begin();

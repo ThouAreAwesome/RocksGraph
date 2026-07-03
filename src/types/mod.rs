@@ -61,7 +61,8 @@
 //! | [`keys`] | [`VertexKey`], [`EdgeKey`], [`CanonicalEdgeKey`], [`Direction`], [`CanonicalKey`] |
 //! | [`label`] | [`Label`] — human-readable label string |
 //! | [`prop_key`] | [`PropKey`], [`ID`](prop_key::ID), [`LABEL`](prop_key::LABEL) — property key type and built-in keys |
-//! | [`prop_codec`] | v1 property blob codec — `encode_props`, `decode_prop_by_key`, `decode_all_to_map` |
+//! | [`prop_codec`] | v2 property blob codec — `encode_props`, `decode_prop_by_key`, `decode_all_to_map` |
+//! | [`kv_codec`] | Crate-internal key-value byte-level key/value serialization (lexicographical sorting and binary row framing) |
 //! | [`error`] | [`StoreError`] — storage and runtime errors |
 //!
 //! Most types are re-exported at the crate root for convenience.
@@ -70,6 +71,7 @@ pub mod element;
 pub mod error;
 pub mod gvalue;
 pub mod keys;
+pub(crate) mod kv_codec;
 pub mod label;
 pub(crate) mod prop_codec;
 pub mod prop_key;

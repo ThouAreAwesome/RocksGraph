@@ -56,18 +56,18 @@ use rocksdb::{Direction as ScanDir, IteratorMode, OptimisticTransactionDB, ReadO
 
 use std::collections::HashMap;
 
+use super::{CF_EDGES_IN, CF_EDGES_OUT, CF_SCHEMA, CF_VERTEX_DEGREE, CF_VERTICES};
 use crate::{
-    store::{
-        rocks::encoding::{
+    store::traits::GraphTransaction,
+    types::{
+        kv_codec::{
             build_lazy_edge, build_lazy_vertex, decode_edge_key, decode_vertex_key, edge_scan_prefix, encode_edge_key,
             encode_schema_key, encode_vertex_key, prefix_upper_bound, EdgeValue, VertexDegree, VertexValue,
-            CF_EDGES_IN, CF_EDGES_OUT, CF_SCHEMA, CF_VERTEX_DEGREE, CF_VERTICES, EDGE_KEY_SIZE,
+            EDGE_KEY_SIZE,
         },
-        traits::GraphTransaction,
-    },
-    types::{
-        prop_codec::encode_props, AdjacentEdgeCursor, AdjacentEdgesOptions, CanonicalEdgeKey, Direction, Edge, EdgeKey,
-        LabelId, Primitive, Rank, StoreError, Vertex, VertexKey,
+        prop_codec::encode_props,
+        AdjacentEdgeCursor, AdjacentEdgesOptions, CanonicalEdgeKey, Direction, Edge, EdgeKey, LabelId, Primitive, Rank,
+        StoreError, Vertex, VertexKey,
     },
 };
 
@@ -741,7 +741,8 @@ mod tests {
 
     #[test]
     fn test_put_schema_entry() {
-        use crate::store::rocks::encoding::{encode_schema_key, CF_SCHEMA, SCHEMA_KIND_VERTEX_LABEL};
+        use super::super::CF_SCHEMA;
+        use crate::types::kv_codec::{encode_schema_key, SCHEMA_KIND_VERTEX_LABEL};
 
         let (store, _dir) = open_temp_store();
         let mut txn = ctx(&store);

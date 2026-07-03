@@ -15,10 +15,10 @@
 // You should have received a copy of the GNU General Public License
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
-//! Property blob (v1) format — canonical binary representation for element properties.
+//! Property blob (v2) format — canonical binary representation for element properties.
 //!
-//! The v1 format is the single, graph-engine-level encoding for property data.
-//! It is not tied to RocksDB specifically; `store/rocks/encoding.rs` uses this
+//! The v2 format is the single, graph-engine-level encoding for property data.
+//! It is not tied to RocksDB specifically; `types/kv_codec.rs` uses this
 //! codec to write blobs and this module owns the decode side.
 //!
 //! ## Wire layout

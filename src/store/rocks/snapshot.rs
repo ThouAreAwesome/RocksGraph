@@ -36,16 +36,14 @@ use std::{collections::HashSet, sync::Arc};
 
 use rocksdb::{Direction as ScanDir, IteratorMode, OptimisticTransactionDB, ReadOptions};
 
+use super::{CF_EDGES_IN, CF_EDGES_OUT, CF_VERTEX_DEGREE, CF_VERTICES};
 use crate::{
-    store::{
-        rocks::encoding::{
-            build_lazy_edge, build_lazy_vertex, decode_edge_key, decode_vertex_key, edge_scan_prefix, encode_edge_key,
-            encode_vertex_key, prefix_upper_bound, EdgeValue, VertexDegree, VertexValue, CF_EDGES_IN, CF_EDGES_OUT,
-            CF_VERTEX_DEGREE, CF_VERTICES, EDGE_KEY_SIZE,
-        },
-        traits::GraphSnapshot,
-    },
+    store::traits::GraphSnapshot,
     types::{
+        kv_codec::{
+            build_lazy_edge, build_lazy_vertex, decode_edge_key, decode_vertex_key, edge_scan_prefix, encode_edge_key,
+            encode_vertex_key, prefix_upper_bound, EdgeValue, VertexDegree, VertexValue, EDGE_KEY_SIZE,
+        },
         AdjacentEdgeCursor, AdjacentEdgesOptions, CanonicalEdgeKey, Direction, Edge, EdgeKey, LabelId, Rank,
         StoreError, Vertex, VertexKey,
     },

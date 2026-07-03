@@ -146,8 +146,8 @@ all — it's a second, independent way to reach the same `Schema`, not a continu
 
 ┌──────────────────────────────────────────────────────────────────────────┐
 │ SchemaManagement — STRINGS, never enters the pipeline above              │
-│   open_management() → make_vertex_label()/make_edge_label()/             │
-│   make_property_key()/set_edge_mode()/set_schema_mode() → commit()       │
+│   open_management() → add_vertex_label()/add_edge_label()/               │
+│   add_property_key()/set_edge_mode()/set_schema_mode() → commit()         │
 └─────────────────────────────────┬────────────────────────────────────────┘
                                   │ declare_*() + version CAS, own WriteBatch
                                   ▼
@@ -428,25 +428,24 @@ lookups, `values("label")`'s decode, and `materialize`/`get_all_props`'s propert
 ### 4. JanusGraph-style management interface
 
 JanusGraph separates *using* the graph (`g.addV(...)`) from *defining* its schema
-(`graph.openManagement()` → `mgmt.makeVertexLabel(...)`, `mgmt.makePropertyKey(...)`,
-`mgmt.makeEdgeLabel(...)`, then `mgmt.commit()`). RocksGraph adopts the same split, minus
-the per-label multiplicity knob (`design_multiple_edges.md` §2):
+(`graph.openManagement()` → `mgmt.addVertexLabel(...)`, `mgmt.addPropertyKey(...)`,
+`mgmt.addEdgeLabel(...)`, then `mgmt.commit()`). RocksGraph adopts the same split (using `add_vertex_label`, `add_edge_label`, `add_property_key`), minus
+the per-label multiplicity knob (`design_multiple_edges.md` §2). Note that property key definitions are **global** to the entire graph: a property key (like `"age"`) has a single, uniform `DataType` definition effective across the entire graph, rather than being scoped to specific vertex or edge labels:
 
 ```rust
-let mgmt = graph.open_management();
+let mut mgmt = graph.open_management();
 
-mgmt.make_property_key("name", DataType::String).make();
-mgmt.make_property_key("since", DataType::Int64).make();
-
-mgmt.make_vertex_label("person").make();
-mgmt.make_edge_label("knows").make();     // no per-label multiplicity — see set_edge_mode below
-mgmt.set_edge_mode(EdgeMode::Multi);       // graph-wide, one-way: Single -> Multi only (see below)
-mgmt.set_schema_mode(SchemaMode::Strict);  // graph-wide, either direction
+mgmt.add_property_key("name", DataType::String)
+    .add_property_key("since", DataType::Int64)
+    .add_vertex_label("person")
+    .add_edge_label("knows")     // no per-label multiplicity — see set_edge_mode below
+    .set_edge_mode(EdgeMode::Multi)       // graph-wide, one-way: Single -> Multi only (see below)
+    .set_schema_mode(SchemaMode::Strict);  // graph-wide, either direction
 
 mgmt.commit()?;   // CAS-validates + applies the whole batch atomically, persists to schema CF
 ```
 
-**Staging, not immediate effect.** Each `make_*`/`set_edge_mode` call accumulates into a
+**Staging, not immediate effect.** Each `add_vertex_label`/`add_edge_label`/`add_property_key`/`set_edge_mode` call accumulates into a
 `pending_*` vector owned by the `SchemaManagement` session; it does **not** touch the shared
 `Schema` until `commit()`. This mirrors JanusGraph's transactional management system and
 means a batch of related declarations either all land or none do.
@@ -458,7 +457,7 @@ pub struct SchemaManagement {
     base_version: u64,
     pending_vertex_labels: Vec<String>,
     pending_edge_labels: Vec<String>,
-    pending_prop_keys: Vec<(String, DataType, Cardinality)>,
+    pending_prop_keys: Vec<(String, DataType)>,
     pending_edge_mode: Option<EdgeMode>,
     pending_schema_mode: Option<SchemaMode>,
 }
@@ -468,14 +467,10 @@ impl Graph {
     pub fn open_management(&self) -> SchemaManagement { .. }
 }
 
-pub struct PropertyKeyMaker<'a> { mgmt: &'a mut SchemaManagement, name: String, data_type: DataType, cardinality: Cardinality }
-pub struct VertexLabelMaker<'a> { mgmt: &'a mut SchemaManagement, name: String }
-pub struct EdgeLabelMaker<'a>   { mgmt: &'a mut SchemaManagement, name: String }
-
 impl SchemaManagement {
-    pub fn make_property_key(&mut self, name: impl Into<String>, data_type: DataType) -> PropertyKeyMaker<'_> { .. }
-    pub fn make_vertex_label(&mut self, name: impl Into<String>) -> VertexLabelMaker<'_> { .. }
-    pub fn make_edge_label(&mut self, name: impl Into<String>) -> EdgeLabelMaker<'_> { .. }
+    pub fn add_property_key(&mut self, name: impl Into<String>, data_type: DataType) -> &mut Self { .. }
+    pub fn add_vertex_label(&mut self, name: impl Into<String>) -> &mut Self { .. }
+    pub fn add_edge_label(&mut self, name: impl Into<String>) -> &mut Self { .. }
 
     /// Stage a graph-wide multiplicity change. Applied atomically with everything
     /// else in this batch at `commit()`. `commit()` rejects `EdgeMode::Multi -> EdgeMode::Single`
@@ -1095,3 +1090,24 @@ Schema persistence and mode enforcement are tested via:
 | `src/store/traits.rs` | **No change** — confirms the invariant that `GraphStore`/`S::Txn`/`S::Snapshot` never reference `Schema` (§3) |
 | `docs/design_multiple_edges.md` | `EdgeConfig` per-label → `EdgeMode` graph-wide (companion update, already applied) |
 | `src/types/label.rs` | `Label` struct can be removed — superseded by plain `SmolStr` at the API boundary |
+
+### 11. Future Extension: Label-Scoped Properties
+
+In the future, we may want to support defining property keys within the scope of a specific vertex or edge label (e.g., a property key `"age"` having a type of `DataType::Int32` on vertex label `"person"`, but `DataType::Float64` on vertex label `"device"`).
+
+This upgrade can be achieved in a fully backward-compatible manner at both the API and storage engine layers:
+
+#### API Upgrades
+We will add new direct, chainable methods to `SchemaManagement` specifically for defining property keys within a label scope:
+*   `pub fn add_vertex_property(&mut self, vertex_label: impl Into<String>, name: impl Into<String>, data_type: DataType) -> &mut Self`
+*   `pub fn add_edge_property(&mut self, edge_label: impl Into<String>, name: impl Into<String>, data_type: DataType) -> &mut Self`
+
+The existing `add_property_key(name, DataType)` method will remain unchanged, representing "global" properties that act as a graph-wide fallback for all labels.
+
+#### Disk & Storage Engine Compatibility
+*   **Hierarchical Schema Cache:** The in-memory and on-disk `Schema` registry will be upgraded to support a fallback lookup strategy:
+    1.  **Scoped definitions:** Look up `(LabelId, PropertyName) -> (u16 ID, DataType)`.
+    2.  **Global fallback:** Look up `PropertyName -> (u16 ID, DataType)`.
+*   At write/read time, physical engine steps already have access to the element's `LabelId`. The engine will use the element's `LabelId` together with the property name to resolve the correct `u16 ID` and `DataType`.
+*   This fallback strategy ensures that all legacy data already written to disk under the global property namespace remains readable and behaves correctly without needing database migrations.
+

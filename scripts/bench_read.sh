@@ -23,8 +23,8 @@ echo "=== Running Gremlin Read Benchmark ==="
 cd "$PROJECT_ROOT" || exit
 
 PARALLELISM=5
-STORE_DIR="$PROJECT_ROOT/data/rocksGraph-1M"
-FILE_PATH="$PROJECT_ROOT/bench_data/soc-LiveJournal1-1M.txt"
+STORE_DIR="$PROJECT_ROOT/data/rocksGraph-10M"
+FILE_PATH="$PROJECT_ROOT/bench_data/soc-LiveJournal1-10M.txt"
 
 # Execute the benchmark binary
 # adding `--features rocksdb-stats` to show RocksDB statistics

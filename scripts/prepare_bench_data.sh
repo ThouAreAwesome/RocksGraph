@@ -34,7 +34,7 @@ BENCH_DIR="bench_data"
 GZ_FILE_PATH="$BENCH_DIR/$GZ_FILE_NAME"
 DECOMPRESSED_FILE="$BENCH_DIR/soc-LiveJournal1.txt"
 SHUFFLED_FILE="$BENCH_DIR/soc-LiveJournal1-shuffled.txt"
-FINAL_FILE="$BENCH_DIR/soc-LiveJournal1-1M.txt"
+FINAL_FILE="$BENCH_DIR/soc-LiveJournal1-10M.txt"
 LINE_COUNT=1000000
 
 # --- Script ---

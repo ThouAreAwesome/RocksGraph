@@ -17,10 +17,8 @@
 
 use crate::{
     schema::Schema,
-    store::{
-        rocks::encoding,
-        traits::{GraphStore, GraphTransaction},
-    },
+    store::traits::{GraphStore, GraphTransaction},
+    types::kv_codec,
     types::{
         element::{Edge, Property, Vertex},
         keys::{
@@ -1051,23 +1049,23 @@ impl<S: GraphStore> LogicalGraph<S> {
             let schema = self.schema.read().unwrap();
             for &label_id in &self.staged_schema.staged_vertex_labels {
                 if let Some(name) = schema.vertex_label_str(label_id) {
-                    let val = encoding::encode_schema_label_value(label_id);
-                    self.store.put_schema_entry(encoding::SCHEMA_KIND_VERTEX_LABEL, name, &val)?;
+                    let val = kv_codec::encode_schema_label_value(label_id);
+                    self.store.put_schema_entry(kv_codec::SCHEMA_KIND_VERTEX_LABEL, name, &val)?;
                     schema_changed = true;
                 }
             }
             for &label_id in &self.staged_schema.staged_edge_labels {
                 if let Some(name) = schema.edge_label_str(label_id) {
-                    let val = encoding::encode_schema_label_value(label_id);
-                    self.store.put_schema_entry(encoding::SCHEMA_KIND_EDGE_LABEL, name, &val)?;
+                    let val = kv_codec::encode_schema_label_value(label_id);
+                    self.store.put_schema_entry(kv_codec::SCHEMA_KIND_EDGE_LABEL, name, &val)?;
                     schema_changed = true;
                 }
             }
             for &prop_key_id in &self.staged_schema.staged_prop_keys {
                 if let Some(name) = schema.prop_key_str(prop_key_id) {
                     if let Some(cfg) = schema.prop_key_types.get(&prop_key_id) {
-                        let val = encoding::encode_schema_prop_value(prop_key_id, cfg.data_type.to_u8());
-                        self.store.put_schema_entry(encoding::SCHEMA_KIND_PROP_KEY, name, &val)?;
+                        let val = kv_codec::encode_schema_prop_value(prop_key_id, cfg.data_type.to_u8());
+                        self.store.put_schema_entry(kv_codec::SCHEMA_KIND_PROP_KEY, name, &val)?;
                         schema_changed = true;
                     }
                 }
@@ -1079,8 +1077,8 @@ impl<S: GraphStore> LogicalGraph<S> {
                 // step only flushes that already-current version to disk together with the
                 // entries it covers — it must not bump it a second time.
                 let meta_val =
-                    encoding::encode_schema_meta(schema.version, schema.edge_mode.to_u8(), schema.mode.to_u8());
-                self.store.put_schema_entry(encoding::SCHEMA_KIND_META, encoding::SCHEMA_META_NAME, &meta_val)?;
+                    kv_codec::encode_schema_meta(schema.version, schema.edge_mode.to_u8(), schema.mode.to_u8());
+                self.store.put_schema_entry(kv_codec::SCHEMA_KIND_META, kv_codec::SCHEMA_META_NAME, &meta_val)?;
             }
         }
 

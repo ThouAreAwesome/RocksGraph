@@ -47,8 +47,8 @@ use crate::{
 ///
 /// // Declare the schema up front -- required before any write in `Strict` mode.
 /// let mut mgmt = graph.open_management();
-/// mgmt.make_vertex_label("person").make();
-/// mgmt.make_property_key("name", DataType::String).make();
+/// mgmt.add_vertex_label("person")
+///     .add_property_key("name", DataType::String);
 /// mgmt.commit()?;
 ///
 /// // A declared label commits normally.
@@ -115,19 +115,26 @@ impl SchemaManagement {
         }
     }
 
-    /// Create a maker for a vertex label.
-    pub fn make_vertex_label(&mut self, name: impl Into<String>) -> VertexLabelMaker<'_> {
-        VertexLabelMaker { mgmt: self, name: name.into() }
+    /// Stage a vertex label declaration and return a mutable reference for chaining.
+    pub fn add_vertex_label(&mut self, name: impl Into<String>) -> &mut Self {
+        self.pending_vertex_labels.push(name.into());
+        self
     }
 
-    /// Create a maker for an edge label.
-    pub fn make_edge_label(&mut self, name: impl Into<String>) -> EdgeLabelMaker<'_> {
-        EdgeLabelMaker { mgmt: self, name: name.into() }
+    /// Stage an edge label declaration and return a mutable reference for chaining.
+    pub fn add_edge_label(&mut self, name: impl Into<String>) -> &mut Self {
+        self.pending_edge_labels.push(name.into());
+        self
     }
 
-    /// Create a maker for a property key.
-    pub fn make_property_key(&mut self, name: impl Into<String>, data_type: DataType) -> PropertyKeyMaker<'_> {
-        PropertyKeyMaker { mgmt: self, name: name.into(), data_type }
+    /// Stage a property key declaration and return a mutable reference for chaining.
+    ///
+    /// Property key definitions are **graph-wide (global)**. A property key (e.g. `"age"`)
+    /// has a single, uniform `DataType` definition effective across the entire graph,
+    /// rather than being scoped or restricted to specific vertex or edge labels.
+    pub fn add_property_key(&mut self, name: impl Into<String>, data_type: DataType) -> &mut Self {
+        self.pending_prop_keys.push((name.into(), data_type));
+        self
     }
 
     /// Stage a graph-wide multiplicity change.
@@ -152,8 +159,9 @@ impl SchemaManagement {
     /// is only swapped in (and the RocksDB write only issued) once every staged item has
     /// been validated successfully.
     pub fn commit(self) -> Result<(), StoreError> {
-        use crate::store::rocks::encoding::{
-            encode_schema_key, encode_schema_label_value, encode_schema_meta, encode_schema_prop_value, CF_SCHEMA,
+        use crate::store::rocks::CF_SCHEMA;
+        use crate::types::kv_codec::{
+            encode_schema_key, encode_schema_label_value, encode_schema_meta, encode_schema_prop_value,
             SCHEMA_KIND_EDGE_LABEL, SCHEMA_KIND_PROP_KEY, SCHEMA_KIND_VERTEX_LABEL, SCHEMA_META_KEY,
         };
         use rocksdb::WriteBatchWithTransaction;
@@ -242,36 +250,42 @@ impl SchemaManagement {
     }
 }
 
-pub struct VertexLabelMaker<'a> {
-    mgmt: &'a mut SchemaManagement,
-    name: String,
-}
+impl std::fmt::Display for SchemaManagement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let schema = self.schema.read().map_err(|_| std::fmt::Error)?;
 
-impl<'a> VertexLabelMaker<'a> {
-    pub fn make(self) {
-        self.mgmt.pending_vertex_labels.push(self.name);
-    }
-}
+        writeln!(f, "=== RocksGraph Schema (Version: {}) ===", schema.version)?;
+        writeln!(f, "Schema Mode: {:?}", schema.mode)?;
+        writeln!(f, "Edge Mode: {:?}", schema.edge_mode)?;
 
-pub struct EdgeLabelMaker<'a> {
-    mgmt: &'a mut SchemaManagement,
-    name: String,
-}
+        writeln!(f, "\nVertex Labels:")?;
+        let mut vertex_labels: Vec<&str> = schema.vertex_labels.iter().map(|(_, name)| name.as_str()).collect();
+        vertex_labels.sort();
+        for label in vertex_labels {
+            writeln!(f, "  - {}", label)?;
+        }
 
-impl<'a> EdgeLabelMaker<'a> {
-    pub fn make(self) {
-        self.mgmt.pending_edge_labels.push(self.name);
-    }
-}
+        writeln!(f, "\nEdge Labels:")?;
+        let mut edge_labels: Vec<&str> = schema.edge_labels.iter().map(|(_, name)| name.as_str()).collect();
+        edge_labels.sort();
+        for label in edge_labels {
+            writeln!(f, "  - {}", label)?;
+        }
 
-pub struct PropertyKeyMaker<'a> {
-    mgmt: &'a mut SchemaManagement,
-    name: String,
-    data_type: DataType,
-}
+        writeln!(f, "\nProperty Keys:")?;
+        let mut prop_keys: Vec<(&str, DataType)> = schema
+            .prop_keys
+            .iter()
+            .map(|(id, name)| {
+                let data_type = schema.prop_key_types.get(id).map(|cfg| cfg.data_type).unwrap_or(DataType::Bytes);
+                (name.as_str(), data_type)
+            })
+            .collect();
+        prop_keys.sort_by_key(|(name, _)| *name);
+        for (name, data_type) in prop_keys {
+            writeln!(f, "  - {} ({:?})", name, data_type)?;
+        }
 
-impl<'a> PropertyKeyMaker<'a> {
-    pub fn make(self) {
-        self.mgmt.pending_prop_keys.push((self.name, self.data_type));
+        write!(f, "======================================")
     }
 }

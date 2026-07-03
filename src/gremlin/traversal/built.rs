@@ -20,7 +20,6 @@
 //! [`Value`]s.
 
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
 
 use smol_str::SmolStr;
 
@@ -40,12 +39,15 @@ use crate::{
 };
 
 /// Pre-built lookup table: label_id → SmolStr, avoiding per-result BiHashMap lookups.
-pub(crate) struct LabelCache {
+/// Pre-built lookup table: label_id/prop_key_id ↔ SmolStr, avoiding per-result BiHashMap lookups.
+pub(crate) struct SchemaCache {
     vertex_labels: HashMap<LabelId, SmolStr>,
     edge_labels: HashMap<LabelId, SmolStr>,
+    prop_key_str: HashMap<u16, SmolStr>,
+    prop_key_id: HashMap<SmolStr, u16>,
 }
 
-impl LabelCache {
+impl SchemaCache {
     pub(crate) fn from_schema(schema: &Schema) -> Self {
         // Iterate all known vertex label ids and resolve eagerly.
         let mut vertex_labels = HashMap::new();
@@ -60,11 +62,17 @@ impl LabelCache {
                 edge_labels.insert(id, name.clone());
             }
         }
-        Self { vertex_labels, edge_labels }
+        let mut prop_key_str = HashMap::new();
+        let mut prop_key_id = HashMap::new();
+        for (&id, key) in &schema.prop_keys {
+            prop_key_str.insert(id, key.clone());
+            prop_key_id.insert(key.clone(), id);
+        }
+        Self { vertex_labels, edge_labels, prop_key_str, prop_key_id }
     }
 
     #[inline]
-    fn vertex_label(&self, label_id: LabelId) -> &SmolStr {
+    pub(crate) fn vertex_label(&self, label_id: LabelId) -> &SmolStr {
         self.vertex_labels.get(&label_id).unwrap_or_else(|| {
             static EMPTY: SmolStr = SmolStr::new_inline("");
             &EMPTY
@@ -72,11 +80,21 @@ impl LabelCache {
     }
 
     #[inline]
-    fn edge_label(&self, label_id: LabelId) -> &SmolStr {
+    pub(crate) fn edge_label(&self, label_id: LabelId) -> &SmolStr {
         self.edge_labels.get(&label_id).unwrap_or_else(|| {
             static EMPTY: SmolStr = SmolStr::new_inline("");
             &EMPTY
         })
+    }
+
+    #[inline]
+    pub(crate) fn prop_key_str(&self, id: u16) -> Option<&SmolStr> {
+        self.prop_key_str.get(&id)
+    }
+
+    #[inline]
+    pub(crate) fn prop_key_id(&self, name: &str) -> Option<u16> {
+        self.prop_key_id.get(name).copied()
     }
 }
 
@@ -87,37 +105,32 @@ impl LabelCache {
 /// - `Some([])` → fetch and return all properties (existing behavior).
 /// - `Some(keys)` → fetch only named properties.
 ///
-/// `schema` should be a pre-acquired read-lock on the schema registry,
-/// passed through from [`BuiltTraversal::next`] to avoid repeated lock contention.
+/// `cache` is a pre-populated cache of the schema registry.
 pub(crate) fn materialize(
     gv: &GValue,
     ctx: &mut dyn crate::engine::GraphCtx,
-    schema: &Schema,
-    cache: &LabelCache,
+    cache: &SchemaCache,
     prop_keys: Option<&[SmolStr]>,
 ) -> Result<Value, StoreError> {
     match gv {
         GValue::Scalar(ref p) => Ok(primitive_to_value(p.clone())),
-        GValue::Vertex(vk) => materialize_vertex(*vk, ctx, schema, cache, prop_keys),
-        GValue::Edge(ek) => materialize_edge(*ek, ctx, schema, cache, prop_keys),
+        GValue::Vertex(vk) => materialize_vertex(*vk, ctx, cache, prop_keys),
+        GValue::Edge(ek) => materialize_edge(*ek, ctx, cache, prop_keys),
         GValue::Property(ref p) => {
-            let key = schema.prop_key_str(p.key).cloned().unwrap_or_else(|| SmolStr::from(format!("key_{}", p.key)));
+            let key = cache.prop_key_str(p.key).cloned().unwrap_or_else(|| SmolStr::from(format!("key_{}", p.key)));
             Ok(Value::Property(UserProperty { key, value: Box::new(primitive_to_value(p.value.clone())) }))
         }
         GValue::List(ref list) => {
             let mut out = Vec::with_capacity(list.len());
             for item in list {
-                out.push(materialize(item, ctx, schema, cache, prop_keys)?);
+                out.push(materialize(item, ctx, cache, prop_keys)?);
             }
             Ok(Value::List(out))
         }
         GValue::Map(ref map) => {
             let mut out = Map::new();
             for (k, v) in map {
-                out.entries.push((
-                    materialize(k, ctx, schema, cache, prop_keys)?,
-                    materialize(v, ctx, schema, cache, prop_keys)?,
-                ));
+                out.entries.push((materialize(k, ctx, cache, prop_keys)?, materialize(v, ctx, cache, prop_keys)?));
             }
             Ok(Value::Map(out))
         }
@@ -125,7 +138,7 @@ pub(crate) fn materialize(
             let mut objects = Vec::with_capacity(path.len());
             let mut labels: Vec<Vec<String>> = Vec::with_capacity(path.len());
             for (val, step_labels) in path {
-                objects.push(materialize(val, ctx, schema, cache, prop_keys)?);
+                objects.push(materialize(val, ctx, cache, prop_keys)?);
                 labels.push(match step_labels {
                     Some(ls) => ls.iter().map(|s| s.to_string()).collect(),
                     None => vec![],
@@ -140,8 +153,7 @@ pub(crate) fn materialize(
 fn materialize_vertex(
     vk: VertexKey,
     ctx: &mut dyn crate::engine::GraphCtx,
-    schema: &Schema,
-    cache: &LabelCache,
+    cache: &SchemaCache,
     prop_keys: Option<&[SmolStr]>,
 ) -> Result<Value, StoreError> {
     match prop_keys {
@@ -176,7 +188,7 @@ fn materialize_vertex(
                 let label = cache.vertex_label(label_id).clone();
                 let mut properties: HashMap<SmolStr, Vec<Value>> = HashMap::new();
                 for key in keys {
-                    let Some(prop_key_id) = schema.prop_key_id(key) else { continue };
+                    let Some(prop_key_id) = cache.prop_key_id(key) else { continue };
                     if matches!(prop_key_id, ID_KEY_ID | LABEL_KEY_ID | RANK_KEY_ID) {
                         continue;
                     }
@@ -195,8 +207,7 @@ fn materialize_vertex(
 fn materialize_edge(
     ek: crate::types::keys::EdgeKey,
     ctx: &mut dyn crate::engine::GraphCtx,
-    schema: &Schema,
-    cache: &LabelCache,
+    cache: &SchemaCache,
     prop_keys: Option<&[SmolStr]>,
 ) -> Result<Value, StoreError> {
     let cek = ek.canonical_edge_key();
@@ -239,7 +250,7 @@ fn materialize_edge(
             let label = cache.edge_label(ek.label_id).clone();
             let mut properties: HashMap<SmolStr, Value> = HashMap::new();
             for key in keys {
-                let Some(prop_key_id) = schema.prop_key_id(key) else { continue };
+                let Some(prop_key_id) = cache.prop_key_id(key) else { continue };
                 if matches!(prop_key_id, ID_KEY_ID | LABEL_KEY_ID | RANK_KEY_ID) {
                     continue;
                 }
@@ -266,22 +277,18 @@ fn materialize_edge(
 /// Obtained from [`ReadTraversal::iter`] or [`WriteTraversal::iter`].
 /// Implements `Iterator<Item = Result<Value, StoreError>>`.
 ///
-/// Holds the schema lock for the duration of iteration so that
-/// this helper does not re-acquire it per result.
-///
 /// [`ReadTraversal::iter`]: super::ReadTraversal::iter
 /// [`WriteTraversal::iter`]: super::WriteTraversal::iter
 pub struct BuiltTraversal<'g> {
     pub(super) graph: &'g mut dyn crate::engine::GraphCtx,
     pub(super) plan: PhysicalPlan,
-    pub(super) schema: Arc<RwLock<Schema>>,
     /// Property fetch hint set by `withProperties()`.
     /// - `None` → default: id + label only, no properties.
     /// - `Some(vec![])` → all properties.
     /// - `Some(vec!["name"])` → named properties only.
     pub(super) prop_keys: Option<Vec<SmolStr>>,
-    /// Pre-built label resolution cache (label_id → string).
-    pub(super) cache: LabelCache,
+    /// Pre-built label and property registry cache.
+    pub(super) cache: SchemaCache,
 }
 
 impl<'g> Iterator for BuiltTraversal<'g> {
@@ -294,13 +301,11 @@ impl<'g> Iterator for BuiltTraversal<'g> {
             Ok(Some(t)) => {
                 // Scalar values (from count(), values(), is(), etc.) carry no
                 // label-id or property-key-id that needs schema decoding — skip
-                // the RwLock read-acquire to avoid atomic + fence overhead on
-                // the hottest path.
+                // any schema lookups.
                 if let GValue::Scalar(ref p) = &t.value {
                     return Some(Ok(primitive_to_value(p.clone())));
                 }
-                let schema = self.schema.read().unwrap();
-                Some(materialize(&t.value, self.graph, &schema, &self.cache, self.prop_keys.as_deref()))
+                Some(materialize(&t.value, self.graph, &self.cache, self.prop_keys.as_deref()))
             }
         }
     }

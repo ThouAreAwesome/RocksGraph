@@ -30,15 +30,14 @@ use std::collections::HashSet;
 
 use rocksdb::{Direction as ScanDir, IteratorMode, ReadOptions, WriteBatchWithTransaction};
 
+use super::{CF_EDGES_IN, CF_EDGES_OUT, CF_VERTEX_DEGREE, CF_VERTICES};
 use crate::{
-    store::rocks::{
-        encoding::{
-            decode_edge_key, edge_scan_prefix, encode_edge_key, encode_vertex_key, prefix_upper_bound, EdgeValue,
-            VertexDegree, VertexValue, CF_EDGES_IN, CF_EDGES_OUT, CF_VERTEX_DEGREE, CF_VERTICES,
-        },
-        store::RocksStorage,
-    },
+    store::rocks::store::RocksStorage,
     types::{
+        kv_codec::{
+            decode_edge_key, edge_scan_prefix, encode_edge_key, encode_vertex_key, prefix_upper_bound, EdgeValue,
+            VertexDegree, VertexValue,
+        },
         prop_codec::{decode_all_to_map, encode_props},
         CanonicalEdgeKey, Direction, Edge, EdgeKey, LabelId, StoreError, Vertex, VertexKey,
     },

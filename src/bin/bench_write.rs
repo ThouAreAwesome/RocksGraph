@@ -149,12 +149,12 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     let graph = Graph::open_with_options(&data_dir, GraphOptions { mode: SchemaMode::Strict, ..Default::default() })?;
     {
         let mut mgmt = graph.open_management();
-        mgmt.make_vertex_label(VERTEX_LABEL).make();
-        mgmt.make_edge_label(EDGE_LABEL).make();
-        mgmt.make_property_key(NAME_KEY, DataType::String).make();
-        mgmt.make_property_key(AGE_KEY, DataType::Int64).make();
-        mgmt.make_property_key(WEIGHT_KEY, DataType::Float64).make();
-        mgmt.make_property_key(TIMESTAMP_KEY, DataType::Int64).make();
+        mgmt.add_vertex_label(VERTEX_LABEL)
+            .add_edge_label(EDGE_LABEL)
+            .add_property_key(NAME_KEY, DataType::String)
+            .add_property_key(AGE_KEY, DataType::Int64)
+            .add_property_key(WEIGHT_KEY, DataType::Float64)
+            .add_property_key(TIMESTAMP_KEY, DataType::Int64);
         mgmt.commit()?;
     }
 

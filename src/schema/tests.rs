@@ -36,9 +36,7 @@ fn test_management_explicit_declaration_and_cas() {
     // Declare vertex label, edge label, property key
     {
         let mut mgmt = graph.open_management();
-        mgmt.make_vertex_label("person").make();
-        mgmt.make_edge_label("knows").make();
-        mgmt.make_property_key("age", DataType::Int32).make();
+        mgmt.add_vertex_label("person").add_edge_label("knows").add_property_key("age", DataType::Int32);
         mgmt.commit().unwrap();
     }
 
@@ -68,10 +66,10 @@ fn test_management_explicit_declaration_and_cas() {
     let mut mgmt1 = graph_reopened.open_management();
     let mut mgmt2 = graph_reopened.open_management();
 
-    mgmt1.make_vertex_label("software").make();
+    mgmt1.add_vertex_label("software");
     mgmt1.commit().unwrap(); // Increments version to 2
 
-    mgmt2.make_vertex_label("project").make();
+    mgmt2.add_vertex_label("project");
     let err = mgmt2.commit().unwrap_err();
     assert!(matches!(err, StoreError::SchemaConflict(_)));
 
@@ -155,15 +153,15 @@ fn test_management_commit_atomic_on_partial_failure() {
 
     {
         let mut mgmt = graph.open_management();
-        mgmt.make_property_key("age", DataType::Int32).make();
+        mgmt.add_property_key("age", DataType::Int32);
         mgmt.commit().unwrap();
     }
     assert_eq!(graph.schema().read().unwrap().version, 1);
 
     {
         let mut mgmt = graph.open_management();
-        mgmt.make_vertex_label("ghost").make();
-        mgmt.make_property_key("age", DataType::Int64).make(); // conflicts with existing Int32
+        mgmt.add_vertex_label("ghost");
+        mgmt.add_property_key("age", DataType::Int64); // conflicts with existing Int32
         let err = mgmt.commit().unwrap_err();
         assert!(matches!(err, StoreError::SchemaConflict(_)));
     }
@@ -192,7 +190,7 @@ fn test_management_commit_noop_does_not_bump_version() {
     // Declare "age" for the first time -> version bumps to 1.
     {
         let mut mgmt = graph.open_management();
-        mgmt.make_property_key("age", DataType::Int32).make();
+        mgmt.add_property_key("age", DataType::Int32);
         mgmt.commit().unwrap();
     }
     assert_eq!(graph.schema().read().unwrap().version, 1);
@@ -200,7 +198,7 @@ fn test_management_commit_noop_does_not_bump_version() {
     // Re-declaring "age" with the identical type is idempotent -> no version bump.
     {
         let mut mgmt = graph.open_management();
-        mgmt.make_property_key("age", DataType::Int32).make();
+        mgmt.add_property_key("age", DataType::Int32);
         mgmt.commit().unwrap();
     }
     assert_eq!(graph.schema().read().unwrap().version, 1, "idempotent redeclare must not bump version");
@@ -241,9 +239,7 @@ fn test_schema_mode_strict_rejections() {
     // Let's declare "person", "knows", and "name"
     {
         let mut mgmt = graph.open_management();
-        mgmt.make_vertex_label("person").make();
-        mgmt.make_edge_label("knows").make();
-        mgmt.make_property_key("name", DataType::String).make();
+        mgmt.add_vertex_label("person").add_edge_label("knows").add_property_key("name", DataType::String);
         mgmt.commit().unwrap();
     }
 
@@ -315,7 +311,7 @@ fn test_auto_mode_write_invalidates_concurrent_schema_management_session() {
 
     // Open a management session first, capturing base_version = 0.
     let mut mgmt = graph.open_management();
-    mgmt.make_vertex_label("project").make();
+    mgmt.add_vertex_label("project");
 
     // A regular Auto-mode write races ahead and registers a brand-new label, bumping
     // `version` to 1.
@@ -567,10 +563,10 @@ fn test_schema_persistence_across_restart() {
             Graph::open_with_options(&path, GraphOptions { mode: SchemaMode::Strict, edge_mode: EdgeMode::Single })
                 .unwrap();
         let mut mgmt = graph.open_management();
-        mgmt.make_vertex_label("person").make();
-        mgmt.make_edge_label("knows").make();
-        mgmt.make_property_key("name", DataType::String).make();
-        mgmt.make_property_key("age", DataType::Int32).make();
+        mgmt.add_vertex_label("person")
+            .add_edge_label("knows")
+            .add_property_key("name", DataType::String)
+            .add_property_key("age", DataType::Int32);
         mgmt.commit().unwrap();
 
         let mut tx = graph.begin();
@@ -619,14 +615,14 @@ fn test_schema_conflict_on_incompatible_redeclaration() {
     // Declare "score" as Int64.
     {
         let mut mgmt = graph.open_management();
-        mgmt.make_property_key("score", DataType::Int64).make();
+        mgmt.add_property_key("score", DataType::Int64);
         mgmt.commit().unwrap();
     }
 
     // Try to redeclare "score" with a different type — must conflict.
     {
         let mut mgmt = graph.open_management();
-        mgmt.make_property_key("score", DataType::String).make();
+        mgmt.add_property_key("score", DataType::String);
         let result = mgmt.commit();
         assert!(
             matches!(result, Err(StoreError::SchemaConflict(_))),
@@ -638,7 +634,7 @@ fn test_schema_conflict_on_incompatible_redeclaration() {
     // Identical redeclaration should be fine (no-op).
     {
         let mut mgmt = graph.open_management();
-        mgmt.make_property_key("score", DataType::Int64).make();
+        mgmt.add_property_key("score", DataType::Int64);
         mgmt.commit().unwrap(); // no-op, no error
     }
 
@@ -688,9 +684,7 @@ fn test_set_schema_mode_both_directions() {
     // Auto → Strict
     {
         let mut mgmt = graph.open_management();
-        mgmt.set_schema_mode(SchemaMode::Strict);
-        mgmt.make_vertex_label("item").make();
-        mgmt.make_property_key("val", DataType::Int64).make();
+        mgmt.set_schema_mode(SchemaMode::Strict).add_vertex_label("item").add_property_key("val", DataType::Int64);
         mgmt.commit().unwrap();
     }
 
@@ -750,4 +744,60 @@ fn test_graph_close_with_clones() {
     assert!(v.is_some(), "clone handle should still work after original is closed");
 
     graph2.close().unwrap();
+}
+
+// ── #10: SchemaManagement Fluent API & Display ──────────────────────────
+
+#[test]
+fn test_schema_management_fluent_api_and_display() {
+    let dir = tempdir().unwrap();
+    let graph = Graph::open(dir.path()).unwrap();
+
+    // 1. Test direct convenience chaining
+    {
+        let mut mgmt = graph.open_management();
+        mgmt.add_vertex_label("person").add_edge_label("knows").add_property_key("age", DataType::Int32);
+        mgmt.commit().unwrap();
+    }
+
+    // Verify committed state
+    {
+        let s = graph.schema();
+        let s = s.read().unwrap();
+        assert!(s.vertex_label_id("person").is_some());
+        assert!(s.edge_label_id("knows").is_some());
+        assert!(s.prop_key_id("age").is_some());
+    }
+
+    // 2. Test std::fmt::Display visual output
+    {
+        let mut mgmt = graph.open_management();
+        mgmt.add_vertex_label("software").add_property_key("lang", DataType::String);
+
+        let display_str = format!("{}", mgmt);
+        assert!(display_str.contains("=== RocksGraph Schema"));
+        assert!(display_str.contains("Schema Mode: Auto"));
+        assert!(display_str.contains("Edge Mode: Single"));
+        assert!(display_str.contains("- person"));
+        assert!(display_str.contains("- knows"));
+        assert!(display_str.contains("- age (Int32)"));
+        // "software" and "lang" are staged but not committed yet, so they shouldn't show in Display of committed schema
+        assert!(!display_str.contains("- software"));
+        assert!(!display_str.contains("- lang"));
+
+        mgmt.commit().unwrap();
+    }
+
+    // Verify second commit state
+    {
+        let s = graph.schema();
+        let s = s.read().unwrap();
+        assert!(s.vertex_label_id("software").is_some());
+        assert!(s.prop_key_id("lang").is_some());
+
+        let mgmt = graph.open_management();
+        let display_str = format!("{}", mgmt);
+        assert!(display_str.contains("- software"));
+        assert!(display_str.contains("- lang (String)"));
+    }
 }

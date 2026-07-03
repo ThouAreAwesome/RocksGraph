@@ -78,9 +78,8 @@ impl CoreStep for HasLabelStep {
             let Some(t) = upstream.next(ctx)? else { break };
             let matched = match &t.value {
                 GValue::Vertex(vk) => {
-                    let Some(Primitive::Int32(lb)) = ctx.get_value(&CanonicalKey::Vertex(*vk), LABEL_KEY_ID).unwrap()
-                    else {
-                        unreachable!("should alway find label id of a vertex")
+                    let Some(Primitive::Int32(lb)) = ctx.get_value(&CanonicalKey::Vertex(*vk), LABEL_KEY_ID)? else {
+                        return Err(StoreError::CorruptData("vertex label_id missing or not Int32"));
                     };
                     self.vertex_pred.evaluate(&Primitive::Int32(lb))
                 }

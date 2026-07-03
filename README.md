@@ -538,7 +538,7 @@ existing database ignores the options passed and uses whatever was persisted):
   there is nothing extra to do.
 - **`SchemaMode::Strict`** — nothing is registered implicitly. Every vertex label, edge label,
   and property key must be declared up front via `Graph::open_management()`, or the write
-  fails with `StoreError::SchemaViolation`.
+  fails with `StoreError::SchemaViolation`. (Note: Property key definitions are global/graph-wide; a property key like `"name"` has a single, uniform `DataType` definition effective across the entire graph, rather than being scoped to specific vertex or edge labels.)
 
 ```rust
 use rocksgraph::{schema::{DataType, GraphOptions, SchemaMode}, Graph, StoreError};
@@ -548,8 +548,8 @@ let graph = Graph::open_with_options("./path/to/db", options)?;
 
 // Declare the schema before any write reaches the engine.
 let mut mgmt = graph.open_management();
-mgmt.make_vertex_label("person").make();
-mgmt.make_property_key("name", DataType::String).make();
+mgmt.add_vertex_label("person")
+    .add_property_key("name", DataType::String);
 mgmt.commit()?;
 
 let mut tx = graph.begin();
