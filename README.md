@@ -202,6 +202,7 @@ the traversal API. The `schema` module interns them to compact numeric IDs inter
 | `group()` | `.group()` | keyed list aggregation into a `Map` |
 | `groupCount()` | `.group_count()` | keyed count aggregation into a `Map` |
 | `path()` | `.path()` | returns `Value::Path` with per-step labels |
+| `withProperties(keys)` | `.withProperties(["key", ...])` | configures which properties are included when a vertex/edge is materialized in the result — `[]` fetches all, named keys fetch only those, omitting the call returns id + label only. Not a mutation; available on both `ReadTraversal` and `WriteTraversal` since either can terminate in a materialized read-back |
 
 ### Mutation (WriteTraversal only)
 
@@ -212,7 +213,6 @@ the traversal API. The `schema` module interns them to compact numeric IDs inter
 | `from(vertex_id)` | `.from(vertex_id)` — optional; if omitted, the upstream traverser's vertex is used as the out-vertex |
 | `to(vertex_id)` | `.to(vertex_id)` — optional; if omitted, the upstream traverser's vertex is used as the in-vertex |
 | `property(key, value)` | `.property(key, value)` — `"id"` sets the vertex/edge id |
-| `withProperties(keys)` | `.withProperties(["key", ...])` — declare property keys for `addE` |
 | `drop()` | `.drop()` — drops whatever the traverser carries: a vertex, an edge, or (after `.properties([..])`) a single property key |
 
 ### Composition

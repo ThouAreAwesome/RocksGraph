@@ -94,15 +94,15 @@ pub struct RocksOptions {
     ///
     /// **Retroactive**: applies immediately to all reads after the next `open()`.
     ///
-    /// **Why 4 GiB default**: sized to hold the full on-disk data of the
-    /// soc-LiveJournal1 graph (~1 GB across all 4 CFs) with comfortable headroom,
-    /// matching the typical configurations used in published graph-database
-    /// benchmarks (Neo4j page cache, TigerGraph working set, etc.).  This keeps
-    /// all four column families (vertices ~243 MB, edges_out ~300 MB, edges_in
-    /// ~300 MB, vertex_degree ~58 MB) warm in RAM so edge-traversal queries
-    /// (Q2–Q5) are served at near-RAM latency rather than paying SSD round-trips.
-    /// For CI / unit tests, override with `with_block_cache(256 * 1024 * 1024)`.
-    /// In production, set to 30–50% of available RAM.
+    /// **Why 1 GiB default**: close to the full on-disk data of the
+    /// soc-LiveJournal1 graph (~900 MB across all 4 CFs: vertices ~243 MB,
+    /// edges_out ~300 MB, edges_in ~300 MB, vertex_degree ~58 MB), so it still
+    /// keeps most of that working set warm in RAM without assuming a
+    /// large-memory host. This is a conservative baseline suitable for a
+    /// modest single-node deployment; it does not assume the multi-GB headroom
+    /// a dedicated production box would have. For CI / unit tests, override
+    /// with `with_block_cache(256 * 1024 * 1024)`. In production, set to
+    /// 30–50% of available RAM (see the deployment table above).
     pub block_cache_size: usize,
 
     /// Per-CF memtable (write buffer) size before a flush to an SST file is
@@ -224,7 +224,7 @@ pub struct RocksOptions {
 impl Default for RocksOptions {
     fn default() -> Self {
         Self {
-            block_cache_size: 4 * 1024 * 1024 * 1024,
+            block_cache_size: 1024 * 1024 * 1024,
             write_buffer_size: 128 * 1024 * 1024,
             max_write_buffer_number: 3,
             max_background_jobs: 4,

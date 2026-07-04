@@ -23,11 +23,8 @@ use std::{
     env,
     fs::File,
     io::{BufRead, BufReader},
-    sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-        mpsc, Arc,
-    },
-    time::{Duration, Instant},
+    sync::{mpsc, Arc},
+    time::Instant,
 };
 
 const EDGE_LABEL: &str = "Knows";
@@ -102,14 +99,40 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
         &graph,
         parallelism,
         |snap, src, _dst| {
-            let ct = snap.g().V([]).hasId([src]).values([NAME_KEY, AGE_KEY]).count().next()?.unwrap();
-            assert_eq!(ct, Value::Int64(2));
-            Ok(())
+            let Value::Int64(ct) = snap.g().V([]).hasId([src]).values([NAME_KEY, AGE_KEY]).count().next()?.unwrap()
+            else {
+                unreachable!("unexpected gremlin result type")
+            };
+            assert_eq!(ct, 2);
+            Ok(ct)
         },
     )?;
 
     run_query_benchmark(
-        "Q2: g.V().hasId(id).outE(label).where(otherV().hasId(dst)).values('weight', 'timestamp').count()",
+        "Q2: g.V().hasId(id).outE(label).values('weight', 'timestamp').count()",
+        &lines,
+        &graph,
+        parallelism,
+        |snap, src, _dst| {
+            let Value::Int64(ct) = snap
+                .g()
+                .V([])
+                .hasId([src])
+                .outE([EDGE_LABEL])
+                .values([WEIGHT_KEY, TIMESTAMP_KEY])
+                .count()
+                .next()?
+                .unwrap()
+            else {
+                unreachable!("unexpected gremlin result type")
+            };
+            assert!(ct >= 2);
+            Ok(ct)
+        },
+    )?;
+
+    run_query_benchmark(
+        "Q3: g.V().hasId(id).outE(label).where(otherV().hasId(dst)).values('weight', 'timestamp').count()",
         &lines,
         &graph,
         parallelism,
@@ -128,30 +151,7 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                 unreachable!("unexpected gremlin result type")
             };
             assert!(ct >= 2);
-            Ok(())
-        },
-    )?;
-
-    run_query_benchmark(
-        "Q3: g.V().hasId(id).outE(label).values('weight', 'timestamp').count()",
-        &lines,
-        &graph,
-        parallelism,
-        |snap, src, _dst| {
-            let Value::Int64(ct) = snap
-                .g()
-                .V([])
-                .hasId([src])
-                .outE([EDGE_LABEL])
-                .values([WEIGHT_KEY, TIMESTAMP_KEY])
-                .count()
-                .next()?
-                .unwrap()
-            else {
-                unreachable!("unexpected gremlin result type")
-            };
-            assert!(ct >= 2);
-            Ok(())
+            Ok(ct)
         },
     )?;
 
@@ -175,7 +175,7 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                 unreachable!("unexpected gremlin result type")
             };
             assert!(ct >= 1);
-            Ok(())
+            Ok(ct)
         },
     )?;
 
@@ -191,7 +191,7 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                 unreachable!("unexpected gremlin result type")
             };
             assert!(ct >= 0);
-            Ok(())
+            Ok(ct)
         },
     )?;
 
@@ -218,7 +218,7 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                 unreachable!("unexpected gremlin result type")
             };
             assert!(ct >= 0);
-            Ok(())
+            Ok(ct)
         },
     )?;
 
@@ -241,14 +241,15 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                 unreachable!("unexpected gremlin result type")
             };
             assert!(ct >= 0);
-            Ok(())
+            Ok(ct)
         },
     )?;
 
-    // We run the full DB scan benchmarks with 5 sequential runs to measure stable database scan latencies.
+    // A full scan already covers the whole dataset in one pass, so a single run
+    // is a stable measurement — no need to repeat it.
     run_query_benchmark(
         "Q8: g.V().count() (Scan total vertices in DB)",
-        &Arc::new(vec!["0 0".to_string(); 5]),
+        &Arc::new(vec!["0 0".to_string(); 1]),
         &graph,
         1,
         |snap, _src, _dst| {
@@ -256,13 +257,13 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                 unreachable!("unexpected gremlin result type")
             };
             println!("   [Scan Result] Total vertices: {}", ct);
-            Ok(())
+            Ok(ct)
         },
     )?;
 
     run_query_benchmark(
         "Q9: g.E([]).count() (Scan total edges in DB)",
-        &Arc::new(vec!["0 0".to_string(); 5]),
+        &Arc::new(vec!["0 0".to_string(); 1]),
         &graph,
         1,
         |snap, _src, _dst| {
@@ -270,7 +271,7 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                 unreachable!("unexpected gremlin result type")
             };
             println!("   [Scan Result] Total edges: {}", ct);
-            Ok(())
+            Ok(ct)
         },
     )?;
 
@@ -294,7 +295,13 @@ fn explain_all(graph: &Graph) -> Result<(), Box<dyn std::error::Error>> {
             Box::new(move |s| s.g().V([]).hasId([src]).values([NAME_KEY, AGE_KEY]).count().explain()),
         ),
         (
-            "Q2: g.V([]).hasId(src).outE(label).where(otherV().hasId(dst)).values('weight','timestamp').count()",
+            "Q2: g.V([]).hasId(src).outE(label).values('weight','timestamp').count()",
+            Box::new(move |s| {
+                s.g().V([]).hasId([src]).outE([EDGE_LABEL]).values([WEIGHT_KEY, TIMESTAMP_KEY]).count().explain()
+            }),
+        ),
+        (
+            "Q3: g.V([]).hasId(src).outE(label).where(otherV().hasId(dst)).values('weight','timestamp').count()",
             Box::new(move |s| {
                 s.g()
                     .V([])
@@ -304,12 +311,6 @@ fn explain_all(graph: &Graph) -> Result<(), Box<dyn std::error::Error>> {
                     .values([WEIGHT_KEY, TIMESTAMP_KEY])
                     .count()
                     .explain()
-            }),
-        ),
-        (
-            "Q3: g.V([]).hasId(src).outE(label).values('weight','timestamp').count()",
-            Box::new(move |s| {
-                s.g().V([]).hasId([src]).outE([EDGE_LABEL]).values([WEIGHT_KEY, TIMESTAMP_KEY]).count().explain()
             }),
         ),
         (
@@ -381,7 +382,7 @@ fn run_query_benchmark<F>(
     query_fn: F,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
-    F: Fn(&mut ReadSession, i64, i64) -> Result<(), StoreError> + Send + Sync + 'static,
+    F: Fn(&mut ReadSession, i64, i64) -> Result<i64, StoreError> + Send + Sync + 'static,
 {
     println!("\n--- Running Benchmark for: {} ---", name);
     let start = Instant::now();
@@ -389,33 +390,7 @@ where
     let line_count = lines.len();
     let chunk_size = (line_count + parallelism - 1).div_ceil(parallelism);
 
-    let (hist_tx, hist_rx) = mpsc::channel::<Histogram<u64>>();
-
-    // Progress tracking — only for large workloads (skip in unit tests).
-    let completed = Arc::new(AtomicUsize::new(0));
-    let progress_done = Arc::new(AtomicBool::new(false));
-    let progress_handle = if line_count > 1_000 {
-        let c = Arc::clone(&completed);
-        let done = Arc::clone(&progress_done);
-        let total = line_count;
-        let t0 = start;
-        Some(std::thread::spawn(move || loop {
-            std::thread::sleep(Duration::from_secs(2));
-            if done.load(Ordering::Relaxed) {
-                break;
-            }
-            let n = c.load(Ordering::Relaxed);
-            if n == 0 {
-                continue;
-            }
-            let elapsed = t0.elapsed().as_secs_f64();
-            let pct = n * 100 / total;
-            let eta = elapsed / n as f64 * (total - n) as f64;
-            eprintln!("  Progress: {pct}% ({n} / {total}) | {elapsed:.0}s elapsed | ~{eta:.0}s remaining");
-        }))
-    } else {
-        None
-    };
+    let (hist_tx, hist_rx) = mpsc::channel::<(Histogram<u64>, Histogram<u64>)>();
 
     let mut worker_handles = vec![];
     for i in 0..parallelism {
@@ -423,16 +398,20 @@ where
         let graph = graph.clone(); // cheap Arc clone
         let h_tx = hist_tx.clone();
         let query_fn = Arc::clone(&query_fn);
-        let completed = Arc::clone(&completed);
 
         let handle = std::thread::spawn(move || {
             // One snapshot per thread — reused across all queries in this chunk.
             let mut snap = graph.read();
             let mut local_hist = Histogram::<u64>::new(3).unwrap();
+            let mut local_count_hist = Histogram::<u64>::new(3).unwrap();
             let start_index = i * chunk_size;
             let end_index = (start_index + chunk_size).min(line_count);
+            let worker_total = end_index - start_index;
+            // Worker 0 prints coarse progress for the whole run; chunks are
+            // near-equal in size, so its fraction approximates overall progress.
+            let progress_step = (worker_total / 10).max(1);
 
-            for line in &lines_chunk[start_index..end_index] {
+            for (idx, line) in lines_chunk[start_index..end_index].iter().enumerate() {
                 let parts: Vec<i64> = line.split_whitespace().filter_map(|s| s.parse().ok()).collect();
                 if parts.len() != 2 {
                     continue;
@@ -441,13 +420,19 @@ where
 
                 snap.clear_caches();
                 let op_start = Instant::now();
-                if let Err(e) = query_fn(&mut snap, src, dst) {
-                    eprintln!("Query failed: {}", e);
+                match query_fn(&mut snap, src, dst) {
+                    Ok(ct) => local_count_hist.record(ct as u64).unwrap(),
+                    Err(e) => eprintln!("Query failed: {}", e),
                 }
                 local_hist.record(op_start.elapsed().as_nanos() as u64).unwrap();
-                completed.fetch_add(1, Ordering::Relaxed);
+
+                if i == 0 && worker_total > 1_000 && (idx + 1) % progress_step == 0 {
+                    let elapsed = start.elapsed().as_secs_f64();
+                    let pct = (idx + 1) * 100 / worker_total;
+                    eprintln!("  Progress: ~{pct}% | {elapsed:.0}s elapsed");
+                }
             }
-            h_tx.send(local_hist).unwrap();
+            h_tx.send((local_hist, local_count_hist)).unwrap();
         });
         worker_handles.push(handle);
     }
@@ -457,26 +442,33 @@ where
         h.join().unwrap();
     }
 
-    progress_done.store(true, Ordering::Relaxed);
-    if let Some(h) = progress_handle {
-        h.join().unwrap();
-    }
-
     let mut final_hist = Histogram::<u64>::new(3).unwrap();
-    for h in hist_rx {
+    let mut final_count_hist = Histogram::<u64>::new(3).unwrap();
+    for (h, c) in hist_rx {
         final_hist.add(h).unwrap();
+        final_count_hist.add(c).unwrap();
     }
 
     let elapsed_secs = start.elapsed().as_secs_f64();
     let ops = line_count as f64 / elapsed_secs;
     println!("Ops: {:.2}/s ({} queries in {:.2}s)", ops, line_count, elapsed_secs);
     println!(
-        "Latency (μs) — p50: {}, p90: {}, p95: {}, p99: {}, max: {}",
+        "Latency (μs) — mean: {}, p50: {}, p90: {}, p95: {}, p99: {}, max: {}",
+        final_hist.mean() / 1000.0,
         final_hist.value_at_quantile(0.5) as f64 / 1000.0,
         final_hist.value_at_quantile(0.9) as f64 / 1000.0,
         final_hist.value_at_quantile(0.95) as f64 / 1000.0,
         final_hist.value_at_quantile(0.99) as f64 / 1000.0,
         final_hist.max() as f64 / 1000.0
+    );
+    println!(
+        "Result count — mean: {:.1}, p50: {}, p90: {}, p95: {}, p99: {}, max: {}",
+        final_count_hist.mean(),
+        final_count_hist.value_at_quantile(0.5),
+        final_count_hist.value_at_quantile(0.9),
+        final_count_hist.value_at_quantile(0.95),
+        final_count_hist.value_at_quantile(0.99),
+        final_count_hist.max()
     );
 
     Ok(())
