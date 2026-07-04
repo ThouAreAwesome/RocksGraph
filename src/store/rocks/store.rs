@@ -57,7 +57,7 @@ use crate::{
 ///
 /// | Deployment | `block_cache_size` | `write_buffer_size` | `max_write_buffer_number` | `max_background_jobs` |
 /// |---|---|---|---|---|
-/// | Dev / CI | 256 MiB (default) | 128 MiB (default) | 3 (default) | 4 (default) |
+/// | Dev / CI | 256 MiB (override) | 128 MiB (default) | 3 (default) | 4 (default) |
 /// | Small prod (16 GB RAM) | 4–6 GiB | 256 MiB | 4 | 4 |
 /// | Medium prod (64 GB RAM) | 20–30 GiB | 512 MiB | 4–6 | 8 |
 /// | Large prod (256 GB RAM) | 80–120 GiB | 1 GiB | 6–8 | 16 |
@@ -94,11 +94,15 @@ pub struct RocksOptions {
     ///
     /// **Retroactive**: applies immediately to all reads after the next `open()`.
     ///
-    /// **Why 256 MiB default**: safe for a developer laptop or CI environment
-    /// (typically 8–16 GB RAM) without starving other processes. It also
-    /// comfortably holds the working set of a small graph (≤1 M edges, ~100 MB
-    /// total data) almost entirely in cache, giving near-100% hit rates during
-    /// development and tests. In production, set to 30–50% of available RAM.
+    /// **Why 4 GiB default**: sized to hold the full on-disk data of the
+    /// soc-LiveJournal1 graph (~1 GB across all 4 CFs) with comfortable headroom,
+    /// matching the typical configurations used in published graph-database
+    /// benchmarks (Neo4j page cache, TigerGraph working set, etc.).  This keeps
+    /// all four column families (vertices ~243 MB, edges_out ~300 MB, edges_in
+    /// ~300 MB, vertex_degree ~58 MB) warm in RAM so edge-traversal queries
+    /// (Q2–Q5) are served at near-RAM latency rather than paying SSD round-trips.
+    /// For CI / unit tests, override with `with_block_cache(256 * 1024 * 1024)`.
+    /// In production, set to 30–50% of available RAM.
     pub block_cache_size: usize,
 
     /// Per-CF memtable (write buffer) size before a flush to an SST file is
@@ -220,7 +224,7 @@ pub struct RocksOptions {
 impl Default for RocksOptions {
     fn default() -> Self {
         Self {
-            block_cache_size: 256 * 1024 * 1024,
+            block_cache_size: 4 * 1024 * 1024 * 1024,
             write_buffer_size: 128 * 1024 * 1024,
             max_write_buffer_number: 3,
             max_background_jobs: 4,

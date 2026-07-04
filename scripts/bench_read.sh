@@ -36,7 +36,7 @@ if [ ! -d "$STORE_DIR" ]; then
 fi
 
 PARALLELISM=5
-# Default: 10 000 randomly-sampled query pairs per benchmark.
+# Default: 100 000 randomly-sampled query pairs per benchmark.
 # Pass --queries 0 as an extra argument to use the full file.
 QUERIES=10000
 

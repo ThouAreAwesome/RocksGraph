@@ -131,9 +131,41 @@ case "$DATASET" in
         prepare_livejournal_sub "10" 10
         ;;
         
+    shuffled)
+        # Full LiveJournal dataset (~69M edges, all edges shuffled).
+        # Unlike the sub-samples above, "shuffled" is the complete shuffle result.
+        SHUFFLED_FILE="$BENCH_DATA_DIR/soc-LiveJournal1-shuffled.txt"
+        if [ -f "$SHUFFLED_FILE" ]; then
+            echo "=== soc-LiveJournal1-shuffled already prepared at $SHUFFLED_FILE"
+            exit 0
+        fi
+
+        local raw_gz="$BENCH_DATA_DIR/soc-LiveJournal1.txt.gz"
+        if [ ! -f "$raw_gz" ]; then
+            echo "=== Downloading raw LiveJournal dataset from SNAP..."
+            curl -L -o "$raw_gz" "https://snap.stanford.edu/data/soc-LiveJournal1.txt.gz"
+            if [ $? -ne 0 ]; then echo "Error: Download failed."; exit 1; fi
+        fi
+
+        local decompressed="$BENCH_DATA_DIR/soc-LiveJournal1.txt"
+        if [ ! -f "$decompressed" ]; then
+            echo "=== Decompressing LiveJournal dataset..."
+            gunzip -c "$raw_gz" | grep -v '^#' > "$decompressed"
+        fi
+
+        if [ -n "$SHUF_CMD" ]; then
+            echo "=== Shuffling full dataset (this may take a few minutes)..."
+            $SHUF_CMD "$decompressed" > "$SHUFFLED_FILE"
+        else
+            echo "=== Warning: shuf not available, copying without shuffle."
+            cp "$decompressed" "$SHUFFLED_FILE"
+        fi
+        echo "=== soc-LiveJournal1-shuffled prepared successfully."
+        ;;
+
     *)
         echo "Unknown dataset: $DATASET"
-        echo "Available options: orkut, 10M, 1M, 100k, 10k, 1000, 10"
+        echo "Available options: orkut, shuffled, 10M, 1M, 100k, 10k, 1000, 10"
         exit 1
         ;;
 esac
