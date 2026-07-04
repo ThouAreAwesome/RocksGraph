@@ -3,7 +3,7 @@
 A Gremlin-inspired property graph query engine written in Rust, backed by RocksDB.
 RocksGraph takes the traversal model from TinkerPop but makes deliberate departures
 where the standard's design choices create unnecessary complexity or overhead.
-See [docs/design_principles.md](docs/design_principles.md) for the full rationale.
+See [docs/design_principles.md](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/design_principles.md) for the full rationale.
 
 > **Status:** Beta (v0.1.0). Under active development. Preparing for release on crates.io.
 
@@ -615,7 +615,7 @@ println!("{} vertices, {} edges loaded", stats.vertices_written, stats.edges_wri
   `Graph::open` if ingest succeeded, or returns `StoreError::IncompleteLoad` if it didn't.
 - Temporary files go in `work_dir` and are cleaned up automatically (RAII guard).
 
-See [`docs/design_bulkload_sst_ingest.md`](docs/design_bulkload_sst_ingest.md) for the
+See [`docs/design_bulkload_sst_ingest.md`](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/design_bulkload_sst_ingest.md) for the
 full pipeline, memory budget allocation, and format details.
 
 ## Development
@@ -702,7 +702,7 @@ widely audited.
 - **Embedded only:** no server/client mode; queries are executed in-process.
 - **Single-threaded per query:** each volcano pipeline runs single-threaded; multiple sessions can run concurrently against a shared `Graph`.
 - **Schema ID space limits:** up to `i32::MAX` (~2.1 billion) distinct vertex labels and edge labels (independent namespaces), and 32767 property keys per graph — registering past that fails with `StoreError::SchemaExhausted`. (Label IDs are stored as `i32`; property-key IDs remain `u16`.)
-- **Not TinkerPop-compatible:** RocksGraph is Gremlin-inspired but intentionally departs from the standard. See [docs/design_principles.md](docs/design_principles.md).
+- **Not TinkerPop-compatible:** RocksGraph is Gremlin-inspired but intentionally departs from the standard. See [docs/design_principles.md](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/design_principles.md).
 - **No distributed backend:** placeholder exists but is not implemented.
 
 ## Operations
@@ -735,7 +735,7 @@ format changes will require a major version bump and a documented migration path
 
 ### Engine & Query
 
-- [ ] Improve Gremlin step coverage (lambdas, side-effects, additional aggregation steps) — see [docs/TODO.md](docs/TODO.md) for the prioritized list
+- [ ] Improve Gremlin step coverage (lambdas, side-effects, additional aggregation steps) — see [docs/TODO.md](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/TODO.md) for the prioritized list
 - [x] Bulk-load via SST ingestion (`SstBulkLoader`) — streams vertices + edges through `ExternalSorter`, O(1) memory, 300–400K edges/s on LiveJournal (69M edges)
 - [x] `ReadSession` / `ReadTraversal` — read-only snapshot path with no OCC overhead
 - [x] `next(), to_list(), iter()` on `ReadTraversal` and `WriteTraversal`

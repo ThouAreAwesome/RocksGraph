@@ -32,7 +32,7 @@ use crate::{
 
 /// Storage-tuning options for the RocksDB backend.
 ///
-/// These settings are re-applied **every time** [`Graph::open`] is called
+/// These settings are re-applied **every time** [`crate::Graph::open`] is called
 /// (unlike [`GraphOptions`], which is persisted on first creation).
 /// Changes take effect after the next `open()` call.
 ///

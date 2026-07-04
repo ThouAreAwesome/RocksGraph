@@ -19,9 +19,11 @@
 //! via `SstBulkLoader`, then reports throughput.
 //!
 //! Usage:
-//!   bench_write --data-dir <path> --file-path <path>
-//!               [--max-memory <bytes>]  (default: 512 MiB)
-//!               [--max-sst    <bytes>]  (default: 58 MiB)
+//! ```text
+//! bench_write --data-dir <path> --file-path <path>
+//!             [--max-memory <bytes>]  (default: 512 MiB)
+//!             [--max-sst    <bytes>]  (default: 58 MiB)
+//! ```
 
 use rocksgraph::{
     schema::{DataType, GraphOptions},

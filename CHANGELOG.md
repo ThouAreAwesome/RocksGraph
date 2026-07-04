@@ -16,10 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pagination and ordering: `limit()`, `range()`, `skip()`, `tail()`, `dedup()`, `order()`, `order().by(key)` / `order_by(key, dir)` (including multi-key tie-breaking)
 - Variable-length traversals: `repeat()` / `until()` / `emit()`
 - Path tracking and labelling: `as()`, `select()`, `path()`
-- Extraction & aggregation: `values()`, `properties()`, `id()`, `label()`, `count()`, `sum()`, `mean()`, `max()`, `min()`, `fold()`, `unfold()`, `group()`, `groupCount()`
+- Extraction & aggregation: `values()`, `properties()`, `id()`, `label()`, `count()`, `sum()`, `mean()`, `max()`, `min()`, `fold()`, `unfold()`, `group()`, `groupCount()`, `withProperties()`
 - Path filters: `simplePath()`, `cyclicPath()`
 - Composition: `identity()`, `constant()`, `local()`, `union()`, `coalesce()`
-- Mutation steps: `addV()`, `addE()`, `drop()`, property set/drop, `withProperties()`
+- Mutation steps: `addV()`, `addE()`, `drop()`, property set/drop
 - `addE()` upstream vertex support — `.from()` / `.to()` may be omitted to use the upstream
   traverser as that edge endpoint (e.g. `V([v1]).out("knows").addE("friends").to(v1)`),
   creating one edge per upstream traverser
