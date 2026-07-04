@@ -142,6 +142,9 @@ pub enum StoreError {
     /// - Builder layer: missing required sub-plan, empty union, etc.
     /// - Engine layer: impossible state reached in valid queries.
     TraversalError(String),
+
+    /// A bulk load was interrupted before ingest. Caller must retry load_initial.
+    IncompleteLoad { msg: String },
 }
 
 // ── Classification helpers ──────────────────────────────────────────────────
@@ -157,7 +160,14 @@ impl StoreError {
 
     /// True if the storage engine itself is unhealthy — retrying will not help.
     pub fn is_storage_failure(&self) -> bool {
-        matches!(self, Self::RocksDb(_) | Self::Io(_) | Self::CorruptData(_) | Self::MissingColumnFamily(_))
+        matches!(
+            self,
+            Self::RocksDb(_)
+                | Self::Io(_)
+                | Self::CorruptData(_)
+                | Self::MissingColumnFamily(_)
+                | Self::IncompleteLoad { .. }
+        )
     }
 
     /// True for schema-layer errors.
@@ -183,6 +193,7 @@ impl StoreError {
             | Self::Tombstoned
             | Self::IncidentEdges
             | Self::ReadOnly => "integrity",
+            Self::IncompleteLoad { .. } => "storage",
             Self::UnexpectedDataType(_) | Self::UnsupportedOperation(_) | Self::TraversalError(_) => "query",
         }
     }
@@ -211,6 +222,7 @@ impl fmt::Display for StoreError {
             StoreError::UnexpectedDataType(msg) => write!(f, "unexpected datatype: {msg}"),
             StoreError::UnsupportedOperation(msg) => write!(f, "unsupported operation: {msg}"),
             StoreError::TraversalError(msg) => write!(f, "traversal error: {msg}"),
+            StoreError::IncompleteLoad { msg } => write!(f, "incomplete bulk load: {}", msg),
         }
     }
 }

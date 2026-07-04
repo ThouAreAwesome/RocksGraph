@@ -15,15 +15,21 @@
 ##
 ## You should have received a copy of the GNU General Public License
 ## along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
+#
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-echo "=== Running Data Integrity Check ==="
+DATASET="${1:-100k}"
+shift # Remove dataset name from argument list
 
-cd "$PROJECT_ROOT" || exit
+STORE_DIR="$PROJECT_ROOT/data/rocksGraph-$DATASET"
 
-STORE_DIR="$PROJECT_ROOT/data/rocksGraph-10M"
+if [ ! -d "$STORE_DIR" ]; then
+    echo "=== Error: Database directory $STORE_DIR not found. Run bench_write first."
+    exit 1
+fi
 
+echo "=== Running Data Integrity Check ($DATASET) ==="
 cargo run --bin bench_integrity --release -- --data-dir "$STORE_DIR" "$@"
 
 EXIT_CODE=$?
@@ -33,3 +39,4 @@ if [ $EXIT_CODE -ne 0 ]; then
 fi
 
 echo "=== Integrity check passed. ==="
+exit 0

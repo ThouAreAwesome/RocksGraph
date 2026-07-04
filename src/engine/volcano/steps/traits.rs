@@ -80,6 +80,20 @@ pub trait CoreStep: std::fmt::Debug {
 
     /// Pull the next batch of results. Returns `Ok(None)` when exhausted,
     /// `Err` on storage or runtime failure.
+    ///
+    /// # Critical Performance Warning: Lazy / Streaming produce
+    ///
+    /// Step implementations **must be lazy and stream their results** in small batches
+    /// (capped at `PIPELINE_PRODUCE_SIZE`, e.g., 8 items) rather than eagerly collecting
+    /// all elements from upstream.
+    ///
+    /// Avoid eager `while let Some(t) = upstream.next(ctx)?` loops that consume the
+    /// entire upstream unless the step is a reduction/aggregation/sort step by definition
+    /// (e.g. `count()`, `sum()`, `fold()`, `group()`, `order()`, `tail()`).
+    ///
+    /// Eagerly consuming upstream in non-aggregating steps (like `path()`, `values()`,
+    /// or filters) breaks the Volcano model's streaming latency guarantees, causes
+    /// high O(V) memory usage, and blocks progress reporting / query execution pipelines.
     fn produce(
         &mut self,
         ctx: &mut dyn GraphCtx,

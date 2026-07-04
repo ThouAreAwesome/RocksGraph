@@ -15,25 +15,44 @@
 ##
 ## You should have received a copy of the GNU General Public License
 ## along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
+#
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-echo "=== Running Gremlin Read Benchmark ==="
+DATASET="${1:-100k}"
+shift # Remove dataset name from argument list
 
-cd "$PROJECT_ROOT" || exit
+STORE_DIR="$PROJECT_ROOT/data/rocksGraph-$DATASET"
 
-PARALLELISM=5
-STORE_DIR="$PROJECT_ROOT/data/rocksGraph-10M"
-FILE_PATH="$PROJECT_ROOT/bench_data/soc-LiveJournal1-10M.txt"
+if [ "$DATASET" = "orkut" ]; then
+    FILE_PATH="$PROJECT_ROOT/bench_data/com-orkut.ungraph.txt"
+else
+    FILE_PATH="$PROJECT_ROOT/bench_data/soc-LiveJournal1-$DATASET.txt"
+fi
 
-# Execute the benchmark binary
-# adding `--features rocksdb-stats` to show RocksDB statistics
-cargo run --bin bench_read --release  -- --data-dir "$STORE_DIR" --file-path "$FILE_PATH" --parallelism $PARALLELISM "$@"
-
-EXIT_CODE=$?
-if [ $EXIT_CODE -ne 0 ]; then
-    echo "=== Benchmark failed with exit code $EXIT_CODE. ==="
+if [ ! -d "$STORE_DIR" ]; then
+    echo "=== Error: Database directory $STORE_DIR not found. Run bench_write first."
     exit 1
 fi
 
-echo "=== Benchmark completed successfully. ==="
+PARALLELISM=5
+# Default: 10 000 randomly-sampled query pairs per benchmark.
+# Pass --queries 0 as an extra argument to use the full file.
+QUERIES=10000
+
+echo "=== Running Read Benchmark ($DATASET, ${QUERIES} query pairs per benchmark) ==="
+cargo run --bin bench_read --release -- \
+  --data-dir "$STORE_DIR" \
+  --file-path "$FILE_PATH" \
+  --parallelism $PARALLELISM \
+  --queries $QUERIES \
+  "$@"
+
+EXIT_CODE=$?
+if [ $EXIT_CODE -ne 0 ]; then
+    echo "=== Read Benchmark failed with exit code $EXIT_CODE. ==="
+    exit 1
+fi
+
+echo "=== Read Benchmark completed successfully. ==="
+exit 0

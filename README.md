@@ -566,6 +566,58 @@ every staged label/key in the batch is applied, or none are. See the [`SchemaMan
 rustdoc](src/schema/management.rs) for the full guarantees, and `set_edge_mode` /
 `set_schema_mode` for changing graph-wide options (e.g. enabling multi-edges) after creation.
 
+## Bulk Loading
+
+For large initial datasets (millions to billions of edges), use `SstBulkLoader` instead
+of the transactional write path.  It generates sorted RocksDB SST files offline and
+ingests them atomically — bypassing WAL, memtable pressure, and OCC overhead entirely.
+
+**Measured:** 69 M edges, 4.85 M vertices → ~300K edges/s, ~1.2 GB peak RAM.
+
+```rust
+use rocksgraph::{
+    BulkSchema, BulkVertex, BulkEdge, BulkLoadStats, SstBulkLoader, EdgeListSource,
+    schema::{DataType, GraphOptions},
+    RocksOptions,
+};
+
+// Describe the schema upfront (vertex labels, edge labels, property keys).
+let schema = BulkSchema {
+    vertex_labels: vec!["Person".into()],
+    edge_labels:   vec!["Knows".into()],
+    prop_keys:     vec![("age".into(), DataType::Int64)],
+};
+
+// EdgeListSource reads a SNAP-format edge list lazily (O(1) memory).
+let source = EdgeListSource {
+    path:         "data/edges.txt".into(),
+    vertex_label: "Person".into(),
+    edge_label:   "Knows".into(),
+    comment_char: '#',
+};
+let (vertices, edges) = source.open()?;
+
+// Load into an empty database.
+let stats: BulkLoadStats = SstBulkLoader::new("path/to/db", "path/to/work_dir")
+    .load_initial(schema, vertices, edges, GraphOptions::default(), &RocksOptions::default())?;
+
+println!("{} vertices, {} edges loaded", stats.vertices_written, stats.edges_written);
+// Database is now accessible via Graph::open("path/to/db")
+```
+
+**Key properties:**
+- `EdgeMode::Single` (default) — rank is always 0; duplicate `(src, label, dst)` → error.
+- `EdgeMode::Multi` — supports auto-assigned ranks (`BulkEdge::rank = None`) and explicit
+  ranks (`BulkEdge::rank = Some(r)`); `Rank::MAX` (65535) is reserved as sentinel.
+- `SchemaMode::Strict` — validates all labels and property keys against `BulkSchema` before
+  writing any SST file.
+- Crash-safe: a `BULK_LOAD_IN_PROGRESS` marker in the schema CF is auto-cleared on
+  `Graph::open` if ingest succeeded, or returns `StoreError::IncompleteLoad` if it didn't.
+- Temporary files go in `work_dir` and are cleaned up automatically (RAII guard).
+
+See [`docs/design_bulkload_sst_ingest.md`](docs/design_bulkload_sst_ingest.md) for the
+full pipeline, memory budget allocation, and format details.
+
 ## Development
 
 **Prerequisites:** Rust toolchain 1.80+ (stable), [`just`](https://github.com/casey/just)
@@ -601,9 +653,9 @@ Benchmark binaries live in `src/bin/`. The `scripts/` directory contains helpers
 
 | Script | Purpose |
 |--------|---------|
-| `prepare_bench_data.sh` | Download and sample 1M edges from the SNAP soc-LiveJournal1 dataset |
-| `bench_read.sh` | Run the read traversal benchmark |
-| `bench_write.sh` | Run the write benchmark |
+| `bench_write.sh` | Bulk-load a SNAP edge-list file into a new database via SST ingestion |
+| `bench_read.sh` | Run the read traversal benchmark (Q1–Q9, prints throughput + latency) |
+| `bench_integrity.sh` | Verify degree-CF consistency against a full adjacency scan |
 | `instruments_read.sh` | Profile read benchmark with macOS Instruments |
 | `instruments_write.sh` | Profile write benchmark with macOS Instruments |
 
@@ -611,11 +663,14 @@ Benchmark binaries live in `src/bin/`. The `scripts/` directory contains helpers
 # Build release binaries
 just build-release
 
-# Run read benchmark (adjust paths as needed)
+# Bulk-load the LiveJournal dataset (requires bench_data/soc-LiveJournal1-shuffled.txt)
+./scripts/bench_write.sh
+
+# Run read benchmark against the loaded database
 ./scripts/bench_read.sh
 
-# Run write benchmark
-./scripts/bench_write.sh
+# Verify structural integrity of the loaded database
+./scripts/bench_integrity.sh
 ```
 
 [Current benchmark records](BENCHMARKS.md)
@@ -681,7 +736,7 @@ format changes will require a major version bump and a documented migration path
 ### Engine & Query
 
 - [ ] Improve Gremlin step coverage (lambdas, side-effects, additional aggregation steps) — see [docs/TODO.md](docs/TODO.md) for the prioritized list
-- [ ] Support bulk-load mode: offline SST file generation + direct RocksDB SST ingestion for high-throughput initial loads
+- [x] Bulk-load via SST ingestion (`SstBulkLoader`) — streams vertices + edges through `ExternalSorter`, O(1) memory, 300–400K edges/s on LiveJournal (69M edges)
 - [x] `ReadSession` / `ReadTraversal` — read-only snapshot path with no OCC overhead
 - [x] `next(), to_list(), iter()` on `ReadTraversal` and `WriteTraversal`
 - [x] Support strict schema mode (see [Schema Modes](#schema-modes))

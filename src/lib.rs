@@ -77,6 +77,8 @@ pub(crate) mod types;
 
 // ── User-facing re-exports ────────────────────────────────────────────────────
 pub use api::{Graph, ReadSession, TxSession};
+pub use store::rocks::bulk_loader::{BulkEdge, BulkLoadStats, BulkSchema, BulkVertex, SstBulkLoader};
+pub use store::rocks::bulk_source::EdgeListSource;
 pub use store::RocksOptions;
 // GraphTraversal is doc-hidden but must be pub so users can pass `__()` values
 // to where/coalesce/union without naming the type.
@@ -86,6 +88,7 @@ pub use gremlin::{
     traversal::{BuiltTraversal, ReadTraversal, TraversalBuilder, WriteTraversal, __},
     value::{between, eq, gt, gte, lt, lte, ne, within, without, Edge, Map, Path, Predicate, Property, Value, Vertex},
 };
+pub use types::gvalue::Primitive;
 pub use types::StoreError;
 
 #[cfg(test)]

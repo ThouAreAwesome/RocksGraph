@@ -17,27 +17,18 @@
 
 use std::{path::Path, sync::Arc};
 
-use rocksdb::{BlockBasedOptions, Cache, ColumnFamilyDescriptor, OptimisticTransactionDB, Options, SliceTransform};
+use rocksdb::{Cache, ColumnFamilyDescriptor, OptimisticTransactionDB, Options};
 
 use crate::{
     store::{
         rocks::{
-            snapshot::Snapshot, transaction::Transaction, CF_EDGES_IN, CF_EDGES_OUT, CF_SCHEMA, CF_VERTEX_DEGREE,
-            CF_VERTICES,
+            cf_options, snapshot::Snapshot, transaction::Transaction, CF_EDGES_IN, CF_EDGES_OUT, CF_SCHEMA,
+            CF_VERTEX_DEGREE, CF_VERTICES,
         },
         traits::GraphStore,
     },
-    types::{kv_codec::EDGE_PREFIX_LENGTH, StoreError},
+    types::StoreError,
 };
-
-/// Bloom filter bits-per-key — internal only, not user-tunable.
-/// 10 bits/key is RocksDB's documented default, giving ~1% false-positive rate.
-const BLOOM_FILTER_BITS_PER_KEY: f64 = 10.0;
-
-/// SST block-based table format version — internal only, not user-tunable.
-/// 6 adds footer checksum protection and stronger misplacement detection;
-/// RocksDB's recommended default since 9.0.  Readable by RocksDB >= 8.6.
-const BLOCK_FORMAT_VERSION: i32 = 6;
 
 /// Storage-tuning options for the RocksDB backend.
 ///
@@ -270,44 +261,17 @@ impl RocksStorage {
         // is hot rather than being statically partitioned per CF.
         let block_cache = Cache::new_lru_cache(rocksdb_opts.block_cache_size);
 
-        // ── Edge CFs: prefix bloom filter (8-byte vertex_id prefix) ─────────────
-        let mut edge_cf_opts = Options::default();
-        edge_cf_opts.set_prefix_extractor(SliceTransform::create_fixed_prefix(EDGE_PREFIX_LENGTH));
-        edge_cf_opts.set_write_buffer_size(rocksdb_opts.write_buffer_size);
-        edge_cf_opts.set_max_write_buffer_number(rocksdb_opts.max_write_buffer_number);
-        let mut edge_block_opts = BlockBasedOptions::default();
-        // full filter (not block-based) so prefix seeks hit the bloom filter
-        edge_block_opts.set_bloom_filter(BLOOM_FILTER_BITS_PER_KEY, false);
-        edge_block_opts.set_format_version(BLOCK_FORMAT_VERSION);
+        // ── CF options via shared factories — the bulk loader uses the same
+        // factories without block_cache; here we add the shared live-DB cache.
+        let mut edge_block_opts = cf_options::edge_block_opts(rocksdb_opts);
+        // Larger blocks amortise SST seek overhead during prefix scans (outE / inE).
         edge_block_opts.set_block_cache(&block_cache);
-        // Larger blocks amortise SST seek overhead across consecutive edge keys
-        // during prefix scans (outE / inE / bothE).
-        edge_block_opts.set_block_size(rocksdb_opts.edge_block_size);
-        edge_block_opts.set_cache_index_and_filter_blocks(rocksdb_opts.cache_index_and_filter_blocks);
-        if rocksdb_opts.cache_index_and_filter_blocks {
-            // Keep L0 filter/index blocks pinned so they are never evicted while
-            // the L0 file itself still exists — L0 is the hottest tier.
-            edge_block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
-        }
-        edge_cf_opts.set_block_based_table_factory(&edge_block_opts);
-        // bloom filter in memtable for in-flight writes
-        edge_cf_opts.set_memtable_prefix_bloom_ratio(0.1);
+        let edge_cf_opts = cf_options::edge_cf_opts(rocksdb_opts, &edge_block_opts);
 
-        // ── Vertex CFs: point-lookup bloom filter ─────────────────────────────
-        let mut vertex_block_opts = BlockBasedOptions::default();
-        vertex_block_opts.set_bloom_filter(BLOOM_FILTER_BITS_PER_KEY, false);
-        vertex_block_opts.set_format_version(BLOCK_FORMAT_VERSION);
-        vertex_block_opts.set_block_cache(&block_cache);
         // Small blocks match point-lookup access patterns (one vertex per read).
-        vertex_block_opts.set_block_size(rocksdb_opts.vertex_block_size);
-        vertex_block_opts.set_cache_index_and_filter_blocks(rocksdb_opts.cache_index_and_filter_blocks);
-        if rocksdb_opts.cache_index_and_filter_blocks {
-            vertex_block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
-        }
-        let mut vertex_cf_opts = Options::default();
-        vertex_cf_opts.set_block_based_table_factory(&vertex_block_opts);
-        vertex_cf_opts.set_write_buffer_size(rocksdb_opts.write_buffer_size);
-        vertex_cf_opts.set_max_write_buffer_number(rocksdb_opts.max_write_buffer_number);
+        let mut vertex_block_opts = cf_options::vertex_block_opts(rocksdb_opts);
+        vertex_block_opts.set_block_cache(&block_cache);
+        let vertex_cf_opts = cf_options::vertex_cf_opts(rocksdb_opts, &vertex_block_opts);
 
         let cfs = vec![
             ColumnFamilyDescriptor::new(CF_VERTICES, vertex_cf_opts.clone()),
@@ -324,6 +288,33 @@ impl RocksStorage {
             #[cfg(feature = "rocksdb-stats")]
             opts: std::sync::Mutex::new(opts),
         })
+    }
+
+    /// Check for and recover from an interrupted bulk load.
+    ///
+    /// If a `BULK_LOAD_IN_PROGRESS` marker exists in the schema CF, either
+    /// auto-clear it (ingest succeeded, cleanup was lost) or return
+    /// `IncompleteLoad` (ingest never happened).
+    pub(crate) fn recover_bulk_load_crash(&self) -> Result<(), StoreError> {
+        let cf_s = self.db.cf_handle(CF_SCHEMA);
+        if cf_s.is_none() {
+            return Ok(());
+        }
+        let cf_s = cf_s.unwrap();
+        if self.db.get_cf(&cf_s, super::bulk_loader::BULK_LOAD_IN_PROGRESS_KEY).map_err(StoreError::RocksDb)?.is_none()
+        {
+            return Ok(());
+        }
+        let cf_v = self.db.cf_handle(CF_VERTICES);
+        if let Some(ref cf_vtx) = cf_v {
+            if self.db.iterator_cf(cf_vtx, rocksdb::IteratorMode::Start).next().is_some() {
+                let mut cleanup = rocksdb::WriteBatchWithTransaction::<true>::default();
+                cleanup.delete_cf(&cf_s, super::bulk_loader::BULK_LOAD_IN_PROGRESS_KEY);
+                self.db.write(cleanup).map_err(StoreError::RocksDb)?;
+                return Ok(());
+            }
+        }
+        Err(StoreError::IncompleteLoad { msg: "bulk load interrupted before ingest — retry load_initial".into() })
     }
 
     /// Load schema from CF_SCHEMA, or initialize it with defaults if not present.

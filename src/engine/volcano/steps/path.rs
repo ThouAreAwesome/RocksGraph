@@ -37,15 +37,12 @@ use crate::{
 pub struct PathStep {
     // ── Upstream link ──
     upstream: Option<StepRef>,
-
     // ── Dynamic/Runtime execution state ──
-    /// Whether the collected paths have already been emitted.
-    emitted: bool,
 }
 
 impl PathStep {
     pub fn new() -> Self {
-        Self { upstream: None, emitted: false }
+        Self { upstream: None }
     }
 }
 
@@ -58,28 +55,23 @@ impl CoreStep for PathStep {
         &mut self,
         ctx: &mut dyn GraphCtx,
     ) -> Result<Option<SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>>, StoreError> {
-        if self.emitted {
-            return Ok(None);
-        }
-
         let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
 
-        let mut paths = SmallVec::new();
-        while let Some(t) = upstream.next(ctx)? {
+        let mut batch = SmallVec::new();
+        while batch.len() < PIPELINE_PRODUCE_SIZE {
+            let Some(t) = upstream.next(ctx)? else { break };
             let path_gvalues: Vec<(GValue, Option<SmallVec<[SmolStr; STEP_LABEL_INLINE]>>)> = t.collect_path();
-            paths.push(Traverser::new_rc_conditional(GValue::Path(path_gvalues), &t, true));
+            batch.push(Traverser::new_rc_conditional(GValue::Path(path_gvalues), &t, true));
         }
 
-        self.emitted = true;
-        if paths.is_empty() {
+        if batch.is_empty() {
             Ok(None)
         } else {
-            Ok(Some(paths))
+            Ok(Some(batch))
         }
     }
 
     fn reset(&mut self) {
-        self.emitted = false;
         if let Some(up) = &self.upstream {
             up.reset();
         }

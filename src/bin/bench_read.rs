@@ -16,14 +16,18 @@
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 use hdrhistogram::Histogram;
+use rand::seq::SliceRandom;
 use rocksgraph::{ne, Graph, ReadSession, StoreError, TraversalBuilder, Value, __};
 
 use std::{
     env,
     fs::File,
     io::{BufRead, BufReader},
-    sync::{mpsc, Arc},
-    time::Instant,
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        mpsc, Arc,
+    },
+    time::{Duration, Instant},
 };
 
 const EDGE_LABEL: &str = "Knows";
@@ -58,10 +62,39 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(3);
 
+    // --queries N  — randomly sample N edge pairs as query parameters (default 10_000).
+    // Pass --queries 0 to use the entire file (full benchmark, slow on large datasets).
+    let query_count: usize = args
+        .iter()
+        .position(|arg| arg == "--queries")
+        .and_then(|pos| args.get(pos + 1))
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10_000);
+
     let graph = Graph::open(data_dir)?;
+
+    // --explain: print the physical plan for every query using IDs 1→2, then exit.
+    if args.iter().any(|a| a == "--explain") {
+        return explain_all(&graph);
+    }
+
     let file = File::open(file_dir)?;
     let reader = BufReader::new(file);
-    let lines: Arc<Vec<String>> = Arc::new(reader.lines().collect::<Result<_, _>>()?);
+    let lines: Arc<Vec<String>> = Arc::new({
+        let mut all: Vec<String> = reader.lines().collect::<Result<_, _>>()?;
+        if query_count > 0 && query_count < all.len() {
+            // Reservoir-sample for statistical representativeness.
+            // Avoids bias from hub vertices that cluster at the start of sorted files.
+            all.shuffle(&mut rand::thread_rng());
+            all.truncate(query_count);
+        }
+        println!(
+            "Query parameters: {} edge pairs{}",
+            all.len(),
+            if query_count == 0 { " (full file)" } else { " (random sample)" }
+        );
+        all
+    });
 
     run_query_benchmark(
         "Q1: g.V().hasId(id).values('name', 'age').count()",
@@ -249,6 +282,97 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn explain_all(graph: &Graph) -> Result<(), Box<dyn std::error::Error>> {
+    let mut snap = graph.read();
+    let src: i64 = 1;
+    let dst: i64 = 2;
+
+    type QueryFn = Box<dyn Fn(&mut rocksgraph::ReadSession) -> Result<String, rocksgraph::StoreError>>;
+    let queries: &[(&str, QueryFn)] = &[
+        (
+            "Q1: g.V([]).hasId(src).values('name','age').count()",
+            Box::new(move |s| s.g().V([]).hasId([src]).values([NAME_KEY, AGE_KEY]).count().explain()),
+        ),
+        (
+            "Q2: g.V([]).hasId(src).bothE(label).where(otherV().hasId(dst)).values('weight','timestamp').count()",
+            Box::new(move |s| {
+                s.g()
+                    .V([])
+                    .hasId([src])
+                    .bothE([EDGE_LABEL])
+                    .r#where(__().otherV().hasId([dst]))
+                    .values([WEIGHT_KEY, TIMESTAMP_KEY])
+                    .count()
+                    .explain()
+            }),
+        ),
+        (
+            "Q3: g.V([]).hasId(src).bothE(label).values('weight','timestamp').count()",
+            Box::new(move |s| {
+                s.g().V([]).hasId([src]).bothE([EDGE_LABEL]).values([WEIGHT_KEY, TIMESTAMP_KEY]).count().explain()
+            }),
+        ),
+        (
+            "Q4: g.V([]).hasId(src).bothE(label).values('weight','timestamp').limit(5).count()",
+            Box::new(move |s| {
+                s.g()
+                    .V([])
+                    .hasId([src])
+                    .bothE([EDGE_LABEL])
+                    .values([WEIGHT_KEY, TIMESTAMP_KEY])
+                    .limit(5)
+                    .count()
+                    .explain()
+            }),
+        ),
+        (
+            "Q5: g.V([]).hasId(src).both(label).values('name','age').count()",
+            Box::new(move |s| {
+                s.g().V([]).hasId([src]).both([EDGE_LABEL]).values([NAME_KEY, AGE_KEY]).count().explain()
+            }),
+        ),
+        (
+            "Q6: g.V(src).out(label).hasLabel(v_label).dedup().out(label).hasLabel(v_label).dedup().hasId(ne(src)).count()",
+            Box::new(move |s| {
+                s.g()
+                    .V([src])
+                    .out([EDGE_LABEL])
+                    .hasLabel([VERTEX_LABEL])
+                    .dedup()
+                    .out([EDGE_LABEL])
+                    .hasLabel([VERTEX_LABEL])
+                    .dedup()
+                    .hasId(ne(src))
+                    .count()
+                    .explain()
+            }),
+        ),
+        (
+            "Q7: g.V(src).repeat(out(label).hasLabel(v_label).dedup()).times(2).hasId(ne(src)).count()",
+            Box::new(move |s| {
+                s.g()
+                    .V([src])
+                    .repeat(__().out([EDGE_LABEL]).hasLabel([VERTEX_LABEL]).dedup())
+                    .times(2)
+                    .hasId(ne(src))
+                    .count()
+                    .explain()
+            }),
+        ),
+        ("Q8: g.V().count()", Box::new(move |s| s.g().V([]).count().explain())),
+        ("Q9: g.E([]).count()", Box::new(move |s| s.g().E([]).count().explain())),
+    ];
+
+    for (name, build) in queries {
+        println!("\n=== {} ===", name);
+        match build(&mut snap) {
+            Ok(plan) => println!("{}", plan),
+            Err(e) => println!("  (plan error: {})", e),
+        }
+    }
+    Ok(())
+}
+
 fn run_query_benchmark<F>(
     name: &str,
     lines: &Arc<Vec<String>>,
@@ -267,12 +391,39 @@ where
 
     let (hist_tx, hist_rx) = mpsc::channel::<Histogram<u64>>();
 
+    // Progress tracking — only for large workloads (skip in unit tests).
+    let completed = Arc::new(AtomicUsize::new(0));
+    let progress_done = Arc::new(AtomicBool::new(false));
+    let progress_handle = if line_count > 1_000 {
+        let c = Arc::clone(&completed);
+        let done = Arc::clone(&progress_done);
+        let total = line_count;
+        let t0 = start;
+        Some(std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_secs(2));
+            if done.load(Ordering::Relaxed) {
+                break;
+            }
+            let n = c.load(Ordering::Relaxed);
+            if n == 0 {
+                continue;
+            }
+            let elapsed = t0.elapsed().as_secs_f64();
+            let pct = n * 100 / total;
+            let eta = elapsed / n as f64 * (total - n) as f64;
+            eprintln!("  Progress: {pct}% ({n} / {total}) | {elapsed:.0}s elapsed | ~{eta:.0}s remaining");
+        }))
+    } else {
+        None
+    };
+
     let mut worker_handles = vec![];
     for i in 0..parallelism {
         let lines_chunk = Arc::clone(lines);
         let graph = graph.clone(); // cheap Arc clone
         let h_tx = hist_tx.clone();
         let query_fn = Arc::clone(&query_fn);
+        let completed = Arc::clone(&completed);
 
         let handle = std::thread::spawn(move || {
             // One snapshot per thread — reused across all queries in this chunk.
@@ -294,6 +445,7 @@ where
                     eprintln!("Query failed: {}", e);
                 }
                 local_hist.record(op_start.elapsed().as_nanos() as u64).unwrap();
+                completed.fetch_add(1, Ordering::Relaxed);
             }
             h_tx.send(local_hist).unwrap();
         });
@@ -302,6 +454,11 @@ where
 
     drop(hist_tx);
     for h in worker_handles {
+        h.join().unwrap();
+    }
+
+    progress_done.store(true, Ordering::Relaxed);
+    if let Some(h) = progress_handle {
         h.join().unwrap();
     }
 

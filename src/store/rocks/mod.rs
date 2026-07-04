@@ -16,6 +16,10 @@
 // along with RocksGraph.  If not, see <https://www.gnu.org/licenses/>.
 
 pub(super) mod admin;
+pub(crate) mod bulk_loader;
+pub(crate) mod bulk_sort;
+pub(crate) mod bulk_source;
+pub(super) mod cf_options;
 mod snapshot;
 mod store;
 mod transaction;

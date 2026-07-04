@@ -149,6 +149,7 @@ impl Graph {
         rocksdb_options: RocksOptions,
     ) -> Result<Self, StoreError> {
         let store = Arc::new(RocksStorage::open(path, &rocksdb_options)?);
+        store.recover_bulk_load_crash()?;
         let schema = store.load_schema(schema_options)?;
         Ok(Self { store, schema: Arc::new(RwLock::new(schema)) })
     }

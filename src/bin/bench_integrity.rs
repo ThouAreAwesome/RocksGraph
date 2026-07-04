@@ -21,13 +21,32 @@
 //!
 //! Currently checks:
 //! - **Degree integrity**: verifies that the O(1) `vertex_degree` CF counters agree
-//!   with a full adjacency scan across every vertex.  The optimized query uses
-//!   `DegreeStep` (reads the CF directly); the ground-truth query does a real
-//!   adjacency scan using all known edge labels (bypassing the degree optimizer).
+//!   with a full adjacency scan across every vertex.
+//!
+//! ## Streaming comparison
+//!
+//! Both queries use `path()` to carry `[Vertex(id), Int64(degree)]` for each
+//! vertex, enabling mismatch reports to include the vertex ID.  Two independent
+//! `ReadSession` snapshots are compared vertex-by-vertex via `zip()` — no
+//! `HashMap` or bulk `Vec` is built; peak extra memory is O(1) per vertex pair.
+//! The vertex scan order is deterministic (sorted by vertex key) so positional
+//! comparison is correct.
+//!
+//! The previous `PathStep` was eager (consumed all upstream traversers in one
+//! blocking call before yielding anything).  It has been fixed to stream results
+//! in chunks of `PIPELINE_PRODUCE_SIZE`, so the first result is returned
+//! immediately and progress is visible from the first 0.5 s tick.
 
-use rocksgraph::{Graph, TraversalBuilder, Value, __};
+use rocksgraph::{Graph, StoreError, TraversalBuilder, Value, __};
 
-use std::{collections::HashMap, env};
+use std::{
+    env,
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc,
+    },
+    time::{Duration, Instant},
+};
 
 #[allow(dead_code)]
 const VERTEX_LABEL: &str = "Person";
@@ -47,112 +66,141 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Verify that the O(1) degree counters in the `vertex_degree` CF agree with
-/// a full adjacency scan across every vertex in the graph.
-///
-/// Two queries are compared for both out-degree and in-degree using `path()` to
-/// carry the vertex identity alongside each degree value:
-///
-/// **Optimized** (labels empty → `degree_pushdown` A+B+C cascade fires;
-/// `DegreeStep` maps each vertex O(1) to its CF degree):
-/// ```text
-/// g.V([]).local(__.out([]).count()).path()   →  [Vertex(id), Int64(degree)]
-/// ```
-///
-/// **Ground truth** (non-empty labels block Rule A so the degree optimizer
-/// cannot fire; `LocalStep` re-threads the outer Vertex as parent for each
-/// `CountStep` result, giving the same path structure):
-/// ```text
-/// g.V([]).local(__.out([all_labels]).count()).path()   →  [Vertex(id), Int64(count)]
-/// ```
-///
-/// Results are collected into `HashMap<vertex_id, degree>` and compared by
-/// vertex identity — unaffected by V() scan order.
 fn verify_degree_integrity(graph: &Graph) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n--- Verifying degree integrity (vertex_degree CF vs adjacency scan) ---");
 
-    // Collect edge labels from the schema (O(#labels)) instead of scanning all
-    // edges (O(#edges)).  In Strict mode the schema is authoritative.
     let edge_labels: Vec<String> = graph.edge_label_names();
-
     if edge_labels.is_empty() {
         println!("  No edge labels found — skipping degree integrity check.");
         return Ok(());
     }
 
-    // Single snapshot for both queries — consistent view of committed state.
     let mut snap = graph.read();
+    let v_count = match snap.g().V([]).count().next()? {
+        Some(Value::Int64(n)) => n as usize,
+        _ => 0,
+    };
+    println!("  Database: {v_count} vertices, {} edge label(s)", edge_labels.len());
 
     // ── Out-degree ──────────────────────────────────────────────────────────
-
-    let out_opt = snap.g().V([]).local(__().out([]).count()).path().to_list()?;
-    let out_scan = snap.g().V([]).local(__().out(edge_labels.iter().map(|s| s.as_str())).count()).path().to_list()?;
-    check_degree("out-degree", out_opt, out_scan)?;
+    // path() carries (Vertex, Int64(degree)) so mismatches can report vertex ID.
+    // The root cause of previous slowness was an eager PathStep; that is now fixed
+    // to stream PIPELINE_PRODUCE_SIZE results at a time.
+    {
+        let mut snap_opt = graph.read();
+        let mut snap_scan = graph.read();
+        let opt = snap_opt.g().V([]).local(__().out([]).count()).path().iter()?;
+        let scan = snap_scan.g().V([]).local(__().out(edge_labels.iter().map(|s| s.as_str())).count()).path().iter()?;
+        compare_degree_streams("out-degree", v_count, opt, scan)?;
+    }
 
     // ── In-degree ───────────────────────────────────────────────────────────
-
-    let in_opt = snap.g().V([]).local(__().r#in([]).count()).path().to_list()?;
-    let in_scan = snap.g().V([]).local(__().r#in(edge_labels.iter().map(|s| s.as_str())).count()).path().to_list()?;
-    check_degree("in-degree", in_opt, in_scan)?;
+    {
+        let mut snap_opt = graph.read();
+        let mut snap_scan = graph.read();
+        let opt = snap_opt.g().V([]).local(__().r#in([]).count()).path().iter()?;
+        let scan =
+            snap_scan.g().V([]).local(__().r#in(edge_labels.iter().map(|s| s.as_str())).count()).path().iter()?;
+        compare_degree_streams("in-degree", v_count, opt, scan)?;
+    }
 
     Ok(())
 }
 
-/// Extract `HashMap<vertex_id, degree>` from path results.
-/// Each path must be `[Value::Vertex(v), Value::Int64(degree)]`.
-fn paths_to_degree_map(paths: Vec<Value>) -> HashMap<i64, i64> {
-    let mut map = HashMap::new();
-    for p in paths {
-        if let Value::Path(path) = p {
-            if let (Some(Value::Vertex(v)), Some(Value::Int64(degree))) = (path.objects.first(), path.objects.get(1)) {
-                map.insert(v.id, *degree);
+/// Stream-compare two degree iterators vertex-by-vertex.
+///
+/// Both iterators must produce `Value::Path([Vertex(id), Int64(degree)])` in the
+/// same vertex-key order (guaranteed since both start with the same `V([])` scan).
+/// Mismatches are accumulated and reported; scan order divergence is a hard error.
+fn compare_degree_streams(
+    name: &str,
+    v_count: usize,
+    opt_iter: impl Iterator<Item = Result<Value, StoreError>>,
+    scan_iter: impl Iterator<Item = Result<Value, StoreError>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    eprintln!("  [{name}] stream-comparing {v_count} vertices (optimized ↔ scan)…");
+
+    let t0 = Instant::now();
+    let checked = Arc::new(AtomicUsize::new(0));
+    let done = Arc::new(AtomicBool::new(false));
+
+    let progress_handle = {
+        let checked = Arc::clone(&checked);
+        let done = Arc::clone(&done);
+        let name = name.to_string();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_secs(5));
+            if done.load(Ordering::Relaxed) {
+                break;
             }
-        }
-    }
-    map
-}
+            let count = checked.load(Ordering::Relaxed);
+            let elapsed = t0.elapsed().as_secs_f64();
+            let pct = count * 100 / v_count;
 
-/// Compare per-vertex degrees extracted from two `path()` result sets.
-/// Comparison is by vertex ID (HashMap key), not by position.
-fn check_degree(name: &str, opt_paths: Vec<Value>, scan_paths: Vec<Value>) -> Result<(), Box<dyn std::error::Error>> {
-    let opt_map = paths_to_degree_map(opt_paths);
-    let scan_map = paths_to_degree_map(scan_paths);
-
-    if opt_map.is_empty() || scan_map.is_empty() {
-        return Err(format!(
-            "{name}: no vertex/degree pairs found in paths — DegreeStep or LocalStep path tracking may be broken"
-        )
-        .into());
-    }
-    if opt_map.len() != scan_map.len() {
-        return Err(
-            format!("{name}: vertex count mismatch — optimized={}, scan={}", opt_map.len(), scan_map.len()).into()
-        );
-    }
-
-    let mut mismatches: Vec<(i64, i64, i64)> = opt_map
-        .iter()
-        .filter_map(|(&vid, &opt_deg)| {
-            let scan_deg = *scan_map.get(&vid)?;
-            if opt_deg != scan_deg {
-                Some((vid, opt_deg, scan_deg))
+            if count >= 100 {
+                let eta = elapsed / count as f64 * (v_count - count) as f64;
+                eprintln!("  [{name}] {pct}% ({count}/{v_count}) | {elapsed:.1}s elapsed | ~{eta:.1}s remaining");
+            } else if count > 0 {
+                eprintln!("  [{name}] {pct}% ({count}/{v_count}) | {elapsed:.1}s elapsed | ~estimating...");
             } else {
-                None
+                eprintln!("  [{name}] 0% (0/{v_count}) | {elapsed:.1}s elapsed | ~estimating... (warming block cache)");
             }
         })
-        .collect();
+    };
 
-    if mismatches.is_empty() {
-        println!("  {name}: OK ({} vertices, all degrees match)", opt_map.len());
-    } else {
-        mismatches.sort_by_key(|&(vid, _, _)| vid);
-        for (vid, opt_deg, scan_deg) in &mismatches {
-            println!("  {name}: MISMATCH vertex={vid} stored(CF)={opt_deg} scanned={scan_deg}");
+    let mut mismatch_count = 0usize;
+    let mut local_checked = 0usize;
+
+    for (opt_item, scan_item) in opt_iter.zip(scan_iter) {
+        let (opt_vid, opt_deg) = extract_path(opt_item?).ok_or("malformed optimized path")?;
+        let (scan_vid, scan_deg) = extract_path(scan_item?).ok_or("malformed scan path")?;
+
+        // Both V() scans share the same vertex key order — divergence is a bug.
+        if opt_vid != scan_vid {
+            done.store(true, Ordering::Relaxed);
+            let _ = progress_handle.join();
+            return Err(format!(
+                "{name}: scan order diverged at position {local_checked} — opt_vid={opt_vid} scan_vid={scan_vid}"
+            )
+            .into());
         }
-        return Err(format!("{name}: {} mismatch(es) detected", mismatches.len()).into());
+
+        if opt_deg != scan_deg {
+            mismatch_count += 1;
+            if mismatch_count <= 5 {
+                eprintln!("  [{name}] MISMATCH vertex={opt_vid} CF={opt_deg} scan={scan_deg}");
+            }
+        }
+
+        local_checked += 1;
+        checked.store(local_checked, Ordering::Relaxed);
+    }
+
+    done.store(true, Ordering::Relaxed);
+    let _ = progress_handle.join();
+
+    if local_checked != v_count {
+        return Err(format!("{name}: expected {v_count} vertices but compared {local_checked}").into());
+    }
+
+    let elapsed = t0.elapsed().as_secs_f64();
+    if mismatch_count == 0 {
+        println!("  {name}: OK ({local_checked} vertices, all degrees match) | {elapsed:.1}s");
+    } else {
+        return Err(format!("{name}: {mismatch_count} mismatch(es) detected (first 5 printed above)").into());
     }
 
     Ok(())
+}
+
+/// Extract `(vertex_id, degree)` from `Value::Path([Vertex(id), Int64(degree)])`.
+fn extract_path(val: Value) -> Option<(i64, i64)> {
+    if let Value::Path(p) = val {
+        if let (Some(Value::Vertex(v)), Some(Value::Int64(deg))) = (p.objects.first(), p.objects.get(1)) {
+            return Some((v.id, *deg));
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -167,7 +215,6 @@ mod tests {
         let graph =
             Graph::open_with_options(dir.path(), GraphOptions { mode: SchemaMode::Strict, ..Default::default() })
                 .unwrap();
-        // Declare schema explicitly — required in Strict mode.
         {
             let mut mgmt = graph.open_management();
             mgmt.add_vertex_label(VERTEX_LABEL).add_edge_label(EDGE_LABEL);
@@ -181,8 +228,6 @@ mod tests {
         tx.g().addE(EDGE_LABEL).from(2).to(3).next().unwrap();
         tx.g().addE(EDGE_LABEL).from(3).to(1).next().unwrap();
         tx.commit().unwrap();
-
-        // All degrees should match — no mismatches expected.
         assert!(verify_degree_integrity(&graph).is_ok());
     }
 
@@ -203,8 +248,6 @@ mod tests {
         tx.g().addE(EDGE_LABEL).from(1).to(1).next().unwrap(); // self-loop
         tx.g().addE(EDGE_LABEL).from(1).to(2).next().unwrap();
         tx.commit().unwrap();
-
-        // Self-loop degree should be counted correctly (was a known bug).
         assert!(verify_degree_integrity(&graph).is_ok());
     }
 }
