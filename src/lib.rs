@@ -53,6 +53,7 @@
 #![warn(clippy::undocumented_unsafe_blocks)]
 
 pub mod api;
+pub mod bytecode;
 pub(crate) mod engine;
 pub(crate) mod graph;
 pub(crate) mod gremlin;
