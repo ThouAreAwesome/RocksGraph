@@ -1,7 +1,7 @@
 # Step Coverage TODO
 
-RocksGraph is Gremlin-inspired, not Gremlin-compatible (see
-[design_principles.md](design_principles.md)) — this list is not a TinkerPop compliance
+RocksGraph follows Gremlin semantics closely, with selective departures where necessary
+(see [design_principles.md](design_principles.md)). This list is not a TinkerPop compliance
 checklist. It tracks which Gremlin-vocabulary steps are still missing from the traversal API
 (`gremlin/traversal.rs`) and the physical engine (`engine/volcano/steps/`), prioritized by how
 much they'd unblock real use cases versus how niche they are for a single-threaded, embedded,

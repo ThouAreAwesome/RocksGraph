@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Physical step tests for `sum`, `mean`, `max`, `min`.
 
 use crate::engine::volcano::steps::traits::CoreStep;

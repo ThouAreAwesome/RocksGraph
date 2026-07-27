@@ -1,15 +1,21 @@
 # RocksGraph
 
-A Gremlin-inspired property graph query engine written in Rust, backed by RocksDB.
-RocksGraph takes the traversal model from TinkerPop but makes deliberate departures
-where the standard's design choices create unnecessary complexity or overhead.
-See [docs/design_principles.md](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/design_principles.md) for the full rationale.
+**An embeddable Gremlin-style graph database for Rust.** Open a graph with one line
+of code, traverse it with zero infrastructure — like SQLite for property graphs.
+
+RocksGraph is built for the places where a full graph database server is overkill:
+local development, embedded applications, CI pipelines, desktop apps, and single-machine
+production deployments. It uses RocksDB for persistent storage (with pluggable backend
+support), and offers a pragmatic take on the Gremlin traversal model — keeping what
+works, simplifying what doesn't. No server. No cluster. No JVM.
+
+See [docs/design_principles.md](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/design_principles.md) for the design rationale.
 
 > **Status:** Beta (v0.1.0). Under active development. Preparing for release on crates.io.
 
 ## Overview
 
-RocksGraph translates a subset of [Gremlin](https://tinkerpop.apache.org/gremlin.html) traversal queries into a logical IR, optimizes them, and executes them against a persistent RocksDB store. It is designed as a clean, layered architecture separating the user-facing session API, query planning, optimization, and execution.
+RocksGraph translates [Gremlin](https://tinkerpop.apache.org/gremlin.html)-style traversal queries into a logical IR, optimizes them, and executes them through a pull-based Volcano pipeline against the storage backend. The default backend is RocksDB, with a pluggable architecture (`GraphStore` trait) that also supports pure-Rust in-memory operation. The codebase is organized as a clean, layered stack separating the user-facing session API, query planning, optimization, and execution.
 
 ## Architecture
 
@@ -754,8 +760,8 @@ format changes will require a major version bump and a documented migration path
 
 ## License
 
-RocksGraph is free software: you can redistribute it and/or modify it under the terms of the
-[GNU General Public License v2.0](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)
-or (at your option) any later version.
+RocksGraph is dual-licensed under the terms of both the [MIT License](LICENSE-MIT) and the [Apache License (Version 2.0)](LICENSE-APACHE).
+
+See [LICENSE-APACHE](LICENSE-APACHE) and [LICENSE-MIT](LICENSE-MIT) for details.
 
 Copyright © 2026 Austin Han.

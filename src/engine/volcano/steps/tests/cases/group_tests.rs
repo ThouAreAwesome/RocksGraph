@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 // Physical tests: group(), groupCount()
 use crate::engine::volcano::steps::traits::CoreStep;
 use crate::{

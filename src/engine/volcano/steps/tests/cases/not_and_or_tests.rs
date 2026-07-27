@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Physical step tests for `not`, `and`, `or`.
 
 use crate::engine::volcano::steps::traits::CoreStep;
