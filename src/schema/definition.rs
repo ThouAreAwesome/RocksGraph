@@ -111,7 +111,7 @@ impl DataType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PropKeyConfig {
+pub struct PropKeyConfig {
     pub data_type: DataType,
 }
 
@@ -150,7 +150,7 @@ pub(crate) const MAX_PROP_KEYS: usize = (1 << 15) - 1;
 /// [`SchemaManagement`](crate::schema::SchemaManagement) (declaration) and the traversal API
 /// (implicit auto-registration) — never this registry directly.
 #[derive(Debug, Clone)]
-pub(crate) struct Schema {
+pub struct Schema {
     pub mode: SchemaMode,
     pub edge_mode: EdgeMode,
     pub version: u64,

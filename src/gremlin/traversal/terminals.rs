@@ -21,6 +21,10 @@ impl<'s> ReadTraversal<'s> {
         Self { plan: LogicalPlan { steps: vec![] }, ctx, error: None, pending_repeat: None, prop_keys: None }
     }
 
+    pub(crate) fn from_plan(plan: LogicalPlan, ctx: &'s mut dyn GraphCtx) -> Self {
+        Self { plan, ctx, error: None, pending_repeat: None, prop_keys: None }
+    }
+
     /// Configure property fetching for this traversal.
     ///
     /// With no arguments (`withProperties([])`), all properties are fetched (matching
@@ -105,6 +109,10 @@ pub struct WriteTraversal<'s> {
 impl<'s> WriteTraversal<'s> {
     pub(crate) fn new(ctx: &'s mut dyn GraphCtx) -> Self {
         Self { plan: LogicalPlan { steps: vec![] }, ctx, error: None, pending_repeat: None, prop_keys: None }
+    }
+
+    pub(crate) fn from_plan(plan: LogicalPlan, ctx: &'s mut dyn GraphCtx) -> Self {
+        Self { plan, ctx, error: None, pending_repeat: None, prop_keys: None }
     }
 
     /// Configure property fetching for this traversal (see [`ReadTraversal::withProperties`]).

@@ -60,6 +60,7 @@ pub(crate) mod planner;
 pub mod schema;
 pub(crate) mod store;
 pub(crate) mod types;
+pub mod bytecode;
 
 // ── User-facing re-exports ────────────────────────────────────────────────────
 pub use api::{Graph, ReadSession, TxSession};
