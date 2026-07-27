@@ -18,7 +18,7 @@
 #
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BENCH_DATA_DIR="$PROJECT_ROOT/bench_data"
+BENCH_DATA_DIR="$PROJECT_ROOT/rocksgraph/bench_data"
 mkdir -p "$BENCH_DATA_DIR"
 
 DATASET="${1:-100k}"

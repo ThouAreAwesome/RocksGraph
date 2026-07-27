@@ -73,7 +73,7 @@ alias au := audit
 release:
     #!/usr/bin/env bash
     set -euo pipefail
-    version=$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "(.*)"/\1/')
+    version=$(grep -m1 '^version = ' rocksgraph/Cargo.toml | sed -E 's/version = "(.*)"/\1/')
     echo "Preparing to release v$version"
 
     if [ -n "$(git status --porcelain)" ]; then
@@ -81,15 +81,15 @@ release:
         exit 1
     fi
 
-    if ! grep -q "## \[$version\]" CHANGELOG.md; then
-        echo "CHANGELOG.md has no entry for $version — add one first." >&2
+    if ! grep -q "## \[$version\]" rocksgraph/CHANGELOG.md; then
+        echo "rocksgraph/CHANGELOG.md has no entry for $version — add one first." >&2
         exit 1
     fi
 
     just full-check
     just test
     just audit
-    cargo publish --dry-run
+    cargo publish -p rocksgraph --dry-run
 
     read -r -p "About to tag v$version, push tags, and run 'cargo publish'. Continue? [y/N] " confirm
     if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
@@ -99,4 +99,4 @@ release:
 
     git tag "v$version"
     git push --tags
-    cargo publish
+    cargo publish -p rocksgraph

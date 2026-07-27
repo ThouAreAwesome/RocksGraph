@@ -26,7 +26,7 @@ cd "$PROJECT_ROOT" || exit
 
 PARALLELISM=3
 STORE_DIR="$PROJECT_ROOT/data/rocksGraph-1M"
-FILE_PATH="$PROJECT_ROOT/bench_data/soc-LiveJournal1-1M.txt"
+FILE_PATH="$PROJECT_ROOT/rocksgraph/bench_data/soc-LiveJournal1-1M.txt"
 
 
 # Execute the benchmark binary, passing all arguments to the binary itself.

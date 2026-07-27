@@ -25,9 +25,9 @@ shift # Remove dataset name from argument list
 STORE_DIR="$PROJECT_ROOT/data/rocksGraph-$DATASET"
 
 if [ "$DATASET" = "orkut" ]; then
-    FILE_PATH="$PROJECT_ROOT/bench_data/com-orkut.ungraph.txt"
+    FILE_PATH="$PROJECT_ROOT/rocksgraph/bench_data/com-orkut.ungraph.txt"
 else
-    FILE_PATH="$PROJECT_ROOT/bench_data/soc-LiveJournal1-$DATASET.txt"
+    FILE_PATH="$PROJECT_ROOT/rocksgraph/bench_data/soc-LiveJournal1-$DATASET.txt"
 fi
 
 if [ ! -d "$STORE_DIR" ]; then

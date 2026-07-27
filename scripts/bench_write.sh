@@ -32,11 +32,11 @@ fi
 STORE_DIR="$PROJECT_ROOT/data/rocksGraph-$DATASET"
 
 if [ "$DATASET" = "orkut" ]; then
-    FILE_PATH="$PROJECT_ROOT/bench_data/com-orkut.ungraph.txt"
+    FILE_PATH="$PROJECT_ROOT/rocksgraph/bench_data/com-orkut.ungraph.txt"
     # Default memory limit to 1 GiB for Orkut unless explicitly specified
     DEFAULT_MAX_MEMORY="--max-memory 1073741824"
 else
-    FILE_PATH="$PROJECT_ROOT/bench_data/soc-LiveJournal1-$DATASET.txt"
+    FILE_PATH="$PROJECT_ROOT/rocksgraph/bench_data/soc-LiveJournal1-$DATASET.txt"
     DEFAULT_MAX_MEMORY=""
 fi
 
