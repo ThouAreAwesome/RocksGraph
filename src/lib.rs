@@ -53,6 +53,7 @@
 #![warn(clippy::undocumented_unsafe_blocks)]
 
 pub mod api;
+pub mod bytecode;
 pub(crate) mod engine;
 pub(crate) mod graph;
 pub(crate) mod gremlin;
@@ -60,7 +61,6 @@ pub(crate) mod planner;
 pub mod schema;
 pub(crate) mod store;
 pub(crate) mod types;
-pub mod bytecode;
 
 // ── User-facing re-exports ────────────────────────────────────────────────────
 pub use api::{Graph, ReadSession, TxSession};
