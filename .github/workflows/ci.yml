@@ -32,3 +32,22 @@ jobs:
     steps:
       - uses: "actions/checkout@v4"
       - uses: "EmbarkStudios/cargo-deny-action@v2"
+
+  python-windows-ci:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install maturin
+        run: pip install maturin
+      - name: Build Python bindings
+        working-directory: bindings/python
+        run: maturin develop
+      - name: Verify import
+        working-directory: bindings/python
+        run: python -c "import _rocksgraph"

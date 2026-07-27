@@ -243,6 +243,12 @@ impl ReadSession {
         ReadTraversal::new(&mut self.ctx as &mut dyn GraphCtx)
     }
 
+    /// Execute a bytecode-encoded traversal, returning results natively.
+    pub fn execute(&mut self, bytes: &[u8]) -> Result<Vec<crate::gremlin::value::Value>, crate::types::StoreError> {
+        self.ctx.clear_caches();
+        crate::bytecode::execute_read(&mut self.ctx, bytes)
+    }
+
     // Clear per-traversal caches so they don't accumulate across g() calls.
     // The underlying RocksDB snapshot is unaffected — all traversals on this
     // session still see the same consistent point-in-time view.
@@ -289,6 +295,11 @@ impl TxSession {
     /// returned [`WriteTraversal`] to build and execute a query or mutation.
     pub fn g(&mut self) -> WriteTraversal<'_> {
         WriteTraversal::new(&mut self.ctx as &mut dyn GraphCtx)
+    }
+
+    /// Execute a bytecode-encoded traversal, returning results natively.
+    pub fn execute(&mut self, bytes: &[u8]) -> Result<Vec<crate::gremlin::value::Value>, crate::types::StoreError> {
+        crate::bytecode::execute_write(&mut self.ctx, bytes)
     }
 
     /// Flush all mutations to RocksDB atomically and consume this session.

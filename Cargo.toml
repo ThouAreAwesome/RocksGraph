@@ -1,8 +1,10 @@
 [workspace]
 resolver = "2"
 members = [
-    "rocksgraph"
+    "rocksgraph",
+    "bindings/python"
 ]
+default-members = ["rocksgraph"]
 
 [profile.bench]
 debug = true
