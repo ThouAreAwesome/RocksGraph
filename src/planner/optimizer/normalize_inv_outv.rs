@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use crate::planner::logical_step::{LogicalPlan, LogicalStep, OtherVStep};
 use crate::types::StoreError;
 

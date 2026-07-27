@@ -2,51 +2,59 @@
 
 ## Positioning
 
-RocksGraph is **Gremlin-inspired, not Gremlin-compatible**.
+RocksGraph follows the Gremlin traversal model closely. Users familiar with JanusGraph,
+AWS Neptune, or TinkerPop will find the core traversal primitives — `.g().V().out().values()`,
+filter steps, path tracking, and aggregations — behave as expected.
 
-It takes the core ideas of TinkerPop — pipeline-based traversal, vertex/edge duality,
-lazy evaluation, composable steps — but makes deliberate departures where the TinkerPop
-standard's design choices create unnecessary complexity, performance overhead, or
-poor ergonomics in practice.
-
-These departures are not gaps to be filled. They are intentional trade-offs made from
-production experience with TinkerPop Gremlin.
-
----
-
-## Why not comply with TinkerPop
-
-TinkerPop Gremlin was designed as a universal, database-agnostic traversal language.
-That goal introduced compromises that are felt in every real implementation:
-
-**Forced full-property materialization.** `out()` returning a `Vertex` always fetches all
-properties. There is no way to return a typed `Vertex`/`Edge` with partial properties.
-The only alternatives — `valueMap()`, `elementMap()`, `project()` — lose the typed
-structure. In practice, callers often need the typed result with just a few properties.
-
-**Vertex label inconsistency.** A vertex label carries no structural weight — vertex ID
-alone is globally unique. Yet the label adds API surface (`hasLabel()`, `Key::Label`),
-a value-read cost at materialization, and modeling questions (one label or many? required
-or optional?). This inconsistency with edge labels, where the label is genuinely
-structural and always in-pipeline at zero cost, creates persistent asymmetry.
-
-**The VertexProperty indirection.** TinkerPop wraps vertex properties in a `VertexProperty`
-object to support multi-cardinality (a vertex can have multiple values for the same key).
-This indirection surprises users — `vertex.property("name")` returns a `VertexProperty`,
-not a value — and adds allocation overhead for the overwhelmingly common single-value case.
-
-**Dynamic typing throughout.** A traversal's return type is not known at compile time.
-Whether `.next()` returns a `Vertex`, an `Integer`, or a `Map` depends on the step chain
-at runtime. This makes Rust integration awkward and prevents the compiler from catching
-misuse.
-
-**`by()` modulator complexity.** The `by()` modulator is a powerful but opaque mechanism
-that changes the behavior of the preceding step in non-obvious ways. It is difficult to
-explain, easy to misuse, and hard to reason about in complex traversals.
+We diverge from TinkerPop selectively and reluctantly: only when the standard's design
+creates problems that cannot be resolved within its constraints (forced allocations on the
+hot path, ambiguous access to structural values, type information that is genuinely
+unrepresentable at compile time). Each divergence is documented below with the specific
+problem it solves.
 
 ---
 
-## Principled Departures
+## Design tensions between TinkerPop's goals and RocksGraph's
+
+TinkerPop Gremlin was designed as a universal, database-agnostic traversal language —
+a goal it achieves well. RocksGraph is designed as an embeddable, single-process graph
+engine where every allocation and every round-trip matters. These two design contexts
+create natural tensions:
+
+**Full-property materialization.** In TinkerPop, `out()` returning a `Vertex` always
+fetches all properties. There is no mechanism in the standard for a typed `Vertex`/`Edge`
+with partial properties. The standard alternatives — `valueMap()`, `elementMap()`,
+`project()` — are untyped. For an embedded engine where I/O is the dominant cost,
+selective property loading is essential. RocksGraph addresses this with `withProperties()`.
+
+**Vertex label as an optional dimension.** In TinkerPop, a vertex label is a first-class
+concept alongside the vertex ID — yet unlike edge labels (which are structurally
+necessary for traversal), vertex labels add API surface and materialization cost without
+carrying equivalent structural weight. RocksGraph treats the vertex label as a schema-level
+convenience that is resolved on demand, rather than a required property of every vertex
+traversal.
+
+**VertexProperty indirection.** TinkerPop wraps vertex properties in a `VertexProperty`
+object to support multi-cardinality. RocksGraph treats vertex properties as a flat
+`HashMap<u16, Primitive>` — the common single-value case requires no indirection, and
+multi-cardinality (when genuinely needed) can be modeled with list-valued properties.
+
+**Dynamic typing vs compile-time enforcement.** TinkerPop's traversal return type varies
+at runtime depending on the step chain — `.next()` might return a `Vertex`, an `Integer`,
+or a `Map`. This works naturally in JVM languages but loses information that Rust's type
+system could use. RocksGraph separates `ReadTraversal` and `WriteTraversal` at the type
+level, and uses typed terminal methods.
+
+**`by()` modulator complexity.** The `by()` modulator is powerful but opaque — it changes
+the behavior of the preceding step in non-obvious ways. RocksGraph currently supports
+`order().by(key)` but has not adopted the full `by()` modulator semantics because the
+added expressiveness has not yet been shown to justify the API complexity in an embedded
+context. This is an active area of design evaluation (see `docs/design_group_step.md`),
+not a permanent exclusion.
+
+---
+
+## Necessary Divergences
 
 ### Compile-time read/write separation *(implemented)*
 
@@ -118,12 +126,13 @@ encodes it in the type system rather than leaving it as a runtime convention.
 ### `withProperties()` fetch hint *(implemented)*
 
 A trailing step that controls which properties are fetched during materialization:
-- `.withProperties([])` — return `Vertex`/`Edge` with id and label only; zero extra reads
-  for edges (label is in `EdgeKey`), minimal reads for vertices
+- No `.withProperties()` call — return `Vertex`/`Edge` with id and label only; no property reads
+- `.withProperties([])` — fetch and return all properties
 - `.withProperties(["name", "age"])` — return typed `Vertex`/`Edge` with only those keys
-- No `.withProperties()` — default behavior, all properties fetched
 
-This fills the gap TinkerPop cannot fill: a typed result with selective property loading.
+This addresses a real-world need in embedded contexts — selective property loading
+without losing the typed `Vertex`/`Edge` structure — that the standard Gremlin API has
+no mechanism for.
 
 #### Why no `valueMap()` / `elementMap()`
 
@@ -132,11 +141,10 @@ These TinkerPop steps extract properties into an unstructured `Map`, losing the 
 with partial properties — the only choices are the full `Vertex` (all properties) or
 `valueMap()` (untyped map of values).
 
-`withProperties()` is the principled RocksGraph alternative: the result stays typed, and
-the caller picks which properties to fetch. The mid-pipeline use case (extract properties
-then continue traversing on them) is rare enough that supporting two overlapping APIs is
-not justified. Skip `valueMap()` and `elementMap()` — they are TinkerPop workarounds that
-`withProperties()` renders unnecessary.
+`withProperties()` is the RocksGraph equivalent: the result stays typed as `Vertex`/`Edge`,
+and the caller picks which properties to fetch. TinkerPop users accustomed to `valueMap()`
+or `elementMap()` can use `withProperties()` instead — it achieves the same selective
+loading without losing the typed wrapper.
 
 ### Reserved-key disjoint model *(implemented)*
 
@@ -147,9 +155,10 @@ machinery (`values()`/`properties()`/`has()`) rejects all three outright rather 
 quietly accepting them as a second access path.
 
 TinkerPop's generic steps and reserved tokens (`values("id")`, `Key`-style routing)
-let the same value be reached two ways. RocksGraph treats that overlap as a defect, not
-a convenience — it already produced one real bug (label decoding diverging between the
-two paths) before being closed by removing the second path entirely.
+let the same value be reached through two independent code paths. RocksGraph takes the
+position that structural values (`id`, `label`, `rank`) should have exactly one access
+path: this eliminated a real bug where label decoding diverged between the two paths
+during early development, and prevents that class of inconsistency permanently.
 
 See `docs/design_reserved_keys.md` for the full design.
 
@@ -172,30 +181,15 @@ value modulator's shape (whether it ends in a reducing `Barrier` step like `coun
 or `sum()`) decides whether each map entry's value is a `List` or a reduced scalar.
 RocksGraph's `group()`/`groupCount()` have no `by()` modulator at all today — `group()`
 always groups by raw identity into `List`s, and `groupCount()` is a separate, fixed
-step rather than a generalization. Closing this gap would mean choosing between
-TinkerPop's full generality and the "narrowly scoped steps" value below.
+step rather than a generalization. This is a known compatibility gap relative to TinkerPop.
+
+The design question under evaluation is *how* to close it — specifically whether to adopt
+the full `by()` modulator semantics or introduce a narrower API that covers the common
+cases without the full generality.
 
 See `docs/design_group_step.md` for the verified TinkerPop semantics, the current
 implementation's exact behavior (including a dead `key` field left over from an
 earlier attempt), and the options under consideration.
-
----
-
-## AI-Assisted Query Authoring as a Design Assumption
-
-The traditional argument for TinkerPop compatibility is ecosystem inertia: users know the
-API, existing tooling exists, answers are findable. As AI-assisted code generation becomes
-the primary authoring interface for most users, this argument weakens significantly:
-
-- Users describe what they want in natural language; the AI generates the traversal
-- A non-standard but principled API is equally easy for AI to emit as a standard one
-- The AI can explain departures from TinkerPop on demand and translate between models
-- A clean, internally consistent API is actually easier for AI to use correctly than a
-  standard-compliant one with known inconsistencies
-
-What matters in an AI-assisted world is that the API is **consistent, typed, and well-documented**,
-not that it matches an external specification. Complexity that exists purely for
-compatibility becomes a liability rather than an asset.
 
 ---
 

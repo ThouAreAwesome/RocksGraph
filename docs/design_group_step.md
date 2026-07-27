@@ -64,7 +64,7 @@ this narrow form; no prior design doc covers the gap.
 Verified empirically (`__().group().by("name")` built and inspected directly) before
 writing this section:
 
-1. **`.by()` already has a meaning, and it's wrong for `group()`.** `.by()`
+1. **`.by()` is already bound to `OrderStep` in RocksGraph — a naming collision with `group().by()`.** `.by()`
    (`src/gremlin/traversal/mod.rs`) is hardcoded to `OrderStep`: if the last pushed
    step isn't `Order`, it silently *inserts a new `order()` step* and applies the key
    there instead. Confirmed: `__().group().by("name")` compiled, before the mitigation
