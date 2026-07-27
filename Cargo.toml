@@ -1,46 +1,8 @@
-[package]
-authors = ["Austin Han <austinhan1024@gmail.com>"]
-description = "Embedded property graph database with Gremlin-style traversals. Persistent via RocksDB, zero infrastructure — link it in, open a graph, traverse it."
-edition = "2021"
-license = "MIT OR Apache-2.0"
-name = "rocksgraph"
-version = "0.1.1"
-readme = "README.md"
-repository = "https://github.com/ThouAreAwesome/RocksGraph"
-documentation = "https://docs.rs/rocksgraph"
-keywords = ["graph", "gremlin", "rocksdb", "database"]
-categories = ["database-implementations"]
-rust-version = "1.80"
-exclude = ["/docs", "/.claude", "/.vscode", "/.github"]
-
-[features]
-# Enable RocksDB statistics collection. Adds ~5-10% overhead on every storage
-# operation (atomic counter increments). Use only for profiling/diagnostics.
-rocksdb-stats = []
-# Enable `tracing`-based instrumentation of the pipeline.  Each step logs
-# traversers it emits or filters out.  Opt-in — zero-cost when disabled.
-tracing = ["dep:tracing"]
-
-[dependencies]
-# Compact inline strings (≤22 bytes stack-allocated)
-smol_str = "0.2"
-base64 = "0.21"
-
-# Inline vec for Traverser labels: stack-allocates ≤2 label strings with no heap
-smallvec = "1"
-
-# RocksDB storage backend
-rocksdb = "0.24"
-
-# Bidirectional hash map — used by Schema for label_id ↔ label_string lookup
-bimap = "0.6"
-
-tempfile = "3"
-rand = "0.8"
-hdrhistogram = "7.5.4"
-tracing = { version = "0.1", optional = true }
-
-[dev-dependencies]
+[workspace]
+resolver = "2"
+members = [
+    "rocksgraph"
+]
 
 [profile.bench]
 debug = true
