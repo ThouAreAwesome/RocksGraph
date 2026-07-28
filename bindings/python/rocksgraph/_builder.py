@@ -10,12 +10,13 @@ def _vertex_id(v):
     return v
 
 class Traversal:
-    def __init__(self, session, steps=None):
+    def __init__(self, session, steps=None, prop_keys=None):
         self.session = session
         self.steps = steps or []
+        self.prop_keys = prop_keys
 
     def _clone(self):
-        return self.__class__(self.session, list(self.steps))
+        return self.__class__(self.session, list(self.steps), self.prop_keys)
 
     def _add(self, opcode, args):
         t = self._clone()
@@ -25,18 +26,22 @@ class Traversal:
     def next(self):
         if self.session is None:
             raise RuntimeError("Anonymous traversal cannot be executed")
-        return self.session._execute(encode(self.steps))
+        results = self.session._execute(encode(self.steps), self.prop_keys)
+        return results[0] if results else None
 
     def to_list(self):
         if self.session is None:
             raise RuntimeError("Anonymous traversal cannot be executed")
-        return self.session._execute(encode(self.steps))
+        return self.session._execute(encode(self.steps), self.prop_keys)
 
     toList = to_list  # Gremlin camelCase alias
 
     def withProperties(self, *keys):
-        # Hint is not passed via bytecode, ignored on python side for now
-        return self
+        """Include only the named properties when vertices/edges are materialized.
+        An empty call withProperties() fetches all properties."""
+        t = self._clone()
+        t.prop_keys = list(keys) if keys else []
+        return t
 
     def V(self, *ids): return self._add(OP_V, ids)
     def E(self, *keys): return self._add(OP_E, keys)
@@ -142,7 +147,7 @@ class Traversal:
     
     def count(self): return self._add(OP_COUNT, None)
     def dedup(self): return self._add(OP_DEDUP, None)
-    def degree(self): return self._add(OP_DEGREE, None)
+    def degree(self, direction=None): return self._add(OP_DEGREE, direction)
     def fold(self): return self._add(OP_FOLD, None)
     def unfold(self): return self._add(OP_UNFOLD, None)
     def sum(self): return self._add(OP_SUM, None)
@@ -151,10 +156,11 @@ class Traversal:
     def mean(self): return self._add(OP_MEAN, None)
     
     def group(self): 
-        """Group objects. Note: .by() is not supported in this release."""
+        """Group objects by traverser value. Use .by('key') to group by property."""
         return self._add(OP_GROUP, None)
     def groupCount(self):
-        """Group count objects. Note: .by() is not supported in this release."""
+        """Count objects per group. Use .by('key') to count by property.
+        NOTE: May raise TypeError on Vertex/Edge dicts (unhashable)."""
         return self._add(OP_GROUPCOUNT, None)
         
     def order(self): return self._add(OP_ORDER, [])
@@ -306,6 +312,20 @@ class __:
     def choose(predicate_t, true_t, false_t=None): return Traversal(None).choose(predicate_t, true_t, false_t)
     @staticmethod
     def repeat(traversal): return Traversal(None).repeat(traversal)
+    @staticmethod
+    def addV(label: str, vid=None): return Traversal(None).addV(label, vid)
+    @staticmethod
+    def hasId(value): return Traversal(None).hasId(value)
+    @staticmethod
+    def drop(): return Traversal(None).drop()
+    @staticmethod
+    def addE(label: str): return Traversal(None).addE(label)
+    @staticmethod
+    def from_(v): return Traversal(None).from_(v)
+    @staticmethod
+    def to(v): return Traversal(None).to(v)
+    @staticmethod
+    def property(key: str, value): return Traversal(None).property(key, value)
 
 class P:
     def __init__(self, tag, value):
@@ -337,7 +357,7 @@ class P:
 
 class Graph:
     def __init__(self, path: str):
-        from _rocksgraph import PyGraph
+        from rocksgraph._rocksgraph import PyGraph
         self._graph = PyGraph.open(path)
 
     def read(self):
@@ -349,19 +369,19 @@ class Graph:
 class ReadSession:
     def __init__(self, session):
         self._session = session
-        
-    def g(self):
+
+    def traversal(self):
         return GraphTraversal(self._session)
 
 class TxSession:
     def __init__(self, session):
         self._session = session
-        
-    def g(self):
+
+    def traversal(self):
         return GraphTraversal(self._session)
-        
+
     def commit(self):
         self._session.commit()
-        
+
     def rollback(self):
         self._session.rollback()

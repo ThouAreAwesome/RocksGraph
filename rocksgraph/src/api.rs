@@ -244,9 +244,10 @@ impl ReadSession {
     }
 
     /// Execute a bytecode-encoded traversal, returning results natively.
-    pub fn execute(&mut self, bytes: &[u8]) -> Result<Vec<crate::gremlin::value::Value>, crate::types::StoreError> {
+    pub fn execute(&mut self, bytes: &[u8], prop_keys: Option<Vec<String>>) -> Result<Vec<crate::gremlin::value::Value>, crate::types::StoreError> {
         self.ctx.clear_caches();
-        crate::bytecode::execute_read(&mut self.ctx, bytes)
+        let keys = prop_keys.map(|v| v.into_iter().map(|s| smol_str::SmolStr::from(s)).collect());
+        crate::bytecode::execute_read(&mut self.ctx, bytes, keys)
     }
 
     // Clear per-traversal caches so they don't accumulate across g() calls.
@@ -298,8 +299,9 @@ impl TxSession {
     }
 
     /// Execute a bytecode-encoded traversal, returning results natively.
-    pub fn execute(&mut self, bytes: &[u8]) -> Result<Vec<crate::gremlin::value::Value>, crate::types::StoreError> {
-        crate::bytecode::execute_write(&mut self.ctx, bytes)
+    pub fn execute(&mut self, bytes: &[u8], prop_keys: Option<Vec<String>>) -> Result<Vec<crate::gremlin::value::Value>, crate::types::StoreError> {
+        let keys = prop_keys.map(|v| v.into_iter().map(|s| smol_str::SmolStr::from(s)).collect());
+        crate::bytecode::execute_write(&mut self.ctx, bytes, keys)
     }
 
     /// Flush all mutations to RocksDB atomically and consume this session.

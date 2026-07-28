@@ -107,11 +107,23 @@ def _encode_step(opcode: int, args: Any, buf: bytearray):
                   OP_ID, OP_LABEL, OP_RANK, OP_IDENTITY):
         return
         
-    if opcode in (OP_BOTH, OP_BOTHE, OP_IN, OP_INE, OP_OUT, OP_OUTE):
+    if opcode in (OP_BOTH, OP_IN, OP_OUT):
         buf.extend(struct.pack(">H", len(args)))
         for label in args:
             _encode_string(label, buf)
         buf.append(0) # end_vertex_ids = None
+
+    elif opcode in (OP_BOTHE, OP_INE, OP_OUTE):
+        buf.extend(struct.pack(">H", len(args)))
+        for label in args:
+            _encode_string(label, buf)
+        buf.append(0) # end_vertex_ids = None
+        buf.append(0) # rank = None
+
+    elif opcode == OP_DEGREE:
+        # 0=Both, 1=Out, 2=In
+        dir_map = {"out": 1, "in": 2}
+        buf.append(dir_map.get(args, 0))
 
     elif opcode in (OP_VALUES, OP_PROPERTIES, OP_AS, OP_SELECT, OP_E):
         buf.extend(struct.pack(">H", len(args)))
@@ -141,14 +153,22 @@ def _encode_step(opcode: int, args: Any, buf: bytearray):
             _encode_plan(plan, buf)
             
     elif opcode == OP_ADDV:
-        # label: str, id: Option<i64>
-        label, vid = args
+        # label, vid, properties
+        if len(args) == 3:
+            label, vid, props = args
+        else:
+            label, vid = args
+            props = {}
         _encode_string(label, buf)
         if vid is not None:
             buf.append(1)
             buf.extend(struct.pack(">q", vid))
         else:
             buf.append(0)
+        buf.extend(struct.pack(">H", len(props)))
+        for k, v in props.items():
+            _encode_string(k, buf)
+            _encode_primitive(v, buf)
             
     elif opcode == OP_ADDE:
         # label, from_id, to_id, properties, rank
