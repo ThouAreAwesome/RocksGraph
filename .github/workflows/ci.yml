@@ -51,11 +51,9 @@ jobs:
           maturin build --release
           pip install --force-reinstall ../../target/wheels/*.whl
       - name: Verify import
-        working-directory: bindings/python
         run: python -c "from rocksgraph._rocksgraph import PyGraph; print('ok')"
       - name: Run tests
-        working-directory: bindings/python
-        run: python -m pytest tests/ -q
+        run: python -m pytest bindings/python/tests/ -q
 
   python-tests:
     strategy:
@@ -79,5 +77,4 @@ jobs:
           maturin build --release
           pip install --force-reinstall ../../target/wheels/*.whl
       - name: Run Python tests
-        working-directory: bindings/python
-        run: python -m pytest tests/ -v
+        run: python -m pytest bindings/python/tests/ -v

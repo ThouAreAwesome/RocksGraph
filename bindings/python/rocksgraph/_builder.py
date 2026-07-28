@@ -558,7 +558,10 @@ class P:
 
 class Graph:
     def __init__(self, path: str):
-        from rocksgraph._rocksgraph import PyGraph
+        try:
+            from rocksgraph._rocksgraph import PyGraph
+        except ModuleNotFoundError:
+            from _rocksgraph import PyGraph
         self._graph = PyGraph.open(path)
 
     def read(self):
