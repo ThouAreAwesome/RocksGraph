@@ -11,11 +11,6 @@ def insert_ages(graph):
     return graph.read()
 
 
-def age_values(results):
-    """Extract 'age' property values from vertex list."""
-    return [r["properties"]["age"][0] for r in results]
-
-
 class TestPredicates:
     def test_gt(self, graph):
         rs = insert_ages(graph)

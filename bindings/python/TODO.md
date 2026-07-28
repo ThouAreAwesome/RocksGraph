@@ -3,9 +3,9 @@
 ## Scope for v0.1
 
 v0.1 supports: vertex CRUD, edge CRUD, property filtering, basic traversals
-(`out`/`in_`/`both`), aggregations (`count`/`fold`/`unfold`), `hasLabel`, `hasId`,
-`values`, all predicates, `order().by()`, `path()`, `as_`/`select`, `coalesce`,
-`repeat`/`times`, `union`, `where`, `simplePath`, `drop`,
+(`out`/`in_`/`both`), aggregations (`count`/`fold`/`unfold`/`sum`/`max`/`min`/`mean`/`degree`), `hasLabel`, `hasId`,
+`values`, all predicates, `is()` scalar filter, `order().by()`, `path()`, `as_`/`select`, `coalesce`, `choose`, `local`, `cyclicPath`,
+`repeat`/`times`/`until`/`emit`, `union`, `where`, `simplePath`, `drop`,
 `limit`/`range`/`skip`/`tail`. Edge traversals (`outE`/`inE`/`bothE`/`inV`/`outV`)
 and edge properties are fully tested end-to-end.
 
@@ -16,8 +16,7 @@ The single exception is `OP_ENDVERTEXFILTER` (internal-only, never exposed to us
 The engine does not auto-generate vertex IDs. Every `addV` call must supply a
 unique integer ID via the preceding property step.
 
-Items marked **[v0.2]** are deferred — encoding and Rust engine are complete but
-not yet runtime-tested, or blocked by a known engine limitation.
+Items marked **[v0.2]** are deferred — blocked by a known engine limitation.
 
 ---
 
@@ -47,15 +46,13 @@ not yet runtime-tested, or blocked by a known engine limitation.
 
 - [x] **`next()` returning a full list** — fixed; returns `results[0]` or `None`.
 
-- [ ] **`group()`/`groupCount()` ignore `by()` key** — The Rust `GroupStep` and
-  `GroupCountStep` always group by the traverser value itself (line 49 of
-  `rocksgraph/src/engine/volcano/steps/group.rs`). The `by("key")` argument is
-  encoded and decoded but never consumed by the physical step. When traversers are
-  vertices, the map keys become Python dicts which are unhashable, causing
-  `TypeError: unhashable type: 'dict'`. **Root cause: Rust-side feature gap.**
-  Workaround: project to scalar values before grouping, e.g.
-  `V().values("city").group()` (groups by city string). This is a v0.1 blocker
-  if `group().by(key)` is listed as supported.
+- [x] **`group()`/`groupCount()` `by()` key now implemented** — `GroupStep` and
+  `GroupCountStep` in `group.rs` now look up the named property value as the
+  grouping key. `test_group_by` and `test_group_count_by` pass.
+
+- [x] **`group()` / `groupCount()` without `by()` on vertex/edge traversers** — fixed
+  in `lib.rs`: Map keys for Vertex→`int(id)`, Edge→`tuple(src,dst,label,rank)`,
+  both hashable. `test_group_no_by` and `test_group_count_no_by` pass.
 
 - [x] **`fold()`/`unfold()` type compat issue** — resolved; `fold()` returns a
   single-element list containing a list, which is the correct Gremlin semantics.
@@ -180,19 +177,19 @@ Verified passing:
 - [x] `simplePath()` — `TestV02SubTraversals::test_simplePath` passes
 - [x] `has("label", "key", value)` 3-arg form
 - [x] `drop()` removes a vertex
-- [ ] `group().by("key")` — **SKIPPED**: Rust `GroupStep` ignores `by()` key, always
-  groups by traverser value. When traversers are vertices, keys are Python dicts
-  (unhashable). See "Known runtime bugs" above for root cause.
-- [ ] `groupCount().by("key")` — same root cause as `group()`.
+- [x] `group().by("key")` — `test_group_by` passes; Rust `GroupStep` now correctly
+  looks up property values as grouping keys.
+- [x] `groupCount().by("key")` — same fix; `GroupCountStep` also implemented.
 
-**Not yet runtime-tested (wired, encoding verified):**
-- [ ] `repeat().until(sub_traversal)` — times() tested, until() not
-- [ ] `repeat().emit()` — not yet tested
-- [ ] `degree()` — direction encoding tested in codec; no runtime test
-- [ ] `sum()` / `max()` / `min()` / `mean()` — no runtime tests
-- [ ] `cyclicPath()` — no runtime test
-- [ ] `choose(pred, true_t, false_t)` — no runtime test
-- [ ] `local(sub_traversal)` — no runtime test
+**All wired steps now runtime-tested ✅:**
+
+- [x] `repeat().until(sub_traversal)` — `test_repeat_until` passes
+- [x] `repeat().emit()` — `test_repeat_emit` passes
+- [x] `degree()` — 3 runtime tests (default/out/in) pass
+- [x] `sum()` / `max()` / `min()` / `mean()` — `TestAggregations` passes
+- [x] `cyclicPath()` — `test_cyclicPath` passes
+- [x] `choose(pred, true_t, false_t)` — `test_choose` passes
+- [x] `local(sub_traversal)` — `test_local` passes
 
 ### 8b. Edge traversals — all confirmed working ✅
 
@@ -285,30 +282,23 @@ Only one edge per label between any two vertices is allowed (rank=0 default).
 
 ---
 
-## Test summary — 94 passed, 4 skipped (98 total)
+## Test summary — 142 passed, 3 skipped
 
-The 4 skipped tests fall into two categories:
+The 5 skipped tests fall into two categories:
 
 | Test | Reason | Root cause |
 |------|---------|------------|
-| `test_group_by` | `group()` always groups by traverser value, ignoring `by()` key | Rust `GroupStep` missing `by()` implementation |
 | `test_adde_with_rank` | Non-zero rank rejected by engine | Engine: single-edge only |
 | `test_hasRank` | Depends on non-zero rank support | Engine: single-edge only |
 | `test_hasRank_not_eq` | Depends on non-zero rank support | Engine: single-edge only |
 
 **Sharpest v0.1 user-facing limitations:**
 
-1. **`group()`/`groupCount()` with vertex or edge keys fail** — the `by()` key
-   argument is silently ignored at the Rust level. Rust always uses the raw traverser
-   value as the grouping key. When upstream returns vertices/edges, Python raises
-   `TypeError: unhashable type: 'dict'`. A Rust-side fix is required (implement `by`
-   key lookup in `GroupStep`).
-
-2. **`addV` requires explicit vertex ID** — every `addV` must be followed by
+1. **`addV` requires explicit vertex ID** — every `addV` must be followed by
    `.property("id", N)` before execution. The error is
    `TraversalError("AddVStep cannot be built without a vertex ID")`.
 
-3. **Multi-edge (rank > 0) is unsupported** — only one edge per label between any
+2. **Multi-edge (rank > 0) is unsupported** — only one edge per label between any
    two vertices is allowed. Non-zero rank raises `UnsupportedOperation` at runtime.
 
 ---
@@ -332,6 +322,4 @@ or no builder method). Listed in rough priority order.
 
 ### Need builder method
 
-| Feature | Rust step | Effort |
-|---------|-----------|:------:|
-| `is(pred)` | `ScalarFilterStep` — opcode already exists | small |
+(All builder methods are now implemented — see scope above.)

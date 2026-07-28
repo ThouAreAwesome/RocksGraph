@@ -25,7 +25,7 @@ fn t(v: i64) -> Rc<Traverser> {
 fn test_group_step() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![t(1), t(2), t(1), t(3)]);
-    let mut step = GroupStep::default();
+    let mut step = GroupStep::new(None);
     step.add_upper(src.clone() as StepRef);
     let mut ctx = NoopCtx;
     let res = step.produce(&mut ctx).unwrap().unwrap();
@@ -41,7 +41,7 @@ fn test_group_step() {
 fn test_group_count_step() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![t(1), t(2), t(1), t(1), t(3)]);
-    let mut step = GroupCountStep::default();
+    let mut step = GroupCountStep::new(None);
     step.add_upper(src.clone() as StepRef);
     let mut ctx = NoopCtx;
     let res = step.produce(&mut ctx).unwrap().unwrap();
@@ -58,7 +58,7 @@ fn test_group_count_step() {
 #[test]
 fn test_group_empty() {
     let src = BufferedStep::new(VecSourceStep::empty());
-    let mut step = GroupStep::default();
+    let mut step = GroupStep::new(None);
     step.add_upper(src.clone() as StepRef);
     let mut ctx = NoopCtx;
     assert!(step.produce(&mut ctx).unwrap().is_some()); // emits empty map
@@ -67,7 +67,7 @@ fn test_group_empty() {
 #[test]
 fn test_group_count_empty() {
     let src = BufferedStep::new(VecSourceStep::empty());
-    let mut step = GroupCountStep::default();
+    let mut step = GroupCountStep::new(None);
     step.add_upper(src.clone() as StepRef);
     let mut ctx = NoopCtx;
     assert!(step.produce(&mut ctx).unwrap().is_some());
@@ -75,7 +75,7 @@ fn test_group_count_empty() {
 
 #[test]
 fn test_group_no_upstream() {
-    let mut step = GroupStep::default();
+    let mut step = GroupStep::new(None);
     let mut ctx = NoopCtx;
     assert!(step.produce(&mut ctx).unwrap().is_none());
 }
@@ -84,7 +84,7 @@ fn test_group_no_upstream() {
 fn test_group_done_flag() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![t(1)]);
-    let mut step = GroupStep::default();
+    let mut step = GroupStep::new(None);
     step.add_upper(src.clone() as StepRef);
     let mut ctx = NoopCtx;
     assert!(step.produce(&mut ctx).unwrap().is_some());
@@ -93,14 +93,14 @@ fn test_group_done_flag() {
 
 #[test]
 fn test_group_count_no_upstream() {
-    let mut step = GroupCountStep::default();
+    let mut step = GroupCountStep::new(None);
     let mut ctx = NoopCtx;
     assert!(step.produce(&mut ctx).unwrap().is_none());
 }
 
 #[test]
 fn test_group_count_upper() {
-    let mut step = GroupCountStep::default();
+    let mut step = GroupCountStep::new(None);
     assert!(step.upper().is_none());
     let src = BufferedStep::new(VecSourceStep::empty());
     step.add_upper(src.clone() as StepRef);
@@ -109,7 +109,7 @@ fn test_group_count_upper() {
 
 #[test]
 fn test_group_upper() {
-    let mut step = GroupStep::default();
+    let mut step = GroupStep::new(None);
     assert!(step.upper().is_none());
     let src = BufferedStep::new(VecSourceStep::empty());
     step.add_upper(src.clone() as StepRef);
@@ -120,7 +120,7 @@ fn test_group_upper() {
 fn test_group_count_done_flag() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![t(1)]);
-    let mut step = GroupCountStep::default();
+    let mut step = GroupCountStep::new(None);
     step.add_upper(src.clone() as StepRef);
     let mut ctx = NoopCtx;
     assert!(step.produce(&mut ctx).unwrap().is_some());

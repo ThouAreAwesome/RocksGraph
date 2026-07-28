@@ -1,8 +1,187 @@
 from typing import Any, List, Optional
 from ._codec import *
+from enum import Enum
+
+
+class T:
+    """Token constants for use with by(), values(), properties()."""
+    id = "id"
+    label = "label"
+    key = "key"
+    value = "value"
+
+
+class Direction(Enum):
+    """Traversal direction for degree()."""
+    OUT = "out"
+    IN = "in"
+    BOTH = None  # default
+
+
+class Order(Enum):
+    """Sort order for order().by()."""
+    asc = "asc"
+    desc = "desc"
+
+
+class Vertex:
+    """A materialised vertex from a traversal result."""
+    def __init__(self, d: dict):
+        self._d = d
+
+    def __getitem__(self, key: str):
+        return self._d[key]
+
+    def __contains__(self, key: str):
+        return key in self._d
+
+    def get(self, key: str, default=None):
+        return self._d.get(key, default)
+
+    def keys(self):
+        return self._d.keys()
+
+    def __hash__(self):
+        return hash(self._d["id"])
+
+    def __eq__(self, other):
+        if isinstance(other, Vertex):
+            return self._d["id"] == other._d["id"]
+        return NotImplemented
+
+    def items(self):
+        return self._d.items()
+
+    def __iter__(self):
+        return iter(self._d)
+
+    def __repr__(self):
+        props = self._d.get("properties", {})
+        summary = ", ".join(f"{k}={v!r}" for k, v in props.items())
+        return f"Vertex(id={self._d['id']!r}, label={self._d.get('label','')!r}{', ' + summary if summary else ''})"
+
+    @property
+    def id(self):
+        return self._d["id"]
+
+    @property
+    def label(self):
+        return self._d.get("label", "")
+
+    @property
+    def properties(self):
+        return self._d.get("properties", {})
+
+
+class Edge:
+    """A materialised edge from a traversal result."""
+    def __init__(self, d: dict):
+        self._d = d
+
+    def __getitem__(self, key: str):
+        return self._d[key]
+
+    def __contains__(self, key: str):
+        return key in self._d
+
+    def get(self, key: str, default=None):
+        return self._d.get(key, default)
+
+    def keys(self):
+        return self._d.keys()
+
+    def __hash__(self):
+        return hash((self._d["src"], self._d["dst"], self._d["label"], self._d.get("rank", 0)))
+
+    def __eq__(self, other):
+        if isinstance(other, Edge):
+            return (self._d["src"] == other._d["src"]
+                    and self._d["dst"] == other._d["dst"]
+                    and self._d["label"] == other._d["label"]
+                    and self._d.get("rank", 0) == other._d.get("rank", 0))
+        return NotImplemented
+
+    def items(self):
+        return self._d.items()
+
+    def __iter__(self):
+        return iter(self._d)
+
+    def __repr__(self):
+        props = self._d.get("properties", {})
+        summary = ", ".join(f"{k}={v!r}" for k, v in props.items())
+        return f"Edge(src={self._d['src']!r}, dst={self._d['dst']!r}, label={self._d.get('label','')!r}, rank={self._d.get('rank', 0)!r}{', ' + summary if summary else ''})"
+
+    @property
+    def src(self):
+        return self._d["src"]
+
+    @property
+    def dst(self):
+        return self._d["dst"]
+
+    @property
+    def label(self):
+        return self._d.get("label", "")
+
+    @property
+    def rank(self):
+        return self._d.get("rank", 0)
+
+    @property
+    def properties(self):
+        return self._d.get("properties", {})
+
+
+class Property:
+    """A materialised property element from `.properties()` traversal result."""
+    def __init__(self, d: dict):
+        self._d = d
+
+    def __getitem__(self, key: str):
+        return self._d[key]
+
+    def __contains__(self, key: str):
+        return key in self._d
+
+    def get(self, key: str, default=None):
+        return self._d.get(key, default)
+
+    def __repr__(self):
+        return f"Property(key={self._d.get('key','')!r}, value={self._d.get('value','')!r})"
+
+    @property
+    def key(self):
+        return self._d.get("key", "")
+
+    @property
+    def value(self):
+        return self._d.get("value", None)
+
+
+def _post_process(value):
+    """Recursively convert raw dicts to Vertex/Edge/Property objects."""
+    if isinstance(value, dict):
+        if "src" in value and "dst" in value:
+            return Edge(value)
+        if "id" in value and "label" in value:
+            return Vertex(value)
+        if set(value.keys()) == {"key", "value"}:
+            return Property(value)
+        if "objects" in value:  # Path
+            value["objects"] = [_post_process(o) for o in value["objects"]]
+            return value
+        # Generic map (e.g. group() output) — recursively post-process values
+        return {k: _post_process(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_post_process(v) for v in value]
+    return value
+
 
 def _vertex_id(v):
-    """Extract a vertex ID from a dict, object, or raw int."""
+    """Extract a vertex ID from a Vertex, dict, or raw int."""
+    if isinstance(v, Vertex):
+        return v.id
     if isinstance(v, dict):
         return v.get("id", v)
     if hasattr(v, 'id'):
@@ -27,14 +206,25 @@ class Traversal:
         if self.session is None:
             raise RuntimeError("Anonymous traversal cannot be executed")
         results = self.session._execute(encode(self.steps), self.prop_keys)
-        return results[0] if results else None
+        return _post_process(results[0]) if results else None
 
     def to_list(self):
         if self.session is None:
             raise RuntimeError("Anonymous traversal cannot be executed")
-        return self.session._execute(encode(self.steps), self.prop_keys)
+        return _post_process(self.session._execute(encode(self.steps), self.prop_keys))
 
     toList = to_list  # Gremlin camelCase alias
+
+    def iterate(self):
+        """Execute traversal for side-effects only (e.g. drop, mutations). Returns None."""
+        self.to_list()
+        return None
+
+    def to_set(self):
+        """Return results as a Python set (requires hashable elements)."""
+        return set(self.to_list())
+
+    toSet = to_set  # Gremlin camelCase alias
 
     def withProperties(self, *keys):
         """Include only the named properties when vertices/edges are materialized.
@@ -120,6 +310,12 @@ class Traversal:
         else:
             raise ValueError("has() takes 1 to 3 arguments")
 
+    def is_(self, value):
+        """Filter the current traverser value with a predicate. Used after values()."""
+        if isinstance(value, P):
+            return self._add(OP_SCALARFILTER, value)
+        return self._add(OP_SCALARFILTER, P.eq(value))
+
     def hasId(self, value):
         if isinstance(value, P):
             return self._add(OP_HASID, value)
@@ -147,7 +343,10 @@ class Traversal:
     
     def count(self): return self._add(OP_COUNT, None)
     def dedup(self): return self._add(OP_DEDUP, None)
-    def degree(self, direction=None): return self._add(OP_DEGREE, direction)
+    def degree(self, direction=None):
+        if isinstance(direction, Direction):
+            direction = direction.value
+        return self._add(OP_DEGREE, direction)
     def fold(self): return self._add(OP_FOLD, None)
     def unfold(self): return self._add(OP_UNFOLD, None)
     def sum(self): return self._add(OP_SUM, None)
@@ -165,6 +364,8 @@ class Traversal:
         
     def order(self): return self._add(OP_ORDER, [])
     def by(self, key_spec, order="asc"):
+        if isinstance(order, Order):
+            order = order.value
         if self.steps and self.steps[-1][0] == OP_ORDER:
             t = self._clone()
             t.steps[-1] = (OP_ORDER, list(t.steps[-1][1]) + [(key_spec, order)])
@@ -385,3 +586,13 @@ class TxSession:
 
     def rollback(self):
         self._session.rollback()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is None:
+            self._session.commit()
+        else:
+            self._session.rollback()
+        return False
