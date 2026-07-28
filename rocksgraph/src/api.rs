@@ -244,9 +244,13 @@ impl ReadSession {
     }
 
     /// Execute a bytecode-encoded traversal, returning results natively.
-    pub fn execute(&mut self, bytes: &[u8], prop_keys: Option<Vec<String>>) -> Result<Vec<crate::gremlin::value::Value>, crate::types::StoreError> {
+    pub fn execute(
+        &mut self,
+        bytes: &[u8],
+        prop_keys: Option<Vec<String>>,
+    ) -> Result<Vec<crate::gremlin::value::Value>, crate::types::StoreError> {
         self.ctx.clear_caches();
-        let keys = prop_keys.map(|v| v.into_iter().map(|s| smol_str::SmolStr::from(s)).collect());
+        let keys = prop_keys.map(|v| v.into_iter().map(smol_str::SmolStr::from).collect());
         crate::bytecode::execute_read(&mut self.ctx, bytes, keys)
     }
 
@@ -299,8 +303,12 @@ impl TxSession {
     }
 
     /// Execute a bytecode-encoded traversal, returning results natively.
-    pub fn execute(&mut self, bytes: &[u8], prop_keys: Option<Vec<String>>) -> Result<Vec<crate::gremlin::value::Value>, crate::types::StoreError> {
-        let keys = prop_keys.map(|v| v.into_iter().map(|s| smol_str::SmolStr::from(s)).collect());
+    pub fn execute(
+        &mut self,
+        bytes: &[u8],
+        prop_keys: Option<Vec<String>>,
+    ) -> Result<Vec<crate::gremlin::value::Value>, crate::types::StoreError> {
+        let keys = prop_keys.map(|v| v.into_iter().map(smol_str::SmolStr::from).collect());
         crate::bytecode::execute_write(&mut self.ctx, bytes, keys)
     }
 

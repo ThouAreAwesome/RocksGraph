@@ -308,12 +308,20 @@ impl From<&[u8]> for Value {
 /// `properties` uses multi-cardinality: each key maps to a `Vec<Value>` to
 /// support TinkerPop VertexProperty semantics.  For the common single-value
 /// case, read `vertex.properties["name"][0]`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Vertex {
     pub id: i64,
     pub label: SmolStr,
     pub properties: HashMap<SmolStr, Vec<Value>>,
 }
+
+impl PartialEq for Vertex {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for Vertex {}
 
 // ── Edge ──────────────────────────────────────────────────────────────────────
 
@@ -325,7 +333,7 @@ pub struct Vertex {
 /// `rank` is `u16` end to end: `.property("rank", 5u16)` on write, [`Value::UInt16`] from
 /// `.values(["rank"])` on generic read, and this raw `u16` field on full materialization —
 /// no widening through `Int32`/`Int64` at any point.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Edge {
     pub id: SmolStr,
     pub out_v: i64,
@@ -334,6 +342,14 @@ pub struct Edge {
     pub rank: u16,
     pub properties: HashMap<SmolStr, Value>,
 }
+
+impl PartialEq for Edge {
+    fn eq(&self, other: &Self) -> bool {
+        self.out_v == other.out_v && self.in_v == other.in_v && self.label == other.label && self.rank == other.rank
+    }
+}
+
+impl Eq for Edge {}
 
 // ── Property ──────────────────────────────────────────────────────────────────
 

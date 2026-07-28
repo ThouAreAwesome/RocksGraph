@@ -10,16 +10,24 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    types::{error::StoreError, gvalue::GValue},
+    types::{error::StoreError, gvalue::GValue, CanonicalKey},
 };
 use smallvec::{smallvec, SmallVec};
 use std::rc::Rc;
 
-/// Collects all traversers and groups them into a Map by value.
-#[derive(Debug, Default)]
+/// Collects all traversers and groups them into a Map.
+/// If `key` is set, groups by the named property value instead of the traverser value.
+#[derive(Debug)]
 pub struct GroupStep {
     upstream: Option<StepRef>,
     done: bool,
+    key: Option<u16>, // property key ID for group().by("key")
+}
+
+impl GroupStep {
+    pub fn new(key: Option<u16>) -> Self {
+        Self { upstream: None, done: false, key }
+    }
 }
 
 impl CoreStep for GroupStep {
@@ -46,7 +54,19 @@ impl CoreStep for GroupStep {
         let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
         let mut groups: Vec<(GValue, Vec<GValue>)> = Vec::new();
         while let Some(t) = upstream.next(ctx)? {
-            let key = t.value.clone();
+            let key = if let Some(prop_key_id) = self.key {
+                let canonical_key = match &t.value {
+                    GValue::Vertex(vt) => Some(CanonicalKey::Vertex(*vt)),
+                    GValue::Edge(eg) => Some(CanonicalKey::Edge(eg.canonical_edge_key())),
+                    _ => None,
+                };
+                match canonical_key.and_then(|ck| ctx.get_value(&ck, prop_key_id).transpose()) {
+                    Some(Ok(prim)) => GValue::Scalar(prim),
+                    _ => continue,
+                }
+            } else {
+                t.value.clone()
+            };
             if let Some((_, list)) = groups.iter_mut().find(|(k, _)| k == &key) {
                 list.push(t.value.clone());
             } else {
@@ -64,10 +84,18 @@ impl CoreStep for GroupStep {
 }
 
 /// Collects all traversers and counts occurrences per value.
-#[derive(Debug, Default)]
+/// If `key` is set, counts by the named property value instead of the traverser value.
+#[derive(Debug)]
 pub struct GroupCountStep {
     upstream: Option<StepRef>,
     done: bool,
+    key: Option<u16>,
+}
+
+impl GroupCountStep {
+    pub fn new(key: Option<u16>) -> Self {
+        Self { upstream: None, done: false, key }
+    }
 }
 
 impl CoreStep for GroupCountStep {
@@ -94,10 +122,23 @@ impl CoreStep for GroupCountStep {
         let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
         let mut counts: Vec<(GValue, i64)> = Vec::new();
         while let Some(t) = upstream.next(ctx)? {
-            if let Some((_, cnt)) = counts.iter_mut().find(|(k, _)| k == &t.value) {
+            let key = if let Some(prop_key_id) = self.key {
+                let canonical_key = match &t.value {
+                    GValue::Vertex(vt) => Some(CanonicalKey::Vertex(*vt)),
+                    GValue::Edge(eg) => Some(CanonicalKey::Edge(eg.canonical_edge_key())),
+                    _ => None,
+                };
+                match canonical_key.and_then(|ck| ctx.get_value(&ck, prop_key_id).transpose()) {
+                    Some(Ok(prim)) => GValue::Scalar(prim),
+                    _ => continue,
+                }
+            } else {
+                t.value.clone()
+            };
+            if let Some((_, cnt)) = counts.iter_mut().find(|(k, _)| k == &key) {
                 *cnt += 1;
             } else {
-                counts.push((t.value.clone(), 1));
+                counts.push((key, 1));
             }
         }
         self.done = true;

@@ -707,13 +707,17 @@ impl PhysicalPlanBuilder {
                     "CyclicPathStep"
                 )
             }
-            LogicalStep::Group(_) => {
-                drop(schema);
-                wire_required!(BufferedStep::new(steps::group::GroupStep::default()), upstream, "GroupStep")
+            LogicalStep::Group(s) => {
+                let prop_key_id = resolve_group_key(&s.key, &schema);
+                wire_required!(BufferedStep::new(steps::group::GroupStep::new(prop_key_id)), upstream, "GroupStep")
             }
-            LogicalStep::GroupCount(_) => {
-                drop(schema);
-                wire_required!(BufferedStep::new(steps::group::GroupCountStep::default()), upstream, "GroupCountStep")
+            LogicalStep::GroupCount(s) => {
+                let prop_key_id = resolve_group_key(&s.key, &schema);
+                wire_required!(
+                    BufferedStep::new(steps::group::GroupCountStep::new(prop_key_id)),
+                    upstream,
+                    "GroupCountStep"
+                )
             }
             LogicalStep::Choose(s) => {
                 drop(schema);
@@ -768,6 +772,18 @@ impl PhysicalPlanBuilder {
             LogicalStep::From(_) | LogicalStep::To(_) => Err(StoreError::UnsupportedOperation(
                 "From/To steps are optimizer-internal and should be eliminated before physical build.".to_string(),
             )),
+        }
+    }
+}
+
+fn resolve_group_key(key: &Option<SmolStr>, schema: &Schema) -> Option<u16> {
+    let key_str = key.as_ref()?;
+    if let Some(id) = schema.prop_key_id(key_str) {
+        Some(id)
+    } else {
+        match schema.mode {
+            SchemaMode::Strict => None,
+            SchemaMode::Auto => Some(u16::MAX),
         }
     }
 }
