@@ -21,8 +21,12 @@ impl<'s> ReadTraversal<'s> {
         Self { plan: LogicalPlan { steps: vec![] }, ctx, error: None, pending_repeat: None, prop_keys: None }
     }
 
-    pub(crate) fn from_plan(plan: LogicalPlan, ctx: &'s mut dyn GraphCtx) -> Self {
-        Self { plan, ctx, error: None, pending_repeat: None, prop_keys: None }
+    pub(crate) fn from_plan(
+        plan: LogicalPlan,
+        ctx: &'s mut dyn GraphCtx,
+        prop_keys: Option<Vec<SmolStr>>,
+    ) -> Self {
+        Self { plan, ctx, error: None, pending_repeat: None, prop_keys }
     }
 
     /// Configure property fetching for this traversal.
@@ -111,8 +115,12 @@ impl<'s> WriteTraversal<'s> {
         Self { plan: LogicalPlan { steps: vec![] }, ctx, error: None, pending_repeat: None, prop_keys: None }
     }
 
-    pub(crate) fn from_plan(plan: LogicalPlan, ctx: &'s mut dyn GraphCtx) -> Self {
-        Self { plan, ctx, error: None, pending_repeat: None, prop_keys: None }
+    pub(crate) fn from_plan(
+        plan: LogicalPlan,
+        ctx: &'s mut dyn GraphCtx,
+        prop_keys: Option<Vec<SmolStr>>,
+    ) -> Self {
+        Self { plan, ctx, error: None, pending_repeat: None, prop_keys }
     }
 
     /// Configure property fetching for this traversal (see [`ReadTraversal::withProperties`]).

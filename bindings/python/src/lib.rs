@@ -137,8 +137,8 @@ struct PyReadSession {
 
 #[pymethods]
 impl PyReadSession {
-    fn _execute(&mut self, py: Python<'_>, bytes: &[u8]) -> PyResult<PyObject> {
-        let results = self.session.execute(bytes)
+    fn _execute(&mut self, py: Python<'_>, bytes: &[u8], prop_keys: Option<Vec<String>>) -> PyResult<PyObject> {
+        let results = self.session.execute(bytes, prop_keys)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
         values_to_py_list(py, results)
     }
@@ -151,11 +151,11 @@ struct PyTxSession {
 
 #[pymethods]
 impl PyTxSession {
-    fn _execute(&mut self, py: Python<'_>, bytes: &[u8]) -> PyResult<PyObject> {
+    fn _execute(&mut self, py: Python<'_>, bytes: &[u8], prop_keys: Option<Vec<String>>) -> PyResult<PyObject> {
         let session = self.session.as_mut().ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err("Session already closed")
         })?;
-        let results = session.execute(bytes)
+        let results = session.execute(bytes, prop_keys)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
         values_to_py_list(py, results)
     }

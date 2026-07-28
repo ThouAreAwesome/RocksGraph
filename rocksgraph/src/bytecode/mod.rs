@@ -1129,14 +1129,22 @@ fn decode_emit_spec(bytes: &[u8], offset: &mut usize) -> Result<EmitSpec, StoreE
         _ => Err(StoreError::UnsupportedOperation(format!("Unknown EmitSpec tag {}", tag))),
     }
 }
-pub fn execute_read(graph: &mut dyn GraphCtx, bytes: &[u8]) -> Result<Vec<Value>, StoreError> {
+pub fn execute_read(
+    graph: &mut dyn GraphCtx,
+    bytes: &[u8],
+    prop_keys: Option<Vec<SmolStr>>,
+) -> Result<Vec<Value>, StoreError> {
     let plan = decode(bytes)?;
-    let traversal = crate::gremlin::traversal::ReadTraversal::from_plan(plan, graph);
+    let traversal = crate::gremlin::traversal::ReadTraversal::from_plan(plan, graph, prop_keys);
     traversal.to_list()
 }
-pub fn execute_write(graph: &mut dyn GraphCtx, bytes: &[u8]) -> Result<Vec<Value>, StoreError> {
+pub fn execute_write(
+    graph: &mut dyn GraphCtx,
+    bytes: &[u8],
+    prop_keys: Option<Vec<SmolStr>>,
+) -> Result<Vec<Value>, StoreError> {
     let plan = decode(bytes)?;
-    let traversal = crate::gremlin::traversal::WriteTraversal::from_plan(plan, graph);
+    let traversal = crate::gremlin::traversal::WriteTraversal::from_plan(plan, graph, prop_keys);
     traversal.to_list()
 }
 

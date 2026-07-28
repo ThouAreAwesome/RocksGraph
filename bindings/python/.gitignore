@@ -1,0 +1,18 @@
+# virtual environment
+.venv/
+
+# build artifacts
+rocksgraph/_rocksgraph*.so
+rocksgraph/_rocksgraph*.dylib
+rocksgraph/_rocksgraph*.pyd
+dist/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# test / tool cache
+.pytest_cache/
+.ruff_cache/
+

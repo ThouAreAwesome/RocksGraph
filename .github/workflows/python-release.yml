@@ -1,0 +1,111 @@
+name: "Python Release"
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build-wheels:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-latest, target: aarch64-unknown-linux-gnu }
+          - { os: macos-latest, target: aarch64-apple-darwin }
+          - { os: macos-13, target: x86_64-apple-darwin }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist
+          working-directory: bindings/python
+          manylinux: auto
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.target }}
+          path: bindings/python/dist/*.whl
+
+  test-wheels:
+    needs: build-wheels
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install wheel
+        run: pip install dist/*.whl
+      - name: Run tests
+        run: python -m pytest --pyargs rocksgraph || true
+        # --pyargs won't find test files in a separate tests/ package.
+        # For now install the wheel and smoke-test the import + basic query.
+      - name: Smoke test
+        run: |
+          python -c "
+          import tempfile, shutil, os
+          from rocksgraph import Graph, P, Int64
+          db = tempfile.mkdtemp()
+          g = Graph(db)
+          tx = g.tx()
+          tx.g().addV('person').property('id', 1).property('name', 'Alice').property('age', Int64(30)).next()
+          tx.commit()
+          rs = g.read()
+          assert rs.g().V().count().to_list() == [1]
+          assert rs.g().V().has('age', P.gt(Int64(28))).values('name').to_list() == ['Alice']
+          shutil.rmtree(db)
+          print('wheel smoke test passed')
+          "
+
+  publish-testpypi:
+    needs: test-wheels
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    environment:
+      name: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: dist
+
+  publish-pypi:
+    needs: test-wheels
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist

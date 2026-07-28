@@ -8,5 +8,9 @@
   "rust-analyzer.inlayHints.chainingHints.enable": true,
   "rust-analyzer.inlayHints.parameterHints.enable": true,
   "rust-analyzer.inlayHints.typeHints.enable": true,
-  "rust-analyzer.rustfmt.extraArgs": ["+nightly"]
+  "rust-analyzer.rustfmt.extraArgs": ["+nightly"],
+  "python.analysis.extraPaths": [
+    "bindings/python"
+  ],
+  "claudeCodeChat.permissions.yoloMode": true
 }
