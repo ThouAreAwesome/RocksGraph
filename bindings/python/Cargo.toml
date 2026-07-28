@@ -3,6 +3,7 @@ name = "rocksgraph-python"
 version = "0.1.1"
 edition = "2021"
 authors = ["Austin Han <austinhan1024@gmail.com>"]
+license = "MIT OR Apache-2.0"
 publish = false
 
 [lib]
@@ -10,5 +11,5 @@ name = "_rocksgraph"
 crate-type = ["cdylib"]
 
 [dependencies]
-rocksgraph = { path = "../../rocksgraph" }
+rocksgraph = { version = "0.1.1", path = "../../rocksgraph" }
 pyo3 = { version = "0.21.2", features = ["extension-module"] }

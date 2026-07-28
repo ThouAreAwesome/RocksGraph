@@ -45,9 +45,11 @@ jobs:
           python-version: '3.11'
       - name: Install maturin and pytest
         run: pip install maturin pytest
-      - name: Build and install
+      - name: Build wheel and install
         working-directory: bindings/python
-        run: maturin develop
+        run: |
+          maturin build --release
+          pip install --force-reinstall target\wheels\*.whl
       - name: Verify import
         working-directory: bindings/python
         run: python -c "from rocksgraph._rocksgraph import PyGraph; print('ok')"
@@ -71,9 +73,11 @@ jobs:
           python-version: '3.11'
       - name: Install maturin and pytest
         run: pip install "maturin>=1.5,<2.0" pytest
-      - name: Build and install
+      - name: Build wheel and install
         working-directory: bindings/python
-        run: maturin develop
+        run: |
+          maturin build --release
+          pip install --force-reinstall target/wheels/*.whl
       - name: Run Python tests
         working-directory: bindings/python
         run: python -m pytest tests/ -v
