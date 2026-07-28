@@ -6,14 +6,19 @@ all-features = false
 no-default-features = false
 
 # `cargo deny check advisories` — flags dependencies with known RUSTSEC vulnerabilities
-# or that are unmaintained/yanked. No exceptions yet; add an `ignore` entry with a
-# `reason` if a specific advisory is investigated and judged not applicable.
+# or that are unmaintained/yanked.
 [advisories]
-ignore = []
+ignore = [
+    # pyo3 0.21.2: PyString::from_object overflow (RUSTSEC-2025-0020).
+    # Not exploitable in rocksgraph-python: we never pass untrusted &str to
+    # PyString::from_object. Will upgrade when macOS linker issues with 0.24+ are resolved.
+    { id = "RUSTSEC-2025-0020", reason = "not exploitable; blocked on pyo3 upgrade" },
+    # pyo3 0.21.2: missing Sync bound on PyCFunction::new_closure (RUSTSEC-2026-0177).
+    # Not exploitable: we run under GIL, no detach() usage, no free-threaded Python.
+    { id = "RUSTSEC-2026-0177", reason = "not exploitable; blocked on pyo3 upgrade" },
+]
 
-# `cargo deny check licenses` — every license below is permissive and GPL-compatible.
-# GPL-2.0-or-later is RocksGraph's own license, listed so the root package itself
-# passes the check.
+# `cargo deny check licenses` — all licences below are permissive.
 [licenses]
 allow = [
     "MIT",
@@ -26,7 +31,6 @@ allow = [
     "0BSD",
     "Unlicense",
     "Unicode-3.0",
-    "GPL-2.0-or-later",
 ]
 confidence-threshold = 0.8
 
