@@ -30,4 +30,4 @@ classifiers = [
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
-module-name = "_rocksgraph"
+module-name = "rocksgraph._rocksgraph"
