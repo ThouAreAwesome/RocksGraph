@@ -27,12 +27,12 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist
           working-directory: bindings/python
-          manylinux: auto
+          manylinux: "2_28"
           before-script-linux: |
-            if command -v dnf > /dev/null; then
-              dnf install -y clang
-            else
-              yum install -y clang
+            if command -v apt-get > /dev/null; then
+              apt-get update -y && apt-get install -y clang libclang-dev
+            elif command -v dnf > /dev/null; then
+              dnf install -y clang clang-devel
             fi
       - name: Upload wheel
         uses: actions/upload-artifact@v4
