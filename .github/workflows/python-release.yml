@@ -77,10 +77,6 @@ jobs:
     needs: test-wheels
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch'
-    environment:
-      name: testpypi
-    permissions:
-      id-token: write
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -91,6 +87,7 @@ jobs:
         with:
           repository-url: https://test.pypi.org/legacy/
           packages-dir: dist
+          password: ${{ secrets.TEST_PYPI_API_TOKEN }}
 
   publish-pypi:
     needs: test-wheels
