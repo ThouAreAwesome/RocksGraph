@@ -126,12 +126,14 @@ impl PyGraph {
     }
 
     fn read(&self) -> PyResult<PyReadSession> {
-        let g = self.graph.as_ref().ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Graph is already closed"))?;
+        let g =
+            self.graph.as_ref().ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Graph is already closed"))?;
         Ok(PyReadSession { session: g.read() })
     }
 
     fn tx(&self) -> PyResult<PyTxSession> {
-        let g = self.graph.as_ref().ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Graph is already closed"))?;
+        let g =
+            self.graph.as_ref().ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Graph is already closed"))?;
         Ok(PyTxSession { session: Some(g.begin()) })
     }
 
