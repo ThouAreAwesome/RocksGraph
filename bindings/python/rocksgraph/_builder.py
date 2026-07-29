@@ -567,6 +567,9 @@ class Graph:
     def tx(self):
         return TxSession(self._graph.tx())
 
+    def close(self):
+        self._graph.close()
+
 class ReadSession:
     def __init__(self, session):
         self._session = session

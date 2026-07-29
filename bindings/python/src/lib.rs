@@ -113,7 +113,7 @@ fn values_to_py_list(py: Python<'_>, values: Vec<Value>) -> PyResult<PyObject> {
 
 #[pyclass(unsendable)]
 struct PyGraph {
-    graph: Graph,
+    graph: Option<Graph>,
 }
 
 #[pymethods]
@@ -122,15 +122,25 @@ impl PyGraph {
     fn open(path: &str) -> PyResult<Self> {
         let path = PathBuf::from(path);
         let graph = Graph::open(path).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
-        Ok(Self { graph })
+        Ok(Self { graph: Some(graph) })
     }
 
-    fn read(&self) -> PyReadSession {
-        PyReadSession { session: self.graph.read() }
+    fn read(&self) -> PyResult<PyReadSession> {
+        let g = self.graph.as_ref().ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Graph is already closed"))?;
+        Ok(PyReadSession { session: g.read() })
     }
 
-    fn tx(&self) -> PyTxSession {
-        PyTxSession { session: Some(self.graph.begin()) }
+    fn tx(&self) -> PyResult<PyTxSession> {
+        let g = self.graph.as_ref().ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Graph is already closed"))?;
+        Ok(PyTxSession { session: Some(g.begin()) })
+    }
+
+    fn close(&mut self) -> PyResult<()> {
+        if let Some(g) = self.graph.take() {
+            g.close().map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))
+        } else {
+            Ok(())
+        }
     }
 }
 
