@@ -28,14 +28,35 @@ jobs:
           args: --release --out dist
           working-directory: bindings/python
           manylinux: auto
+          before-script-linux: |
+            if command -v dnf > /dev/null; then
+              dnf install -y clang
+            else
+              yum install -y clang
+            fi
       - name: Upload wheel
         uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.target }}
           path: bindings/python/dist/*.whl
 
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+          working-directory: bindings/python
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-sdist
+          path: bindings/python/dist/*.tar.gz
+
   test-wheels:
-    needs: build-wheels
+    needs: [build-wheels, sdist]
     strategy:
       fail-fast: false
       matrix:
@@ -64,11 +85,12 @@ jobs:
           db = tempfile.mkdtemp()
           g = Graph(db)
           tx = g.tx()
-          tx.g().addV('person').property('id', 1).property('name', 'Alice').property('age', Int64(30)).next()
+          tx.traversal().addV('person').property('id', 1).property('name', 'Alice').property('age', Int64(30)).next()
           tx.commit()
           rs = g.read()
-          assert rs.g().V().count().to_list() == [1]
-          assert rs.g().V().has('age', P.gt(Int64(28))).values('name').to_list() == ['Alice']
+          assert rs.traversal().V().count().to_list() == [1]
+          assert rs.traversal().V().has('age', P.gt(Int64(28))).values('name').to_list() == ['Alice']
+          g.close()
           shutil.rmtree(db)
           print('wheel smoke test passed')
           "
