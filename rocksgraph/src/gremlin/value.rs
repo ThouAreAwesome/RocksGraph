@@ -181,6 +181,8 @@ pub enum Value {
     Map(Map),
     /// Traversal path with per-position step labels. Produced by `path()`.
     Path(Path),
+    /// Dense float32 vector. Produced by `.values("embedding")` on FloatVector properties.
+    FloatVector(Vec<f32>),
 }
 
 impl Value {

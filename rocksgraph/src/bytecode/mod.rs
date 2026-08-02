@@ -528,6 +528,23 @@ fn encode_step(step: &LogicalStep, buf: &mut Vec<u8>) {
             buf.push(OP_LOCAL);
             encode_plan(&s.plan, buf);
         }
+        LogicalStep::VectorNear(s) => {
+            buf.push(OP_VECTORNEAR);
+            encode_smolstr(&s.prop_key, buf);
+            buf.extend_from_slice(&(s.k as u32).to_be_bytes());
+            buf.extend_from_slice(&(s.query_vec.len() as u32).to_be_bytes());
+            for f in &s.query_vec {
+                buf.extend_from_slice(&f.to_le_bytes());
+            }
+        }
+        LogicalStep::VectorSimilarity(s) => {
+            buf.push(OP_VECTORSIMILARITY);
+            encode_smolstr(&s.prop_key, buf);
+            buf.extend_from_slice(&(s.query_vec.len() as u32).to_be_bytes());
+            for f in &s.query_vec {
+                buf.extend_from_slice(&f.to_le_bytes());
+            }
+        }
     }
 }
 
@@ -889,6 +906,40 @@ fn decode_step(bytes: &[u8], offset: &mut usize) -> Result<LogicalStep, StoreErr
         OP_CONSTANT => Ok(LogicalStep::Constant(ConstantStep { value: decode_primitive(bytes, offset)? })),
         OP_IDENTITY => Ok(LogicalStep::Identity(IdentityStep {})),
         OP_LOCAL => Ok(LogicalStep::Local(LocalStep { plan: decode_plan(bytes, offset)? })),
+        OP_VECTORNEAR => {
+            let prop_key = read_smolstr(bytes, offset)?;
+            let k = read_u32(bytes, offset)? as usize;
+            let dim = read_u32(bytes, offset)? as usize;
+            let mut q = Vec::with_capacity(dim);
+            for _ in 0..dim {
+                q.push(f32::from_le_bytes([
+                    bytes[*offset],
+                    bytes[*offset + 1],
+                    bytes[*offset + 2],
+                    bytes[*offset + 3],
+                ]));
+                *offset += 4;
+            }
+            Ok(LogicalStep::VectorNear(VectorNearLogicalStep { prop_key: prop_key.to_string(), query_vec: q, k }))
+        }
+        OP_VECTORSIMILARITY => {
+            let prop_key = read_smolstr(bytes, offset)?;
+            let dim = read_u32(bytes, offset)? as usize;
+            let mut q = Vec::with_capacity(dim);
+            for _ in 0..dim {
+                q.push(f32::from_le_bytes([
+                    bytes[*offset],
+                    bytes[*offset + 1],
+                    bytes[*offset + 2],
+                    bytes[*offset + 3],
+                ]));
+                *offset += 4;
+            }
+            Ok(LogicalStep::VectorSimilarity(VectorSimilarityLogicalStep {
+                prop_key: prop_key.to_string(),
+                query_vec: q,
+            }))
+        }
         _ => Err(StoreError::UnsupportedOperation(format!("Unknown opcode 0x{:02x}", op))),
     }
 }
@@ -907,6 +958,14 @@ fn read_u16(bytes: &[u8], offset: &mut usize) -> Result<u16, StoreError> {
     }
     let v = u16::from_be_bytes([bytes[*offset], bytes[*offset + 1]]);
     *offset += 2;
+    Ok(v)
+}
+fn read_u32(bytes: &[u8], offset: &mut usize) -> Result<u32, StoreError> {
+    if *offset + 4 > bytes.len() {
+        return Err(StoreError::UnsupportedOperation("EOF".into()));
+    }
+    let v = u32::from_be_bytes([bytes[*offset], bytes[*offset + 1], bytes[*offset + 2], bytes[*offset + 3]]);
+    *offset += 4;
     Ok(v)
 }
 fn read_i64(bytes: &[u8], offset: &mut usize) -> Result<i64, StoreError> {
@@ -966,6 +1025,13 @@ fn encode_primitive(p: &Primitive, buf: &mut Vec<u8>) {
         Primitive::Uuid(v) => {
             buf.push(8);
             buf.extend_from_slice(&v.to_be_bytes());
+        }
+        Primitive::FloatVector(v) => {
+            buf.push(10);
+            buf.extend_from_slice(&(v.len() as u32).to_be_bytes());
+            for f in v {
+                buf.extend_from_slice(&f.to_le_bytes());
+            }
         }
         Primitive::Bytes(b) => {
             buf.push(9);
@@ -1027,7 +1093,25 @@ fn decode_primitive(bytes: &[u8], offset: &mut usize) -> Result<Primitive, Store
             *offset += len;
             Ok(Primitive::Bytes(v))
         }
-        _ => Err(StoreError::UnsupportedOperation(format!("Unknown primitive tag {}", tag))),
+        10 => {
+            if *offset + 4 > bytes.len() {
+                return Err(StoreError::UnsupportedOperation("EOF".into()));
+            }
+            let dim = u32::from_be_bytes(bytes[*offset..*offset + 4].try_into().unwrap()) as usize;
+            *offset += 4;
+            let mut v = Vec::with_capacity(dim);
+            for _ in 0..dim {
+                v.push(f32::from_le_bytes([
+                    bytes[*offset],
+                    bytes[*offset + 1],
+                    bytes[*offset + 2],
+                    bytes[*offset + 3],
+                ]));
+                *offset += 4;
+            }
+            Ok(Primitive::FloatVector(v))
+        }
+        _ => Err(StoreError::UnsupportedOperation(format!("Unknown primitive tag: {}", tag))),
     }
 }
 fn encode_primitive_predicate(p: &PrimitivePredicate, buf: &mut Vec<u8>) {
@@ -1164,6 +1248,7 @@ pub const TAG_LIST: u8 = 12;
 pub const TAG_MAP: u8 = 13;
 pub const TAG_UINT16: u8 = 14;
 pub const TAG_PROPERTY: u8 = 15;
+pub const TAG_FLOATVECTOR: u8 = 16;
 
 fn encode_value(v: &Value, buf: &mut Vec<u8>) {
     match v {
@@ -1243,6 +1328,13 @@ fn encode_value(v: &Value, buf: &mut Vec<u8>) {
                 for l in ls {
                     encode_smolstr(l, buf);
                 }
+            }
+        }
+        Value::FloatVector(v) => {
+            buf.push(TAG_FLOATVECTOR);
+            buf.extend_from_slice(&(v.len() as u32).to_be_bytes());
+            for f in v {
+                buf.extend_from_slice(&f.to_le_bytes());
             }
         }
         Value::List(l) => {
@@ -1384,6 +1476,25 @@ fn decode_value(bytes: &[u8], offset: &mut usize) -> Result<Value, StoreError> {
                 entries.push((decode_value(bytes, offset)?, decode_value(bytes, offset)?));
             }
             Ok(Value::Map(crate::gremlin::value::Map { entries }))
+        }
+        TAG_FLOATVECTOR => {
+            if *offset + 4 > bytes.len() {
+                return Err(StoreError::UnsupportedOperation("EOF".into()));
+            }
+            let dim = u32::from_be_bytes([bytes[*offset], bytes[*offset + 1], bytes[*offset + 2], bytes[*offset + 3]])
+                as usize;
+            *offset += 4;
+            let mut v = Vec::with_capacity(dim);
+            for _ in 0..dim {
+                v.push(f32::from_le_bytes([
+                    bytes[*offset],
+                    bytes[*offset + 1],
+                    bytes[*offset + 2],
+                    bytes[*offset + 3],
+                ]));
+                *offset += 4;
+            }
+            Ok(Value::FloatVector(v))
         }
         TAG_PROPERTY => {
             let key = read_smolstr(bytes, offset)?;
@@ -1581,3 +1692,6 @@ mod tests {
         }
     }
 }
+
+pub const OP_VECTORNEAR: u8 = 61;
+pub const OP_VECTORSIMILARITY: u8 = 62;

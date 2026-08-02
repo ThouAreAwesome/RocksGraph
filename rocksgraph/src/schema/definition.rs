@@ -71,6 +71,7 @@ pub enum DataType {
     Uuid = 7,
     UInt16 = 8,
     Bytes = 9,
+    FloatVector = 10,
 }
 
 impl DataType {
@@ -86,6 +87,7 @@ impl DataType {
             Primitive::String(_) => DataType::String,
             Primitive::Uuid(_) => DataType::Uuid,
             Primitive::Bytes(_) => DataType::Bytes,
+            Primitive::FloatVector(_) => DataType::FloatVector,
         }
     }
 
@@ -105,6 +107,7 @@ impl DataType {
             7 => Some(DataType::Uuid),
             8 => Some(DataType::UInt16),
             9 => Some(DataType::Bytes),
+            10 => Some(DataType::FloatVector),
             _ => None,
         }
     }
@@ -510,10 +513,11 @@ mod tests {
             DataType::Uuid,
             DataType::UInt16,
             DataType::Bytes,
+            DataType::FloatVector,
         ];
         for dt in all {
             assert_eq!(DataType::from_u8(dt.to_u8()), Some(dt));
         }
-        assert_eq!(DataType::from_u8(10), None);
+        assert_eq!(DataType::from_u8(11), None);
     }
 }

@@ -63,6 +63,8 @@ OP_HASRANK = 57
 OP_CONSTANT = 58
 OP_IDENTITY = 59
 OP_LOCAL = 60
+OP_VECTORNEAR = 61
+OP_VECTORSIMILARITY = 62
 
 # Primitive types matching rocksgraph/src/types/gvalue.rs
 PRIM_NULL = 0
@@ -75,6 +77,7 @@ PRIM_FLOAT64 = 6
 PRIM_STRING = 7
 PRIM_UUID = 8
 PRIM_BYTES = 9
+PRIM_FLOATVECTOR = 10
 
 # Predicate tags matching rocksgraph/src/gremlin/value.rs
 PRED_EQ = 0
@@ -290,6 +293,32 @@ def _encode_step(opcode: int, args: Any, buf: bytearray):
         else:
             buf.append(0)
             
+    elif opcode == OP_VECTORNEAR:
+        prop, query, k = args
+        _encode_string(prop, buf)
+        buf.extend(struct.pack(">I", k))
+        if isinstance(query, Vector):
+            vec = query
+        elif isinstance(query, list):
+            vec = Vector(query)
+        else:
+            vec = Vector(query.values if hasattr(query, "values") else list(query))
+        buf.extend(struct.pack(">I", len(vec.values)))
+        for f in vec.values:
+            buf.extend(struct.pack("<f", f))
+    elif opcode == OP_VECTORSIMILARITY:
+        prop, query = args
+        _encode_string(prop, buf)
+        if isinstance(query, Vector):
+            vec = query
+        elif isinstance(query, list):
+            vec = Vector(query)
+        else:
+            vec = Vector(query.values if hasattr(query, "values") else list(query))
+        buf.extend(struct.pack(">I", len(vec.values)))
+        for f in vec.values:
+            buf.extend(struct.pack("<f", f))
+    
     elif opcode == OP_CONSTANT:
         _encode_primitive(args, buf)
         
@@ -302,7 +331,7 @@ def _encode_string(s: str, buf: bytearray):
     buf.extend(b)
 
 def _encode_primitive(val: Any, buf: bytearray):
-    from ._types import Int32, Int64, UInt16, Float32, Float64, Uuid
+    from ._types import Int32, Int64, UInt16, Float32, Float64, Uuid, Vector
     import uuid
     if val is None:
         buf.append(PRIM_NULL)
@@ -344,6 +373,11 @@ def _encode_primitive(val: Any, buf: bytearray):
     elif isinstance(val, uuid.UUID):
         buf.append(PRIM_UUID)
         buf.extend(val.bytes)
+    elif isinstance(val, Vector):
+        buf.append(PRIM_FLOATVECTOR)
+        buf.extend(struct.pack(">I", len(val.values)))
+        for f in val.values:
+            buf.extend(struct.pack("<f", f))
     else:
         raise ValueError(f"Unsupported primitive type: {type(val)}")
 
@@ -368,3 +402,51 @@ def _encode_emit_spec(emit: Any, buf: bytearray):
     else:
         buf.append(2) # If(plan)
         _encode_plan(emit, buf)
+
+def value_to_py(tag, buf, offset):
+    """Decode a single value from response buffer. Returns (value, new_offset)."""
+    if tag == PRIM_NULL:
+        return None, offset
+    elif tag == PRIM_BOOL:
+        return buf[offset] != 0, offset + 1
+    elif tag == PRIM_INT32:
+        import struct
+        v = struct.unpack('>i', buf[offset:offset+4])[0]
+        return v, offset + 4
+    elif tag == PRIM_INT64:
+        import struct
+        v = struct.unpack('>q', buf[offset:offset+8])[0]
+        return v, offset + 8
+    elif tag == PRIM_FLOAT32:
+        import struct
+        v = struct.unpack('>f', buf[offset:offset+4])[0]
+        return v, offset + 4
+    elif tag == PRIM_FLOAT64:
+        import struct
+        v = struct.unpack('>d', buf[offset:offset+8])[0]
+        return v, offset + 8
+    elif tag == PRIM_STRING:
+        import struct
+        slen = struct.unpack('>I', buf[offset:offset+4])[0]
+        offset += 4
+        v = buf[offset:offset+slen].decode('utf-8')
+        return v, offset + slen
+    elif tag == PRIM_UUID:
+        import uuid
+        v = str(uuid.UUID(bytes=buf[offset:offset+16]))
+        return v, offset + 16
+    elif tag == PRIM_BYTES:
+        import struct
+        blen = struct.unpack('>I', buf[offset:offset+4])[0]
+        offset += 4
+        v = bytes(buf[offset:offset+blen])
+        return v, offset + blen
+    elif tag == PRIM_FLOATVECTOR:
+        import struct
+        dim = struct.unpack('>I', buf[offset:offset+4])[0]
+        offset += 4
+        from ._types import Vector
+        v = Vector(values=list(struct.unpack(f'<{dim}f', buf[offset:offset+dim*4])))
+        return v, offset + dim * 4
+    else:
+        raise ValueError(f'Unknown primitive tag {tag}')

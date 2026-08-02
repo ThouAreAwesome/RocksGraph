@@ -82,6 +82,7 @@ pub(crate) fn primitive_to_value(p: Primitive) -> Value {
         Primitive::String(s) => Value::String(s.to_string()),
         Primitive::Uuid(u) => Value::Uuid(u),
         Primitive::Bytes(b) => Value::Bytes(b),
+        Primitive::FloatVector(v) => Value::FloatVector(v),
     }
 }
 

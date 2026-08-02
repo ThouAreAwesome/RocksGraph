@@ -87,6 +87,13 @@ fn value_to_py(py: Python<'_>, value: Value) -> PyResult<PyObject> {
             Ok(dict.into())
         }
         Value::Bytes(b) => Ok(PyBytes::new_bound(py, &b).into()),
+        Value::FloatVector(v) => {
+            let lst = PyList::empty_bound(py);
+            for f in v {
+                lst.append(f.into_py(py))?;
+            }
+            Ok(lst.into())
+        }
         Value::Uuid(u) => {
             let b = u.to_be_bytes();
             let s = format!(
