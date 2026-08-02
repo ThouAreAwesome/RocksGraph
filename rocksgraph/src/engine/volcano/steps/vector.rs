@@ -9,25 +9,40 @@ use crate::types::PIPELINE_PRODUCE_SIZE;
 use crate::types::{
     error::StoreError,
     gvalue::{GValue, Primitive},
+    keys::CanonicalKey,
 };
 use smallvec::smallvec;
+use smol_str::SmolStr;
+use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::{Arc, RwLock};
+
+use crate::schema::Schema;
 
 #[derive(Debug)]
 pub struct VectorNearStep {
     upstream: Option<StepRef>,
-    #[allow(dead_code)] // v0.2: resolve FloatVector from vertex/edge properties via GraphCtx
-    prop_key: String,
+    prop_key: SmolStr,
     query_vec: Vec<f32>,
     k: usize,
     buffer: Vec<Rc<Traverser>>,
     cursor: usize,
     drained: bool,
+    prop_key_cache: HashMap<SmolStr, u16>,
 }
 
 impl VectorNearStep {
     pub fn new(prop_key: String, query_vec: Vec<f32>, k: usize) -> Self {
-        Self { upstream: None, prop_key, query_vec, k, buffer: Vec::new(), cursor: 0, drained: false }
+        Self {
+            upstream: None,
+            prop_key: SmolStr::from(prop_key),
+            query_vec,
+            k,
+            buffer: Vec::new(),
+            cursor: 0,
+            drained: false,
+            prop_key_cache: HashMap::new(),
+        }
     }
     fn cosine_sim(a: &[f32], b: &[f32]) -> f32 {
         let mut dot = 0.0f64;
@@ -49,6 +64,39 @@ impl VectorNearStep {
     }
 }
 
+fn resolve_prop_key_id(schema: &Arc<RwLock<Schema>>, cache: &mut HashMap<SmolStr, u16>, name: &SmolStr) -> Option<u16> {
+    if let Some(&id) = cache.get(name) {
+        return Some(id);
+    }
+    let guard = schema.read().unwrap();
+    let id = guard.prop_key_id(name)?;
+    cache.insert(name.clone(), id);
+    Some(id)
+}
+
+/// Extract a FloatVector from a traverser: either directly if the value is
+/// already a FloatVector, or by looking up the named property from a Vertex/Edge.
+fn resolve_vector(t: &Traverser, ctx: &mut dyn GraphCtx, prop_id: Option<u16>) -> Option<Vec<f32>> {
+    match &t.value {
+        GValue::FloatVector(v) => Some(v.clone()),
+        GValue::Vertex(vk) => {
+            let pid = prop_id?;
+            match ctx.get_value(&CanonicalKey::Vertex(*vk), pid).ok()? {
+                Some(Primitive::FloatVector(v)) => Some(v),
+                _ => None,
+            }
+        }
+        GValue::Edge(ek) => {
+            let pid = prop_id?;
+            match ctx.get_value(&CanonicalKey::Edge(ek.canonical_edge_key()), pid).ok()? {
+                Some(Primitive::FloatVector(v)) => Some(v),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 impl CoreStep for VectorNearStep {
     fn add_upper(&mut self, upstream: StepRef) {
         self.upstream = Some(upstream);
@@ -66,19 +114,18 @@ impl CoreStep for VectorNearStep {
     }
     fn produce(
         &mut self,
-        _ctx: &mut dyn GraphCtx,
+        ctx: &mut dyn GraphCtx,
     ) -> Result<Option<smallvec::SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>>, StoreError> {
+        let prop_id = resolve_prop_key_id(&ctx.schema(), &mut self.prop_key_cache, &self.prop_key);
+
         if !self.drained {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
             let mut candidates: Vec<(Rc<Traverser>, f32)> = Vec::new();
-            while let Some(t) = upstream.next(_ctx)? {
-                let sim = match &t.value {
-                    GValue::FloatVector(vec) => Self::cosine_sim(vec, &self.query_vec),
-                    _ => {
-                        continue;
-                    }
-                };
-                candidates.push((t, sim));
+            while let Some(t) = upstream.next(ctx)? {
+                let vec = resolve_vector(&t, ctx, prop_id);
+                if let Some(v) = vec {
+                    candidates.push((t, Self::cosine_sim(&v, &self.query_vec)));
+                }
             }
             candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
             self.buffer = candidates.into_iter().take(self.k).map(|(t, _)| t).collect();
@@ -101,13 +148,13 @@ impl CoreStep for VectorNearStep {
 #[derive(Debug)]
 pub struct VectorSimilarityStep {
     upstream: Option<StepRef>,
-    #[allow(dead_code)] // v0.2: resolve FloatVector from vertex/edge properties via GraphCtx
-    prop_key: String,
+    prop_key: SmolStr,
     query_vec: Vec<f32>,
+    prop_key_cache: HashMap<SmolStr, u16>,
 }
 impl VectorSimilarityStep {
     pub fn new(prop_key: String, query_vec: Vec<f32>) -> Self {
-        Self { upstream: None, prop_key, query_vec }
+        Self { upstream: None, prop_key: SmolStr::from(prop_key), query_vec, prop_key_cache: HashMap::new() }
     }
 }
 impl CoreStep for VectorSimilarityStep {
@@ -124,18 +171,18 @@ impl CoreStep for VectorSimilarityStep {
     }
     fn produce(
         &mut self,
-        _ctx: &mut dyn GraphCtx,
+        ctx: &mut dyn GraphCtx,
     ) -> Result<Option<smallvec::SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>>, StoreError> {
+        let prop_id = resolve_prop_key_id(&ctx.schema(), &mut self.prop_key_cache, &self.prop_key);
         let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
         let mut batch = smallvec::SmallVec::new();
         while batch.len() < PIPELINE_PRODUCE_SIZE {
-            match upstream.next(_ctx)? {
+            match upstream.next(ctx)? {
                 Some(t) => {
-                    let sim = match &t.value {
-                        GValue::FloatVector(vec) => VectorNearStep::cosine_sim(vec, &self.query_vec),
-                        _ => continue,
-                    };
-                    batch.push(Rc::new(Traverser::new(GValue::Scalar(Primitive::Float32(sim)))));
+                    if let Some(v) = resolve_vector(&t, ctx, prop_id) {
+                        let sim = VectorNearStep::cosine_sim(&v, &self.query_vec);
+                        batch.push(Rc::new(Traverser::new(GValue::Scalar(Primitive::Float32(sim)))));
+                    }
                 }
                 None => break,
             }
