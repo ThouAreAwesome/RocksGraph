@@ -291,20 +291,25 @@ impl RocksStorage {
             return Ok(());
         }
         let cf_s = cf_s.unwrap();
-        if self.db.get_cf(&cf_s, super::bulk_loader::BULK_LOAD_IN_PROGRESS_KEY).map_err(StoreError::RocksDb)?.is_none()
-        {
-            return Ok(());
-        }
-        let cf_v = self.db.cf_handle(CF_VERTICES);
-        if let Some(ref cf_vtx) = cf_v {
-            if self.db.iterator_cf(cf_vtx, rocksdb::IteratorMode::Start).next().is_some() {
+        let marker_bytes =
+            self.db.get_cf(&cf_s, crate::bulk::loader::BULK_LOAD_IN_PROGRESS_KEY).map_err(StoreError::RocksDb)?;
+        let marker_state = marker_bytes.as_ref().and_then(|v| v.first().copied());
+        match marker_state {
+            None => Ok(()), // clean shutdown
+            Some(crate::bulk::loader::MARKER_POST_SNAPSHOT) | Some(crate::bulk::loader::MARKER_POST_INGEST) => {
+                // All data committed; just clear the stale marker
                 let mut cleanup = rocksdb::WriteBatchWithTransaction::<true>::default();
-                cleanup.delete_cf(&cf_s, super::bulk_loader::BULK_LOAD_IN_PROGRESS_KEY);
+                cleanup.delete_cf(&cf_s, crate::bulk::loader::BULK_LOAD_IN_PROGRESS_KEY);
                 self.db.write(cleanup).map_err(StoreError::RocksDb)?;
-                return Ok(());
+                Ok(())
+            }
+            Some(crate::bulk::loader::MARKER_PRE_INGEST) | Some(_) => {
+                // SST files written but not ingested, or unknown marker
+                Err(StoreError::IncompleteLoad {
+                    msg: "bulk load interrupted before ingest — retry load_initial".into(),
+                })
             }
         }
-        Err(StoreError::IncompleteLoad { msg: "bulk load interrupted before ingest — retry load_initial".into() })
     }
 
     /// Load schema from CF_SCHEMA, or initialize it with defaults if not present.

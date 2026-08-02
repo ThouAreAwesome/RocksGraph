@@ -4,34 +4,11 @@ Status: implemented (Phase 1 + Phase 2 external sort complete)
 
 ---
 
-## TL;DR
 
-`SstBulkLoader` loads a graph dataset into RocksDB at **disk-write speed** by
-bypassing the transactional write path entirely.  It generates sorted SST files
-offline and ingests them atomically.
-
-```
-  INPUT: edges.csv                        THROUGHPUT
-     │                                    ──────────
-     ├─ 1. Scan: collect labels,          SST ingest:  5–50 M edges/s
-     │      count degrees                 Tx path:     ~90 K edges/s
-     ├─ 2. Sort: by CF key order          Speedup:     50–500×
-     ├─ 3. Write: SST files per CF
-     ├─ 4. Ingest: atomic link-in
-     │
-  OUTPUT: fully loaded RocksDB
-```
-
-> ⚠️ **Initial load only — empty DB required.**
-> For incremental writes to an existing database, use `TxSession` or the
-> transactional write path directly.
-
----
-
-## Goals & non-goals
-
-**Goals:**
-- Load 10 M – 1 B edges at near disk-write-speed (1–10 GB/s on NVMe)
+> **⚠️ API superseded.** This document describes the original standalone
+> `SstBulkLoader` API. The current user-facing API is the graph-based session
+> `graph.open_bulk_loader()` — see [`docs/api/design_bulk_loader.md`](api/design_bulk_loader.md).
+> The internal pipeline is the same; only the public interface has changed.
 - Zero WAL overhead; zero memtable pressure; zero compaction during load
 - Atomic visibility — data appears all-at-once
 - Scale to datasets exceeding RAM via external merge sort

@@ -581,34 +581,27 @@ ingests them atomically — bypassing WAL, memtable pressure, and OCC overhead e
 **Measured:** 69 M edges, 4.85 M vertices → ~300K edges/s, ~1.2 GB peak RAM.
 
 ```rust
-use rocksgraph::{
-    BulkSchema, BulkVertex, BulkEdge, BulkLoadStats, SstBulkLoader, EdgeListSource,
-    schema::{DataType, GraphOptions},
-    RocksOptions,
-};
+use rocksgraph::{BulkEdge, BulkLoadStats, BulkVertex, Graph};
+use std::collections::HashMap;
 
-// Describe the schema upfront (vertex labels, edge labels, property keys).
-let schema = BulkSchema {
-    vertex_labels: vec!["Person".into()],
-    edge_labels:   vec!["Knows".into()],
-    prop_keys:     vec![("age".into(), DataType::Int64)],
-};
+// Open graph and get a BulkLoader session for atomic ingestion
+let graph = Graph::open("path/to/db")?;
+let mut loader = graph.open_bulk_loader()?;
 
-// EdgeListSource reads a SNAP-format edge list lazily (O(1) memory).
-let source = EdgeListSource {
-    path:         "data/edges.txt".into(),
-    vertex_label: "Person".into(),
-    edge_label:   "Knows".into(),
-    comment_char: '#',
-};
-let (vertices, edges) = source.open()?;
+let vertices = vec![
+    BulkVertex { id: 1, label: "Person".into(), props: HashMap::new() },
+    BulkVertex { id: 2, label: "Person".into(), props: HashMap::new() },
+];
+let edges = vec![
+    BulkEdge { src: 1, dst: 2, label: "Knows".into(), props: HashMap::new(), rank: None },
+];
 
-// Load into an empty database.
-let stats: BulkLoadStats = SstBulkLoader::new("path/to/db", "path/to/work_dir")
-    .load_initial(schema, vertices, edges, GraphOptions::default(), &RocksOptions::default())?;
+loader.load_vertices(vertices)?;
+loader.load_edges(edges)?;
+let stats: BulkLoadStats = loader.commit()?;
 
 println!("{} vertices, {} edges loaded", stats.vertices_written, stats.edges_written);
-// Database is now accessible via Graph::open("path/to/db")
+// Graph is now ready for reads and traversals
 ```
 
 **Key properties:**

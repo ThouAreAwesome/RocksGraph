@@ -36,10 +36,14 @@
 
 use std::{
     path::Path,
-    sync::{Arc, RwLock},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, RwLock,
+    },
 };
 
 use crate::{
+    bulk::BulkLoader,
     engine::GraphCtx,
     graph::{LogicalGraph, LogicalSnapshot},
     gremlin::traversal::{ReadTraversal, WriteTraversal},
@@ -65,8 +69,9 @@ use crate::{
 /// # graph.close().unwrap();
 /// ```
 pub struct Graph {
-    store: Arc<RocksStorage>,
-    schema: Arc<RwLock<Schema>>,
+    pub(crate) store: Arc<RocksStorage>,
+    pub(crate) schema: Arc<RwLock<Schema>>,
+    pub(crate) bulk_load_in_progress: AtomicBool,
 }
 
 impl Graph {
@@ -137,7 +142,7 @@ impl Graph {
         let store = Arc::new(RocksStorage::open(path, &rocksdb_options)?);
         store.recover_bulk_load_crash()?;
         let schema = store.load_schema(schema_options)?;
-        Ok(Self { store, schema: Arc::new(RwLock::new(schema)) })
+        Ok(Self { store, schema: Arc::new(RwLock::new(schema)), bulk_load_in_progress: AtomicBool::new(false) })
     }
 
     /// Open a schema management session for explicit, [`SchemaMode::Strict`]-style schema
@@ -146,6 +151,17 @@ impl Graph {
     /// [`SchemaMode::Strict`]: crate::schema::SchemaMode::Strict
     pub fn open_schema(&self) -> SchemaSession {
         SchemaSession::new(Arc::clone(&self.store), Arc::clone(&self.schema))
+    }
+
+    /// Open a bulk loading session for fast initial data ingestion via SST generation.
+    ///
+    /// The loader operates on the open graph database and schema, writing and sorting
+    /// SST files offline before atomically ingesting them at [`BulkLoader::commit`].
+    pub fn open_bulk_loader(&self) -> Result<BulkLoader<'_>, StoreError> {
+        if self.bulk_load_in_progress.swap(true, Ordering::AcqRel) {
+            return Err(StoreError::BulkLoadInProgress);
+        }
+        BulkLoader::new(self)
     }
 
     /// Access the thread-safe schema registry directly, bypassing `SchemaSession`. Test-only:
@@ -197,7 +213,11 @@ impl Graph {
 
 impl Clone for Graph {
     fn clone(&self) -> Self {
-        Self { store: Arc::clone(&self.store), schema: Arc::clone(&self.schema) }
+        Self {
+            store: Arc::clone(&self.store),
+            schema: Arc::clone(&self.schema),
+            bulk_load_in_progress: AtomicBool::new(false),
+        }
     }
 }
 

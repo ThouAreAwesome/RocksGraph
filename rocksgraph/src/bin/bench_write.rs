@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Bulk-load benchmark: loads an edge-list file into a new RocksGraph database
-//! via `SstBulkLoader`, then reports throughput.
+//! via `BulkLoader`, then reports throughput.
 //!
 //! Usage:
 //! ```text
@@ -11,12 +11,12 @@
 //!             [--max-sst    <bytes>]  (default: 58 MiB)
 //! ```
 
-use rocksgraph::{
-    schema::{DataType, GraphOptions},
-    BulkSchema, EdgeListSource, Primitive, RocksOptions, SstBulkLoader,
-};
+use rocksgraph::{BulkEdge, BulkVertex, Graph, Primitive, StoreError};
 
 use rand::Rng;
+use std::collections::{BTreeSet, HashMap};
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::{env, path::PathBuf, time::Instant};
 
 const VERTEX_LABEL: &str = "Person";
@@ -25,6 +25,98 @@ const NAME_KEY: &str = "name";
 const AGE_KEY: &str = "age";
 const WEIGHT_KEY: &str = "weight";
 const TIMESTAMP_KEY: &str = "timestamp";
+
+struct EdgeListSource {
+    path: PathBuf,
+    vertex_label: String,
+    edge_label: String,
+    comment_char: char,
+}
+
+impl EdgeListSource {
+    fn open(self) -> Result<(Vec<BulkVertex>, EdgeListIter), Box<dyn std::error::Error>> {
+        let mut ids = BTreeSet::new();
+        let file = File::open(&self.path)?;
+        for line in BufReader::new(file).lines() {
+            let line = line?;
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with(self.comment_char) {
+                continue;
+            }
+            let mut parts = trimmed.split_whitespace();
+            if let (Some(s), Some(d)) = (parts.next(), parts.next()) {
+                if let (Ok(src), Ok(dst)) = (s.parse::<i64>(), d.parse::<i64>()) {
+                    ids.insert(src);
+                    ids.insert(dst);
+                } else {
+                    return Err(format!("failed to parse vertex IDs on line: {trimmed}").into());
+                }
+            }
+        }
+
+        let vertices: Vec<BulkVertex> = ids
+            .into_iter()
+            .map(|id| BulkVertex { id, label: self.vertex_label.clone(), props: HashMap::new() })
+            .collect();
+
+        let file = File::open(&self.path)?;
+        let edge_iter =
+            EdgeListIter { reader: BufReader::new(file), edge_label: self.edge_label, comment_char: self.comment_char };
+
+        Ok((vertices, edge_iter))
+    }
+}
+
+struct EdgeListIter {
+    reader: BufReader<File>,
+    edge_label: String,
+    comment_char: char,
+}
+
+impl Iterator for EdgeListIter {
+    type Item = Result<BulkEdge, StoreError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match self.reader.read_line(&mut line) {
+                Ok(0) => return None,
+                Err(e) => return Some(Err(StoreError::Io(e))),
+                Ok(_) => {}
+            }
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with(self.comment_char) {
+                continue;
+            }
+            let mut parts = trimmed.split_whitespace();
+            if let (Some(s), Some(d)) = (parts.next(), parts.next()) {
+                match (s.parse::<i64>(), d.parse::<i64>()) {
+                    (Ok(src), Ok(dst)) => {
+                        return Some(Ok(BulkEdge {
+                            src,
+                            dst,
+                            label: self.edge_label.clone(),
+                            props: HashMap::new(),
+                            rank: None,
+                        }));
+                    }
+                    _ => {
+                        return Some(Err(StoreError::Io(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("failed to parse vertex IDs on line: {trimmed}"),
+                        ))));
+                    }
+                }
+            } else {
+                return Some(Err(StoreError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("malformed edge line (expected 'src dst'): {trimmed}"),
+                ))));
+            }
+        }
+    }
+}
 
 fn generate_random_string(len: usize) -> String {
     rand::thread_rng().sample_iter(rand::distributions::Alphanumeric).take(len).map(char::from).collect()
@@ -70,18 +162,6 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
         std::fs::remove_dir_all(&data_dir)?;
     }
 
-    // Schema matching bench_read expectations so round-trip verification works.
-    let schema = BulkSchema {
-        vertex_labels: vec![VERTEX_LABEL.to_string()],
-        edge_labels: vec![EDGE_LABEL.to_string()],
-        prop_keys: vec![
-            (NAME_KEY.to_string(), DataType::String),
-            (AGE_KEY.to_string(), DataType::Int64),
-            (WEIGHT_KEY.to_string(), DataType::Float64),
-            (TIMESTAMP_KEY.to_string(), DataType::Int64),
-        ],
-    };
-
     let source = EdgeListSource {
         path: file_path,
         vertex_label: VERTEX_LABEL.to_string(),
@@ -91,24 +171,25 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
 
     // Timing begins here: includes file parsing and property generation.
     let t0 = Instant::now();
-    let (raw_vertices, raw_edges) = source.open().map_err(|e| format!("failed to open source: {e}"))?;
+    let (raw_vertices, raw_edges) = source.open()?;
 
-    // Synthetic properties matching the schema above.
+    // Synthetic properties matching bench_read expectations.
     let mut rng_v = rand::thread_rng();
-    let vertices = raw_vertices.into_iter().map(move |mut v| {
+    let vertices = raw_vertices.into_iter().map(move |mut v| -> BulkVertex {
         v.props.insert(NAME_KEY.to_string(), Primitive::String(generate_random_string(10).into()));
         v.props.insert(AGE_KEY.to_string(), Primitive::Int64(rng_v.gen_range(18..100)));
         v
     });
     let mut rng_e = rand::thread_rng();
-    let edges = raw_edges.into_iter().map(move |mut e| {
+    let edges = raw_edges.into_iter().map(move |res| -> Result<BulkEdge, StoreError> {
+        let mut e = res?;
         e.props.insert(WEIGHT_KEY.to_string(), Primitive::Float64(rng_e.gen_range(0.1..10.0)));
         e.props.insert(TIMESTAMP_KEY.to_string(), Primitive::Int64(rng_e.gen_range(0..1_000_000)));
-        e
+        Ok(e)
     });
 
-    let work_dir = data_dir.join("_bulk_work");
-    let mut loader = SstBulkLoader::new(&data_dir, &work_dir);
+    let graph = Graph::open(&data_dir)?;
+    let mut loader = graph.open_bulk_loader()?;
     if let Some(m) = max_memory {
         loader = loader.with_max_memory(m);
     }
@@ -116,7 +197,9 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
         loader = loader.with_max_sst_size(s);
     }
 
-    let stats = loader.load_initial(schema, vertices, edges, GraphOptions::default(), &RocksOptions::default())?;
+    loader.load_vertices(vertices)?;
+    loader.load_edges(edges)?;
+    let stats = loader.commit()?;
     let elapsed = t0.elapsed();
 
     println!("=== Bulk SST Load Complete ===");

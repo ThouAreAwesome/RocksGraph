@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 pub(super) mod admin;
-pub(crate) mod bulk_loader;
-pub(crate) mod bulk_sort;
-pub(crate) mod bulk_source;
-pub(super) mod cf_options;
+pub(crate) mod cf_options;
 mod snapshot;
 mod store;
 mod transaction;
