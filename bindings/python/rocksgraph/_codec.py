@@ -294,6 +294,7 @@ def _encode_step(opcode: int, args: Any, buf: bytearray):
             buf.append(0)
             
     elif opcode == OP_VECTORNEAR:
+        from ._types import Vector
         prop, query, k = args
         _encode_string(prop, buf)
         buf.extend(struct.pack(">I", k))
@@ -307,6 +308,7 @@ def _encode_step(opcode: int, args: Any, buf: bytearray):
         for f in vec.values:
             buf.extend(struct.pack("<f", f))
     elif opcode == OP_VECTORSIMILARITY:
+        from ._types import Vector
         prop, query = args
         _encode_string(prop, buf)
         if isinstance(query, Vector):

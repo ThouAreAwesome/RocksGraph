@@ -63,6 +63,7 @@ class Vertex:
     def __hash__(self):
         return hash(self._d.get("id"))
 
+    @property
     def id(self):
         return self._d["id"]
 
