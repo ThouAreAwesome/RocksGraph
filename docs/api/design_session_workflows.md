@@ -30,15 +30,16 @@ All examples use Python. Rust equivalents use the same method names in `snake_ca
 | `ReadSession` | `g.read()` | Nothing | Point-in-time snapshot query. |
 | `BulkLoader` | `g.open_bulk_loader(work_dir)` | CF_VERTICES, CF_EDGES (SST ingestion) | Large initial data load, bypasses WAL and OCC. |
 
-**The key rule**: `GraphOptions` at `Graph::open` sets only `mode` (Auto/Strict) and
-`edge_mode` (Single/Multi). It carries no schema content — no labels, no property
+**The key rule**: `GraphOptions` at `Graph::open` sets only `mode` (Auto/Strict),
+`edge_mode` (Single/Multi), `storage` tunables (`StorageOptions`), and `vector_runtime` (`VectorRuntimeOptions` with `default_limit` and `per_index_overrides`). It carries no schema content — no labels, no property
 keys, no vector indexes. All structural declarations go through `SchemaSession`.
 
-**Environmental config** (`memory_limit_bytes`) is never persisted to disk. Supply it
-per-open via `GraphOptions(vector_runtime=[VectorIndexRuntimeOpts(...)])` so a database
+**Environmental config** is never persisted to disk. Supply it per-open so a database
 file is portable across machines with different RAM. Structural config (dimension, metric,
 algorithm) is baked into CF_SCHEMA and must not vary per machine — machine-specific limits
-must not be.
+must not be. Two equivalent surfaces:
+- **Python kwargs**: `Graph(path, vector_memory_limit=5*GiB, vector_index_limits=[IndexLimit(entity_type=..., property=..., memory_limit=...)])` — the binding constructs `VectorRuntimeOptions` internally.
+- **Rust / full control**: `GraphOptions { vector_runtime: VectorRuntimeOptions { default_limit: ..., per_index_overrides: ... }, .. }`
 
 ---
 
@@ -94,7 +95,7 @@ g = Graph(path)
     └── Ready
 ```
 
-> **Memory cap (optional):** `Graph(path, vector_runtime=[VectorIndexRuntimeOpts(entity_type=VERTEX, property="embedding", memory_limit_bytes=5*GiB)])` — applied per-open, never saved to disk.
+> **Memory cap (optional):** `Graph(path, vector_memory_limit=5 * GiB)` or with per-index overrides via `vector_index_limits=[...]` — applied per-open, never saved to disk.
 
 > **For crash recovery** (SIGKILL, OOM during WAL replay, BulkLoader crash), see [Scenario 7](#scenario-7-crash-recovery--sigkill-between-commits).
 
@@ -449,10 +450,7 @@ Three distinct crash paths, each with different recovery behavior.
 [2]  (if partial — two recovery options):
 
      # Option A: reopen with higher memory limit
-     g = Graph(path, vector_runtime=[VectorIndexRuntimeOpts(
-         entity_type=VectorEntityType.VERTEX, property="embedding",
-         memory_limit_bytes=10*GiB,
-     )])
+     g = Graph(path, vector_memory_limit=10 * GiB)
 
      # Option B: rebuild from CF_VERTICES ground truth (always correct)
      g.rebuild_vector_index(VectorEntityType.VERTEX, "embedding")

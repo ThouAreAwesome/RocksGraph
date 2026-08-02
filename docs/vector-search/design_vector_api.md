@@ -830,7 +830,7 @@ once via `SchemaSession::add_vector_index()`, persisted to CF_SCHEMA, and reload
 automatically on every subsequent `Graph::open`. It is never re-supplied at open
 time — the database file is the source of truth.
 
-**Environmental config** (`VectorIndexRuntimeOpts`: `memory_limit_bytes`) is supplied
+**Environmental config** (`VectorRuntimeOptions`: `default_limit`, `per_index_overrides`) is supplied
 per-open via `GraphOptions` and is never written to disk. This prevents a server-side
 memory limit from being baked into a database file and crashing a client machine with
 less RAM.
@@ -861,13 +861,18 @@ let g = Graph::open(path)?;
 
 // Per-open memory cap (environmental, never written to disk)
 let g = Graph::open_with_options(path, GraphOptions {
-    vector_runtime: vec![
-        VectorIndexRuntimeOpts {
-            entity_type:        VectorEntityType::Vertex,
-            property:           "embedding",
-            memory_limit_bytes: Some(5 * 1024 * 1024 * 1024),  // 5 GB cap on this machine
-        },
-    ],
+    vector_runtime: VectorRuntimeOptions {
+        default_limit: Some(VectorIndexLimit {
+            memory_limit_bytes: 5 * 1024 * 1024 * 1024, // 5 GB for all indexes
+        }),
+        per_index_overrides: vec![
+            IndexLimitOverride {
+                entity_type: VectorEntityType::Vertex,
+                property:    "large_doc_embedding".into(),
+                limit:       VectorIndexLimit { memory_limit_bytes: 8 * 1024 * 1024 * 1024 },
+            },
+        ],
+    },
     ..Default::default()
 })?;
 ```
@@ -887,14 +892,15 @@ with g.open_schema() as sess:
 # Subsequent opens — nothing to declare; indexes reload from CF_SCHEMA
 g = Graph(path)
 
-# Per-open memory cap (environmental — set to ~80% of available RAM on this machine)
-g = Graph(path, vector_runtime=[
-    VectorIndexRuntimeOpts(
-        entity_type        = VectorEntityType.VERTEX,
-        property           = "embedding",
-        memory_limit_bytes = 5 * 1024 ** 3,
-    ),
-])
+# Per-open memory cap (environmental — set global cap and optional per-index overrides).
+# Python accepts flat kwargs (vector_memory_limit, vector_index_limits); the binding
+# constructs VectorRuntimeOptions internally. Pass vector_runtime=VectorRuntimeOptions(...)
+# directly for full control.
+g = Graph(
+    path,
+    vector_memory_limit=5 * 1024 ** 3,  # 5 GB global default
+    vector_index_limits=[IndexLimit(entity_type=VectorEntityType.VERTEX, property="large_doc", memory_limit=8 * 1024 ** 3)],
+)
 ```
 
 **Structural type** — persisted to CF_SCHEMA, portable across machines:
@@ -912,10 +918,26 @@ pub struct VectorIndexConfig {
 **Environmental type** — supplied per-open, never persisted:
 
 ```rust
-pub struct VectorIndexRuntimeOpts {
-    pub entity_type:        VectorEntityType,
-    pub property:           String,
-    pub memory_limit_bytes: Option<usize>,
+#[derive(Debug, Clone)]
+pub struct VectorIndexLimit {
+    pub memory_limit_bytes: usize,  // must be > 0; use default_limit: None for unlimited
+}
+
+pub struct IndexLimitOverride {
+    pub entity_type: VectorEntityType,
+    pub property:    SmolStr,
+    pub limit:       VectorIndexLimit,
+}
+
+pub struct VectorRuntimeOptions {
+    /// Default limit applied to every vector index.
+    /// None = unlimited (expert escape hatch).
+    pub default_limit: Option<VectorIndexLimit>,
+
+    /// Per-index overrides matched by (entity_type, property).
+    /// Takes precedence over default_limit. Indexes with no matching
+    /// override fall back to default_limit; if that is also None, unlimited.
+    pub per_index_overrides: Vec<IndexLimitOverride>,
 }
 ```
 
@@ -939,7 +961,7 @@ pub enum DistanceMetric {
 ```
 
 **Ships in**: v0.1 (`BruteForce`), v0.2 (`Hnsw`).  
-`VectorIndexRuntimeOpts` and `GraphOptions::vector_runtime` ship alongside v0.2 HNSW.
+`VectorRuntimeOptions` and `GraphOptions::vector_runtime` ship alongside v0.2 HNSW.
 
 ---
 

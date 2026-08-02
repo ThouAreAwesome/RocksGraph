@@ -105,20 +105,36 @@ will be replayed on the next `Graph::open`. See `design_vector_wal.md` §10.
 durable write. A commit that would exceed the limit is rejected entirely — no
 graph write, no WAL entry, no split-brain.**
 
-#### Memory limit in `VectorIndexRuntimeOpts`
+#### Memory limit via `VectorRuntimeOptions`
 
 `memory_limit_bytes` is an **environmental constraint** — it is supplied per-open
-via `GraphOptions::vector_runtime` as a `VectorIndexRuntimeOpts` entry and is never
+via `GraphOptions::vector_runtime` as a `VectorRuntimeOptions` entry and is never
 persisted to CF_SCHEMA. `Graph::open` passes the resolved limit to `UsearchHnswIndex`
 at construction time. The persisted `VectorIndexConfig` (dimension, metric, algorithm)
 contains no memory limit.
 
 ```rust
 // Supplied at open, applied to UsearchHnswIndex at construction; never saved to disk
-pub struct VectorIndexRuntimeOpts {
-    pub entity_type:        VectorEntityType,
-    pub property:           String,
-    pub memory_limit_bytes: Option<usize>,  // None = unlimited (use with caution)
+#[derive(Debug, Clone)]
+pub struct VectorIndexLimit {
+    pub memory_limit_bytes: usize,  // must be > 0; use default_limit: None for unlimited
+}
+
+pub struct IndexLimitOverride {
+    pub entity_type: VectorEntityType,
+    pub property:    SmolStr,
+    pub limit:       VectorIndexLimit,
+}
+
+pub struct VectorRuntimeOptions {
+    /// Default limit applied to every vector index.
+    /// None = unlimited (expert escape hatch).
+    pub default_limit: Option<VectorIndexLimit>,
+
+    /// Per-index overrides matched by (entity_type, property).
+    /// Takes precedence over default_limit. Indexes with no matching
+    /// override fall back to default_limit; if that is also None, unlimited.
+    pub per_index_overrides: Vec<IndexLimitOverride>,
 }
 ```
 
@@ -326,11 +342,9 @@ trigger a true usearch allocation failure. At commit time this hits step 7
 same insert, hits the same OOM, and crashes again — **permanent crash loop
 until hardware is upgraded or the index is manually deleted from `__meta` CF**.
 
-**Recommendation**: always supply a `VectorIndexRuntimeOpts` entry with
-`memory_limit_bytes` set to ~80 % of available RAM in `GraphOptions::vector_runtime`.
-Treat `None` (no entry / missing entry for an index) as an expert escape hatch, not
-a safe default. Document this prominently in the Python/JS `Graph` constructor
-docstring and any getting-started guide.
+**Recommendation**: always supply `VectorRuntimeOptions` with `default_limit` set to ~80 % of available RAM in `GraphOptions::vector_runtime`.
+Treat `None` as an expert escape hatch, not a safe default. Document this prominently
+in the Python/JS `Graph` constructor docstring and any getting-started guide.
 
 ### 5c. Write lock held during brute-force search (v0.1)
 

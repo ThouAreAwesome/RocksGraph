@@ -223,24 +223,52 @@ replay.
 
 **What is NOT persisted — environmental config:** `memory_limit_bytes` is
 **not** part of `VectorIndexConfig` and is never written to CF_SCHEMA. It is
-supplied per-open via `GraphOptions::vector_runtime` as a `VectorIndexRuntimeOpts`
+supplied per-open via `GraphOptions::vector_runtime` as a `VectorRuntimeOptions`
 entry. This preserves portability: a database file created on a 64 GB server
 works correctly on a 8 GB laptop because no memory constraint is baked into the
 file. The caller applies whatever limit is appropriate for the current machine.
 
 ```rust
 // Environmental config — supplied at open, never persisted
-pub struct VectorIndexRuntimeOpts {
-    pub entity_type:        VectorEntityType,
-    pub property:           String,
-    pub memory_limit_bytes: Option<usize>,
+#[derive(Debug, Clone)]
+pub struct VectorIndexLimit {
+    pub memory_limit_bytes: usize,  // must be > 0; use default_limit: None for unlimited
 }
 
-// GraphOptions carries runtime opts, not structural config
+pub struct IndexLimitOverride {
+    pub entity_type: VectorEntityType,
+    pub property:    SmolStr,
+    pub limit:       VectorIndexLimit,
+}
+
+pub struct VectorRuntimeOptions {
+    /// Default limit applied to every vector index.
+    /// None = unlimited (expert escape hatch).
+    pub default_limit: Option<VectorIndexLimit>,
+
+    /// Per-index overrides matched by (entity_type, property).
+    /// Takes precedence over default_limit. Indexes with no matching
+    /// override fall back to default_limit; if that is also None, unlimited.
+    pub per_index_overrides: Vec<IndexLimitOverride>,
+}
+
+/// Storage-level hardware tunables — supplied per-open, never persisted.
+/// Leave as Default unless you have profiling data justifying a change.
+#[derive(Debug, Clone)]
+pub struct StorageOptions {
+    pub max_open_files: i32,
+    pub block_cache_mb: usize,
+    pub write_buffer_mb: usize,
+    pub max_background_jobs: i32,
+    pub custom_rocks_modifier: Option<std::sync::Arc<dyn Fn(&mut rocksdb::Options) + Send + Sync>>,
+}
+
+// GraphOptions carries runtime opts and storage tunables, not structural config
 pub struct GraphOptions {
     pub mode:           SchemaMode,
     pub edge_mode:      EdgeMode,
-    pub vector_runtime: Vec<VectorIndexRuntimeOpts>,   // empty = no per-index memory cap
+    pub storage:        StorageOptions,
+    pub vector_runtime: VectorRuntimeOptions,
 }
 ```
 
