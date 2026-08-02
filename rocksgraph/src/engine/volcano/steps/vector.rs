@@ -182,7 +182,6 @@ impl CoreStep for VectorSimilarityStep {
 
 #[cfg(test)]
 mod vector_e2e_tests {
-    use super::*;
     use crate::engine::traverser::Traverser;
     use crate::types::gvalue::{GValue, Primitive};
 
