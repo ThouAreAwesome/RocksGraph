@@ -131,6 +131,12 @@ pub enum StoreError {
 
     /// A bulk load was interrupted before ingest. Caller must retry load_initial.
     IncompleteLoad { msg: String },
+
+    /// An operation was attempted while a bulk load was in progress.
+    BulkLoadInProgress,
+
+    /// Attempted to load edges or commit before `load_vertices()` was called.
+    VerticesNotLoaded,
 }
 
 // ── Classification helpers ──────────────────────────────────────────────────
@@ -164,14 +170,20 @@ impl StoreError {
     /// True if the query itself is invalid (type mismatch, unsupported construct,
     /// or malformed traversal).
     pub fn is_query_error(&self) -> bool {
-        matches!(self, Self::TraversalError(_) | Self::UnsupportedOperation(_) | Self::UnexpectedDataType(_))
+        matches!(
+            self,
+            Self::TraversalError(_)
+                | Self::UnsupportedOperation(_)
+                | Self::UnexpectedDataType(_)
+                | Self::VerticesNotLoaded
+        )
     }
 
     /// Human-readable category name for logging, metrics, or error-reporting.
     pub fn category(&self) -> &'static str {
         match self {
             Self::RocksDb(_) | Self::Io(_) | Self::CorruptData(_) | Self::MissingColumnFamily(_) => "storage",
-            Self::Conflict | Self::LockError => "transaction",
+            Self::Conflict | Self::LockError | Self::BulkLoadInProgress => "transaction",
             Self::SchemaViolation(_) | Self::SchemaConflict(_) | Self::SchemaExhausted(_) => "schema",
             Self::NotFound
             | Self::DuplicateVertex(_)
@@ -180,7 +192,10 @@ impl StoreError {
             | Self::IncidentEdges
             | Self::ReadOnly => "integrity",
             Self::IncompleteLoad { .. } => "storage",
-            Self::UnexpectedDataType(_) | Self::UnsupportedOperation(_) | Self::TraversalError(_) => "query",
+            Self::UnexpectedDataType(_)
+            | Self::UnsupportedOperation(_)
+            | Self::TraversalError(_)
+            | Self::VerticesNotLoaded => "query",
         }
     }
 }
@@ -209,6 +224,8 @@ impl fmt::Display for StoreError {
             StoreError::UnsupportedOperation(msg) => write!(f, "unsupported operation: {msg}"),
             StoreError::TraversalError(msg) => write!(f, "traversal error: {msg}"),
             StoreError::IncompleteLoad { msg } => write!(f, "incomplete bulk load: {}", msg),
+            StoreError::BulkLoadInProgress => write!(f, "bulk load in progress"),
+            StoreError::VerticesNotLoaded => write!(f, "load_vertices must be called before load_edges or commit"),
         }
     }
 }

@@ -15,7 +15,7 @@ const BLOCK_FORMAT_VERSION: i32 = 6;
 
 /// Block-based options shared by vertex and vertex_degree CFs (without block cache —
 /// the caller sets `block_cache` if needed).
-pub(super) fn vertex_block_opts(rocksdb_opts: &RocksOptions) -> BlockBasedOptions {
+pub(crate) fn vertex_block_opts(rocksdb_opts: &RocksOptions) -> BlockBasedOptions {
     let mut opts = BlockBasedOptions::default();
     opts.set_bloom_filter(BLOOM_FILTER_BITS_PER_KEY, false);
     opts.set_format_version(BLOCK_FORMAT_VERSION);
@@ -28,7 +28,7 @@ pub(super) fn vertex_block_opts(rocksdb_opts: &RocksOptions) -> BlockBasedOption
 }
 
 /// Full CF options for `CF_VERTICES` and `CF_VERTEX_DEGREE`.
-pub(super) fn vertex_cf_opts(rocksdb_opts: &RocksOptions, block_opts: &BlockBasedOptions) -> Options {
+pub(crate) fn vertex_cf_opts(rocksdb_opts: &RocksOptions, block_opts: &BlockBasedOptions) -> Options {
     let mut opts = Options::default();
     opts.set_block_based_table_factory(block_opts);
     opts.set_write_buffer_size(rocksdb_opts.write_buffer_size);
@@ -37,7 +37,7 @@ pub(super) fn vertex_cf_opts(rocksdb_opts: &RocksOptions, block_opts: &BlockBase
 }
 
 /// Block-based options shared by edges_out and edges_in CFs (without block cache).
-pub(super) fn edge_block_opts(rocksdb_opts: &RocksOptions) -> BlockBasedOptions {
+pub(crate) fn edge_block_opts(rocksdb_opts: &RocksOptions) -> BlockBasedOptions {
     let mut opts = BlockBasedOptions::default();
     // full filter (not block-based) so prefix seeks hit the bloom filter
     opts.set_bloom_filter(BLOOM_FILTER_BITS_PER_KEY, false);
@@ -51,7 +51,7 @@ pub(super) fn edge_block_opts(rocksdb_opts: &RocksOptions) -> BlockBasedOptions 
 }
 
 /// Full CF options for `CF_EDGES_OUT` and `CF_EDGES_IN`.
-pub(super) fn edge_cf_opts(rocksdb_opts: &RocksOptions, block_opts: &BlockBasedOptions) -> Options {
+pub(crate) fn edge_cf_opts(rocksdb_opts: &RocksOptions, block_opts: &BlockBasedOptions) -> Options {
     let mut opts = Options::default();
     opts.set_prefix_extractor(SliceTransform::create_fixed_prefix(EDGE_PREFIX_LENGTH));
     opts.set_block_based_table_factory(block_opts);

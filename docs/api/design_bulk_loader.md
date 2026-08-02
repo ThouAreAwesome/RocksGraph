@@ -36,6 +36,29 @@ It is not a replacement for `TxSession` (incremental writes to a live graph) or
 `open_schema()` (schema DDL). It is the `COPY` / `pg_dump --restore`
 analogue for RocksGraph.
 
+```
+Input Data Sources                     BulkLoader (graph session)
+------------------                     -------------------------
+
+Any graph dataset / stream            graph.open_bulk_loader()
+  |                                   |
+  +- CSV / JSON / SNAP / Parquet      +- load_vertices(iter)   -> vertex SST
+  |     -> vertices() iter            |  |
+  |     -> edges() iter               |  +- load_edges(iter)    -> edge SSTs + degree
+  |                                   |     |
+  +- Direct in-memory collections     |     +- commit()         -> ingest atomically
+        -> IntoIterator[BulkVertex]   |
+        -> IntoIterator[BulkEdge]     |
+```
+
+Every graph dataset, regardless of format, decomposes into two iterators.
+External format parsers or user code feed directly into `load_vertices(iter)`
+and `load_edges(iter)`.
+
+Thanks to the [`IntoBulkVertex`] and [`IntoBulkEdge`] traits, iterators can yield either
+raw items (`BulkVertex`, `BulkEdge`) or fallible results (`Result<BulkVertex, E>`, `Result<BulkEdge, E>`),
+enabling clean streaming error propagation without buffering intermediate records.
+
 ---
 
 ## 2. Constraints and positioning
@@ -43,8 +66,8 @@ analogue for RocksGraph.
 | Constraint | Detail |
 | ---------- | ------ |
 | **Overwrites existing data** | `open_bulk_loader()` does not check for pre-existing graph data. Any keys produced by the SST build will overwrite colliding entries on `IngestExternalFile`. The caller is responsible for the overwrite semantics. Typical use is on an empty database; re-running on a live graph replaces all overlapping keys. |
-| **Schema mode governs schema handling** | *Auto mode*: the schema is assumed to be empty at the start of bulk load — vertex labels, edge labels, and property keys are auto-registered from the data during SST generation, with no dependence on any prior schema state. *Strict mode*: the schema is read from the Graph at `open_bulk_loader()` time and is **never modified** during loading or at commit — no labels or keys are added, changed, or removed. |
-| **No concurrent queries during loading** | The graph is exclusively owned by the `BulkLoader` session for the duration. `read()` and `begin()` calls on the same `Graph` handle return `StoreError::BulkLoadInProgress`. |
+| **Schema mode governs schema handling** | *Strict mode*: validates all labels and property keys against `graph.schema` during `load_vertices()`/`load_edges()` — undeclared names abort the current phase before its SSTs are written. Schema is never modified. *Auto mode*: collects new labels and property keys into a staging schema during load; synced to `graph.schema` and `CF_SCHEMA` atomically at `commit()`. |
+| **No concurrent queries during loading** | `open_bulk_loader()` borrows `&mut self`, enforcing compile-time exclusion. For shared `Arc<Graph>` (Python/Node.js bindings, concurrent Rust), an internal `AtomicBool` rejects `g.read()`/`g.tx()` with `StoreError::BulkLoadInProgress`. |
 | **Not transactional** | Data becomes visible all-at-once via `IngestExternalFile`. If the process is killed mid-pipeline, partial state may be left behind — see §7. |
 | **No WAL** | SST files bypass the WAL entirely. After ingestion, the graph behaves as if it was written with WAL for all future incremental writes. |
 
@@ -57,8 +80,18 @@ The `BulkLoader` follows the same session-open-commit pattern as
 
 ### 3a. Rust
 
+`BulkLoader` is opened as a session on an existing `Graph`. It holds a borrowed
+reference to the active `Arc<DB>` and `Arc<RwLock<Schema>>` — it never re-opens
+the database, so there is no file-lock contention.
+
 ```rust
-let mut loader = graph.open_bulk_loader("/tmp/bulk_work")?;
+let mut loader = graph.open_bulk_loader()?;
+// or with explicit work_dir and performance tunables:
+let mut loader = graph.open_bulk_loader()?
+    .with_work_dir("/fast/ssd/bulk_scratch")
+    .with_max_memory(1024 * 1024 * 1024)   // 1 GB RAM budget
+    .with_max_sst_size(128 * 1024 * 1024)   // 128 MB SST split
+    .with_rocks_options(rocks_options);
 
 loader.load_vertices(vertex_iter)?;
 loader.load_edges(edge_iter)?;
@@ -67,6 +100,18 @@ let stats = loader.commit()?;
 println!("loaded {} vertices, {} edges in {:.1}s",
     stats.vertices_written, stats.edges_written, stats.duration_secs);
 ```
+
+#### Builder Configuration Methods
+
+| Method | Default | Description |
+|---|---|---|
+| `with_work_dir(path)` | System temp directory (`_bulk_work`) | Scratch directory for external merge sorting and staging SST files. Cleaned up on `commit()` or `Drop`. |
+| `with_max_memory(bytes)` | `512 MiB` | Maximum in-memory RAM budget for `ExternalSorter` before spilling chunks to disk. |
+| `with_max_sst_size(bytes)` | `58 MiB` (90% of RocksDB 64 MiB default) | Target split threshold for generated SST files to allow parallel ingestion. |
+| `with_rocks_options(opts)` | `graph.rocks_opts` | Sets custom `RocksOptions` (block size, bloom filters, block-based table options) used when creating `SstFileWriter` instances so SST block formats match the target column families. |
+
+`Drop` on `BulkLoader` (without explicit `commit()`) automatically cleans up the work directory
+and discards any in-progress SST files — no data is ingested into the database.
 
 ### 3b. Python
 
@@ -84,13 +129,13 @@ with g.open_schema() as mgmt:
     ))
     mgmt.commit()
 
-with g.open_bulk_loader(work_dir="/tmp/bulk") as bulk:
+with g.open_bulk_loader().with_work_dir("/tmp/bulk").with_max_memory(512 * MB) as bulk:
     bulk.load_vertices(document_iter)
     bulk.load_edges(citation_iter)
 # __exit__ calls commit(): SST ingest → HNSW build → snapshot → marker cleared
 
 # Auto mode — no vector index during bulk load
-with g.open_bulk_loader(work_dir="/tmp/bulk") as bulk:
+with g.open_bulk_loader() as bulk:
     bulk.load_vertices(document_iter)  # vertex labels, prop keys auto-registered
     bulk.load_edges(citation_iter)
 # __exit__ commits: SST ingest only, no HNSW build
@@ -177,43 +222,76 @@ built from it depends entirely on the schema mode (§6), not on the presence of
 
 ## 5. Commit pipeline
 
+The work is done by three methods in sequence. `load_vertices` and `load_edges`
+process iterators and write SST files to the work directory. `commit()` ingests
+them atomically, syncs the schema, builds vector indexes, and writes snapshots.
+
+### 5a. `load_vertices(iter)`
+
+Streams the vertex iterator through an `ExternalSorter`, sorts by vertex key,
+and writes `CF_VERTICES` SSTs to the work directory. Simultaneously writes a
+temporary `vertex_labels.bin` — a sorted `(VertexKey, LabelId)` file used by
+`load_edges()` to annotate destination vertex labels on edges.
+
+```rust
+// Called first. Consumes the iterator. Writes SSTs to _bulk_work/.
+loader.load_vertices(vertex_iter)?;
+```
+
+### 5b. `load_edges(iter)`
+
+Streams the edge iterator, performs a sort-merge join with `vertex_labels.bin`
+to attach destination vertex labels, sorts edges, and writes `CF_EDGES_OUT`,
+`CF_EDGES_IN`, and `CF_VERTEX_DEGREE` SSTs to the work directory.
+
+In Strict mode: validates every edge label and property key against `graph.schema`
+— undeclared names abort immediately, before any edge SSTs are written.
+
+In Auto mode: collects newly-encountered labels and property keys into a
+staging schema for sync-back at `commit()`.
+
+```rust
+// Called second. Must follow load_vertices() — needs vertex_labels.bin.
+// Calling load_edges() before load_vertices() returns StoreError::VerticesNotLoaded.
+loader.load_edges(edge_iter)?;
+```
+
+### 5c. `commit()`
+
+Does not re-read any source data. All SST files already exist in the work
+directory. `commit()` sequences the finalisation steps:
+
 ```
 BulkLoader::commit()
+│  Uses the existing Arc<DB> handle from Graph — never re-opens the database.
 │
-├── Phase 1 — SST generation (streaming, bounded memory via ExternalSorter)
-│     vertices + all properties  → CF_VERTICES SST(s)
-│     edges                      → CF_EDGES_OUT / CF_EDGES_IN SST(s)
-│     degree counts              → CF_VERTEX_DEGREE SST(s)
-│     schema (if auto mode)      → CF_SCHEMA SST (auto-registered labels/keys)
-│     FloatVector values land in CF_VERTICES props blob — no special treatment
-│
-├── Phase 2 — Write crash marker
+├── Phase 1 — Write crash marker
 │     Atomic write to CF_SCHEMA: BULK_LOAD_IN_PROGRESS_KEY = "pre-ingest"
-│     (Signals: SST files ready but not yet ingested)
 │
-├── Phase 3 — IngestExternalFile (all CFs, atomic)
+├── Phase 2 — IngestExternalFile (all CFs, atomic)
+│     CF_VERTICES, CF_EDGES_OUT, CF_EDGES_IN, CF_VERTEX_DEGREE SSTs ingested.
 │     Data becomes visible. Crash marker updated: "post-ingest"
-│     (Signals: graph data live, HNSW build not yet started)
+│
+├── Phase 3 — Schema sync  [AUTO MODE ONLY]
+│     Write newly-discovered labels + property keys to CF_SCHEMA.
+│     Atomically update graph.schema (Arc<RwLock<Schema>>) with the staging schema.
+│     (Strict mode: no-op — validation already done in load_vertices/load_edges.)
 │
 ├── Phase 4 — Vector index build  [STRICT MODE ONLY, skipped in AUTO]
 │     For each VectorIndexConfig registered in schema:
 │       Scan CF_VERTICES for FloatVector entries matching (entity_type, prop_key_id)
 │       Batch-insert into usearch HNSW (no per-insert RwLock contention)
 │     Crash marker updated: "post-index"
-│     (Signals: HNSW built, snapshot not yet written)
 │
 ├── Phase 5 — Write index snapshots  [STRICT MODE ONLY]
-│     For each built HNSW index: write snapshot file atomically
+│     For each built HNSW index: write snapshot file atomically.
 │     Crash marker updated: "post-snapshot"
 │
 └── Phase 6 — Clear crash marker
-      Delete BULK_LOAD_IN_PROGRESS_KEY from CF_SCHEMA
-      BulkLoader session complete — graph fully queryable
+      Delete BULK_LOAD_IN_PROGRESS_KEY from CF_SCHEMA.
+      Clean up work directory (SST files + sort-spill chunks).
+      Disarm WorkDirGuard — on error, work_dir is left for crash recovery (§7).
 ```
-
-Work directory (containing SST files and sort-spill chunks) is cleaned up
-automatically on success. On error or crash, it is left in place for crash
-recovery (§7).
 
 ---
 
@@ -222,18 +300,18 @@ recovery (§7).
 ### 6a. Strict mode
 
 All schema elements — vertex labels, edge labels, property keys, and vector
-indexes — **must be declared via `open_schema()` before `BulkLoader`
-starts**. The loader reads the schema from the `Graph` handle at
-`open_bulk_loader()` time.
+indexes — **must be declared via `open_schema()` before `BulkLoader` starts**.
+The loader holds a shared reference to `graph.schema` and validates every
+`BulkVertex.label`, `BulkEdge.label`, and property key name against this
+schema during `load_vertices()`/`load_edges()`. Unknown names are rejected
+before edge SSTs are written — vertex SSTs from load_vertices() may already exist in the work directory, but they will be cleaned up by Drop (§3a).
 
-**The schema is never modified during bulk load or at commit.** The loader
-validates every `BulkVertex.label`, `BulkEdge.label`, and property key name
-against the frozen schema; unknown names are rejected immediately. No labels,
-property keys, or index entries are added to CF_SCHEMA during the pipeline.
+The schema is **never modified** during bulk load. No labels, property keys,
+or index entries are added to CF_SCHEMA. No sync-back to `graph.schema` is
+needed at `commit()` — the schema is already authoritative.
 
 At commit, all vector indexes registered in the schema are built automatically
-from the ingested data (Phase 4–5 above). The user does not need to call
-anything after the bulk load to have a queryable HNSW index.
+from the ingested data (Phase 4–5, §5c).
 
 After the bulk load completes, the user may add further indexes at any time:
 
@@ -246,10 +324,15 @@ with g.open_schema() as mgmt:
 
 ### 6b. Auto mode
 
-**The schema is assumed to be empty at the start of bulk load.** Vertex labels,
-edge labels, and non-vector property keys are **auto-registered from the data**
-during Phase 1 SST generation. Auto mode does not read or rely on any
-schema that may already exist in the `Graph`.
+Vertex labels, edge labels, and non-vector property keys are **auto-registered
+from the data** during `load_vertices()`/`load_edges()`. Newly-encountered
+names are collected into a staging schema held by the `BulkLoader` session —
+`graph.schema` is not modified during load.
+
+At `commit()`, the staging schema is written to `CF_SCHEMA` and atomically
+synced into `graph.schema` (`Arc<RwLock<Schema>>`). From that point forward,
+the graph's schema includes all labels and property keys discovered during
+the bulk load.
 
 **Vector indexes are never built automatically in auto mode.** Even though the
 loader can detect `GValue::FloatVector` values in `props`, it cannot infer the
@@ -277,10 +360,9 @@ with g.open_schema() as mgmt:
 
 | | Strict mode | Auto mode |
 | --- | --- | --- |
-| Schema at `open_bulk_loader()` | Read from Graph; frozen for the duration | Assumed empty; ignored |
-| Vertex/edge labels | Must be declared beforehand; unknown names rejected | Auto-registered from data |
-| Non-vector property keys | Must be declared beforehand; unknown names rejected | Auto-registered from data |
-| Schema modifications during load | **None** | Labels + property keys written to CF_SCHEMA SST |
+| Schema during load | Held via Arc<RwLock<Schema>>; validates writes | Auto-registers into staging schema; not yet visible |
+| Schema at commit | No-op (schema unchanged) | Staging schema written to CF_SCHEMA + synced into graph.schema |
+| Schema modifications during load | **None** | Labels + property keys collected into staging schema |
 | Vector indexes during bulk load | Auto-built from declared schema | **Never built** |
 | Adding indexes after bulk load | `open_schema().add_vector_index()` | Same |
 
@@ -291,6 +373,12 @@ with g.open_schema() as mgmt:
 The crash marker `BULK_LOAD_IN_PROGRESS_KEY` in CF_SCHEMA records the pipeline
 phase at the time of the crash. `Graph::open()` checks for this marker and
 takes the appropriate recovery action before returning.
+
+**Crash before `commit()`** (during `load_vertices()` or `load_edges()`): no
+crash marker has been written yet. The database is untouched — nothing was
+ingested. The work directory may contain partial SST files; these are stale
+and can be safely deleted. `Graph::open()` sees a clean database with no
+recovery action needed.
 
 | Marker state | What happened | Recovery action |
 | ------------ | ------------- | --------------- |
@@ -312,7 +400,7 @@ takes the appropriate recovery action before returning.
 | | `open_schema()` | `BulkLoader` | `TxSession` |
 | --- | --- | --- | --- |
 | **Purpose** | Schema DDL | Initial bulk data load | Incremental data writes |
-| **Opened via** | `graph.open_schema()` | `graph.open_bulk_loader(work_dir)` | `graph.begin()` |
+| **Opened via** | `graph.open_schema()` | `graph.open_bulk_loader()` | `graph.begin()` |
 | **Commit** | `.commit()` (or context manager) | `.commit()` (or context manager) | `.commit()` |
 | **Crash safety** | Atomic (WAL-backed CAS) | Not transactional (SST ingest is atomic; HNSW build is not) | Atomic (WAL-backed OCC) |
 | **Data path** | CF_SCHEMA only | SST files → `IngestExternalFile` | WAL → memtable → compaction |

@@ -5,17 +5,14 @@ streaming.  The `BulkSource` trait and additional format adapters remain proposa
 
 ## Problem
 
-`SstBulkLoader::load_initial` already accepts format-agnostic iterators:
+`BulkLoader` (opened via `graph.open_bulk_loader()`) accepts vertex and edge
+iterators — the universal protocol for bulk data ingestion:
 
 ```rust
-pub fn load_initial(
-    self,
-    schema:     BulkSchema,
-    vertices:   impl Iterator<Item = BulkVertex>,
-    edges:      impl Iterator<Item = BulkEdge>,
-    graph_opts: GraphOptions,
-    rocks_opts: &RocksOptions,
-) -> Result<BulkLoadStats, StoreError>
+let mut loader = graph.open_bulk_loader()?;
+loader.load_vertices(vertex_iter);
+loader.load_edges(edge_iter);
+loader.commit()?;
 ```
 
 But every caller must write its own file-parsing code to produce those iterators.
@@ -24,13 +21,34 @@ format; real-world pipelines also produce GraphSON, CSV, JSON Lines, and adjacen
 lists.  Without a shared abstraction, format parsing is reimplemented per dataset
 and per tool.
 
+```
+Format adapter                    BulkLoader (graph session)
+─────────────                     ─────────────────────────
+
+EdgeListSource::open("snap.txt")  
+  │                               
+  ├─ scan edge list once          
+  │  ├─ collect unique vertex IDs 
+  │  └─ build edge records        
+  │                               
+  ├─ vertices() → iter<BulkVertex> → load_vertices() writes vertex SST
+  └─ edges()    → iter<BulkEdge>   → load_edges()    writes edge SSTs
+```
+
+Every format adapter decomposes into two iterators. `BulkLoader` processes them
+in order (vertices first to build the label file, then edges annotated with
+dst vertex labels) — the adapter handles the format-specific extraction; the
+bulk loader handles the storage pipeline.
+
 ## Goals & non-goals
 
 - **Goal:** define a `BulkSource` trait that any file format can implement to
-  produce the `(BulkSchema, vertices, edges)` tuple expected by `SstBulkLoader`.
+  produce the vertex and edge iterators consumed by `BulkLoader`.
 - **Goal:** ship format implementations for the most common graph dataset formats.
 - **Goal:** schema can come from the file (auto-detected) or from the caller
-  (explicitly declared) — both paths must be supported.
+  (explicitly declared) — both paths must be supported. The schema is
+  read from the `Graph` handle at `open_bulk_loader()` time; adapters
+  for formats without embedded schema produce a minimal declaration.
 - **Non-goal:** general-purpose ETL / streaming pipeline framework.
 - **Non-goal:** Gremlin-level traversal during import.
 
@@ -38,7 +56,7 @@ and per tool.
 
 ```rust
 /// A source of graph data that can produce a schema declaration and
-/// two lazy iterators of vertices and edges for `SstBulkLoader`.
+/// two lazy iterators of vertices and edges for `BulkLoader`.
 pub trait BulkSource {
     type VertexIter: Iterator<Item = Result<BulkVertex, BulkSourceError>>;
     type EdgeIter:   Iterator<Item = Result<BulkEdge,   BulkSourceError>>;
@@ -53,20 +71,27 @@ pub trait BulkSource {
 }
 ```
 
-`SstBulkLoader` gains a convenience method that accepts any `BulkSource`:
+`BulkLoader` accepts any `BulkSource` via a convenience method.
+
+`BulkLoader` is opened as a session on a `Graph`:
 
 ```rust
-impl SstBulkLoader {
-    pub fn load_from<S: BulkSource>(
-        self,
-        source: S,
-        opts: &RocksOptions,
-    ) -> Result<BulkLoadStats, StoreError> {
-        let (schema, vertices, edges) = source.open()?;
-        self.load_initial(schema, vertices.map(|r| r.unwrap()), edges.map(|r| r.unwrap()), opts)
-    }
-}
+let mut loader = graph.open_bulk_loader()?;
+
+// Option 1: load iterators directly
+loader.load_vertices(vertex_iter);
+loader.load_edges(edge_iter);
+
+// Option 2: load from a BulkSource adapter
+loader.load_from_source(edge_list_source)?;
+
+let stats = loader.commit()?;
 ```
+
+`load_from_source` calls `source.open()` and feeds the returned iterators
+into the pipeline.  `commit()` processes vertices first (to build the label
+file), then edges (annotated with dst vertex labels), writes SST files,
+and ingests them atomically.
 
 ## Format implementations
 
@@ -229,23 +254,23 @@ must be emitted before edges, but the file only contains edges:
 
 The `EdgeListSource` and `AdjacencyListSource` handle this internally.  For large
 files that do not fit in memory, the two-pass is implemented with external sort on
-vertex IDs (same infrastructure as the degree computation pass in `SstBulkLoader`).
+vertex IDs (same infrastructure as the degree computation pass in the internal `BulkLoader` pipeline).
 
 ## Interaction with `SchemaMode` and `EdgeMode`
 
 `BulkSource` implementations produce raw `BulkVertex`/`BulkEdge` records without
 knowledge of schema or edge mode.  Mode enforcement is entirely the responsibility
-of `SstBulkLoader`:
+of `BulkLoader`:
 
-- **`SchemaMode::Strict`**: `SstBulkLoader` validates every label and property key
-  name against the declared `BulkSchema` during Pass 1.  A `BulkSource` that
-  produces an undeclared label will cause `load_initial` to abort with
-  `StoreError::SchemaViolation` before any SST is written.
+- **`SchemaMode::Strict`**: `BulkLoader` validates every label and property key
+  name against the schema read from the `Graph` handle.  A `BulkSource` that
+  produces an undeclared label will cause `load_vertices()`/`load_edges()` to abort with
+  `StoreError::SchemaViolation` before the current phase writes its SSTs.
 - **`SchemaMode::Auto`**: unknown labels encountered in the `BulkSource` output are
-  automatically registered during Pass 1.
+  automatically registered during processing.
 - **`EdgeMode::Single`**: duplicate `(src, dst, label)` edges emitted by a
   `BulkSource` are rejected at the SST write pass with `StoreError::DuplicateEdge`.
-- **`EdgeMode::Multi`**: `SstBulkLoader` assigns ranks; `BulkEdge::rank` may be
+- **`EdgeMode::Multi`**: `BulkLoader` assigns ranks; `BulkEdge::rank` may be
   `None` (auto-assign) or `Some(r)` (explicit, for sources that carry rank info).
 
 Format implementations that *know* they may produce duplicates (e.g., a

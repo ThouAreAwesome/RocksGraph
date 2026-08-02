@@ -62,7 +62,7 @@ Graph::open(path)
   ├── .read()                      → ReadSession       (snapshot, read-only)
   ├── .begin()                     → TxSession         (OCC transaction, read-write)
   ├── .open_schema()               → SchemaSession  (DDL, atomic CAS commit)
-  ├── .open_bulk_loader(work_dir)  → BulkLoader        (SST bulk load, overwrites existing data)
+  ├── .open_bulk_loader()          → BulkLoader        (SST bulk load, overwrites existing data)
   │
   └── (operational methods on Graph itself — see §3)
 ```
@@ -153,7 +153,7 @@ RocksDB's `IngestExternalFile` — bypassing the WAL, OCC, and per-row memtable
 pressure entirely. See `docs/api/design_bulk_loader.md` for the full design.
 
 ```rust
-let mut loader = g.open_bulk_loader("/tmp/bulk_work")?;
+let mut loader = g.open_bulk_loader()?;
 loader.load_vertices(vertex_iter)?;
 loader.load_edges(edge_iter)?;
 let stats = loader.commit()?;
@@ -180,7 +180,7 @@ Key constraints:
 | **Data reads** | `read()` / `begin()` | `.V().out().values()`, `.vectorNear()`, `.vectorSimilarity()` | Gremlin traversal; consistent snapshot semantics |
 | **Data writes** | `begin()` | `.addV()`, `.addE()`, `.property()` | OCC transaction; WAL-backed |
 | **Operational / maintenance** | `Graph` directly | `rebuild_vector_index`, `export_vector_index`, `import_vector_index`, `vector_index_stats` | Work on existing indexes; don't change schema; not traversal operations |
-| **Initial bulk load** | `open_bulk_loader(work_dir)` | `load_vertices`, `load_edges`, `commit()` | Bypasses WAL and OCC entirely; overwrites existing data |
+| **Initial bulk load** | `open_bulk_loader()` | `load_vertices`, `load_edges`, `commit()` | Bypasses WAL and OCC entirely; overwrites existing data |
 
 The key decision rule: **"Am I changing what indexes or schema elements exist?"
 → `open_schema()`. "Am I working with an existing index or reading data?"
@@ -266,10 +266,11 @@ at the last snapshot, then replays `CF_VECTOR_WAL` entries forward.
 It writes at disk speed by bypassing the WAL, memtable, and OCC entirely.
 
 ```
-graph.open_bulk_loader(work_dir)  → BulkLoader
+graph.open_bulk_loader()  → BulkLoader
   │
+  ├── .with_work_dir(path)  — sets custom scratch directory (defaults to temp)
+  ├── .with_max_memory(b)   — caps in-memory sort budget before disk spill
   ├── .load_vertices(iter)  — streams vertices through ExternalSorter
-  │                           (spills to work_dir when memory budget exceeded)
   └── .load_edges(iter)     — streams edges through ExternalSorter
 
 BulkLoader::commit()
@@ -419,7 +420,7 @@ mgmt.add_vertex_label("document")
 mgmt.commit()?;
 
 // Step 2: bulk load — HNSW index built automatically at commit
-let mut loader = g.open_bulk_loader("/tmp/bulk")?;
+let mut loader = g.open_bulk_loader()?;
 loader.load_vertices(document_iter)?;
 loader.load_edges(edge_iter)?;
 loader.commit()?;  // phases 1–6, including batch HNSW build
@@ -429,7 +430,7 @@ loader.commit()?;  // phases 1–6, including batch HNSW build
 
 ```rust
 // Step 1: bulk load — schema auto-registered, no vector index built
-let mut loader = g.open_bulk_loader("/tmp/bulk")?;
+let mut loader = g.open_bulk_loader()?;
 loader.load_vertices(document_iter)?;
 loader.load_edges(edge_iter)?;
 loader.commit()?;  // phases 1–3 only; FloatVector values in CF_VERTICES as blobs
@@ -580,8 +581,8 @@ graph.import_vector_index(entity_type, property, path)
 graph.vector_index_stats(entity_type, property)
 
 // Bulk load (session on Graph)
-graph.open_bulk_loader(work_dir)  → BulkLoader
-    { .load_vertices(iter), .load_edges(iter), .commit() }
+graph.open_bulk_loader()  → BulkLoader
+    { .with_work_dir(path), .load_vertices(iter), .load_edges(iter), .commit() }
 ```
 
 ### 6b. Python (PyO3)
@@ -683,7 +684,7 @@ one place to check.
 | Begin a transaction | `.begin()` | `.tx()` | `.tx()` |
 | Get traversal source | `.g()` | `.traversal()` | `.traversal()` |
 | Schema session | `open_schema()` | `open_schema()` | `openSchema()` |
-| Open bulk load session | `graph.open_bulk_loader(work_dir)` | `g.open_bulk_loader(work_dir)` | `g.openBulkLoader({ workDir })` |
+| Open bulk load session | `graph.open_bulk_loader()` | `g.open_bulk_loader()` | `g.openBulkLoader()` |
 | Method names generally | `snake_case` | `snake_case` | `camelCase` |
 
 Python keeps `tx()` and `traversal()` for ergonomics — both read more naturally

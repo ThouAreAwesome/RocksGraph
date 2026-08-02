@@ -106,6 +106,9 @@ mod type_tests {
             StoreError::UnsupportedOperation("uo".to_string()),
             StoreError::TraversalError("re".to_string()),
             StoreError::UnexpectedDataType("ud".to_string()),
+            StoreError::IncompleteLoad { msg: "inc".to_string() },
+            StoreError::BulkLoadInProgress,
+            StoreError::VerticesNotLoaded,
         ];
 
         for e in &errs {
