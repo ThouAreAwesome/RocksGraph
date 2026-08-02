@@ -1,9 +1,8 @@
 # RocksGraph
 
-**An embeddable Gremlin-style graph database for Python.** Open a graph with one
-line of code, traverse it with zero infrastructure — like SQLite for property graphs.
-
-No server. No cluster. No JVM. Just `pip install rocksgraph`.
+**An embeddable property graph database with Gremlin traversals and vector search.**
+Open a graph with one line of code, traverse it by relationship, and search it by
+vector similarity — no server, no cluster, no JVM. Just `pip install rocksgraph`.
 
 ```bash
 pip install rocksgraph
@@ -153,6 +152,7 @@ Python `int` and `float` auto-convert to `Int64` / `Float64`. Use typed wrappers
 | `Float32(3.14)` | `f32` | `float` |
 | `Float64(1e300)` | `f64` | `float` |
 | `Uuid("550e8400-...")` | `Uuid` | `str` |
+| `Vector([1.0, 0.5, ...])` | `FloatVector(Vec<f32>)` | `list[float]` |
 | raw `int` / `float` | → `Int64` / `Float64` | auto |
 
 ## Enums
@@ -439,6 +439,32 @@ Filters do not change the traverser type — they pass through whatever they rec
 | `rank()` | `.rank()` | int (edge only) |
 | `identity()` | `.identity()` | same as input |
 | `constant(value)` | `.constant(42)` | given value |
+
+### Vector Search
+
+| Step | Builder | Returns |
+|------|---------|---------|
+| `vectorNear(prop, query, k)` | `.vectorNear("emb", Vector([0.1, 0.9]), 5)` | Vertex/Edge — top-k by cosine similarity, descending |
+| `vectorSimilarity(prop, query)` | `.vectorSimilarity("emb", Vector([0.1, 0.9]))` | `float` — cosine similarity score |
+
+`Vector([f32, ...])` is the query type. A plain `list[float]` is auto-coerced. Results from `vectorNear` are ordered by descending similarity.
+
+```python
+from rocksgraph import Graph, Vector
+import tempfile
+
+graph = Graph(tempfile.mkdtemp())
+
+with graph.tx() as tx:
+    tx.traversal().addV("doc").property("id", 1).property("emb", Vector([1.0, 0.0])).next()
+    tx.traversal().addV("doc").property("id", 2).property("emb", Vector([0.0, 1.0])).next()
+
+snap = graph.read()
+# top-2 nearest to [1.0, 0.0]
+results = snap.traversal().V().hasLabel("doc").vectorNear("emb", Vector([1.0, 0.0]), 2).to_list()
+# cosine similarity of vertex 1's embedding
+score = snap.traversal().V(1).vectorSimilarity("emb", Vector([1.0, 0.0])).next()  # 1.0
+```
 
 ### Extraction
 
