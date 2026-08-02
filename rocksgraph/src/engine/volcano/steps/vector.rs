@@ -44,24 +44,6 @@ impl VectorNearStep {
             prop_key_cache: HashMap::new(),
         }
     }
-    fn cosine_sim(a: &[f32], b: &[f32]) -> f32 {
-        let mut dot = 0.0f64;
-        let mut na = 0.0f64;
-        let mut nb = 0.0f64;
-        for i in 0..a.len() {
-            let av = a[i] as f64;
-            let bv = b[i] as f64;
-            dot += av * bv;
-            na += av * av;
-            nb += bv * bv;
-        }
-        let d = (na * nb).sqrt();
-        if d == 0.0 {
-            0.0
-        } else {
-            (dot / d) as f32
-        }
-    }
 }
 
 fn resolve_prop_key_id(schema: &Arc<RwLock<Schema>>, cache: &mut HashMap<SmolStr, u16>, name: &SmolStr) -> Option<u16> {
@@ -124,7 +106,7 @@ impl CoreStep for VectorNearStep {
             while let Some(t) = upstream.next(ctx)? {
                 let vec = resolve_vector(&t, ctx, prop_id);
                 if let Some(v) = vec {
-                    candidates.push((t, Self::cosine_sim(&v, &self.query_vec)));
+                    candidates.push((t, crate::vector::cosine_sim(&v, &self.query_vec)));
                 }
             }
             candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -180,7 +162,7 @@ impl CoreStep for VectorSimilarityStep {
             match upstream.next(ctx)? {
                 Some(t) => {
                     if let Some(v) = resolve_vector(&t, ctx, prop_id) {
-                        let sim = VectorNearStep::cosine_sim(&v, &self.query_vec);
+                        let sim = crate::vector::cosine_sim(&v, &self.query_vec);
                         batch.push(Rc::new(Traverser::new(GValue::Scalar(Primitive::Float32(sim)))));
                     }
                 }
@@ -226,9 +208,9 @@ mod vector_e2e_tests {
     fn test_cosine_sim() {
         let a = vec![1.0f32, 0.0, 0.0];
         let b = vec![0.0f32, 1.0, 0.0];
-        assert!((VectorNearStep::cosine_sim(&a, &b) - 0.0).abs() < 1e-6);
-        assert!((VectorNearStep::cosine_sim(&a, &a) - 1.0).abs() < 1e-6);
-        assert!((VectorNearStep::cosine_sim(&[1.0, 0.0], &[-1.0, 0.0]) + 1.0).abs() < 1e-6);
+        assert!((crate::vector::cosine_sim(&a, &b) - 0.0).abs() < 1e-6);
+        assert!((crate::vector::cosine_sim(&a, &a) - 1.0).abs() < 1e-6);
+        assert!((crate::vector::cosine_sim(&[1.0, 0.0], &[-1.0, 0.0]) + 1.0).abs() < 1e-6);
     }
 
     #[test]
