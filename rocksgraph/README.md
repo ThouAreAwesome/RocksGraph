@@ -1,21 +1,19 @@
 # RocksGraph
 
-**An embeddable Gremlin-style graph database for Rust.** Open a graph with one line
-of code, traverse it with zero infrastructure — like SQLite for property graphs.
+**An embeddable property graph database with Gremlin traversals and vector search.**
+Open a graph with one line of code, traverse it by relationship, and search it by
+vector similarity — no server, no cluster, no JVM.
 
 RocksGraph is built for the places where a full graph database server is overkill:
 local development, embedded applications, CI pipelines, desktop apps, and single-machine
-production deployments. It uses RocksDB for persistent storage (with pluggable backend
-support), and offers a pragmatic take on the Gremlin traversal model — keeping what
-works, simplifying what doesn't. No server. No cluster. No JVM.
-
-See [docs/design_principles.md](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/design_principles.md) for the design rationale.
+production deployments. It uses RocksDB for persistent storage and offers a pragmatic
+take on the Gremlin traversal model — keeping what works, simplifying what doesn't.
 
 > **Status:** Beta (v0.1.0). Under active development. Preparing for release on crates.io.
 
 ## Overview
 
-RocksGraph translates [Gremlin](https://tinkerpop.apache.org/gremlin.html)-style traversal queries into a logical IR, optimizes them, and executes them through a pull-based Volcano pipeline against the storage backend. The default backend is RocksDB, with a pluggable architecture (`GraphStore` trait) that also supports pure-Rust in-memory operation. The codebase is organized as a clean, layered stack separating the user-facing session API, query planning, optimization, and execution.
+RocksGraph translates [Gremlin](https://tinkerpop.apache.org/gremlin.html)-style traversal queries into a logical IR, optimizes them, and executes them through a pull-based Volcano pipeline against RocksDB. The codebase is organized as a clean, layered stack separating the user-facing session API, query planning, optimization, and execution.
 
 ## Architecture
 
@@ -48,7 +46,7 @@ store / RocksDB      OptimisticTransactionDB persistence
 | `planner` | internal | Engine-agnostic `LogicalPlan` IR + optimizer rules |
 | `engine::volcano` | internal | Pull-based Volcano iterator execution engine |
 | `graph` | internal | Query-scoped in-memory overlay over a `GraphStore` transaction |
-| `store` | internal | Pluggable storage backend abstraction; RocksDB implementation |
+| `store` | internal | RocksDB storage layer (`OptimisticTransactionDB`) |
 | `schema` | `pub` | Label/property-key registry; `Auto` vs `Strict` schema modes (see [Schema Modes](#schema-modes)) |
 
 ## Value Types
@@ -57,13 +55,14 @@ All user-facing query inputs and outputs use types from `gremlin::value`, re-exp
 
 | Type | Description |
 |------|-------------|
-| `Value` | Scalar or composite result: `Null`, `Bool`, `Int32`, `Int64`, `UInt16`, `Float32`, `Float64`, `String`, `Uuid`, `Vertex`, `Edge`, `Property`, `List`, `Map`, `Path` |
+| `Value` | Scalar or composite result: `Null`, `Bool`, `Int32`, `Int64`, `UInt16`, `Float32`, `Float64`, `String`, `Uuid`, `Vertex`, `Edge`, `Property`, `List`, `Map`, `Path`, `FloatVector` |
 | `Predicate` | Filter condition: `Predicate::Eq`, `Within`, `Without`, `Gt`, `Gte`, `Lt`, `Lte`, `Between`, `Ne` |
 | `Vertex` | Materialized vertex: `id`, `label` (decoded string name), `properties` |
 | `Edge` | Materialized edge: `out_v`, `in_v`, `label` (decoded string name), `rank` (`u16`, see `Value::UInt16`), `properties` |
 | `Property` | Key-value property element returned by `.properties()` |
 | `Map` | Ordered key-value map returned by `.group()` or `.group_count()` |
 | `Path` | Sequence of values with per-step labels returned by `.path()` |
+| `FloatVector` | Dense f32 vector stored as a vertex/edge property (`Value::FloatVector(Vec<f32>)`). Vector search steps (`vectorNear`, `vectorSimilarity`) are currently available via the Python bindings; native Rust DSL support will be added in v0.2. |
 
 Predicate constructors are free functions: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `between`, `within`, `without`.
 
@@ -702,7 +701,7 @@ widely audited.
 - **Single-threaded per query:** each volcano pipeline runs single-threaded; multiple sessions can run concurrently against a shared `Graph`.
 - **Schema ID space limits:** up to `i32::MAX` (~2.1 billion) distinct vertex labels and edge labels (independent namespaces), and 32767 property keys per graph — registering past that fails with `StoreError::SchemaExhausted`. (Label IDs are stored as `i32`; property-key IDs remain `u16`.)
 - **Not TinkerPop-compatible:** RocksGraph is Gremlin-inspired but intentionally departs from the standard. See [docs/design_principles.md](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/design_principles.md).
-- **No distributed backend:** placeholder exists but is not implemented.
+- **Embedded only (no distribution):** RocksGraph targets single-machine deployments. Distributed or server-client operation is not on the roadmap.
 
 ## Operations
 
@@ -732,19 +731,11 @@ format changes will require a major version bump and a documented migration path
 
 ## Roadmap
 
-### Engine & Query
+### Vector Search
 
-- [ ] Improve Gremlin step coverage (lambdas, side-effects, additional aggregation steps) — see [docs/TODO.md](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/TODO.md) for the prioritized list
-- [x] Bulk-load via SST ingestion (`SstBulkLoader`) — streams vertices + edges through `ExternalSorter`, O(1) memory, 300–400K edges/s on LiveJournal (69M edges)
-- [x] `ReadSession` / `ReadTraversal` — read-only snapshot path with no OCC overhead
-- [x] `next(), to_list(), iter()` on `ReadTraversal` and `WriteTraversal`
-- [x] Support strict schema mode (see [Schema Modes](#schema-modes))
-- [x] Range predicates in `HasPropertyStep` (`Gt`, `Lt`, `Between`, etc.)
-
-### Storage & Distribution
-
-- [ ] Support distributed key-value backend (e.g. FoundationDB)
-- [ ] Server-client mode (gRPC or WebSocket)
+- [x] **v0.1** — `FloatVector` property type, brute-force exact KNN (`vectorNear`, `vectorSimilarity`), Python bindings
+- [ ] **v0.2** — HNSW index via `usearch`; `VectorIndex` trait; WAL + crash-consistent snapshots; per-index memory limits; RYOW isolation (see [design doc](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/vector-search/design_vector_v0.2_implementation_plan.md))
+- [ ] **v0.3** — Edge vector indexes; `change_vector_index_algorithm`; auto-rebuild on schema change
 
 ### Developer Experience
 

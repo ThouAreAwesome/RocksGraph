@@ -9,7 +9,7 @@
 - [x] `cargo publish --dry-run` passes
 - [x] `cargo clippy --all-targets -- --deny warnings` clean
 - [x] `cargo fmt --all --check` clean
-- [x] `cargo test --all-targets` — 701 tests pass
+- [x] `cargo test --all-targets` — 784 tests pass
 - [x] Doc examples compile and run (10 doctests)
 - [x] BENCHMARKS.md updated with latest numbers
 - [x] CHANGELOG.md up to date
