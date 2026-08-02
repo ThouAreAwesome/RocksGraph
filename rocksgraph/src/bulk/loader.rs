@@ -1304,7 +1304,7 @@ mod tests {
                 OptimisticTransactionDB::open_cf_descriptors(&dbo, &db_path, cfs).unwrap();
             let cf = db.cf_handle(CF_SCHEMA).unwrap();
             let mut batch = WriteBatchWithTransaction::<true>::default();
-            batch.put_cf(&cf, BULK_LOAD_IN_PROGRESS_KEY, [1u8]);
+            batch.put_cf(&cf, BULK_LOAD_IN_PROGRESS_KEY, [MARKER_POST_INGEST]);
             db.write(batch).unwrap();
         }
 
@@ -1747,8 +1747,12 @@ mod tests {
         assert!(matches!(loader.load_edges(edges), Err(StoreError::VerticesNotLoaded)));
 
         // 2. Calling commit before load_vertices -> VerticesNotLoaded
+        drop(loader);  // release AtomicBool lock
         let empty_loader = graph.open_bulk_loader().unwrap();
         assert!(matches!(empty_loader.commit(), Err(StoreError::VerticesNotLoaded)));
+
+        // Re-open for tests 3-4
+        let mut loader = graph.open_bulk_loader().unwrap();
 
         // 3. Calling load_vertices twice -> UnsupportedOperation
         let vertices = vec![BulkVertex { id: 1, label: "Person".into(), props: HashMap::new() }];
