@@ -13,9 +13,9 @@ class TestVectorSearch:
         snap = graph.read()
         v1 = snap.traversal().V(1).values("emb").next()
         assert v1 is not None, "Should retrieve stored vector value"
-        if isinstance(v1, list):
-            assert len(v1) == 3
-            assert abs(v1[0] - 0.1) < 1e-6
+        assert isinstance(v1, list), f"Values response must be list, got {type(v1)}"
+        assert len(v1) == 3
+        assert abs(v1[0] - 0.1) < 1e-6
 
     def test_vectornear_exact_knn(self, graph):
         tx = graph.tx()
@@ -53,3 +53,75 @@ class TestVectorSearch:
             .vectorSimilarity("emb", Vector([0.0, 1.0])).to_list()
         assert len(scores2) == 1
         assert abs(scores2[0] - 0.0) < 1e-6
+
+    def test_floatvector_codec_roundtrip(self):
+        """Python Vector → encode → decode → back (no DB needed)."""
+        from rocksgraph._codec import _encode_primitive, PRIM_FLOATVECTOR
+        import struct
+
+        original = Vector([1.0, -2.5, 3.14, 0.0])
+        buf = bytearray()
+        _encode_primitive(original, buf)
+
+        # Verify tag
+        assert buf[0] == PRIM_FLOATVECTOR
+        # Verify dimension
+        dim = struct.unpack(">I", buf[1:5])[0]
+        assert dim == 4
+        # Decode LE f32 values
+        decoded = list(struct.unpack(f"<{dim}f", buf[5:5 + dim * 4]))
+        # f32 precision: 3.14 becomes 3.140000104904175
+        for a, b in zip(decoded, original.values):
+            assert abs(a - b) < 1e-5, f"{a} != {b} within f32 epsilon"
+        assert abs(decoded[0] - 1.0) < 1e-6
+        assert abs(decoded[1] + 2.5) < 1e-6
+
+    def test_floatvector_hash_dedup(self, graph):
+        """Two vertices with identical vector properties are equal."""
+        tx = graph.tx()
+        tx.traversal().addV("doc").property("id", 1) \
+            .property("emb", Vector([0.1, 0.2, 0.3])).next()
+        tx.traversal().addV("doc").property("id", 2) \
+            .property("emb", Vector([0.1, 0.2, 0.3])).next()
+        tx.commit()
+
+        snap = graph.read()
+        v1 = snap.traversal().V(1).values("emb").next()
+        v2 = snap.traversal().V(2).values("emb").next()
+        assert v1 == v2, "Identical FloatVectors should be equal"
+
+    def test_vector_type_coercion(self):
+        """Plain lists are auto-wrapped to Vector in vectorNear/vectorSimilarity."""
+        from rocksgraph._codec import _encode_step, OP_VECTORNEAR
+        buf = bytearray()
+        # Passing a plain list should not crash — it's auto-converted to Vector
+        _encode_step(OP_VECTORNEAR, ("emb", [1.0, 2.0, 3.0], 5), buf)
+        assert len(buf) > 0, "Encoding should succeed with auto-coerced list"
+
+    def test_vector_type_error(self, graph):
+        """Passing non-vector type to vectorNear raises ValueError."""
+        snap = graph.read()
+        # An integer is not iterable → Vector() raises TypeError
+        with pytest.raises(TypeError):
+            snap.traversal().V().vectorNear("emb", 42, 3).to_list()
+
+    def test_vectornear_top_k_ordering(self, graph):
+        """vectorNear returns correct top-k in descending similarity order."""
+        tx = graph.tx()
+        # Non-collinear 2D vectors so cosine similarity differs meaningfully
+        vectors = [(0.0, 1.0), (0.7, 0.7), (1.0, 0.0), (0.3, 0.95), (0.9, 0.4)]
+        for i, (x, y) in enumerate(vectors):
+            tx.traversal().addV("doc").property("id", i)                 .property("emb", Vector([x, y])).next()
+        tx.commit()
+
+        snap = graph.read()
+        # Query with [1.0, 0.0] — id=2 [1.0, 0.0] is exact, id=4 [0.9, 0.4] next
+        results = (
+            snap.traversal().V().hasLabel("doc")
+            .vectorNear("emb", Vector([1.0, 0.0]), 2)
+            .to_list()
+        )
+        assert len(results) == 2
+        top_ids = [v["id"] for v in results]
+        assert top_ids[0] == 2, f"Best match should be id=2, got {top_ids}"
+        assert top_ids[1] == 4, f"Second best should be id=4, got {top_ids}"
