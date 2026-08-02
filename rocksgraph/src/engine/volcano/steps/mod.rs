@@ -68,3 +68,6 @@ pub mod r#where;
 // ── Physical plan operators (storage-layer stubs) ─────────────────────────────
 
 pub use traits::{CoreStep, StepRef};
+
+/** Brute-force vector search (v0.1). */
+pub mod vector;

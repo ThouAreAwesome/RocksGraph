@@ -60,7 +60,9 @@ class Vertex:
         summary = ", ".join(f"{k}={v!r}" for k, v in props.items())
         return f"Vertex(id={self._d['id']!r}, label={self._d.get('label','')!r}{', ' + summary if summary else ''})"
 
-    @property
+    def __hash__(self):
+        return hash(self._d.get("id"))
+
     def id(self):
         return self._d["id"]
 
@@ -330,6 +332,17 @@ class Traversal:
         
     def values(self, *keys): return self._add(OP_VALUES, keys)
     def properties(self, *keys): return self._add(OP_PROPERTIES, keys)
+
+    def vectorNear(self, property, query, k):
+        """Find the k most similar elements to the query vector (brute-force exact KNN)."""
+        from ._codec import OP_VECTORNEAR
+        return self._add(OP_VECTORNEAR, (property, query, k))
+
+    def vectorSimilarity(self, property, query):
+        """Compute cosine similarity between each element's vector and the query."""
+        from ._codec import OP_VECTORSIMILARITY
+        return self._add(OP_VECTORSIMILARITY, (property, query))
+
     def id(self): return self._add(OP_ID, None)
     def label(self): return self._add(OP_LABEL, None)
     def rank(self): return self._add(OP_RANK, None)

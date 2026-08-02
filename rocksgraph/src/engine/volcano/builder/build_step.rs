@@ -44,6 +44,7 @@ pub(super) fn primitive_data_type(val: &crate::types::gvalue::Primitive) -> Data
         Primitive::String(_) => DataType::String,
         Primitive::Uuid(_) => DataType::Uuid,
         Primitive::Bytes(_) => DataType::Bytes,
+        Primitive::FloatVector(_) => DataType::FloatVector,
     }
 }
 
@@ -767,6 +768,23 @@ impl PhysicalPlanBuilder {
                     BufferedStep::new(steps::local::LocalStep::new(physical_plan, track_path)),
                     upstream,
                     "LocalStep"
+                )
+            }
+            LogicalStep::VectorNear(s) => {
+                wire_required!(
+                    BufferedStep::new(steps::vector::VectorNearStep::new(s.prop_key.clone(), s.query_vec.clone(), s.k)),
+                    upstream,
+                    "VectorNearStep"
+                )
+            }
+            LogicalStep::VectorSimilarity(s) => {
+                wire_required!(
+                    BufferedStep::new(steps::vector::VectorSimilarityStep::new(
+                        s.prop_key.clone(),
+                        s.query_vec.clone()
+                    )),
+                    upstream,
+                    "VectorSimilarityStep"
                 )
             }
             LogicalStep::From(_) | LogicalStep::To(_) => Err(StoreError::UnsupportedOperation(

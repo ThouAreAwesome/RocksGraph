@@ -120,6 +120,7 @@ pub(crate) fn materialize(
             }
             Ok(Value::Map(out))
         }
+        GValue::FloatVector(ref v) => Ok(Value::FloatVector(v.clone())),
         GValue::Path(ref path) => {
             let mut objects = Vec::with_capacity(path.len());
             let mut labels: Vec<Vec<String>> = Vec::with_capacity(path.len());

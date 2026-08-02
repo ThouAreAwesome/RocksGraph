@@ -47,6 +47,8 @@ pub enum Primitive {
     String(SmolStr),
     Uuid(u128),
     Bytes(Vec<u8>),
+    /// Dense float32 vector (embedding / ANN).
+    FloatVector(Vec<f32>),
 }
 
 impl PartialEq for Primitive {
@@ -63,6 +65,9 @@ impl PartialEq for Primitive {
             (Self::String(a), Self::String(b)) => a == b,
             (Self::Uuid(a), Self::Uuid(b)) => a == b,
             (Self::Bytes(a), Self::Bytes(b)) => a == b,
+            (Self::FloatVector(a), Self::FloatVector(b)) => {
+                a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.to_bits() == y.to_bits())
+            }
             _ => false,
         }
     }
@@ -155,6 +160,12 @@ impl Hash for Primitive {
             Self::String(v) => v.hash(state),
             Self::Uuid(v) => v.hash(state),
             Self::Bytes(v) => v.hash(state),
+            Self::FloatVector(v) => {
+                v.len().hash(state);
+                for f in v.iter() {
+                    (if f.is_nan() { f32::NAN.to_bits() } else { f.to_bits() }).hash(state);
+                }
+            }
         }
     }
 }
@@ -237,6 +248,9 @@ pub enum GValue {
     /// Each entry is `(value, labels)` where `labels` is the set of `as("x")`
     /// names that tagged that position, or `None` when the position is unnamed.
     Path(Vec<(GValue, Option<SmallVec<[SmolStr; STEP_LABEL_INLINE]>>)>),
+    /// Dense float32 vector (e.g. embedding property).
+    #[allow(dead_code)] // constructed at runtime via bytecode decode and steps
+    FloatVector(Vec<f32>),
 }
 
 impl PartialEq for GValue {
@@ -250,6 +264,9 @@ impl PartialEq for GValue {
             (Self::List(a), Self::List(b)) => a == b,
             (Self::Map(a), Self::Map(b)) => a == b,
             (Self::Path(a), Self::Path(b)) => a == b,
+            (Self::FloatVector(a), Self::FloatVector(b)) => {
+                a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.to_bits() == y.to_bits())
+            }
             _ => false,
         }
     }
@@ -283,6 +300,12 @@ impl Hash for GValue {
                 path.len().hash(state);
                 for item in path.iter() {
                     item.hash(state);
+                }
+            }
+            Self::FloatVector(v) => {
+                v.len().hash(state);
+                for f in v.iter() {
+                    (if f.is_nan() { f32::NAN.to_bits() } else { f.to_bits() }).hash(state);
                 }
             }
         }

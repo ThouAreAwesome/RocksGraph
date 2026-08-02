@@ -56,6 +56,7 @@ const TAG_STRING: u8 = 6;
 const TAG_UUID: u8 = 7;
 const TAG_UINT16: u8 = 8;
 const TAG_BYTES: u8 = 9;
+const TAG_FLOATVECTOR: u8 = 10;
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
@@ -137,6 +138,22 @@ fn decode_single_value(blob: &[u8], pos: usize) -> Option<Primitive> {
             }
             Some(Primitive::Bytes(blob[start..start + len].to_vec()))
         }
+        TAG_FLOATVECTOR => {
+            if p + 4 > blob.len() {
+                return None;
+            }
+            let dim = u32::from_be_bytes(blob[p..p + 4].try_into().ok()?) as usize;
+            let s = p + 4;
+            if s + dim * 4 > blob.len() {
+                return None;
+            }
+            let mut v = Vec::with_capacity(dim);
+            for i in 0..dim {
+                let off = s + i * 4;
+                v.push(f32::from_le_bytes([blob[off], blob[off + 1], blob[off + 2], blob[off + 3]]));
+            }
+            Some(Primitive::FloatVector(v))
+        }
         _ => None,
     }
 }
@@ -187,6 +204,13 @@ fn write_value(buf: &mut Vec<u8>, value: &Primitive) {
             buf.push(TAG_BYTES);
             buf.extend_from_slice(&(b.len() as u16).to_be_bytes());
             buf.extend_from_slice(b);
+        }
+        Primitive::FloatVector(v) => {
+            buf.push(TAG_FLOATVECTOR);
+            buf.extend_from_slice(&(v.len() as u32).to_be_bytes());
+            for f in v {
+                buf.extend_from_slice(&f.to_le_bytes());
+            }
         }
     }
 }

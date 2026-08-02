@@ -1,0 +1,209 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+use crate::engine::volcano::steps::traits::ExplainNode;
+use crate::engine::{
+    context::GraphCtx,
+    traverser::Traverser,
+    volcano::steps::traits::{CoreStep, StepRef},
+};
+use crate::types::PIPELINE_PRODUCE_SIZE;
+use crate::types::{
+    error::StoreError,
+    gvalue::{GValue, Primitive},
+};
+use smallvec::smallvec;
+use std::rc::Rc;
+
+#[derive(Debug)]
+pub struct VectorNearStep {
+    upstream: Option<StepRef>,
+    #[allow(dead_code)] // v0.2: resolve FloatVector from vertex/edge properties via GraphCtx
+    prop_key: String,
+    query_vec: Vec<f32>,
+    k: usize,
+    buffer: Vec<Rc<Traverser>>,
+    cursor: usize,
+    drained: bool,
+}
+
+impl VectorNearStep {
+    pub fn new(prop_key: String, query_vec: Vec<f32>, k: usize) -> Self {
+        Self { upstream: None, prop_key, query_vec, k, buffer: Vec::new(), cursor: 0, drained: false }
+    }
+    fn cosine_sim(a: &[f32], b: &[f32]) -> f32 {
+        let mut dot = 0.0f64;
+        let mut na = 0.0f64;
+        let mut nb = 0.0f64;
+        for i in 0..a.len() {
+            let av = a[i] as f64;
+            let bv = b[i] as f64;
+            dot += av * bv;
+            na += av * av;
+            nb += bv * bv;
+        }
+        let d = (na * nb).sqrt();
+        if d == 0.0 {
+            0.0
+        } else {
+            (dot / d) as f32
+        }
+    }
+}
+
+impl CoreStep for VectorNearStep {
+    fn add_upper(&mut self, upstream: StepRef) {
+        self.upstream = Some(upstream);
+    }
+    fn reset(&mut self) {
+        self.buffer.clear();
+        self.cursor = 0;
+        self.drained = false;
+        if let Some(u) = &self.upstream {
+            u.reset();
+        }
+    }
+    fn upper(&self) -> Option<StepRef> {
+        self.upstream.clone()
+    }
+    fn produce(
+        &mut self,
+        _ctx: &mut dyn GraphCtx,
+    ) -> Result<Option<smallvec::SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>>, StoreError> {
+        if !self.drained {
+            let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
+            let mut candidates: Vec<(Rc<Traverser>, f32)> = Vec::new();
+            while let Some(t) = upstream.next(_ctx)? {
+                let sim = match &t.value {
+                    GValue::FloatVector(vec) => Self::cosine_sim(vec, &self.query_vec),
+                    _ => {
+                        continue;
+                    }
+                };
+                candidates.push((t, sim));
+            }
+            candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            self.buffer = candidates.into_iter().take(self.k).map(|(t, _)| t).collect();
+            self.cursor = 0;
+            self.drained = true;
+        }
+        if self.cursor < self.buffer.len() {
+            let t = Rc::clone(&self.buffer[self.cursor]);
+            self.cursor += 1;
+            Ok(Some(smallvec![t]))
+        } else {
+            Ok(None)
+        }
+    }
+    fn explain(&self) -> ExplainNode {
+        ExplainNode::new("VectorNearStep")
+    }
+}
+
+#[derive(Debug)]
+pub struct VectorSimilarityStep {
+    upstream: Option<StepRef>,
+    #[allow(dead_code)] // v0.2: resolve FloatVector from vertex/edge properties via GraphCtx
+    prop_key: String,
+    query_vec: Vec<f32>,
+}
+impl VectorSimilarityStep {
+    pub fn new(prop_key: String, query_vec: Vec<f32>) -> Self {
+        Self { upstream: None, prop_key, query_vec }
+    }
+}
+impl CoreStep for VectorSimilarityStep {
+    fn add_upper(&mut self, upstream: StepRef) {
+        self.upstream = Some(upstream);
+    }
+    fn reset(&mut self) {
+        if let Some(u) = &self.upstream {
+            u.reset();
+        }
+    }
+    fn upper(&self) -> Option<StepRef> {
+        self.upstream.clone()
+    }
+    fn produce(
+        &mut self,
+        _ctx: &mut dyn GraphCtx,
+    ) -> Result<Option<smallvec::SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>>, StoreError> {
+        let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
+        let mut batch = smallvec::SmallVec::new();
+        while batch.len() < PIPELINE_PRODUCE_SIZE {
+            match upstream.next(_ctx)? {
+                Some(t) => {
+                    let sim = match &t.value {
+                        GValue::FloatVector(vec) => VectorNearStep::cosine_sim(vec, &self.query_vec),
+                        _ => continue,
+                    };
+                    batch.push(Rc::new(Traverser::new(GValue::Scalar(Primitive::Float32(sim)))));
+                }
+                None => break,
+            }
+        }
+        if batch.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(batch))
+        }
+    }
+    fn explain(&self) -> ExplainNode {
+        ExplainNode::new("VectorSimilarityStep")
+    }
+}
+
+#[cfg(test)]
+mod vector_e2e_tests {
+    use super::*;
+    use crate::engine::traverser::Traverser;
+    use crate::types::gvalue::{GValue, Primitive};
+
+    #[test]
+    fn test_floatvector_hash_dedup() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let a = GValue::FloatVector(vec![1.0, 2.0]);
+        let b = GValue::FloatVector(vec![1.0, 2.0]);
+        assert_eq!(a, b, "FloatVector equality must be bitwise");
+        let mut ha = DefaultHasher::new();
+        a.hash(&mut ha);
+        let mut hb = DefaultHasher::new();
+        b.hash(&mut hb);
+        assert_eq!(ha.finish(), hb.finish());
+        // NaN == NaN
+        let na = GValue::FloatVector(vec![f32::NAN]);
+        let nb = GValue::FloatVector(vec![f32::NAN]);
+        assert_eq!(na, nb, "NaN == NaN for FloatVector");
+    }
+
+    #[test]
+    fn test_cosine_sim() {
+        let a = vec![1.0f32, 0.0, 0.0];
+        let b = vec![0.0f32, 1.0, 0.0];
+        assert!((VectorNearStep::cosine_sim(&a, &b) - 0.0).abs() < 1e-6);
+        assert!((VectorNearStep::cosine_sim(&a, &a) - 1.0).abs() < 1e-6);
+        assert!((VectorNearStep::cosine_sim(&[1.0, 0.0], &[-1.0, 0.0]) + 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_floatvector_traverser_roundtrip() {
+        let t = Traverser::new(GValue::FloatVector(vec![0.1, 0.2, 0.3]));
+        match &t.value {
+            GValue::FloatVector(v) => assert_eq!(v, &vec![0.1, 0.2, 0.3]),
+            _ => panic!("Expected FloatVector"),
+        }
+    }
+
+    #[test]
+    fn test_primitive_floatvector_prop_codec_roundtrip() {
+        use crate::types::prop_codec::{decode_prop_by_key, encode_props};
+        use std::collections::HashMap;
+        let mut props = HashMap::new();
+        props.insert(1u16, Primitive::FloatVector(vec![1.0, 2.0, 3.0]));
+        let blob = encode_props(&props);
+        assert!(!blob.is_empty(), "FloatVector must encode to non-empty blob");
+        match decode_prop_by_key(&blob, 1) {
+            Some(Primitive::FloatVector(v)) => assert_eq!(v, vec![1.0, 2.0, 3.0]),
+            other => panic!("Expected FloatVector([1.0, 2.0, 3.0]), got {:?}", other),
+        }
+    }
+}
