@@ -1747,7 +1747,7 @@ mod tests {
         assert!(matches!(loader.load_edges(edges), Err(StoreError::VerticesNotLoaded)));
 
         // 2. Calling commit before load_vertices -> VerticesNotLoaded
-        drop(loader);  // release AtomicBool lock
+        drop(loader); // release AtomicBool lock
         let empty_loader = graph.open_bulk_loader().unwrap();
         assert!(matches!(empty_loader.commit(), Err(StoreError::VerticesNotLoaded)));
 
