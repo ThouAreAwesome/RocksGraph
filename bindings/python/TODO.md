@@ -317,7 +317,7 @@ or no builder method). Listed in rough priority order.
 | `Graph.open_with_options()` | schema mode, edge mode | medium |
 | `Graph.statistics()` | RocksDB stats | small |
 | `set_batch_size()` / `clear_caches()` | performance tuning | small |
-| Schema management | `open_management()` | large |
+| Schema management | `open_schema()` | large |
 | Bulk loading | `SstBulkLoader` | large |
 
 ### Need builder method

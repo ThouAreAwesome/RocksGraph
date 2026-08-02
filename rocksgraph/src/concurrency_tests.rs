@@ -19,7 +19,7 @@ fn test_hotspot_contention_preserves_all_updates() {
 
     // 1. Declare the counter schema & seed it
     {
-        let mut mgmt = graph.open_management();
+        let mut mgmt = graph.open_schema();
         mgmt.add_vertex_label("System").add_property_key("counter", DataType::Int64);
         mgmt.commit().unwrap();
 
@@ -111,7 +111,7 @@ fn test_disjoint_writes_never_conflict() {
 
     // Pre-declare schema to prevent auto-schema registration from causing conflicts
     {
-        let mut mgmt = graph.open_management();
+        let mut mgmt = graph.open_schema();
         mgmt.add_vertex_label("User").add_edge_label("Connects").add_property_key("weight", DataType::Float64);
         mgmt.commit().unwrap();
     }

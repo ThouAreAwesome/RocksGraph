@@ -11,7 +11,7 @@ use crate::{
 
 /// High-level management interface for defining schema labels and properties.
 ///
-/// Obtain one via [`Graph::open_management`](crate::api::Graph::open_management). This is the
+/// Obtain one via [`Graph::open_schema`](crate::api::Graph::open_schema). This is the
 /// explicit-declaration counterpart to [`SchemaMode::Auto`] (the default): in `Auto` mode,
 /// vertex labels, edge labels, and property keys are registered implicitly the first time a
 /// traversal uses them. In [`SchemaMode::Strict`], nothing is registered implicitly — every
@@ -32,7 +32,7 @@ use crate::{
 /// let graph = Graph::open_with_options(dir.path(), options)?;
 ///
 /// // Declare the schema up front -- required before any write in `Strict` mode.
-/// let mut mgmt = graph.open_management();
+/// let mut mgmt = graph.open_schema();
 /// mgmt.add_vertex_label("person")
 ///     .add_property_key("name", DataType::String);
 /// mgmt.commit()?;
@@ -65,7 +65,7 @@ use crate::{
 ///    property key is implicitly legal on every label, vertex or edge alike — there's no way to
 ///    restrict a key to specific labels.
 /// 2. **Edge multiplicity (`EdgeMode`) is one graph-wide setting, not per-edge-label.**
-///    [`set_edge_mode`](SchemaManagement::set_edge_mode) flips `Single`/`Multi` for *every* edge
+///    [`set_edge_mode`](SchemaSession::set_edge_mode) flips `Single`/`Multi` for *every* edge
 ///    label at once — there's no way for one edge label (e.g. `"knows"`) to stay `Single` while
 ///    another (e.g. `"created"`) is `Multi` in the same graph. `Multi` mode requires an explicit
 ///    `"rank"` property to disambiguate otherwise-identical parallel edges.
@@ -74,7 +74,7 @@ use crate::{
 ///    `person` to `person`".
 ///
 /// [`SchemaMode`] (`Auto`/`Strict`) is also a single graph-wide setting rather than per-label.
-pub struct SchemaManagement {
+pub struct SchemaSession {
     store: Arc<RocksStorage>,
     schema: Arc<std::sync::RwLock<Schema>>,
     base_version: u64,
@@ -85,8 +85,8 @@ pub struct SchemaManagement {
     pending_schema_mode: Option<SchemaMode>,
 }
 
-impl SchemaManagement {
-    /// Crate-internal: obtain a `SchemaManagement` session via [`Graph::open_management`](crate::api::Graph::open_management).
+impl SchemaSession {
+    /// Crate-internal: obtain a `SchemaSession` session via [`Graph::open_schema`](crate::api::Graph::open_schema).
     pub(crate) fn new(store: Arc<RocksStorage>, schema: Arc<std::sync::RwLock<Schema>>) -> Self {
         let base_version = schema.read().unwrap().version;
         Self {
@@ -236,7 +236,7 @@ impl SchemaManagement {
     }
 }
 
-impl std::fmt::Display for SchemaManagement {
+impl std::fmt::Display for SchemaSession {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let schema = self.schema.read().map_err(|_| std::fmt::Error)?;
 

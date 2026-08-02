@@ -543,7 +543,7 @@ existing database ignores the options passed and uses whatever was persisted):
   registered the first time a traversal uses it. This is the mode every example above uses;
   there is nothing extra to do.
 - **`SchemaMode::Strict`** — nothing is registered implicitly. Every vertex label, edge label,
-  and property key must be declared up front via `Graph::open_management()`, or the write
+  and property key must be declared up front via `Graph::open_schema()`, or the write
   fails with `StoreError::SchemaViolation`. (Note: Property key definitions are global/graph-wide; a property key like `"name"` has a single, uniform `DataType` definition effective across the entire graph, rather than being scoped to specific vertex or edge labels.)
 
 ```rust
@@ -553,7 +553,7 @@ let options = GraphOptions { mode: SchemaMode::Strict, ..Default::default() };
 let graph = Graph::open_with_options("./path/to/db", options)?;
 
 // Declare the schema before any write reaches the engine.
-let mut mgmt = graph.open_management();
+let mut mgmt = graph.open_schema();
 mgmt.add_vertex_label("person")
     .add_property_key("name", DataType::String);
 mgmt.commit()?;
@@ -567,8 +567,8 @@ let err = tx.g().addV("ghost").property("id", 2i64).next().unwrap_err(); // unde
 assert!(matches!(err, StoreError::SchemaViolation(_)));
 ```
 
-`SchemaManagement::commit()` is atomic and CAS-checked against concurrent schema changes: either
-every staged label/key in the batch is applied, or none are. See the [`SchemaManagement`
+`SchemaSession::commit()` is atomic and CAS-checked against concurrent schema changes: either
+every staged label/key in the batch is applied, or none are. See the [`SchemaSession`
 rustdoc](src/schema/management.rs) for the full guarantees, and `set_edge_mode` /
 `set_schema_mode` for changing graph-wide options (e.g. enabling multi-edges) after creation.
 

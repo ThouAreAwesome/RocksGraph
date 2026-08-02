@@ -476,7 +476,7 @@ mod tests {
             let mut snap = graph.begin();
             {
                 use rocksgraph::schema::DataType;
-                let mut mgmt = graph.open_management();
+                let mut mgmt = graph.open_schema();
                 mgmt.add_vertex_label(VERTEX_LABEL)
                     .add_edge_label(EDGE_LABEL)
                     .add_property_key("name", DataType::String)

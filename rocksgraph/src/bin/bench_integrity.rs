@@ -202,7 +202,7 @@ mod tests {
             Graph::open_with_options(dir.path(), GraphOptions { mode: SchemaMode::Strict, ..Default::default() })
                 .unwrap();
         {
-            let mut mgmt = graph.open_management();
+            let mut mgmt = graph.open_schema();
             mgmt.add_vertex_label(VERTEX_LABEL).add_edge_label(EDGE_LABEL);
             mgmt.commit().unwrap();
         }
@@ -224,7 +224,7 @@ mod tests {
             Graph::open_with_options(dir.path(), GraphOptions { mode: SchemaMode::Strict, ..Default::default() })
                 .unwrap();
         {
-            let mut mgmt = graph.open_management();
+            let mut mgmt = graph.open_schema();
             mgmt.add_vertex_label(VERTEX_LABEL).add_edge_label(EDGE_LABEL);
             mgmt.commit().unwrap();
         }

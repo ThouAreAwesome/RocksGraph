@@ -147,7 +147,7 @@ pub(crate) const MAX_PROP_KEYS: usize = (1 << 15) - 1;
 /// Thread-safety: wrap in `Arc<RwLock<Schema>>` when shared across queries.
 ///
 /// Crate-internal: external callers only ever interact with the schema through
-/// [`SchemaManagement`](crate::schema::SchemaManagement) (declaration) and the traversal API
+/// [`SchemaSession`](crate::schema::SchemaSession) (declaration) and the traversal API
 /// (implicit auto-registration) — never this registry directly.
 #[derive(Debug, Clone)]
 pub struct Schema {
@@ -478,7 +478,7 @@ mod tests {
     use super::*;
 
     // `to_u8`/`from_u8` must be exact inverses: their values are the on-disk wire format
-    // for the `schema` CF (see `store/rocks/encoding.rs`), shared by `SchemaManagement::commit`,
+    // for the `schema` CF (see `store/rocks/encoding.rs`), shared by `SchemaSession::commit`,
     // `LogicalGraph::commit`, and `RocksStorage::load_schema`. A mismatch here would silently
     // corrupt persisted schema data rather than fail loudly.
     #[test]

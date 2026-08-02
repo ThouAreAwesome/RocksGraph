@@ -43,7 +43,7 @@ use crate::{
     engine::GraphCtx,
     graph::{LogicalGraph, LogicalSnapshot},
     gremlin::traversal::{ReadTraversal, WriteTraversal},
-    schema::{GraphOptions, Schema, SchemaManagement},
+    schema::{GraphOptions, Schema, SchemaSession},
     store::{traits::GraphStore, RocksOptions, RocksStorage},
     types::{BatchScenario, StoreError},
 };
@@ -85,8 +85,8 @@ impl Graph {
     /// `options.mode` controls how vertex labels, edge labels, and property keys used by
     /// traversals are registered:
     /// - [`SchemaMode::Auto`] (the default) — registered implicitly on first use.
-    /// - [`SchemaMode::Strict`] — must be declared first via [`open_management`](Self::open_management); see
-    ///   [`SchemaManagement`] for a worked example.
+    /// - [`SchemaMode::Strict`] — must be declared first via [`open_schema`](Self::open_schema); see
+    ///   [`SchemaSession`] for a worked example.
     ///
     /// Schema options are only applied the first time a database is created; reopening an
     /// existing database always uses its persisted settings, ignoring `options`.
@@ -141,15 +141,15 @@ impl Graph {
     }
 
     /// Open a schema management session for explicit, [`SchemaMode::Strict`]-style schema
-    /// declaration. See [`SchemaManagement`] for a worked example.
+    /// declaration. See [`SchemaSession`] for a worked example.
     ///
     /// [`SchemaMode::Strict`]: crate::schema::SchemaMode::Strict
-    pub fn open_management(&self) -> SchemaManagement {
-        SchemaManagement::new(Arc::clone(&self.store), Arc::clone(&self.schema))
+    pub fn open_schema(&self) -> SchemaSession {
+        SchemaSession::new(Arc::clone(&self.store), Arc::clone(&self.schema))
     }
 
-    /// Access the thread-safe schema registry directly, bypassing `SchemaManagement`. Test-only:
-    /// real callers declare schema via [`open_management`](Self::open_management) or implicit
+    /// Access the thread-safe schema registry directly, bypassing `SchemaSession`. Test-only:
+    /// real callers declare schema via [`open_schema`](Self::open_schema) or implicit
     /// auto-registration; this exists purely so test fixtures can seed a `Schema` in one step.
     #[cfg(test)]
     pub(crate) fn schema(&self) -> Arc<RwLock<Schema>> {

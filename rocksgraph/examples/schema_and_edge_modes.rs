@@ -17,7 +17,7 @@
 
 //! An advanced example demonstrating schema modes and edge modes:
 //! 1. Configuring Strict Schema Mode (`SchemaMode::Strict`).
-//! 2. Explicitly declaring labels and properties using `SchemaManagement`.
+//! 2. Explicitly declaring labels and properties using `SchemaSession`.
 //! 3. Experiencing Schema Violation errors when strict rules are violated.
 //! 4. Enabling and utilizing Multi-Edge Mode (`EdgeMode::Multi`) with user-specified ranks.
 
@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let graph = Graph::open_with_options(db_path, options)?;
 
     // Declare the schema before any write reaches the engine
-    let mut mgmt = graph.open_management();
+    let mut mgmt = graph.open_schema();
     mgmt.add_vertex_label("person")
         .add_edge_label("knows")
         .add_property_key("name", DataType::String)
@@ -82,10 +82,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // In order to write multiple edges between the same pair of vertices, we must
     // explicitly upgrade the graph's edge mode to EdgeMode::Multi.
     // Note: Schema updates are done atomically via CAS.
-    let mut mgmt = graph.open_management();
+    let mut mgmt = graph.open_schema();
     mgmt.set_edge_mode(EdgeMode::Multi);
     mgmt.commit()?;
-    println!("Visualizing updated schema:\n{}", graph.open_management());
+    println!("Visualizing updated schema:\n{}", graph.open_schema());
     println!("EdgeMode upgraded to Multi successfully.");
 
     // Add first edge with default rank (0)

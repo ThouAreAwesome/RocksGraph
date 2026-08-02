@@ -633,7 +633,7 @@ mod integration_test {
 
         // Register keys for all 8 data types
         {
-            let mut mgmt = graph.open_management();
+            let mut mgmt = graph.open_schema();
             mgmt.add_vertex_label("AllTypesV")
                 .add_edge_label("AllTypesE")
                 .add_property_key("p_bool", DataType::Bool)
@@ -846,7 +846,7 @@ mod integration_test {
 
         // Setup schema with explicit types
         {
-            let mut mgmt = graph.open_management();
+            let mut mgmt = graph.open_schema();
             mgmt.add_vertex_label("person")
                 .add_property_key("p_i32", DataType::Int32)
                 .add_property_key("p_i64", DataType::Int64)
@@ -910,7 +910,7 @@ mod integration_test {
 
         // 1. Declare properties of all types
         {
-            let mut mgmt = graph.open_management();
+            let mut mgmt = graph.open_schema();
             mgmt.add_vertex_label("Item")
                 .add_property_key("p_bool", DataType::Bool)
                 .add_property_key("p_i32", DataType::Int32)
@@ -2778,7 +2778,7 @@ mod integration_test {
         let graph = Graph::open(dir.path()).unwrap();
 
         // Declare schema in Strict mode with "blob" as Bytes type.
-        let mut mgmt = graph.open_management();
+        let mut mgmt = graph.open_schema();
         mgmt.set_schema_mode(SchemaMode::Strict).add_vertex_label("item").add_property_key("blob", DataType::Bytes);
         mgmt.commit().unwrap();
 

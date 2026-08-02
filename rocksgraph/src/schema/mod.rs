@@ -9,9 +9,9 @@ pub(crate) mod management;
 mod tests;
 
 // Public surface: only what callers need to configure a `Graph` (`GraphOptions` and friends) and
-// to declare schema via `SchemaManagement`. `Schema` itself (the live registry) and
+// to declare schema via `SchemaSession`. `Schema` itself (the live registry) and
 // `PropKeyConfig` (one of its internal fields) are crate-internal — see `Graph::schema()`.
 pub use definition::{DataType, EdgeMode, GraphOptions, SchemaMode};
-pub use management::SchemaManagement;
+pub use management::SchemaSession;
 
 pub(crate) use definition::Schema;
