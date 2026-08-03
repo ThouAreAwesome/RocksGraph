@@ -223,7 +223,7 @@ replay.
 
 **What is NOT persisted — environmental config:** `memory_limit_bytes` is
 **not** part of `VectorIndexConfig` and is never written to CF_SCHEMA. It is
-supplied per-open via `GraphOptions::vector_runtime` as a `VectorRuntimeOptions`
+supplied per-open via `GraphOptions::index` as a `IndexOptions`
 entry. This preserves portability: a database file created on a 64 GB server
 works correctly on a 8 GB laptop because no memory constraint is baked into the
 file. The caller applies whatever limit is appropriate for the current machine.
@@ -241,7 +241,7 @@ pub struct IndexLimitOverride {
     pub limit:       VectorIndexLimit,
 }
 
-pub struct VectorRuntimeOptions {
+pub struct IndexOptions {
     /// Default limit applied to every vector index.
     /// None = unlimited (expert escape hatch).
     pub default_limit: Option<VectorIndexLimit>,
@@ -255,7 +255,7 @@ pub struct VectorRuntimeOptions {
 /// Storage-level hardware tunables — supplied per-open, never persisted.
 /// Leave as Default unless you have profiling data justifying a change.
 #[derive(Debug, Clone)]
-pub struct StorageOptions {
+pub struct RocksOptions {
     pub max_open_files: i32,
     pub block_cache_mb: usize,
     pub write_buffer_mb: usize,
@@ -267,8 +267,8 @@ pub struct StorageOptions {
 pub struct GraphOptions {
     pub mode:           SchemaMode,
     pub edge_mode:      EdgeMode,
-    pub storage:        StorageOptions,
-    pub vector_runtime: VectorRuntimeOptions,
+    pub storage:        RocksOptions,
+    pub index: IndexOptions,
 }
 ```
 

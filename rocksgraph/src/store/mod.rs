@@ -7,6 +7,5 @@
 //! Key/encoding layout is defined in `rocks/encoding.rs`. The `RocksGraph`
 //! implementation wraps an `OptimisticTransactionDB` with OCC-based transactions.
 pub mod rocks;
-pub mod traits;
 
 pub use rocks::{RocksOptions, RocksStorage};

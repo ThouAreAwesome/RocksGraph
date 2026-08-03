@@ -114,7 +114,7 @@ pub trait PlanAppender: Sized {
         if let Some(rb) = self.pending_repeat_mut().take() {
             if rb.until.is_none() && rb.times.is_none() {
                 self.record_error(StoreError::TraversalError(
-                    "repeat() must have at least one stop condition: .times(n) or .until(cond).".to_string(),
+                    "repeat() requires at least one stop condition — call .times(n) or .until(cond).".to_string(),
                 ));
                 return;
             }
@@ -159,22 +159,15 @@ pub fn __() -> GraphTraversal {
 #[allow(non_snake_case)]
 impl GraphTraversal {
     pub(crate) fn build(
-        self,
+        mut self,
         graph: &mut dyn GraphCtx,
         prop_keys: Option<Vec<SmolStr>>,
     ) -> Result<BuiltTraversal<'_>, StoreError> {
+        self.flush_pending_repeat();
         if let Some(err) = self.error {
             return Err(err);
         }
         let mut logical = self.plan;
-        // Flush any pending repeat before building.
-        // (We can't call flush_pending_repeat() on self because it's already moved; instead
-        // we check inline — the pending_repeat is moved into this method and dropped.)
-        if self.pending_repeat.is_some() {
-            return Err(StoreError::TraversalError(
-                "repeat() requires at least one stop condition — call .times(n) or .until(cond).".to_string(),
-            ));
-        }
         apply_rules(&mut logical)?;
         let schema_lock = graph.schema();
         let plan = PhysicalPlanBuilder::default().build(&logical, &schema_lock)?;
@@ -183,15 +176,9 @@ impl GraphTraversal {
         Ok(BuiltTraversal { graph, plan, cache, prop_keys })
     }
 
-    pub(crate) fn into_plan(self) -> LogicalPlan {
-        if self.pending_repeat.is_some() {
-            // This should not happen in practice — callers should flush first.
-            // Return whatever plan we have; the builder will reject a RepeatStep
-            // without stop conditions.
-            self.plan
-        } else {
-            self.plan
-        }
+    pub(crate) fn into_plan(mut self) -> LogicalPlan {
+        self.flush_pending_repeat();
+        self.plan
     }
 
     pub fn addV(mut self, label: impl Into<SmolStr>) -> Self {
@@ -499,6 +486,41 @@ pub trait TraversalBuilder: PlanAppender {
         self
     }
 
+    /// Search for the *k* vertices whose `FloatVector` property is closest to
+    /// the given query vector (cosine distance).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use rocksgraph::{Graph, TraversalBuilder};
+    /// # let dir = tempfile::tempdir().unwrap();
+    /// # let graph = Graph::open(dir.path()).unwrap();
+    /// // Declare the index once (SchemaMode::Auto registers the property key implicitly).
+    /// let mut mgmt = graph.open_schema();
+    /// use rocksgraph::schema::{VectorIndexConfig, VectorEntityType, DistanceMetric, AnnAlgorithm};
+    /// mgmt.add_vector_index(VectorIndexConfig {
+    ///     property: "embedding".into(),
+    ///     entity_type: VectorEntityType::Vertex,
+    ///     dimension: 3,
+    ///     metric: DistanceMetric::Cosine,
+    ///     algorithm: AnnAlgorithm::Hnsw(Default::default()),
+    ///     quantization: Default::default(),
+    /// });
+    /// mgmt.commit().unwrap();
+    ///
+    /// // Rebuild to pick up any existing embedding data.
+    /// graph.rebuild_vector_index(VectorEntityType::Vertex, "embedding").unwrap();
+    ///
+    /// // Query.
+    /// let mut snap = graph.read();
+    /// let nearest = snap
+    ///     .g()
+    ///     .V([])
+    ///     .nearest("embedding", vec![0.1, 0.2, 0.3], 10)
+    ///     .to_list()
+    ///     .unwrap();
+    /// # graph.close().unwrap();
+    /// ```
     fn nearest(mut self, prop_key: &str, query: Vec<f32>, k: usize) -> Self {
         self.push_step(LogicalStep::Nearest(NearestLogicalStep {
             prop_key: prop_key.to_string(),
@@ -508,6 +530,29 @@ pub trait TraversalBuilder: PlanAppender {
         self
     }
 
+    /// Compute cosine similarity for each traversing element's vector property
+    /// against `query`, emitting the similarity score as a float value.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use rocksgraph::{Graph, TraversalBuilder, Value};
+    /// # let dir = tempfile::tempdir().unwrap();
+    /// # let graph = Graph::open(dir.path()).unwrap();
+    /// let mut tx = graph.begin();
+    /// tx.g().addV("person").property("id", 1).property("embedding", Value::FloatVector(vec![1.0, 0.0, 0.0])).next().unwrap();
+    /// tx.commit().unwrap();
+    ///
+    /// let mut snap = graph.read();
+    /// let scores = snap
+    ///     .g()
+    ///     .V([1])
+    ///     .similarity("embedding", vec![1.0, 0.0, 0.0])
+    ///     .to_list()
+    ///     .unwrap();
+    /// assert_eq!(scores, vec![Value::Float32(1.0)]);
+    /// # graph.close().unwrap();
+    /// ```
     fn similarity(mut self, prop_key: &str, query: Vec<f32>) -> Self {
         self.push_step(LogicalStep::Similarity(SimilarityLogicalStep {
             prop_key: prop_key.to_string(),

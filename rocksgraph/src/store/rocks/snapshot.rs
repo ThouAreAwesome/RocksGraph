@@ -23,16 +23,13 @@ use std::{collections::HashSet, sync::Arc};
 use rocksdb::{Direction as ScanDir, IteratorMode, OptimisticTransactionDB, ReadOptions};
 
 use super::{CF_EDGES_IN, CF_EDGES_OUT, CF_VERTEX_DEGREE, CF_VERTICES};
-use crate::{
-    store::traits::GraphSnapshot,
-    types::{
-        kv_codec::{
-            build_lazy_edge, build_lazy_vertex, decode_edge_key, decode_vertex_key, edge_scan_prefix, encode_edge_key,
-            encode_vertex_key, prefix_upper_bound, EdgeValue, VertexDegree, VertexValue, EDGE_KEY_SIZE,
-        },
-        AdjacentEdgeCursor, AdjacentEdgesOptions, CanonicalEdgeKey, Direction, Edge, EdgeKey, LabelId, Rank,
-        StoreError, Vertex, VertexKey,
+use crate::types::{
+    kv_codec::{
+        build_lazy_edge, build_lazy_vertex, decode_edge_key, decode_vertex_key, edge_scan_prefix, encode_edge_key,
+        encode_vertex_key, prefix_upper_bound, EdgeValue, VertexDegree, VertexValue, EDGE_KEY_SIZE,
     },
+    AdjacentEdgeCursor, AdjacentEdgesOptions, CanonicalEdgeKey, Direction, Edge, EdgeKey, LabelId, Rank, StoreError,
+    Vertex, VertexKey,
 };
 
 // ── Lifetime-erased RocksDB snapshot ─────────────────────────────────────────
@@ -84,10 +81,10 @@ impl Drop for Snapshot {
     }
 }
 
-// ── GraphSnapshot ─────────────────────────────────────────────────────────────
+// ── Snapshot methods ──────────────────────────────────────────────────────────
 
-impl GraphSnapshot for Snapshot {
-    fn get_vertex(&mut self, key: VertexKey) -> Result<Option<Vertex>, StoreError> {
+impl Snapshot {
+    pub(crate) fn get_vertex(&mut self, key: VertexKey) -> Result<Option<Vertex>, StoreError> {
         let cf = self.db.cf_handle(CF_VERTICES).ok_or(StoreError::MissingColumnFamily("vertices"))?;
         let raw = self.db.get_cf_opt(&cf, encode_vertex_key(key), &self.read_opts()).map_err(StoreError::RocksDb)?;
         match raw {
@@ -99,7 +96,7 @@ impl GraphSnapshot for Snapshot {
         }
     }
 
-    fn get_vertices(&mut self, keys: &[VertexKey]) -> Result<Vec<Vertex>, StoreError> {
+    pub(crate) fn get_vertices(&mut self, keys: &[VertexKey]) -> Result<Vec<Vertex>, StoreError> {
         let cf = self.db.cf_handle(CF_VERTICES).ok_or(StoreError::MissingColumnFamily("vertices"))?;
         let db_keys: Vec<_> = keys.iter().map(|&k| (&cf, encode_vertex_key(k))).collect();
         let results = self.db.multi_get_cf_opt(db_keys, &self.read_opts());
@@ -115,7 +112,7 @@ impl GraphSnapshot for Snapshot {
         Ok(out)
     }
 
-    fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<Edge>, StoreError> {
+    pub(crate) fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<Edge>, StoreError> {
         let cf_name = match key.direction {
             Direction::OUT => CF_EDGES_OUT,
             Direction::IN => CF_EDGES_IN,
@@ -131,7 +128,7 @@ impl GraphSnapshot for Snapshot {
         }
     }
 
-    fn get_edges(&mut self, keys: &[EdgeKey]) -> Result<Vec<Edge>, StoreError> {
+    pub(crate) fn get_edges(&mut self, keys: &[EdgeKey]) -> Result<Vec<Edge>, StoreError> {
         let cf_out = self.db.cf_handle(CF_EDGES_OUT).ok_or(StoreError::MissingColumnFamily(CF_EDGES_OUT))?;
         let cf_in = self.db.cf_handle(CF_EDGES_IN).ok_or(StoreError::MissingColumnFamily(CF_EDGES_IN))?;
 
@@ -158,7 +155,7 @@ impl GraphSnapshot for Snapshot {
         Ok(out)
     }
 
-    fn get_adjacent_edges(
+    pub(crate) fn get_adjacent_edges(
         &mut self,
         vertex: VertexKey,
         direction: Direction,
@@ -248,7 +245,7 @@ impl GraphSnapshot for Snapshot {
         Ok((result, next_cursor))
     }
 
-    fn scan_vertices(
+    pub(crate) fn scan_vertices(
         &mut self,
         label: Option<LabelId>,
         start_from: Option<VertexKey>,
@@ -297,7 +294,7 @@ impl GraphSnapshot for Snapshot {
         Ok((result, next_cursor))
     }
 
-    fn scan_edges(
+    pub(crate) fn scan_edges(
         &mut self,
         label: Option<LabelId>,
         start_from: Option<CanonicalEdgeKey>,
@@ -349,7 +346,7 @@ impl GraphSnapshot for Snapshot {
         Ok((result, next_cursor))
     }
 
-    fn get_vertex_degree(&mut self, key: VertexKey) -> Result<Option<(u32, u32, LabelId)>, StoreError> {
+    pub(crate) fn get_vertex_degree(&mut self, key: VertexKey) -> Result<Option<(u32, u32, LabelId)>, StoreError> {
         let cf_degree = self.db.cf_handle(CF_VERTEX_DEGREE).ok_or(StoreError::MissingColumnFamily("vertex_degree"))?;
         let raw =
             self.db.get_cf_opt(&cf_degree, encode_vertex_key(key), &self.read_opts()).map_err(StoreError::RocksDb)?;
@@ -366,10 +363,7 @@ impl GraphSnapshot for Snapshot {
 #[cfg(test)]
 mod tests {
     use crate::{
-        store::{
-            traits::{GraphSnapshot, GraphStore, GraphTransaction},
-            RocksStorage,
-        },
+        store::RocksStorage,
         types::{AdjacentEdgesOptions, Direction, EdgeKey},
     };
     use tempfile::TempDir;

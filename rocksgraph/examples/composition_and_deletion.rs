@@ -44,7 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let outgoing_edge_count = snap.g().V([1]).union([__().outE(["knows"]), __().outE(["created"])]).count().next()?;
     println!("marko's outE(knows) + outE(created), merged and counted: {:?}", outgoing_edge_count);
 
-    let names_and_id = snap.g().V([1]).union([__().values(["name"]), __().values(["id"])]).to_list()?;
+    let names_and_id = snap.g().V([1]).union([__().values(["name"]), __().id()]).to_list()?;
     println!("marko's name and id, merged into one stream: {:?}", names_and_id);
 
     // --- coalesce(): idempotent upserts ---

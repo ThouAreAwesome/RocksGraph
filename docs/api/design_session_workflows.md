@@ -31,15 +31,15 @@ All examples use Python. Rust equivalents use the same method names in `snake_ca
 | `BulkLoader` | `g.open_bulk_loader(work_dir)` | CF_VERTICES, CF_EDGES (SST ingestion) | Large initial data load, bypasses WAL and OCC. |
 
 **The key rule**: `GraphOptions` at `Graph::open` sets only `mode` (Auto/Strict),
-`edge_mode` (Single/Multi), `storage` tunables (`StorageOptions`), and `vector_runtime` (`VectorRuntimeOptions` with `default_limit` and `per_index_overrides`). It carries no schema content — no labels, no property
+`edge_mode` (Single/Multi), `storage` tunables (`RocksOptions`), and `index` (`IndexOptions` with `default_limit` and `per_index_overrides`). It carries no schema content — no labels, no property
 keys, no vector indexes. All structural declarations go through `SchemaSession`.
 
 **Environmental config** is never persisted to disk. Supply it per-open so a database
 file is portable across machines with different RAM. Structural config (dimension, metric,
 algorithm) is baked into CF_SCHEMA and must not vary per machine — machine-specific limits
 must not be. Two equivalent surfaces:
-- **Python kwargs**: `Graph(path, vector_memory_limit=5*GiB, vector_index_limits=[IndexLimit(entity_type=..., property=..., memory_limit=...)])` — the binding constructs `VectorRuntimeOptions` internally.
-- **Rust / full control**: `GraphOptions { vector_runtime: VectorRuntimeOptions { default_limit: ..., per_index_overrides: ... }, .. }`
+- **Python kwargs**: `Graph(path, vector_memory_limit=5*GiB, vector_index_limits=[IndexLimit(entity_type=..., property=..., memory_limit=...)])` — the binding constructs `IndexOptions` internally.
+- **Rust / full control**: `GraphOptions { index: IndexOptions { default_limit: ..., per_index_overrides: ... }, .. }`
 
 ---
 

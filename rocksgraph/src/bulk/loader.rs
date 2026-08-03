@@ -50,7 +50,6 @@ use crate::{
         },
         prop_codec, StoreError,
     },
-    vector::VectorRuntimeOptions,
 };
 
 use super::sort::ExternalSorter;
@@ -151,7 +150,7 @@ pub struct BulkLoader<'a> {
     work_dir: PathBuf,
     max_sst_size: usize,
     max_memory_bytes: usize,
-    rocks_opts: RocksOptions,
+    storage_opts: RocksOptions,
     committed: bool,
 
     // Schema handling
@@ -184,7 +183,7 @@ impl<'a> BulkLoader<'a> {
             work_dir,
             max_sst_size: DEFAULT_MAX_SST_SIZE,
             max_memory_bytes: DEFAULT_MAX_MEMORY_BYTES,
-            rocks_opts: RocksOptions::default(),
+            storage_opts: RocksOptions::default(),
             committed: false,
             staging_schema,
             vertex_sorter: None,
@@ -219,9 +218,9 @@ impl<'a> BulkLoader<'a> {
         self
     }
 
-    /// Sets RocksDB options used when constructing SST files.
+    /// Sets storage engine options used when constructing SST files.
     pub fn with_rocks_options(mut self, opts: RocksOptions) -> Self {
-        self.rocks_opts = opts;
+        self.storage_opts = opts;
         self
     }
 
@@ -535,10 +534,10 @@ impl<'a> BulkLoader<'a> {
         let in_deg =
             self.in_deg.take().unwrap_or_else(|| ExternalSorter::new(self.work_dir.join("deg_in_empty"), budget_d));
 
-        let v_bo = cf_options::vertex_block_opts(&self.rocks_opts);
-        let v_opts = cf_options::vertex_cf_opts(&self.rocks_opts, &v_bo);
-        let e_bo = cf_options::edge_block_opts(&self.rocks_opts);
-        let e_opts = cf_options::edge_cf_opts(&self.rocks_opts, &e_bo);
+        let v_bo = cf_options::vertex_block_opts(&self.storage_opts, None);
+        let v_opts = cf_options::vertex_cf_opts(&self.storage_opts, &v_bo);
+        let e_bo = cf_options::edge_block_opts(&self.storage_opts, None);
+        let e_opts = cf_options::edge_cf_opts(&self.storage_opts, &e_bo);
 
         // SST finalization — generates sorted SST files before the crash-safe window opens.
         // A crash here leaves no SSTs ingested; restart is safe.
@@ -756,15 +755,11 @@ impl SstBulkLoader {
         schema: BulkSchema,
         vertices: impl Iterator<Item = BulkVertex>,
         edges: impl Iterator<Item = BulkEdge>,
-        graph_opts: GraphOptions,
-        rocks_opts: &crate::RocksOptions,
+        mut graph_opts: GraphOptions,
+        storage_opts: &crate::RocksOptions,
     ) -> Result<BulkLoadStats, StoreError> {
-        let graph = crate::Graph::open_with_rocksdb_options(
-            &self.db_path,
-            graph_opts,
-            rocks_opts.clone(),
-            VectorRuntimeOptions::default(),
-        )?;
+        graph_opts.storage = storage_opts.clone();
+        let graph = crate::Graph::open_with_options(&self.db_path, graph_opts.clone())?;
         if graph_opts.mode == SchemaMode::Strict {
             let mut session = graph.open_schema();
             for vl in &schema.vertex_labels {
@@ -783,7 +778,7 @@ impl SstBulkLoader {
             .with_work_dir(self.work_dir)
             .with_max_sst_size(self.max_sst_size)
             .with_max_memory(self.max_memory_bytes)
-            .with_rocks_options(rocks_opts.clone());
+            .with_rocks_options(storage_opts.clone());
         loader.load_vertices(vertices)?;
         loader.load_edges(edges)?;
         loader.commit()
@@ -1294,16 +1289,16 @@ mod tests {
             use rocksdb::{
                 ColumnFamilyDescriptor, MultiThreaded, OptimisticTransactionDB, Options, WriteBatchWithTransaction,
             };
-            let rocks_opts = RocksOptions::default();
-            let v_bo = cf_options::vertex_block_opts(&rocks_opts);
-            let e_bo = cf_options::edge_block_opts(&rocks_opts);
+            let storage_opts = RocksOptions::default();
+            let v_bo = cf_options::vertex_block_opts(&storage_opts, None);
+            let e_bo = cf_options::edge_block_opts(&storage_opts, None);
             let mut dbo = Options::default();
             dbo.create_if_missing(false);
             let cfs = vec![
-                ColumnFamilyDescriptor::new(CF_VERTICES, cf_options::vertex_cf_opts(&rocks_opts, &v_bo)),
-                ColumnFamilyDescriptor::new(CF_VERTEX_DEGREE, cf_options::vertex_cf_opts(&rocks_opts, &v_bo)),
-                ColumnFamilyDescriptor::new(CF_EDGES_OUT, cf_options::edge_cf_opts(&rocks_opts, &e_bo)),
-                ColumnFamilyDescriptor::new(CF_EDGES_IN, cf_options::edge_cf_opts(&rocks_opts, &e_bo)),
+                ColumnFamilyDescriptor::new(CF_VERTICES, cf_options::vertex_cf_opts(&storage_opts, &v_bo)),
+                ColumnFamilyDescriptor::new(CF_VERTEX_DEGREE, cf_options::vertex_cf_opts(&storage_opts, &v_bo)),
+                ColumnFamilyDescriptor::new(CF_EDGES_OUT, cf_options::edge_cf_opts(&storage_opts, &e_bo)),
+                ColumnFamilyDescriptor::new(CF_EDGES_IN, cf_options::edge_cf_opts(&storage_opts, &e_bo)),
                 ColumnFamilyDescriptor::new(CF_SCHEMA, Options::default()),
             ];
             let db: OptimisticTransactionDB<MultiThreaded> =
@@ -1402,9 +1397,9 @@ mod tests {
         };
 
         let dir = tempdir().unwrap();
-        let rocks_opts = RocksOptions::default();
-        let e_bo = cf_options::edge_block_opts(&rocks_opts);
-        let e_opts = cf_options::edge_cf_opts(&rocks_opts, &e_bo);
+        let storage_opts = RocksOptions::default();
+        let e_bo = cf_options::edge_block_opts(&storage_opts, None);
+        let e_opts = cf_options::edge_cf_opts(&storage_opts, &e_bo);
 
         let cek = CanonicalEdgeKey { src_id: 10, label_id: 1, dst_id: 20, rank: 0 };
         let key = kv_codec::encode_edge_key(&cek.out_key()).to_vec();

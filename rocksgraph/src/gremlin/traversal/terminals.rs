@@ -40,14 +40,10 @@ impl<'s> ReadTraversal<'s> {
     }
 
     /// Build the physical plan and return a lazy iterator over all results.
-    pub fn iter(self) -> Result<BuiltTraversal<'s>, StoreError> {
+    pub fn iter(mut self) -> Result<BuiltTraversal<'s>, StoreError> {
+        self.flush_pending_repeat();
         if let Some(err) = self.error {
             return Err(err);
-        }
-        if self.pending_repeat.is_some() {
-            return Err(StoreError::TraversalError(
-                "repeat() requires at least one stop condition — call .times(n) or .until(cond).".to_string(),
-            ));
         }
         GraphTraversal { plan: self.plan, error: None, pending_repeat: None }.build(self.ctx, self.prop_keys)
     }
@@ -63,14 +59,10 @@ impl<'s> ReadTraversal<'s> {
     }
 
     /// Build the physical plan and return a pretty-printed explanation tree.
-    pub fn explain(self) -> Result<String, StoreError> {
+    pub fn explain(mut self) -> Result<String, StoreError> {
+        self.flush_pending_repeat();
         if let Some(err) = self.error {
             return Err(err);
-        }
-        if self.pending_repeat.is_some() {
-            return Err(StoreError::TraversalError(
-                "repeat() requires at least one stop condition — call .times(n) or .until(cond).".to_string(),
-            ));
         }
         let mut logical = self.plan;
         crate::planner::apply_rules(&mut logical)?;
@@ -184,14 +176,10 @@ impl<'s> WriteTraversal<'s> {
     // ── Terminal ops ──────────────────────────────────────────────────────
 
     /// Build the physical plan and return a lazy iterator over all results.
-    pub fn iter(self) -> Result<BuiltTraversal<'s>, StoreError> {
+    pub fn iter(mut self) -> Result<BuiltTraversal<'s>, StoreError> {
+        self.flush_pending_repeat();
         if let Some(err) = self.error {
             return Err(err);
-        }
-        if self.pending_repeat.is_some() {
-            return Err(StoreError::TraversalError(
-                "repeat() requires at least one stop condition — call .times(n) or .until(cond).".to_string(),
-            ));
         }
         GraphTraversal { plan: self.plan, error: None, pending_repeat: None }.build(self.ctx, self.prop_keys)
     }
@@ -207,14 +195,10 @@ impl<'s> WriteTraversal<'s> {
     }
 
     /// Build the physical plan and return a pretty-printed explanation tree.
-    pub fn explain(self) -> Result<String, StoreError> {
+    pub fn explain(mut self) -> Result<String, StoreError> {
+        self.flush_pending_repeat();
         if let Some(err) = self.error {
             return Err(err);
-        }
-        if self.pending_repeat.is_some() {
-            return Err(StoreError::TraversalError(
-                "repeat() requires at least one stop condition — call .times(n) or .until(cond).".to_string(),
-            ));
         }
         let mut logical = self.plan;
         crate::planner::apply_rules(&mut logical)?;

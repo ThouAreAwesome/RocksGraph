@@ -83,7 +83,7 @@ let g = Graph::open_with_options("./mydb", GraphOptions {
 })?;
 
 // Full control including RocksDB tuning
-let g = Graph::open_with_rocksdb_options("./mydb", schema_opts, rocks_opts)?;
+let g = Graph::open_with_options("./mydb", schema_opts, storage_opts)?;
 ```
 
 `Graph` also holds the handful of **operational / maintenance methods** that
@@ -567,7 +567,7 @@ All other bindings are thin wrappers.
 // Opening
 Graph::open(path)
 Graph::open_with_options(path, GraphOptions)
-Graph::open_with_rocksdb_options(path, GraphOptions, RocksOptions)
+Graph::open_with_options(path, GraphOptions, RocksOptions)
 
 // Sessions
 graph.read()             → ReadSession  { .g() → ReadTraversal }

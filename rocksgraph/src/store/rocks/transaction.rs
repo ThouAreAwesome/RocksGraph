@@ -43,18 +43,14 @@ use rocksdb::{Direction as ScanDir, IteratorMode, OptimisticTransactionDB, ReadO
 use std::collections::HashMap;
 
 use super::{CF_EDGES_IN, CF_EDGES_OUT, CF_SCHEMA, CF_VERTEX_DEGREE, CF_VERTICES};
-use crate::{
-    store::traits::GraphTransaction,
-    types::{
-        kv_codec::{
-            build_lazy_edge, build_lazy_vertex, decode_edge_key, decode_vertex_key, edge_scan_prefix, encode_edge_key,
-            encode_schema_key, encode_vertex_key, prefix_upper_bound, EdgeValue, VertexDegree, VertexValue,
-            EDGE_KEY_SIZE,
-        },
-        prop_codec::encode_props,
-        AdjacentEdgeCursor, AdjacentEdgesOptions, CanonicalEdgeKey, Direction, Edge, EdgeKey, LabelId, Primitive, Rank,
-        StoreError, Vertex, VertexKey,
+use crate::types::{
+    kv_codec::{
+        build_lazy_edge, build_lazy_vertex, decode_edge_key, decode_vertex_key, edge_scan_prefix, encode_edge_key,
+        encode_schema_key, encode_vertex_key, prefix_upper_bound, EdgeValue, VertexDegree, VertexValue, EDGE_KEY_SIZE,
     },
+    prop_codec::encode_props,
+    AdjacentEdgeCursor, AdjacentEdgesOptions, CanonicalEdgeKey, Direction, Edge, EdgeKey, LabelId, Primitive, Rank,
+    StoreError, Vertex, VertexKey,
 };
 
 // ── Lifetime-erased RocksDB transaction ──────────────────────────────────────
@@ -122,11 +118,11 @@ impl Transaction {
     }
 }
 
-// ── GraphTransaction ──────────────────────────────────────────────────────────
+// ── Transaction methods ────────────────────────────────────────────────────────
 
-impl GraphTransaction for Transaction {
+impl Transaction {
     /// Retrieves a vertex by its key, enrolling it in the OCC read-set.
-    fn get_vertex(&mut self, key: VertexKey) -> Result<Option<Vertex>, StoreError> {
+    pub(crate) fn get_vertex(&mut self, key: VertexKey) -> Result<Option<Vertex>, StoreError> {
         let cf_vertices = self.db.cf_handle(CF_VERTICES).ok_or(StoreError::MissingColumnFamily("vertices"))?;
         let vv_raw = self
             .db_txn
@@ -145,7 +141,7 @@ impl GraphTransaction for Transaction {
     }
 
     /// Retrieves the degree (in-edges, out-edges) and label of a vertex, enrolling it in the OCC read-set.
-    fn get_vertex_degree(&mut self, key: VertexKey) -> Result<Option<(u32, u32, LabelId)>, StoreError> {
+    pub(crate) fn get_vertex_degree(&mut self, key: VertexKey) -> Result<Option<(u32, u32, LabelId)>, StoreError> {
         let cf_degree = self.db.cf_handle(CF_VERTEX_DEGREE).ok_or(StoreError::MissingColumnFamily("vertex_degree"))?;
         let vd_raw = self
             .db_txn
@@ -163,7 +159,7 @@ impl GraphTransaction for Transaction {
     }
 
     /// Retrieves a single edge by its key, enrolling it in the OCC read-set.
-    fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<Edge>, StoreError> {
+    pub(crate) fn get_edge(&mut self, key: &EdgeKey) -> Result<Option<Edge>, StoreError> {
         let cf_name = match key.direction {
             Direction::OUT => CF_EDGES_OUT,
             Direction::IN => CF_EDGES_IN,
@@ -186,7 +182,7 @@ impl GraphTransaction for Transaction {
         }
     }
 
-    fn get_vertices(&mut self, keys: &[VertexKey]) -> Result<Vec<Vertex>, StoreError> {
+    pub(crate) fn get_vertices(&mut self, keys: &[VertexKey]) -> Result<Vec<Vertex>, StoreError> {
         let cf = self.db.cf_handle(CF_VERTICES).ok_or(StoreError::MissingColumnFamily("vertices"))?;
         let txn = self.db_txn.as_ref().expect("no active transaction");
         let mut out = Vec::with_capacity(keys.len());
@@ -202,7 +198,7 @@ impl GraphTransaction for Transaction {
         Ok(out)
     }
 
-    fn get_edges(&mut self, keys: &[EdgeKey]) -> Result<Vec<Edge>, StoreError> {
+    pub(crate) fn get_edges(&mut self, keys: &[EdgeKey]) -> Result<Vec<Edge>, StoreError> {
         let cf_out = self.db.cf_handle(CF_EDGES_OUT).ok_or(StoreError::MissingColumnFamily(CF_EDGES_OUT))?;
         let cf_in = self.db.cf_handle(CF_EDGES_IN).ok_or(StoreError::MissingColumnFamily(CF_EDGES_IN))?;
         let txn = self.db_txn.as_ref().expect("no active transaction");
@@ -223,7 +219,7 @@ impl GraphTransaction for Transaction {
         Ok(out)
     }
 
-    fn get_adjacent_edges(
+    pub(crate) fn get_adjacent_edges(
         &mut self,
         vertex: VertexKey,
         direction: Direction,
@@ -313,7 +309,7 @@ impl GraphTransaction for Transaction {
         Ok((result, next_cursor))
     }
 
-    fn scan_vertices(
+    pub(crate) fn scan_vertices(
         &mut self,
         label: Option<LabelId>,
         start_from: Option<VertexKey>,
@@ -363,7 +359,7 @@ impl GraphTransaction for Transaction {
         Ok((result, next_cursor))
     }
 
-    fn scan_edges(
+    pub(crate) fn scan_edges(
         &mut self,
         label: Option<LabelId>,
         start_from: Option<CanonicalEdgeKey>,
@@ -417,7 +413,7 @@ impl GraphTransaction for Transaction {
     }
 
     /// Inserts or updates a vertex record with its label and properties.
-    fn put_vertex(
+    pub(crate) fn put_vertex(
         &mut self,
         key: VertexKey,
         label_id: LabelId,
@@ -430,7 +426,7 @@ impl GraphTransaction for Transaction {
     }
 
     /// Inserts or updates the degree counts and label for a vertex.
-    fn put_vertex_degree(
+    pub(crate) fn put_vertex_degree(
         &mut self,
         key: VertexKey,
         out_e_cnt: u32,
@@ -446,7 +442,7 @@ impl GraphTransaction for Transaction {
     /// Inserts or updates a single edge record (either `edges_out` or `edges_in`).
     /// `end_vertex_label` is the label of the vertex at the *other* end of the
     /// physical row: `dst_label` for `edges_out`, `src_label` for `edges_in`.
-    fn put_edge(
+    pub(crate) fn put_edge(
         &mut self,
         key: &EdgeKey,
         end_vertex_label: LabelId,
@@ -464,7 +460,7 @@ impl GraphTransaction for Transaction {
     }
 
     /// Stage a schema key-value entry for persistence.
-    fn put_schema_entry(&mut self, kind: u8, name: &str, value: &[u8]) -> Result<(), StoreError> {
+    pub(crate) fn put_schema_entry(&mut self, kind: u8, name: &str, value: &[u8]) -> Result<(), StoreError> {
         let txn = self.db_txn.as_ref().expect("no active transaction");
         let cf_schema = self.db.cf_handle(CF_SCHEMA).ok_or(StoreError::MissingColumnFamily(CF_SCHEMA))?;
         let key = encode_schema_key(kind, name);
@@ -472,21 +468,21 @@ impl GraphTransaction for Transaction {
     }
 
     /// Deletes a vertex record.
-    fn delete_vertex(&mut self, key: VertexKey) -> Result<(), StoreError> {
+    pub(crate) fn delete_vertex(&mut self, key: VertexKey) -> Result<(), StoreError> {
         let cf_vertices = self.db.cf_handle(CF_VERTICES).ok_or(StoreError::MissingColumnFamily("vertices"))?;
         let txn = self.db_txn.as_ref().expect("no active transaction");
         txn.delete_cf(&cf_vertices, encode_vertex_key(key)).map_err(StoreError::RocksDb)
     }
 
     /// Deletes a vertex degree record.
-    fn delete_vertex_degree(&mut self, key: VertexKey) -> Result<(), StoreError> {
+    pub(crate) fn delete_vertex_degree(&mut self, key: VertexKey) -> Result<(), StoreError> {
         let cf_degree = self.db.cf_handle(CF_VERTEX_DEGREE).ok_or(StoreError::MissingColumnFamily("vertex_degree"))?;
         let txn = self.db_txn.as_ref().expect("no active transaction");
         txn.delete_cf(&cf_degree, encode_vertex_key(key)).map_err(StoreError::RocksDb)
     }
 
     /// Deletes a single edge record from the appropriate column family.
-    fn delete_edge(&mut self, key: &EdgeKey) -> Result<(), StoreError> {
+    pub(crate) fn delete_edge(&mut self, key: &EdgeKey) -> Result<(), StoreError> {
         let cf_name = match key.direction {
             Direction::OUT => CF_EDGES_OUT,
             Direction::IN => CF_EDGES_IN,
@@ -504,7 +500,7 @@ impl GraphTransaction for Transaction {
     /// RocksDB transaction and snapshot. This allows reusing the same `Transaction`
     /// object for subsequent operations.
     #[allow(clippy::missing_transmute_annotations)]
-    fn commit(&mut self) -> Result<(), StoreError> {
+    pub(crate) fn commit(&mut self) -> Result<(), StoreError> {
         self.db_txn_snap.take();
         let txn = self.db_txn.take().expect("no active transaction");
         let result = txn.commit().map_err(|e| {
@@ -533,7 +529,7 @@ impl GraphTransaction for Transaction {
     /// RocksDB transaction and snapshot. This allows reusing the same `Transaction`
     /// object for subsequent operations.
     #[allow(clippy::missing_transmute_annotations)]
-    fn abort(&mut self) {
+    pub(crate) fn abort(&mut self) {
         self.db_txn_snap.take();
         if let Some(txn) = self.db_txn.take() {
             let _ = txn.rollback();
@@ -586,10 +582,7 @@ mod tests {
     use smol_str::SmolStr;
 
     use crate::{
-        store::{
-            traits::{GraphStore, GraphTransaction},
-            RocksStorage,
-        },
+        store::RocksStorage,
         types::{AdjacentEdgesOptions, Direction, Edge, EdgeKey, LabelId, Primitive, Vertex, VertexKey},
     };
     /// This test simulates a read-write conflict between two transactions (`txn1` and `txn2`) on the same keys in a

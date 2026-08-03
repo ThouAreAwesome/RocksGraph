@@ -13,7 +13,6 @@ use std::sync::{Arc, RwLock};
 use crate::{
     graph::{LogicalGraph, LogicalSnapshot},
     schema::Schema,
-    store::traits::GraphStore,
     types::{
         element::Property,
         gvalue::Primitive,
@@ -57,7 +56,7 @@ use crate::{
 /// | `set_property` (edge)    | —                       | ✗ overlay-only        | none           | ⚠ **edge must be pre-loaded** |
 /// | `drop_property` (vertex) | ✅ auto-load             | n/a                   | none          | none                          |
 /// | `drop_property` (edge)   | —                       | ✗ overlay-only        | none           | ⚠ **edge must be pre-loaded** |
-pub trait GraphCtx {
+pub(crate) trait GraphCtx {
     /// Retrieves a vertex by its key.
     #[allow(dead_code)]
     fn get_vertex(&mut self, key: VertexKey) -> Result<Option<VertexKey>, StoreError>;
@@ -221,7 +220,7 @@ impl GraphCtx for NoopCtx {
     }
 }
 
-impl<S: GraphStore> GraphCtx for LogicalGraph<S> {
+impl GraphCtx for LogicalGraph {
     fn get_vertex(&mut self, key: VertexKey) -> Result<Option<VertexKey>, StoreError> {
         self.get_vertex(key)
     }
@@ -309,7 +308,7 @@ impl<S: GraphStore> GraphCtx for LogicalGraph<S> {
     }
 }
 
-impl<S: GraphStore> GraphCtx for LogicalSnapshot<S> {
+impl GraphCtx for LogicalSnapshot {
     fn get_vertex(&mut self, key: VertexKey) -> Result<Option<VertexKey>, StoreError> {
         self.get_vertex(key)
     }

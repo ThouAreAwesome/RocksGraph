@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! HNSW vector index backed by the usearch crate.
 //!
@@ -17,12 +18,15 @@ use super::traits::{DistanceMetric, Quantization, VectorIndex, VectorIndexConfig
 // ── Snapshot constants ──────────────────────────────────────────────────────
 
 /// Magic bytes: "RG_V" in ASCII, big-endian u32.
+#[allow(dead_code)]
 const SNAPSHOT_MAGIC: u32 = 0x52475F56;
 /// Current snapshot format version.
+#[allow(dead_code)]
 const SNAPSHOT_FORMAT_VERSION: u16 = 2;
 
 /// Header size in bytes: magic(4) + version(2) + timestamp(8) + dim(4) +
 /// metric(1) + algorithm(1) + tombstone(8) + next_edge_label(8) + payload_len(8) = 44
+#[allow(dead_code)]
 const SNAPSHOT_HEADER_SIZE: usize = 44;
 
 fn metric_to_usearch(m: DistanceMetric) -> MetricKind {
@@ -43,7 +47,7 @@ fn scalar_kind(q: Quantization) -> ScalarKind {
 // ── UsearchHnswIndex ────────────────────────────────────────────────────────
 
 /// Initial capacity reserved at index construction — usearch requires
-/// `reserve` before any `add`.  Will be driven by `VectorRuntimeOptions`
+/// `reserve` before any `add`.  Will be driven by `IndexOptions`
 /// once that is wired through to index construction.
 const DEFAULT_RESERVE_CAPACITY: usize = 1000;
 
@@ -71,10 +75,12 @@ impl std::fmt::Debug for UsearchHnswIndex {
 }
 
 impl UsearchHnswIndex {
+    #[allow(dead_code)]
     pub fn dimension(&self) -> usize {
         self.config.dimension
     }
 
+    #[allow(dead_code)]
     pub fn metric(&self) -> DistanceMetric {
         self.config.metric
     }
@@ -112,11 +118,13 @@ impl UsearchHnswIndex {
     }
 
     /// Returns the number of live (non-tombstoned) entries.
+    #[allow(dead_code)]
     pub fn live_count(&self) -> usize {
         self.inner.size()
     }
 
     /// Returns the tombstone ratio: fraction of entries that are soft-deleted.
+    #[allow(dead_code)]
     pub fn tombstone_ratio(&self) -> f32 {
         let total = self.live_count() as u64 + self.tombstone_count;
         if total == 0 {
@@ -258,6 +266,7 @@ impl VectorIndex for UsearchHnswIndex {
 ///
 /// This is a free function (not a trait method) to avoid `dyn` object-safety
 /// issues with constructors returning `Self`.
+#[allow(dead_code)]
 pub fn load_vector_index(path: &Path, config: &VectorIndexConfig) -> Result<UsearchHnswIndex, VectorError> {
     let bytes = std::fs::read(path)?;
 

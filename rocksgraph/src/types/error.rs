@@ -137,6 +137,9 @@ pub enum StoreError {
 
     /// Attempted to load edges or commit before `load_vertices()` was called.
     VerticesNotLoaded,
+
+    /// A vector index operation failed (dimension mismatch, capacity, I/O, etc.).
+    VectorIndex(String),
 }
 
 // ── Classification helpers ──────────────────────────────────────────────────
@@ -167,6 +170,11 @@ impl StoreError {
         matches!(self, Self::SchemaViolation(_) | Self::SchemaConflict(_) | Self::SchemaExhausted(_))
     }
 
+    /// True for vector index errors.
+    pub fn is_vector_error(&self) -> bool {
+        matches!(self, Self::VectorIndex(_))
+    }
+
     /// True if the query itself is invalid (type mismatch, unsupported construct,
     /// or malformed traversal).
     pub fn is_query_error(&self) -> bool {
@@ -192,6 +200,7 @@ impl StoreError {
             | Self::IncidentEdges
             | Self::ReadOnly => "integrity",
             Self::IncompleteLoad { .. } => "storage",
+            Self::VectorIndex(_) => "vector",
             Self::UnexpectedDataType(_)
             | Self::UnsupportedOperation(_)
             | Self::TraversalError(_)
@@ -226,6 +235,7 @@ impl fmt::Display for StoreError {
             StoreError::IncompleteLoad { msg } => write!(f, "incomplete bulk load: {}", msg),
             StoreError::BulkLoadInProgress => write!(f, "bulk load in progress"),
             StoreError::VerticesNotLoaded => write!(f, "load_vertices must be called before load_edges or commit"),
+            StoreError::VectorIndex(msg) => write!(f, "vector index error: {msg}"),
         }
     }
 }
@@ -253,5 +263,11 @@ impl From<rocksdb::Error> for StoreError {
 impl From<std::io::Error> for StoreError {
     fn from(e: std::io::Error) -> Self {
         StoreError::Io(e)
+    }
+}
+
+impl From<crate::vector::error::VectorError> for StoreError {
+    fn from(e: crate::vector::error::VectorError) -> Self {
+        StoreError::VectorIndex(e.to_string())
     }
 }

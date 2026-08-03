@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use crate::engine::GraphCtx;
 use crate::gremlin::value::Value;
 use crate::planner::logical_step::*;
@@ -1212,7 +1215,7 @@ fn decode_emit_spec(bytes: &[u8], offset: &mut usize) -> Result<EmitSpec, StoreE
         _ => Err(StoreError::UnsupportedOperation(format!("Unknown EmitSpec tag {}", tag))),
     }
 }
-pub fn execute_read(
+pub(crate) fn execute_read(
     graph: &mut dyn GraphCtx,
     bytes: &[u8],
     prop_keys: Option<Vec<SmolStr>>,
@@ -1221,7 +1224,7 @@ pub fn execute_read(
     let traversal = crate::gremlin::traversal::ReadTraversal::from_plan(plan, graph, prop_keys);
     traversal.to_list()
 }
-pub fn execute_write(
+pub(crate) fn execute_write(
     graph: &mut dyn GraphCtx,
     bytes: &[u8],
     prop_keys: Option<Vec<SmolStr>>,

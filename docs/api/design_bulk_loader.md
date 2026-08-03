@@ -108,7 +108,7 @@ println!("loaded {} vertices, {} edges in {:.1}s",
 | `with_work_dir(path)` | System temp directory (`_bulk_work`) | Scratch directory for external merge sorting and staging SST files. Cleaned up on `commit()` or `Drop`. |
 | `with_max_memory(bytes)` | `512 MiB` | Maximum in-memory RAM budget for `ExternalSorter` before spilling chunks to disk. |
 | `with_max_sst_size(bytes)` | `58 MiB` (90% of RocksDB 64 MiB default) | Target split threshold for generated SST files to allow parallel ingestion. |
-| `with_rocks_options(opts)` | `graph.rocks_opts` | Sets custom `RocksOptions` (block size, bloom filters, block-based table options) used when creating `SstFileWriter` instances so SST block formats match the target column families. |
+| `with_rocks_options(opts)` | `graph.storage_opts` | Sets custom `RocksOptions` (block size, bloom filters, block-based table options) used when creating `SstFileWriter` instances so SST block formats match the target column families. |
 
 `Drop` on `BulkLoader` (without explicit `commit()`) automatically cleans up the work directory
 and discards any in-progress SST files — no data is ingested into the database.

@@ -6,12 +6,9 @@ use std::{path::Path, sync::Arc};
 use rocksdb::{Cache, ColumnFamilyDescriptor, OptimisticTransactionDB, Options};
 
 use crate::{
-    store::{
-        rocks::{
-            cf_options, snapshot::Snapshot, transaction::Transaction, CF_EDGES_IN, CF_EDGES_OUT, CF_SCHEMA,
-            CF_VERTEX_DEGREE, CF_VERTICES,
-        },
-        traits::GraphStore,
+    store::rocks::{
+        cf_options, snapshot::Snapshot, transaction::Transaction, CF_EDGES_IN, CF_EDGES_OUT, CF_SCHEMA,
+        CF_VERTEX_DEGREE, CF_VERTICES,
     },
     types::StoreError,
 };
@@ -54,17 +51,20 @@ use crate::{
 ///
 /// # Example
 /// ```
-/// # use rocksgraph::{Graph, RocksOptions, vector::VectorRuntimeOptions};
+/// # use rocksgraph::{Graph, schema::GraphOptions, RocksOptions};
 /// # let dir = tempfile::tempdir().unwrap();
 /// // Small production server: 16 GB RAM
-/// let opts = RocksOptions {
-///     block_cache_size:         5 * 1024 * 1024 * 1024, // 5 GiB
-///     write_buffer_size:        256 * 1024 * 1024,       // 256 MiB
-///     max_write_buffer_number:  4,
-///     max_background_jobs:      4,
-///     ..RocksOptions::default()
+/// let opts = GraphOptions {
+///     storage: RocksOptions {
+///         block_cache_size:         5 * 1024 * 1024 * 1024, // 5 GiB
+///         write_buffer_size:        256 * 1024 * 1024,       // 256 MiB
+///         max_write_buffer_number:  4,
+///         max_background_jobs:      4,
+///         ..RocksOptions::default()
+///     },
+///     ..Default::default()
 /// };
-/// let graph = Graph::open_with_rocksdb_options(dir.path(), Default::default(), opts, VectorRuntimeOptions::default()).unwrap();
+/// let graph = Graph::open_with_options(dir.path(), opts).unwrap();
 /// # graph.close().unwrap();
 /// ```
 ///
@@ -113,90 +113,59 @@ pub struct RocksOptions {
     ///
     /// **Retroactive**: applies to new memtable lifecycles after the next `open()`.
     ///
-    /// **Why 3 default**: `1` (only active memtable) would stall writes the
-    /// instant a flush is triggered. `2` gives one buffer for flushing, but
-    /// any flush latency spike immediately stalls writes. `3` adds a second
-    /// waiting memtable, which absorbs a full flush period of incoming writes
-    /// even if one flush runs slow — a practical minimum for stable throughput
-    /// under bursty write workloads. Values above 3 trade memory for resilience
-    /// against sustained flush latency.
+    /// **Why 3 default**: absorbs bursts of 2 × 128 MiB = 256 MiB of pending writes
+    /// while the primary memtable is flushing to L0 SST, preventing write stalls
+    /// under short spikes without blowing up RAM usage.
     pub max_write_buffer_number: i32,
 
-    // ── Concurrency (retroactive: effective immediately on next open) ─────────
-    /// Total number of background threads shared by flush and compaction across
-    /// the entire database.  The most direct lever for keeping L0 SST file
-    /// count low under sustained write load.
+    // ── Concurrency (retroactive: effective on next open) ────────────────────
+    /// Total background worker threads shared between flush (memtable → L0)
+    /// and compaction (L0 → L1 → … → LN) jobs.
     ///
-    /// Insufficient background jobs cause L0 file count to grow, which
-    /// increases read amplification (more files to search per point lookup)
-    /// and eventually triggers write stalls.
+    /// **Retroactive**: applies immediately on the next `open()`.
     ///
-    /// **Retroactive**: thread count adjusts immediately after the next `open()`.
-    ///
-    /// **Why 4 default**: matches RocksDB's built-in default. With 4 data CFs
-    /// (`vertices`, `vertex_degree`, `edges_out`, `edges_in`), a single
-    /// background job per CF is the floor; 4 jobs allow simultaneous flush of
-    /// all CFs without queuing. It is also a safe minimum on any machine with
-    /// ≥ 4 CPU cores and does not over-subscribe single-core CI environments.
-    /// In production, `max(4, num_cpu_cores / 2)` is the standard formula.
+    /// **Why 4 default**: gives 1 dedicated flush thread + up to 3 parallel
+    /// compaction threads. On a 4-core+ machine this prevents compaction backlog
+    /// from throttling incoming writes.
     pub max_background_jobs: i32,
 
-    // ── SST block layout (NOT retroactive: only affects newly written SST files)
-    /// SST data-block size for the **vertex** CFs (`vertices`, `vertex_degree`).
+    // ── On-disk SST block sizes (write-time only; not retroactive) ───────────
+    /// Uncompressed block size for the `vertices` and `vertex_degree` CFs.
     ///
-    /// Vertex CFs are accessed almost exclusively via point lookups (`hasId`,
-    /// `get_degree`).  A block read always fetches the full block even if only
-    /// one record is needed, so smaller blocks reduce wasted I/O bandwidth.
+    /// **Not retroactive**: applies only to new SST files written by flushes or
+    /// compactions after this option is set; existing SST files are unchanged.
     ///
-    /// **Not retroactive**: existing SST files keep their original block size;
-    /// the new value only applies to files written after the next compaction.
-    ///
-    /// **Why 4 KiB default**: the SSD NAND page size and OS filesystem block
-    /// size are both 4 KB on virtually all modern hardware. A 4 KB RocksDB
-    /// block maps exactly to one OS page: the read request is aligned, no
-    /// extra bytes are wasted to sub-page rounding, and the block lands cleanly
-    /// in one OS page cache entry. For a typical vertex record of ~50–100 bytes
-    /// (key + label + a few properties), a 4 KB block holds ~40–80 vertices —
-    /// dense enough to keep the SST index small (one index entry per block)
-    /// while keeping the over-read per point lookup at most 4 KB.
+    /// **Why 4 KiB default**: vertex point lookups (`get_vertex(id)`) fetch a
+    /// single vertex by key. A smaller block size means less unused data is read
+    /// into the block cache on a point-lookup cache miss. 4 KiB matches the
+    /// typical flash page size and minimizes read amplification for random
+    /// vertex access.
     pub vertex_block_size: usize,
 
-    /// SST data-block size for the **edge** CFs (`edges_out`, `edges_in`).
+    /// Uncompressed block size for the `edges_out` and `edges_in` CFs.
     ///
-    /// Edge CFs are accessed primarily via prefix-range scans (`outE`, `inE`,
-    /// `bothE`), which read consecutive keys.  Larger blocks amortise the SST
-    /// seek overhead and decompression cost across more records per I/O,
-    /// improving throughput on multi-hop traversals and full-graph scans.
+    /// **Not retroactive**: applies only to new SST files written by flushes or
+    /// compactions after this option is set; existing SST files are unchanged.
     ///
-    /// **Not retroactive**: existing SST files keep their original block size;
-    /// the new value only applies to files written after the next compaction.
-    ///
-    /// **Why 16 KiB default**: edge records are ~30 bytes each (22-byte key +
-    /// ~8-byte value for a no-property edge). A 16 KB block holds ~500 such
-    /// records. During an `outE()` scan the engine reads edges sequentially, so
-    /// each 16 KB block read serves ~500 records before the next I/O — giving
-    /// low read-amplification for scans. 16 KB is also 4× the SSD page size,
-    /// which means each block read issues 4 consecutive SSD page reads in a
-    /// single sequential I/O — optimal for SSD prefetching. Going larger (32–64
-    /// KB) helps on scan-heavy workloads but hurts point-lookup latency when
-    /// only one edge is needed (e.g., `GetEStep`).
+    /// **Why 16 KiB default**: graph traversals (`out()`, `in()`, `both()`)
+    /// scan ranges of consecutive edge keys sharing the same `src_id` prefix.
+    /// A 16 KiB block amortizes decompression overhead and block-cache index
+    /// lookups over ~100–300 adjacent edge records in a single fetch, giving
+    /// 3–4× higher sequential scan throughput than 4 KiB blocks.
     pub edge_block_size: usize,
 
-    /// Store index and bloom-filter blocks inside `block_cache_size` rather
-    /// than in a separate, uncapped memory pool.
+    // ── Filter & index memory management ─────────────────────────────────────
+    /// When `true`, bloom filter blocks and index blocks for SST files are
+    /// stored in the shared LRU block cache alongside data blocks, subject to
+    /// the cache's total capacity limit.
     ///
-    /// When `false` (the old RocksDB default), index and filter blocks are
-    /// allocated outside the block cache, making total memory usage hard to
-    /// bound and invisible to cache accounting. When `true`, they compete with
-    /// data blocks for the same budget, but cache utilisation is accurate and
-    /// total memory usage is predictable.
+    /// When `false`, filter and index blocks are allocated in unmanaged heap
+    /// memory outside the cache and are never evicted while an SST file is open.
     ///
-    /// Enabling this also activates `pin_l0_filter_and_index_blocks_in_cache`
-    /// automatically, which keeps the filter/index blocks for the hottest
-    /// (L0) SST files pinned and prevents their eviction.
+    /// When `true`, L0 index and filter blocks are pinned in cache by default
+    /// so the hottest top-level filters are never evicted.
     ///
-    /// **Not retroactive**: affects how newly-opened block tables are configured;
-    /// existing open SST table handles retain their previous setting.
+    /// **Retroactive**: applies immediately on the next `open()`.
     ///
     /// **Why `true` default**: with `false`, bloom filters for 4 data CFs can
     /// quietly allocate hundreds of MiB outside the cache, making the effective
@@ -238,46 +207,60 @@ impl RocksStorage {
     ///
     /// Creates all four column families if they do not exist yet:
     /// `vertices`, `vertex_degree`, `edges_out`, and `edges_in`.
-    pub fn open(path: impl AsRef<Path>, rocksdb_opts: &RocksOptions) -> Result<Self, StoreError> {
+    pub fn open(path: impl AsRef<Path>, storage_opts: &RocksOptions) -> Result<Self, StoreError> {
         let mut opts = Options::default();
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
         // Background flush + compaction threads are DB-wide (not per-CF).
-        opts.set_max_background_jobs(rocksdb_opts.max_background_jobs);
+        opts.set_max_background_jobs(storage_opts.max_background_jobs);
         #[cfg(feature = "rocksdb-stats")]
         opts.enable_statistics();
 
         // Shared block cache: one pool across all CFs so memory flows to whichever
         // is hot rather than being statically partitioned per CF.
-        let block_cache = Cache::new_lru_cache(rocksdb_opts.block_cache_size);
+        let block_cache = Cache::new_lru_cache(storage_opts.block_cache_size);
 
         // ── CF options via shared factories — the bulk loader uses the same
         // factories without block_cache; here we add the shared live-DB cache.
-        let mut edge_block_opts = cf_options::edge_block_opts(rocksdb_opts);
-        // Larger blocks amortise SST seek overhead during prefix scans (outE / inE).
-        edge_block_opts.set_block_cache(&block_cache);
-        let edge_cf_opts = cf_options::edge_cf_opts(rocksdb_opts, &edge_block_opts);
+        let vertex_block = cf_options::vertex_block_opts(storage_opts, Some(&block_cache));
+        let vertex_cf = cf_options::vertex_cf_opts(storage_opts, &vertex_block);
 
-        // Small blocks match point-lookup access patterns (one vertex per read).
-        let mut vertex_block_opts = cf_options::vertex_block_opts(rocksdb_opts);
-        vertex_block_opts.set_block_cache(&block_cache);
-        let vertex_cf_opts = cf_options::vertex_cf_opts(rocksdb_opts, &vertex_block_opts);
+        let edge_block = cf_options::edge_block_opts(storage_opts, Some(&block_cache));
+        let edge_cf = cf_options::edge_cf_opts(storage_opts, &edge_block);
 
-        let cfs = vec![
-            ColumnFamilyDescriptor::new(CF_VERTICES, vertex_cf_opts.clone()),
-            ColumnFamilyDescriptor::new(CF_VERTEX_DEGREE, vertex_cf_opts),
-            ColumnFamilyDescriptor::new(CF_EDGES_OUT, edge_cf_opts.clone()),
-            ColumnFamilyDescriptor::new(CF_EDGES_IN, edge_cf_opts),
+        // ── Column family descriptors: schema + 4 graph CFs ─────────────────
+        let descriptors = vec![
+            ColumnFamilyDescriptor::new(rocksdb::DEFAULT_COLUMN_FAMILY_NAME, Options::default()),
             ColumnFamilyDescriptor::new(CF_SCHEMA, Options::default()),
+            ColumnFamilyDescriptor::new(CF_VERTICES, vertex_cf.clone()),
+            ColumnFamilyDescriptor::new(CF_VERTEX_DEGREE, vertex_cf),
+            ColumnFamilyDescriptor::new(CF_EDGES_OUT, edge_cf.clone()),
+            ColumnFamilyDescriptor::new(CF_EDGES_IN, edge_cf),
         ];
 
-        let db = OptimisticTransactionDB::open_cf_descriptors(&opts, path, cfs).map_err(StoreError::RocksDb)?;
+        let db = OptimisticTransactionDB::open_cf_descriptors(&opts, path, descriptors).map_err(StoreError::RocksDb)?;
 
         Ok(Self {
             db: Arc::new(db),
             #[cfg(feature = "rocksdb-stats")]
             opts: std::sync::Mutex::new(opts),
         })
+    }
+
+    /// True if the graph is completely empty (no vertices, no edges, no schema).
+    ///
+    /// Checks `CF_VERTICES`, `CF_EDGES_OUT`, and `CF_SCHEMA`. Returns `true` only
+    /// when every CF has zero entries.
+    #[allow(dead_code)]
+    pub fn is_empty(&self) -> Result<bool, StoreError> {
+        for cf_name in &[CF_VERTICES, CF_EDGES_OUT, CF_SCHEMA] {
+            let cf = self.db.cf_handle(cf_name).ok_or(StoreError::MissingColumnFamily(cf_name))?;
+            let mut iter = self.db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
+            if iter.next().is_some() {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Check for and recover from an interrupted bulk load.
@@ -315,7 +298,8 @@ impl RocksStorage {
     /// Load schema from CF_SCHEMA, or initialize it with defaults if not present.
     pub fn load_schema(
         &self,
-        defaults: crate::schema::definition::GraphOptions,
+        mode: crate::schema::definition::SchemaMode,
+        edge_mode: crate::schema::definition::EdgeMode,
     ) -> Result<crate::schema::Schema, StoreError> {
         use super::CF_SCHEMA;
         use crate::{
@@ -341,8 +325,8 @@ impl RocksStorage {
         } else {
             // Brand new. Save defaults.
             schema.version = 0;
-            schema.edge_mode = defaults.edge_mode;
-            schema.mode = defaults.mode;
+            schema.edge_mode = edge_mode;
+            schema.mode = mode;
 
             let meta_bytes = encode_schema_meta(schema.version, schema.edge_mode.to_u8(), schema.mode.to_u8());
             self.db.put_cf(&cf, SCHEMA_META_KEY, meta_bytes).map_err(StoreError::RocksDb)?;
@@ -492,15 +476,14 @@ impl RocksStorage {
     }
 }
 
-impl GraphStore for RocksStorage {
-    type Snapshot = Snapshot;
-    type Txn = Transaction;
-
-    fn snapshot(&self) -> Snapshot {
+impl RocksStorage {
+    /// Open a read-only snapshot pinned to the current committed state.
+    pub fn snapshot(&self) -> Snapshot {
         Snapshot::new(Arc::clone(&self.db))
     }
 
-    fn begin(&self) -> Transaction {
+    /// Begin a fresh read-write transaction.
+    pub fn begin(&self) -> Transaction {
         Transaction::new(Arc::clone(&self.db))
     }
 }

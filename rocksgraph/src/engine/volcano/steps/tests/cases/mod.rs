@@ -21,7 +21,7 @@ use crate::{
             WhereStep as LogicalWhereStep,
         },
     },
-    store::{traits::GraphStore, RocksStorage},
+    store::RocksStorage,
     types::{
         element::Property,
         error::StoreError,
@@ -51,8 +51,8 @@ pub(super) fn open_rocks_store() -> (RocksStorage, tempfile::TempDir) {
 }
 
 /// Creates a new `LogicalGraph` instance from the given `RocksStorage`.
-pub(super) fn create_logical_graph(store: &RocksStorage) -> LogicalGraph<RocksStorage> {
-    let schema = store.load_schema(crate::schema::GraphOptions::default()).unwrap();
+pub(super) fn create_logical_graph(store: &RocksStorage) -> LogicalGraph {
+    let schema = store.load_schema(crate::schema::SchemaMode::Auto, crate::schema::EdgeMode::Single).unwrap();
     LogicalGraph::new(
         store.begin(),
         std::sync::Arc::new(std::sync::RwLock::new(schema)),
@@ -61,7 +61,7 @@ pub(super) fn create_logical_graph(store: &RocksStorage) -> LogicalGraph<RocksSt
 }
 
 pub(super) fn get_adjacent_edges_test(
-    c: &mut LogicalGraph<RocksStorage>,
+    c: &mut LogicalGraph,
     vertex: VertexKey,
     direction: Direction,
     label: Option<LabelId>,
@@ -78,7 +78,7 @@ pub(super) fn get_adjacent_edges_test(
 /// This graph is used as a common baseline for various test cases.
 ///
 /// The graph includes: Marko, Vadas, Lop, Josh, Ripple, Peter and their relationships.
-pub(super) fn create_tinkerpop_modern_graph(store: &RocksStorage) -> LogicalGraph<RocksStorage> {
+pub(super) fn create_tinkerpop_modern_graph(store: &RocksStorage) -> LogicalGraph {
     let mut graph = create_logical_graph(store);
 
     let (name_key, age_key, lang_key, weight_key) = {
@@ -379,7 +379,7 @@ pub(super) fn create_tinkerpop_modern_graph(store: &RocksStorage) -> LogicalGrap
 }
 
 /// Helper to print the TinkerPop Modern Graph in ASCII art format.
-pub(super) fn print_tinkerpop_modern_graph_ascii(graph: &mut LogicalGraph<RocksStorage>) {
+pub(super) fn print_tinkerpop_modern_graph_ascii(graph: &mut LogicalGraph) {
     println!("\n--- TinkerPop Modern Graph (ASCII Art) ---");
 
     // Map LabelIds to names for display
@@ -1645,8 +1645,7 @@ fn test_get_e_step_exact_rank_point_lookup() {
         s.register_edge_label("dummy3").unwrap(); // 3
         s.register_edge_label("knows").unwrap(); // 4 (KNOWS_LABEL_ID)
     }
-    let mut graph: LogicalGraph<RocksStorage> =
-        LogicalGraph::new(store.begin(), schema, crate::vector::empty_vector_index_map());
+    let mut graph: LogicalGraph = LogicalGraph::new(store.begin(), schema, crate::vector::empty_vector_index_map());
     graph.staged_schema.staged_vertex_labels.insert(1);
     graph.staged_schema.staged_vertex_labels.insert(2);
     graph.staged_schema.staged_edge_labels.insert(1);
@@ -1736,8 +1735,7 @@ fn test_multi_edge_label_without_rank_filter_falls_back_to_scan() {
         s.register_edge_label("dummy3").unwrap(); // 3
         s.register_edge_label("knows").unwrap(); // 4 (KNOWS_LABEL_ID)
     }
-    let mut graph: LogicalGraph<RocksStorage> =
-        LogicalGraph::new(store.begin(), schema, crate::vector::empty_vector_index_map());
+    let mut graph: LogicalGraph = LogicalGraph::new(store.begin(), schema, crate::vector::empty_vector_index_map());
     graph.staged_schema.staged_vertex_labels.insert(1);
     graph.staged_schema.staged_vertex_labels.insert(2);
     graph.staged_schema.staged_edge_labels.insert(1);

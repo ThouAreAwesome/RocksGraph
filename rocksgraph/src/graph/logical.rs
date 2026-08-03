@@ -3,7 +3,7 @@
 
 use crate::{
     schema::Schema,
-    store::traits::{GraphStore, GraphTransaction},
+    store::rocks::transaction::Transaction,
     types::kv_codec,
     types::{
         element::{Edge, Property, Vertex},
@@ -30,8 +30,8 @@ use super::{Existence, ScanConfig, StagedSchema};
 ///
 /// Obtained by calling `LogicalGraph::new(store.begin())`. The engine uses this
 /// as its sole interface to the graph.
-pub(crate) struct LogicalGraph<S: GraphStore> {
-    store: S::Txn, // The underlying transaction from the GraphStore.
+pub(crate) struct LogicalGraph {
+    store: Transaction, // The underlying transaction from the RocksStorage.
     pub(crate) vertices: HashMap<VertexKey, Vertex>,
     edges: HashMap<CanonicalEdgeKey, Edge>,
     vertex_degree: HashMap<VertexKey, (u32, u32, LabelId)>,
@@ -42,9 +42,9 @@ pub(crate) struct LogicalGraph<S: GraphStore> {
     pub(crate) vector_indexes: Arc<RwLock<VectorIndexMap>>,
 }
 
-impl<S: GraphStore> LogicalGraph<S> {
+impl LogicalGraph {
     /// Create a new logical graph context wrapping the given transaction.
-    pub fn new(store: S::Txn, schema: Arc<RwLock<Schema>>, vector_indexes: Arc<RwLock<VectorIndexMap>>) -> Self {
+    pub fn new(store: Transaction, schema: Arc<RwLock<Schema>>, vector_indexes: Arc<RwLock<VectorIndexMap>>) -> Self {
         // Creates a new `LogicalGraph` instance, initializing its in-memory caches
         // and associating it with a store transaction.
         Self {

@@ -40,7 +40,7 @@ impl SstBulkLoader {
         vertices:   impl Iterator<Item = BulkVertex>,
         edges:      impl Iterator<Item = BulkEdge>,
         graph_opts: GraphOptions,   // edge_mode, schema_mode
-        rocks_opts: &RocksOptions,  // block_cache, write_buffer, etc.
+        storage_opts: &RocksOptions,  // block_cache, write_buffer, etc.
     ) -> Result<BulkLoadStats, StoreError>;
 }
 ```

@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Brute-force exact KNN index. v0.1 reference implementation for the
 //! [`VectorIndex`](super::traits::VectorIndex) trait (v0.2).
@@ -7,6 +8,7 @@ use std::path::Path;
 use crate::types::keys::CanonicalEdgeKey;
 
 /// Identifies a vertex or edge that owns a vector property.
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum EntityKey {
     Vertex(i64),
@@ -43,12 +45,14 @@ pub fn cosine_sim(a: &[f32], b: &[f32]) -> f32 {
 /// does inline brute-force. v0.2 will route searches through the
 /// [`VectorIndex`](super::traits::VectorIndex) trait, with this struct
 /// serving as the fallback / reference implementation.
+#[allow(dead_code)]
 #[derive(Debug, Default)]
 pub struct BruteForceIndex {
     entries: Vec<(EntityKey, Vec<f32>)>,
     last_replayed_timestamp: u64,
 }
 
+#[allow(dead_code)]
 impl BruteForceIndex {
     pub fn new() -> Self {
         Self::default()
