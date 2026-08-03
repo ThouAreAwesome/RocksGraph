@@ -830,7 +830,7 @@ once via `SchemaSession::add_vector_index()`, persisted to CF_SCHEMA, and reload
 automatically on every subsequent `Graph::open`. It is never re-supplied at open
 time — the database file is the source of truth.
 
-**Environmental config** (`VectorRuntimeOptions`: `default_limit`, `per_index_overrides`) is supplied
+**Environmental config** (`IndexOptions`: `default_limit`, `per_index_overrides`) is supplied
 per-open via `GraphOptions` and is never written to disk. This prevents a server-side
 memory limit from being baked into a database file and crashing a client machine with
 less RAM.
@@ -861,7 +861,7 @@ let g = Graph::open(path)?;
 
 // Per-open memory cap (environmental, never written to disk)
 let g = Graph::open_with_options(path, GraphOptions {
-    vector_runtime: VectorRuntimeOptions {
+    index: IndexOptions {
         default_limit: Some(VectorIndexLimit {
             memory_limit_bytes: 5 * 1024 * 1024 * 1024, // 5 GB for all indexes
         }),
@@ -894,7 +894,7 @@ g = Graph(path)
 
 # Per-open memory cap (environmental — set global cap and optional per-index overrides).
 # Python accepts flat kwargs (vector_memory_limit, vector_index_limits); the binding
-# constructs VectorRuntimeOptions internally. Pass vector_runtime=VectorRuntimeOptions(...)
+# constructs IndexOptions internally. Pass index=IndexOptions(...)
 # directly for full control.
 g = Graph(
     path,
@@ -929,7 +929,7 @@ pub struct IndexLimitOverride {
     pub limit:       VectorIndexLimit,
 }
 
-pub struct VectorRuntimeOptions {
+pub struct IndexOptions {
     /// Default limit applied to every vector index.
     /// None = unlimited (expert escape hatch).
     pub default_limit: Option<VectorIndexLimit>,
@@ -961,7 +961,7 @@ pub enum DistanceMetric {
 ```
 
 **Ships in**: v0.1 (`BruteForce`), v0.2 (`Hnsw`).  
-`VectorRuntimeOptions` and `GraphOptions::vector_runtime` ship alongside v0.2 HNSW.
+`IndexOptions` and `GraphOptions::index` ship alongside v0.2 HNSW.
 
 ---
 

@@ -1061,6 +1061,7 @@ mod integration_test {
             let options = crate::schema::GraphOptions {
                 mode: crate::schema::SchemaMode::Auto,
                 edge_mode: crate::schema::EdgeMode::Multi,
+                ..Default::default()
             };
             let graph = Graph::open_with_options(dir.path(), options).unwrap();
 

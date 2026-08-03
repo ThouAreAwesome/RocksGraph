@@ -105,10 +105,10 @@ will be replayed on the next `Graph::open`. See `design_vector_wal.md` §10.
 durable write. A commit that would exceed the limit is rejected entirely — no
 graph write, no WAL entry, no split-brain.**
 
-#### Memory limit via `VectorRuntimeOptions`
+#### Memory limit via `IndexOptions`
 
 `memory_limit_bytes` is an **environmental constraint** — it is supplied per-open
-via `GraphOptions::vector_runtime` as a `VectorRuntimeOptions` entry and is never
+via `GraphOptions::index` as a `IndexOptions` entry and is never
 persisted to CF_SCHEMA. `Graph::open` passes the resolved limit to `UsearchHnswIndex`
 at construction time. The persisted `VectorIndexConfig` (dimension, metric, algorithm)
 contains no memory limit.
@@ -126,7 +126,7 @@ pub struct IndexLimitOverride {
     pub limit:       VectorIndexLimit,
 }
 
-pub struct VectorRuntimeOptions {
+pub struct IndexOptions {
     /// Default limit applied to every vector index.
     /// None = unlimited (expert escape hatch).
     pub default_limit: Option<VectorIndexLimit>,
@@ -342,7 +342,7 @@ trigger a true usearch allocation failure. At commit time this hits step 7
 same insert, hits the same OOM, and crashes again — **permanent crash loop
 until hardware is upgraded or the index is manually deleted from `__meta` CF**.
 
-**Recommendation**: always supply `VectorRuntimeOptions` with `default_limit` set to ~80 % of available RAM in `GraphOptions::vector_runtime`.
+**Recommendation**: always supply `IndexOptions` with `default_limit` set to ~80 % of available RAM in `GraphOptions::index`.
 Treat `None` as an expert escape hatch, not a safe default. Document this prominently
 in the Python/JS `Graph` constructor docstring and any getting-started guide.
 

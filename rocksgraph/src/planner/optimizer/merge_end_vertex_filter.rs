@@ -1,7 +1,8 @@
-use crate::types::SMALL_VECTOR_LENGTH;
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+
+use crate::types::SMALL_VECTOR_LENGTH;
 #[cfg(test)]
 use crate::types::gvalue::{Primitive, PrimitivePredicate};
 use crate::{

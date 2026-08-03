@@ -4,7 +4,6 @@
 use smol_str::SmolStr;
 
 use super::LogicalGraph;
-use crate::store::traits::GraphStore;
 
 use crate::{
     store::RocksStorage,
@@ -22,10 +21,9 @@ fn open() -> (RocksStorage, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let store = RocksStorage::open(dir.path(), &Default::default()).unwrap();
     {
-        let loaded = store.load_schema(crate::schema::GraphOptions::default()).unwrap();
+        let loaded = store.load_schema(crate::schema::SchemaMode::Auto, crate::schema::EdgeMode::Single).unwrap();
         let schema = std::sync::Arc::new(std::sync::RwLock::new(loaded));
-        let mut c =
-            LogicalGraph::<RocksStorage>::new(store.begin(), schema.clone(), crate::vector::empty_vector_index_map());
+        let mut c = LogicalGraph::new(store.begin(), schema.clone(), crate::vector::empty_vector_index_map());
         {
             let mut s = schema.write().unwrap();
             s.resolve_prop_key("age", crate::schema::DataType::Int32).unwrap();
@@ -55,8 +53,8 @@ fn open() -> (RocksStorage, tempfile::TempDir) {
     (store, dir)
 }
 
-fn ctx(store: &RocksStorage) -> LogicalGraph<RocksStorage> {
-    let loaded = store.load_schema(crate::schema::GraphOptions::default()).unwrap();
+fn ctx(store: &RocksStorage) -> LogicalGraph {
+    let loaded = store.load_schema(crate::schema::SchemaMode::Auto, crate::schema::EdgeMode::Single).unwrap();
     let schema = std::sync::Arc::new(std::sync::RwLock::new(loaded));
     LogicalGraph::new(store.begin(), schema, crate::vector::empty_vector_index_map())
 }
@@ -66,7 +64,7 @@ fn cek(src: i64, label: LabelId, dst: i64) -> CanonicalEdgeKey {
 }
 
 fn get_adjacent_edges_test(
-    c: &mut LogicalGraph<RocksStorage>,
+    c: &mut LogicalGraph,
     vertex: VertexKey,
     direction: Direction,
     label: Option<LabelId>,
@@ -928,9 +926,9 @@ mod conflict_matrix {
 
     fn run_non_conflict<State: Copy, Setup, Op1, Op2>(setup: Setup, op1: Op1, op2: Op2)
     where
-        Setup: Fn(&mut LogicalGraph<RocksStorage>) -> State,
-        Op1: Fn(&mut LogicalGraph<RocksStorage>, State),
-        Op2: Fn(&mut LogicalGraph<RocksStorage>, State),
+        Setup: Fn(&mut LogicalGraph) -> State,
+        Op1: Fn(&mut LogicalGraph, State),
+        Op2: Fn(&mut LogicalGraph, State),
     {
         // Order 1: Txn1 commits, Txn2 conflicts
         {
@@ -971,9 +969,9 @@ mod conflict_matrix {
 
     fn run_conflict<State: Copy, Setup, Op1, Op2>(setup: Setup, op1: Op1, op2: Op2)
     where
-        Setup: Fn(&mut LogicalGraph<RocksStorage>) -> State,
-        Op1: Fn(&mut LogicalGraph<RocksStorage>, State),
-        Op2: Fn(&mut LogicalGraph<RocksStorage>, State),
+        Setup: Fn(&mut LogicalGraph) -> State,
+        Op1: Fn(&mut LogicalGraph, State),
+        Op2: Fn(&mut LogicalGraph, State),
     {
         // Order 1: Txn1 commits, Txn2 conflicts
         {
@@ -1937,8 +1935,7 @@ fn test_snapshot_scan_isolation() {
     txn.commit().unwrap();
 
     // 2. Open a read snapshot (LogicalSnapshot)
-    // S::Snapshot represents the snapshot type. For RocksStorage, it's Snapshot.
-    let mut snap = crate::graph::LogicalSnapshot::<RocksStorage>::new(
+    let mut snap = crate::graph::LogicalSnapshot::new(
         store.snapshot(),
         std::sync::Arc::new(std::sync::RwLock::new(crate::schema::Schema::new())),
         crate::vector::empty_vector_index_map(),
@@ -2486,7 +2483,7 @@ fn g21_blob_vertex_not_dirtied_by_read() {
 
 #[test]
 fn rebuild_vector_index_empty_db() {
-    use crate::vector::{AnnAlgorithm, DistanceMetric, Quantization, VectorEntityType, VectorIndexConfig};
+    use crate::schema::{AnnAlgorithm, DistanceMetric, Quantization, VectorEntityType, VectorIndexConfig};
     let dir = tempfile::tempdir().unwrap();
     let g = crate::Graph::open(dir.path()).unwrap();
     let mut sess = g.open_schema();
@@ -2506,12 +2503,8 @@ fn rebuild_vector_index_empty_db() {
 #[test]
 fn rebuild_vector_index_roundtrip() {
     use crate::{
-        schema::GraphOptions,
-        vector::{
-            AnnAlgorithm, DistanceMetric, HnswConfig, Quantization, VectorEntityType, VectorIndexConfig,
-            VectorRuntimeOptions,
-        },
-        Graph, RocksOptions, TraversalBuilder,
+        schema::{AnnAlgorithm, DistanceMetric, HnswConfig, Quantization, VectorEntityType, VectorIndexConfig},
+        Graph, TraversalBuilder,
     };
 
     let dir = tempfile::tempdir().unwrap();
@@ -2519,13 +2512,7 @@ fn rebuild_vector_index_roundtrip() {
 
     // 1. Declare vector index + property key via SchemaSession.
     {
-        let g = Graph::open_with_rocksdb_options(
-            path,
-            GraphOptions::default(),
-            RocksOptions::default(),
-            VectorRuntimeOptions::default(),
-        )
-        .unwrap();
+        let g = Graph::open(path).unwrap();
         let mut sess = g.open_schema();
         sess.add_vector_index(VectorIndexConfig {
             property: "emb".into(),
@@ -2541,13 +2528,7 @@ fn rebuild_vector_index_roundtrip() {
 
     // 2. Insert 3 vertices with FloatVector embeddings via public insert path.
     {
-        let g = Graph::open_with_rocksdb_options(
-            path,
-            GraphOptions::default(),
-            RocksOptions::default(),
-            VectorRuntimeOptions::default(),
-        )
-        .unwrap();
+        let g = Graph::open(path).unwrap();
         let mut tx = g.begin();
         tx.g()
             .addV("test")
@@ -2573,13 +2554,7 @@ fn rebuild_vector_index_roundtrip() {
 
     // 3. Re-open, rebuild, and verify search correctness.
     {
-        let g = Graph::open_with_rocksdb_options(
-            path,
-            GraphOptions::default(),
-            RocksOptions::default(),
-            VectorRuntimeOptions::default(),
-        )
-        .unwrap();
+        let g = Graph::open(path).unwrap();
         g.rebuild_vector_index(VectorEntityType::Vertex, "emb").unwrap();
 
         let mut snap = g.read();

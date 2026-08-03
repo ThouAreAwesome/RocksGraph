@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::planner::logical_step::{LogicalPlan, LogicalStep, OtherVStep};

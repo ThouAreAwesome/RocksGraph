@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! [`VectorIndex`] trait and configuration types for vector search.
 //!
@@ -115,12 +116,12 @@ pub struct IndexLimitOverride {
     pub limit: VectorIndexLimit,
 }
 
-/// Runtime options for vector indexes, supplied at `Graph::open` time.
+/// Runtime options for vector indexes, supplied at `Graph::open_with_options` time.
 ///
 /// These are **environmental** — never persisted to disk, so a database file
 /// created on a large server works correctly on a smaller machine.
 #[derive(Debug, Clone, Default)]
-pub struct VectorRuntimeOptions {
+pub struct IndexOptions {
     /// Default memory limit applied to every vector index.
     /// `None` = unlimited (expert escape hatch — can OOM if not sized to RAM).
     pub default_limit: Option<VectorIndexLimit>,
@@ -136,7 +137,8 @@ pub struct VectorRuntimeOptions {
 /// Implementors provide insert, remove, search, save/load, and WAL timestamp
 /// tracking. The trait is object-safe (no `Self`-typed constructors) so that
 /// indexes can be stored as `Box<dyn VectorIndex>` in the `Graph` struct.
-pub trait VectorIndex: Send + Sync {
+#[allow(dead_code)]
+pub(crate) trait VectorIndex: Send + Sync {
     /// Insert or update the vector for an entity key.
     fn insert(&mut self, key: &EntityKey, vector: &[f32]) -> Result<(), VectorError>;
 

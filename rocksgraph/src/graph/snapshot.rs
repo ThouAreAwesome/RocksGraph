@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::{
-    store::traits::{GraphSnapshot, GraphStore},
+    store::rocks::snapshot::Snapshot,
     types::{
         element::{Edge, Property, Vertex},
         keys::{
@@ -22,15 +22,15 @@ use super::ScanConfig;
 
 // ── LogicalSnapshot ───────────────────────────────────────────────────────────
 
-/// Read-only query context backed by a [`GraphSnapshot`].
+/// Read-only query context backed by a RocksDB snapshot.
 ///
 /// Like `LogicalGraph` it maintains `vertices` and `edges` caches
 /// (with the same vertex-label-cache side effects on edge reads)
 /// so repeated reads within one traversal are O(1) map lookups.
 /// Unlike `LogicalGraph` there is no dirty map and no write path — mutations
 /// are rejected at the [`GraphCtx`] boundary with [`StoreError::ReadOnly`].
-pub(crate) struct LogicalSnapshot<S: GraphStore> {
-    store: S::Snapshot,
+pub(crate) struct LogicalSnapshot {
+    store: Snapshot,
     vertices: HashMap<VertexKey, Vertex>,
     edges: HashMap<CanonicalEdgeKey, Edge>,
     /// Read-through cache for `(out_e_cnt, in_e_cnt, vertex_label_id)` from the
@@ -43,9 +43,9 @@ pub(crate) struct LogicalSnapshot<S: GraphStore> {
     pub(crate) vector_indexes: Arc<RwLock<VectorIndexMap>>,
 }
 
-impl<S: GraphStore> LogicalSnapshot<S> {
+impl LogicalSnapshot {
     pub fn new(
-        snapshot: S::Snapshot,
+        snapshot: Snapshot,
         schema: Arc<RwLock<crate::schema::Schema>>,
         vector_indexes: Arc<RwLock<VectorIndexMap>>,
     ) -> Self {

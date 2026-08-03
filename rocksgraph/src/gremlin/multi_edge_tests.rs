@@ -13,6 +13,7 @@ mod multi_edge_integration_test {
         let options = crate::schema::GraphOptions {
             mode: crate::schema::SchemaMode::Auto,
             edge_mode: crate::schema::EdgeMode::Multi,
+            ..Default::default()
         };
         let graph = Graph::open_with_options(path, options).unwrap();
 

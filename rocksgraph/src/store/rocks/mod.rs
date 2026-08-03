@@ -3,9 +3,9 @@
 
 pub(super) mod admin;
 pub(crate) mod cf_options;
-mod snapshot;
+pub(crate) mod snapshot;
 mod store;
-mod transaction;
+pub(crate) mod transaction;
 
 pub use store::{RocksOptions, RocksStorage};
 

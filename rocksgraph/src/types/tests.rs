@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 #[cfg(test)]
@@ -109,6 +110,7 @@ mod type_tests {
             StoreError::IncompleteLoad { msg: "inc".to_string() },
             StoreError::BulkLoadInProgress,
             StoreError::VerticesNotLoaded,
+            StoreError::VectorIndex("vec err".to_string()),
         ];
 
         for e in &errs {
@@ -140,6 +142,9 @@ mod type_tests {
         assert!(StoreError::SchemaViolation("x".into()).is_schema_error());
         assert!(!StoreError::Conflict.is_schema_error());
 
+        assert!(StoreError::VectorIndex("x".into()).is_vector_error());
+        assert!(!StoreError::Conflict.is_vector_error());
+
         assert!(StoreError::TraversalError("x".into()).is_query_error());
         assert!(StoreError::UnsupportedOperation("x".into()).is_query_error());
         assert!(StoreError::UnexpectedDataType("x".into()).is_query_error());
@@ -149,6 +154,7 @@ mod type_tests {
         assert_eq!(StoreError::Conflict.category(), "transaction");
         assert_eq!(StoreError::SchemaViolation("x".into()).category(), "schema");
         assert_eq!(StoreError::NotFound.category(), "integrity");
+        assert_eq!(StoreError::VectorIndex("x".into()).category(), "vector");
         assert_eq!(StoreError::TraversalError("x".into()).category(), "query");
     }
 

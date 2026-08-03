@@ -118,15 +118,29 @@ pub struct PropKeyConfig {
     pub data_type: DataType,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+use crate::store::RocksOptions;
+use crate::vector::traits::IndexOptions;
+
+#[derive(Debug, Clone)]
 pub struct GraphOptions {
+    /// Schema mode (Auto vs Strict). Persisted on create.
     pub mode: SchemaMode,
+    /// Edge mode (Single vs Multi). Persisted on create.
     pub edge_mode: EdgeMode,
+    /// Storage engine runtime options (block cache, write buffer, etc.).
+    pub storage: RocksOptions,
+    /// Vector index runtime options (memory limits, overrides).
+    pub index: IndexOptions,
 }
 
 impl Default for GraphOptions {
     fn default() -> Self {
-        Self { mode: SchemaMode::Auto, edge_mode: EdgeMode::Single }
+        Self {
+            mode: SchemaMode::Auto,
+            edge_mode: EdgeMode::Single,
+            storage: RocksOptions::default(),
+            index: IndexOptions::default(),
+        }
     }
 }
 

@@ -28,5 +28,4 @@ pub(crate) mod volcano;
 
 // GraphCtx appears in GraphTraversal::build()'s impl-trait bound and must
 // remain nameable outside the crate, but it is not part of the user-facing API.
-#[doc(hidden)]
-pub use context::GraphCtx;
+pub(crate) use context::GraphCtx;

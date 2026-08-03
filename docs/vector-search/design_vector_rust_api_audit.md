@@ -136,15 +136,18 @@ Three problems compound each other:
 3. The option taxonomy is absent: there is no clear separation between persisted schema
    config, engine tuning, and index runtime limits.
 
-**Proposed fix — expand `GraphOptions` and rename option types**
+**Proposed fix — expand `GraphOptions` and rename `VectorRuntimeOptions`**
 
 `GraphOptions` is already the natural home for "everything needed to open a Graph".
-Expand it in-place with two categorised sub-fields and rename the option structs to
-remove backend-specific names:
+Expand it in-place with two categorised sub-fields.  `RocksOptions` keeps its name
+(the fields — `block_cache_size`, `write_buffer_size`, etc. — are intrinsically
+RocksDB-specific; the crate is named `rocksgraph`; honesty about what is being
+configured is more valuable than hypothetical future backend-portability).
+`VectorRuntimeOptions` is renamed `IndexOptions` for brevity and taxonomy fit.
 
 ```rust
-// Renamed: RocksOptions → StorageOptions  (removes backend leak)
-pub struct StorageOptions { /* block_cache_size, write_buffer_size, … */ }
+// Unchanged name: RocksOptions  (fields are RocksDB-specific; honesty > portability fiction)
+pub struct RocksOptions { /* block_cache_size, write_buffer_size, … */ }
 
 // Renamed: VectorRuntimeOptions → IndexOptions  (shorter, fits taxonomy)
 pub struct IndexOptions { /* default_limit, per_index_overrides */ }
@@ -156,8 +159,8 @@ pub struct GraphOptions {
     pub edge_mode: EdgeMode,
 
     // ── runtime-only (never persisted; applied every open) ───────────
-    pub storage: StorageOptions,   // engine tuning
-    pub index:   IndexOptions,     // vector index memory limits
+    pub storage: RocksOptions,   // engine tuning
+    pub index:   IndexOptions,   // vector index memory limits
     // future: pub execution: ExecutionOptions,
 }
 ```
@@ -200,7 +203,7 @@ let g = Graph::open_with_options("./db", GraphOptions {
 
 // Storage tuning only:
 let g = Graph::open_with_options("./db", GraphOptions {
-    storage: StorageOptions { block_cache_size: 8 * 1024 * 1024 * 1024, ..Default::default() },
+    storage: RocksOptions { block_cache_size: 8 * 1024 * 1024 * 1024, ..Default::default() },
     ..Default::default()
 })?;
 
@@ -222,10 +225,10 @@ added — all in test files, mechanical one-line fixes each.
 Callers already using `GraphOptions::default()` or `GraphOptions { mode: …, ..Default::default() }`
 require no changes.
 
-`RocksOptions` and `VectorRuntimeOptions` are renamed.  Their old names disappear
-from the public API; callers update the type names.  Both currently live inside
-`pub mod vector` / `pub mod store` which will become `pub(crate)` once §4 is applied,
-so the rename is contained.
+`VectorRuntimeOptions` is renamed to `IndexOptions`.  Its old name disappears
+from the public API; callers update the type name.  It currently lives inside
+`pub mod vector` which will become `pub(crate)` once §4 is applied, so the rename
+is contained.  `RocksOptions` keeps its existing name; no callers need to change it.
 
 `load_schema` is updated to accept only the two persisted fields (`mode`, `edge_mode`)
 rather than the whole `GraphOptions` struct, keeping the schema layer unaware of
@@ -339,7 +342,7 @@ fn nearest(mut self, prop_key: &str, query: Vec<f32>, k: usize) -> Self { … }
 | --- | ----------------------------------------------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | 1   | Schema config types in `vector`, not `schema`                                 | High — affects every user who declares an index      | Low — add re-exports to `schema/mod.rs`                                                                 |
 | 2   | `rebuild_vector_index` returns `VectorError`                                  | High — breaks `?` propagation for all callers        | Medium — add `StoreError::VectorIndex`, delete `VectorError::Store`, add `From` impl                    |
-| 3   | `open_with_rocksdb_options` has 4th positional arg; option types poorly named | Medium — breaking API change, inconsistent placement | Low — expand `GraphOptions` with `storage`/`index` sub-fields, rename option types, delete old function |
+| 3   | `open_with_rocksdb_options` has 4th positional arg; option types inconsistently placed | Medium — breaking API change, inconsistent placement | Low — expand `GraphOptions` with `storage: RocksOptions`/`index: IndexOptions` sub-fields, rename `VectorRuntimeOptions` → `IndexOptions`, delete old function |
 | 4   | Internal types leaked through `pub mod vector`                                | Medium — pollutes API surface and docs               | Low once 1–3 are done; flip module to `pub(crate)`                                                      |
 | 5   | No doctest examples for vector traversal steps                                | Low — discoverability gap, no compile breakage       | Low — one example block                                                                                 |
 
@@ -350,12 +353,11 @@ fn nearest(mut self, prop_key: &str, query: Vec<f32>, k: usize) -> Self { … }
 1. **§1** — move schema config types to `rocksgraph::schema`.  Zero behaviour change,
    purely additive re-exports.  Can ship immediately.
 
-2. **§3** — rename `RocksOptions` → `StorageOptions`, `VectorRuntimeOptions` → `IndexOptions`;
-   expand `GraphOptions` with `storage: StorageOptions` and `index: IndexOptions` fields;
+2. **§3** — rename `VectorRuntimeOptions` → `IndexOptions` (keep `RocksOptions` as-is);
+   expand `GraphOptions` with `storage: RocksOptions` and `index: IndexOptions` fields;
    collapse open API to `open(path)` + `open_with_options(path, GraphOptions)`;
    update `load_schema` to take only the two persisted fields;
-   delete `open_with_rocksdb_options` and the redundant `open_with_options(path, GraphOptions)`
-   three-arg variant;
+   delete `open_with_rocksdb_options`;
    fix the 8 internal test call sites (`..Default::default()`).
    Do before any external release.
 

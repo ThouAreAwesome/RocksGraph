@@ -51,7 +51,7 @@ use crate::{
     graph::{LogicalGraph, LogicalSnapshot},
     gremlin::traversal::{ReadTraversal, WriteTraversal},
     schema::{GraphOptions, Schema, SchemaSession},
-    store::{traits::GraphStore, RocksOptions, RocksStorage},
+    store::RocksStorage,
     types::{
         gvalue::Primitive,
         keys::{CanonicalKey, VertexKey},
@@ -60,7 +60,7 @@ use crate::{
     vector::{
         error::{VectorEntityType, VectorError},
         hnsw::UsearchHnswIndex,
-        traits::{VectorIndexConfig, VectorRuntimeOptions},
+        traits::{IndexOptions, VectorIndexConfig},
         EntityKey, VectorIndexMap,
     },
 };
@@ -86,85 +86,45 @@ pub struct Graph {
     pub(crate) schema: Arc<RwLock<Schema>>,
     pub(crate) bulk_load_in_progress: AtomicBool,
     pub(crate) vector_indexes: Arc<RwLock<VectorIndexMap>>,
-    pub(crate) vector_options: VectorRuntimeOptions,
+    pub(crate) index_options: IndexOptions,
 }
 
 impl Graph {
-    /// Open (or create) the graph database at `path`, in [`SchemaMode::Auto`] with
-    /// [`EdgeMode::Single`] — see [`open_with_options`](Self::open_with_options) to choose
-    /// strict, explicit schema declaration instead.
-    ///
-    /// [`SchemaMode::Auto`]: crate::schema::SchemaMode::Auto
-    /// [`EdgeMode::Single`]: crate::schema::EdgeMode::Single
+    /// Open (or create) the graph database at `path`, with default [`GraphOptions`].
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
-        Self::open_with_rocksdb_options(
-            path,
-            GraphOptions::default(),
-            RocksOptions::default(),
-            VectorRuntimeOptions::default(),
-        )
+        Self::open_with_options(path, GraphOptions::default())
     }
 
-    /// Open (or create) the graph database at `path` with custom schema options.
+    /// Open (or create) the graph database at `path` with custom [`GraphOptions`].
     ///
-    /// `options.mode` controls how vertex labels, edge labels, and property keys used by
-    /// traversals are registered:
-    /// - [`SchemaMode::Auto`] (the default) — registered implicitly on first use.
-    /// - [`SchemaMode::Strict`] — must be declared first via [`open_schema`](Self::open_schema); see
-    ///   [`SchemaSession`] for a worked example.
+    /// `options.mode` and `options.edge_mode` are schema options, applied the first time
+    /// a database is created; reopening an existing database uses its persisted settings.
     ///
-    /// Schema options are only applied the first time a database is created; reopening an
-    /// existing database always uses its persisted settings, ignoring `options`.
-    ///
-    /// To also tune RocksDB storage parameters (write buffer size, block cache size),
-    /// use [`open_with_rocksdb_options`](Self::open_with_rocksdb_options) instead.
-    ///
-    /// [`SchemaMode::Auto`]: crate::schema::SchemaMode::Auto
-    /// [`SchemaMode::Strict`]: crate::schema::SchemaMode::Strict
-    pub fn open_with_options(path: impl AsRef<Path>, options: GraphOptions) -> Result<Self, StoreError> {
-        Self::open_with_rocksdb_options(path, options, RocksOptions::default(), VectorRuntimeOptions::default())
-    }
-
-    /// Open (or create) the graph database with full control over both schema
-    /// behaviour and RocksDB storage tuning.
-    ///
-    /// `schema_options` controls schema registration mode (Auto vs Strict) and edge
-    /// multiplicity (Single vs Multi); these are persisted on first create and ignored
-    /// on subsequent opens.
-    ///
-    /// `rocksdb_options` controls in-memory storage parameters such as the per-CF
-    /// write buffer size and the shared block cache size; these are applied **every**
-    /// time the database is opened and are never persisted to disk.
+    /// `options.storage` and `options.index` are runtime-only options (block cache, memtable
+    /// sizes, vector memory limits) applied every time the database is opened.
     ///
     /// # Example
     /// ```
-    /// # use rocksgraph::{Graph, RocksOptions};
-    /// # use rocksgraph::schema::GraphOptions;
-    /// # use rocksgraph::vector::VectorRuntimeOptions;
+    /// # use rocksgraph::{Graph, RocksOptions, schema::{GraphOptions, SchemaMode}};
     /// # let dir = tempfile::tempdir().unwrap();
-    /// let graph = Graph::open_with_rocksdb_options(
+    /// let graph = Graph::open_with_options(
     ///     dir.path(),
-    ///     GraphOptions::default(),
-    ///     RocksOptions {
-    ///         block_cache_size:         5 * 1024 * 1024 * 1024, // 5 GiB (small prod)
-    ///         write_buffer_size:        256 * 1024 * 1024,       // 256 MiB
-    ///         max_background_jobs:      4,
-    ///         ..RocksOptions::default()
+    ///     GraphOptions {
+    ///         mode: SchemaMode::Strict,
+    ///         storage: RocksOptions {
+    ///             block_cache_size: 5 * 1024 * 1024 * 1024, // 5 GiB
+    ///             ..Default::default()
+    ///         },
+    ///         ..Default::default()
     ///     },
-    ///     VectorRuntimeOptions::default(),
     /// )?;
     /// # graph.close().unwrap();
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn open_with_rocksdb_options(
-        path: impl AsRef<Path>,
-        schema_options: GraphOptions,
-        rocksdb_options: RocksOptions,
-        vector_opts: VectorRuntimeOptions,
-    ) -> Result<Self, StoreError> {
-        let store = Arc::new(RocksStorage::open(path, &rocksdb_options)?);
+    pub fn open_with_options(path: impl AsRef<Path>, options: GraphOptions) -> Result<Self, StoreError> {
+        let store = Arc::new(RocksStorage::open(path, &options.storage)?);
         store.recover_bulk_load_crash()?;
-        let schema = store.load_schema(schema_options)?;
+        let schema = store.load_schema(options.mode, options.edge_mode)?;
         let vector_indexes = {
             let mut map = HashMap::new();
             load_vector_configs(&store, &mut map);
@@ -175,7 +135,7 @@ impl Graph {
             schema: Arc::new(RwLock::new(schema)),
             bulk_load_in_progress: AtomicBool::new(false),
             vector_indexes,
-            vector_options: vector_opts,
+            index_options: options.index,
         })
     }
 
@@ -226,7 +186,7 @@ impl Graph {
         }
     }
 
-    /// Begin a read-write OCC transaction session.
+    /// Open a read-write transaction session with OCC (Optimistic Concurrency Control).
     pub fn begin(&self) -> TxSession {
         TxSession {
             ctx: LogicalGraph::new(self.store.begin(), Arc::clone(&self.schema), Arc::clone(&self.vector_indexes)),
@@ -243,14 +203,14 @@ impl Graph {
     /// write lock (not for the full scan duration).
     ///
     /// # Errors
-    /// Returns `VectorError::IndexNotFound` if no index is declared for
-    /// `(entity_type, property)`. Returns `VectorError::Unsupported` if
+    /// Returns [`StoreError::VectorIndex`] if no index is declared for
+    /// `(entity_type, property)`, if property is missing from schema, or if
     /// `entity_type == Edge` (edge indexes are deferred to v0.3).
-    pub fn rebuild_vector_index(&self, entity_type: VectorEntityType, property: &str) -> Result<(), VectorError> {
+    pub fn rebuild_vector_index(&self, entity_type: VectorEntityType, property: &str) -> Result<(), StoreError> {
         use crate::vector::traits::VectorIndex;
 
         if entity_type == VectorEntityType::Edge {
-            return Err(VectorError::Unsupported("edge vector index rebuild is not yet supported (v0.3)".into()));
+            return Err(VectorError::Unsupported("edge vector index rebuild is not yet supported (v0.3)".into()).into());
         }
 
         // 1. Read config from CF_SCHEMA — same format as load_vector_configs.
@@ -268,7 +228,7 @@ impl Graph {
         let mut index = UsearchHnswIndex::new(&config)?;
 
         // 4. Scan vertices via LogicalSnapshot — reuses existing codec stack.
-        let mut snap: LogicalSnapshot<RocksStorage> = LogicalSnapshot::new(
+        let mut snap = LogicalSnapshot::new(
             self.store.snapshot(),
             Arc::clone(&self.schema),
             Arc::new(RwLock::new(HashMap::new())), // not used during rebuild
@@ -331,7 +291,7 @@ impl Clone for Graph {
             schema: Arc::clone(&self.schema),
             bulk_load_in_progress: AtomicBool::new(false),
             vector_indexes: Arc::clone(&self.vector_indexes),
-            vector_options: self.vector_options.clone(),
+            index_options: self.index_options.clone(),
         }
     }
 }
@@ -475,7 +435,7 @@ impl Graph {
 /// # graph.close().unwrap();
 /// ```
 pub struct ReadSession {
-    ctx: LogicalSnapshot<RocksStorage>,
+    ctx: LogicalSnapshot,
 }
 
 impl ReadSession {
@@ -534,7 +494,7 @@ impl ReadSession {
 /// # graph.close().unwrap();
 /// ```
 pub struct TxSession {
-    ctx: LogicalGraph<RocksStorage>,
+    ctx: LogicalGraph,
     committed: bool,
 }
 

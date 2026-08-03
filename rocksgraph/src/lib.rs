@@ -63,7 +63,7 @@ pub mod schema;
 pub(crate) mod store;
 pub(crate) mod types;
 /// Vector ANN search (v0.1: FloatVector type + brute-force KNN; v0.2: HNSW via usearch).
-pub mod vector;
+pub(crate) mod vector;
 
 // ── User-facing re-exports ────────────────────────────────────────────────────
 pub use api::{Graph, ReadSession, TxSession};

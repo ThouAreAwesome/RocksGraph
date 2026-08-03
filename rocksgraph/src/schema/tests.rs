@@ -82,9 +82,11 @@ fn test_management_explicit_declaration_and_cas() {
 #[test]
 fn test_schema_mode_auto_implicit_writes_and_types() {
     let dir = tempdir().unwrap();
-    let graph =
-        Graph::open_with_options(dir.path(), GraphOptions { mode: SchemaMode::Auto, edge_mode: EdgeMode::Single })
-            .unwrap();
+    let graph = Graph::open_with_options(
+        dir.path(),
+        GraphOptions { mode: SchemaMode::Auto, edge_mode: EdgeMode::Single, ..Default::default() },
+    )
+    .unwrap();
 
     // 1. Implicit write registers label and key on-the-fly
     {
@@ -211,9 +213,11 @@ fn test_auto_mode_version_bumps_once_per_new_label() {
 #[test]
 fn test_schema_mode_strict_rejections() {
     let dir = tempdir().unwrap();
-    let graph =
-        Graph::open_with_options(dir.path(), GraphOptions { mode: SchemaMode::Strict, edge_mode: EdgeMode::Single })
-            .unwrap();
+    let graph = Graph::open_with_options(
+        dir.path(),
+        GraphOptions { mode: SchemaMode::Strict, edge_mode: EdgeMode::Single, ..Default::default() },
+    )
+    .unwrap();
 
     // 1. Write with undeclared vertex label is rejected at compile time
     {
@@ -269,16 +273,18 @@ fn test_open_with_options_ignored_on_existing_db() {
     {
         let graph = Graph::open_with_options(
             dir.path(),
-            GraphOptions { mode: SchemaMode::Strict, edge_mode: EdgeMode::Single },
+            GraphOptions { mode: SchemaMode::Strict, edge_mode: EdgeMode::Single, ..Default::default() },
         )
         .unwrap();
         assert_eq!(graph.schema().read().unwrap().mode, SchemaMode::Strict);
     }
 
     // Re-open with the opposite options -- the persisted Strict/Single must win.
-    let reopened =
-        Graph::open_with_options(dir.path(), GraphOptions { mode: SchemaMode::Auto, edge_mode: EdgeMode::Multi })
-            .unwrap();
+    let reopened = Graph::open_with_options(
+        dir.path(),
+        GraphOptions { mode: SchemaMode::Auto, edge_mode: EdgeMode::Multi, ..Default::default() },
+    )
+    .unwrap();
     let s = reopened.schema();
     let s = s.read().unwrap();
     assert_eq!(s.mode, SchemaMode::Strict, "persisted schema_mode must win over new GraphOptions");
@@ -545,9 +551,11 @@ fn test_schema_persistence_across_restart() {
 
     // Declare schema in Strict mode and write data.
     {
-        let graph =
-            Graph::open_with_options(&path, GraphOptions { mode: SchemaMode::Strict, edge_mode: EdgeMode::Single })
-                .unwrap();
+        let graph = Graph::open_with_options(
+            &path,
+            GraphOptions { mode: SchemaMode::Strict, edge_mode: EdgeMode::Single, ..Default::default() },
+        )
+        .unwrap();
         let mut mgmt = graph.open_schema();
         mgmt.add_vertex_label("person")
             .add_edge_label("knows")
@@ -632,9 +640,11 @@ fn test_schema_conflict_on_incompatible_redeclaration() {
 #[test]
 fn test_edge_mode_ratchet_multi_to_single_rejected() {
     let dir = tempdir().unwrap();
-    let graph =
-        Graph::open_with_options(dir.path(), GraphOptions { mode: SchemaMode::Auto, edge_mode: EdgeMode::Multi })
-            .unwrap();
+    let graph = Graph::open_with_options(
+        dir.path(),
+        GraphOptions { mode: SchemaMode::Auto, edge_mode: EdgeMode::Multi, ..Default::default() },
+    )
+    .unwrap();
 
     // Once Multi, going back to Single must be rejected.
     let mut mgmt = graph.open_schema();
