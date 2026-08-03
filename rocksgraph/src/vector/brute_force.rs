@@ -2,6 +2,8 @@
 //! Brute-force exact KNN index. v0.1 reference implementation for the
 //! [`VectorIndex`](super::traits::VectorIndex) trait (v0.2).
 
+use std::path::Path;
+
 use crate::types::keys::CanonicalEdgeKey;
 
 /// Identifies a vertex or edge that owns a vector property.
@@ -41,14 +43,24 @@ pub fn cosine_sim(a: &[f32], b: &[f32]) -> f32 {
 /// does inline brute-force. v0.2 will route searches through the
 /// [`VectorIndex`](super::traits::VectorIndex) trait, with this struct
 /// serving as the fallback / reference implementation.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct BruteForceIndex {
     entries: Vec<(EntityKey, Vec<f32>)>,
+    last_replayed_timestamp: u64,
+}
+
+impl Default for BruteForceIndex {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+            last_replayed_timestamp: 0,
+        }
+    }
 }
 
 impl BruteForceIndex {
     pub fn new() -> Self {
-        Self { entries: Vec::new() }
+        Self::default()
     }
 
     pub fn len(&self) -> usize {
@@ -89,6 +101,54 @@ impl BruteForceIndex {
     /// Clear all entries.
     pub fn clear(&mut self) {
         self.entries.clear();
+    }
+}
+
+// ── VectorIndex trait impl ──────────────────────────────────────────────────
+
+use super::traits::VectorIndex;
+use super::error::VectorError;
+
+impl VectorIndex for BruteForceIndex {
+    fn insert(&mut self, key: &EntityKey, vector: &[f32]) -> Result<(), VectorError> {
+        if let Some(pos) = self.entries.iter().position(|(k, _)| k == key) {
+            self.entries[pos].1 = vector.to_vec();
+        } else {
+            self.entries.push((key.clone(), vector.to_vec()));
+        }
+        Ok(())
+    }
+
+    fn remove(&mut self, key: &EntityKey) -> Result<(), VectorError> {
+        self.entries.retain(|(k, _)| k != key);
+        Ok(())
+    }
+
+    fn search(&self, query: &[f32], k: usize) -> Result<Vec<(EntityKey, f32)>, VectorError> {
+        if k == 0 || self.entries.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut scored: Vec<(EntityKey, f32)> = self
+            .entries
+            .iter()
+            .map(|(key, vec)| (key.clone(), cosine_sim(vec, query)))
+            .collect();
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(k);
+        Ok(scored)
+    }
+
+    fn save(&self, _path: &Path, _last_replayed_timestamp: u64) -> Result<(), VectorError> {
+        // BruteForce is ephemeral — save is a no-op.
+        Ok(())
+    }
+
+    fn last_replayed_timestamp(&self) -> u64 {
+        self.last_replayed_timestamp
+    }
+
+    fn set_last_replayed_timestamp(&mut self, seq: u64) {
+        self.last_replayed_timestamp = seq;
     }
 }
 
