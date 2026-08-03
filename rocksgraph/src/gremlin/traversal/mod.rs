@@ -62,7 +62,8 @@ use crate::{
             LimitStep, LocalStep, LogicalPlan, LogicalStep, MaxStep, MeanStep, MinStep, NotStep, OrStep, Order,
             OrderKey, OrderKeySpec, OrderStep, OtherVStep, OutEStep, OutStep, OutVStep, PathStep, PropertiesStep,
             PropertyStep, RangeStep, RankStep, RepeatStep, ScalarFilterStep, SelectStep, SimplePathStep, SkipStep,
-            SumStep, TailStep, ToStep, UnfoldStep, UnionStep, ValuesStep, WhereStep,
+            SumStep, TailStep, ToStep, UnfoldStep, UnionStep, ValuesStep, VectorNearLogicalStep,
+            VectorSimilarityLogicalStep, WhereStep,
         },
     },
     types::{prop_key::LABEL, StoreError},
@@ -495,6 +496,23 @@ pub trait TraversalBuilder: PlanAppender {
 
     fn count(mut self) -> Self {
         self.push_step(LogicalStep::Count(CountStep {}));
+        self
+    }
+
+    fn vector_near(mut self, prop_key: &str, query: Vec<f32>, k: usize) -> Self {
+        self.push_step(LogicalStep::VectorNear(VectorNearLogicalStep {
+            prop_key: prop_key.to_string(),
+            query_vec: query,
+            k,
+        }));
+        self
+    }
+
+    fn vector_similarity(mut self, prop_key: &str, query: Vec<f32>) -> Self {
+        self.push_step(LogicalStep::VectorSimilarity(VectorSimilarityLogicalStep {
+            prop_key: prop_key.to_string(),
+            query_vec: query,
+        }));
         self
     }
 

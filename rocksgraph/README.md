@@ -62,7 +62,7 @@ All user-facing query inputs and outputs use types from `gremlin::value`, re-exp
 | `Property` | Key-value property element returned by `.properties()` |
 | `Map` | Ordered key-value map returned by `.group()` or `.group_count()` |
 | `Path` | Sequence of values with per-step labels returned by `.path()` |
-| `FloatVector` | Dense f32 vector stored as a vertex/edge property (`Value::FloatVector(Vec<f32>)`). Vector search steps (`vectorNear`, `vectorSimilarity`) are currently available via the Python bindings; native Rust DSL support will be added in v0.2. |
+| `FloatVector` | Dense f32 vector stored as a vertex/edge property (`Value::FloatVector(Vec<f32>)`). Used with `.vector_near()` and `.vector_similarity()` traversal steps. |
 
 Predicate constructors are free functions: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `between`, `within`, `without`.
 
@@ -233,6 +233,13 @@ the traversal API. The `schema` module interns them to compact numeric IDs inter
 | `emit()` / `emit_if(traversal)` | `.emit()` / `.emit_if(__().xxx())` | emit intermediate results during repetition |
 | `union(traversals)` | `.union([__().xxx(), __().yyy()])` | merges all result streams |
 | `coalesce(traversals)` | `.coalesce([__().xxx(), __().yyy()])` | first non-empty branch wins |
+
+### Vector Search
+
+| Step | Method | Notes |
+|------|--------|-------|
+| `vectorNear(prop, query, k)` | `.vector_near("emb", vec![0.1, 0.9], 5)` | Returns the `k` nearest vertices/edges by cosine similarity on property `prop`, ordered by descending similarity. |
+| `vectorSimilarity(prop, query)` | `.vector_similarity("emb", vec![0.1, 0.9])` | Emits the cosine similarity score (`Float32`) between each traverser's vector property and `query`. |
 
 ### Terminal Operations
 

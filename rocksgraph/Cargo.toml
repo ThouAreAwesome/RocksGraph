@@ -40,5 +40,12 @@ rand = "0.8"
 hdrhistogram = "7.5.4"
 tracing = { version = "0.1", optional = true }
 
+# Vector search: HNSW ANN index (single-file, cross-platform)
+usearch = "2"
+# FxHash for EntityKey → label mapping
+rustc-hash = "2"
+# CRC-32C checksum for snapshot headers
+crc32fast = "1"
+
 [dev-dependencies]
 

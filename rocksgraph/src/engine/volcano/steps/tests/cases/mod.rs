@@ -2529,3 +2529,4 @@ mod range_skip_tail_tests;
 mod repeat;
 mod simple_cyclic_path_tests;
 mod unfold_tests;
+mod vector_tests;
