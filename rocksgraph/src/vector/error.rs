@@ -20,21 +20,18 @@ pub enum VectorError {
     /// A vector's dimension does not match the declared index dimension.
     DimensionMismatch { expected: usize, actual: usize },
     /// No vector index is declared for the given (entity_type, property) pair.
-    IndexNotFound {
-        entity_type: VectorEntityType,
-        property: SmolStr,
-    },
+    IndexNotFound { entity_type: VectorEntityType, property: SmolStr },
     /// An insert was rejected because the index's estimated memory would exceed
     /// the configured limit.
-    MemoryLimitExceeded {
-        index: SmolStr,
-        used: usize,
-        limit: usize,
-    },
+    MemoryLimitExceeded { index: SmolStr, used: usize, limit: usize },
     /// An I/O error outside RocksDB (e.g. snapshot file read/write).
     Io(std::io::Error),
     /// A storage-layer error from the RocksDB engine.
     Store(StoreError),
+    /// A runtime error from the underlying ANN engine (capacity, OOM,
+    /// internal graph corruption). Distinct from `Unsupported`, which
+    /// means "not yet implemented."
+    Internal(String),
     /// A feature that is not yet supported (e.g. edge vector indexes in v0.2).
     Unsupported(String),
 }
@@ -49,13 +46,11 @@ impl fmt::Display for VectorError {
                 write!(f, "no vector index for ({entity_type:?}, {property})")
             }
             Self::MemoryLimitExceeded { index, used, limit } => {
-                write!(
-                    f,
-                    "memory limit exceeded for index '{index}': {used} bytes used, limit {limit} bytes"
-                )
+                write!(f, "memory limit exceeded for index '{index}': {used} bytes used, limit {limit} bytes")
             }
             Self::Io(e) => write!(f, "vector I/O error: {e}"),
             Self::Store(e) => write!(f, "vector storage error: {e}"),
+            Self::Internal(msg) => write!(f, "vector index internal error: {msg}"),
             Self::Unsupported(msg) => write!(f, "unsupported: {msg}"),
         }
     }

@@ -68,6 +68,8 @@ pub const OP_HASRANK: u8 = 57;
 pub const OP_CONSTANT: u8 = 58;
 pub const OP_IDENTITY: u8 = 59;
 pub const OP_LOCAL: u8 = 60;
+pub const OP_NEAREST: u8 = 61;
+pub const OP_SIMILARITY: u8 = 62;
 
 pub fn encode(plan: &LogicalPlan) -> Vec<u8> {
     let mut buf = Vec::new();
@@ -528,8 +530,8 @@ fn encode_step(step: &LogicalStep, buf: &mut Vec<u8>) {
             buf.push(OP_LOCAL);
             encode_plan(&s.plan, buf);
         }
-        LogicalStep::VectorNear(s) => {
-            buf.push(OP_VECTORNEAR);
+        LogicalStep::Nearest(s) => {
+            buf.push(OP_NEAREST);
             encode_smolstr(&s.prop_key, buf);
             buf.extend_from_slice(&(s.k as u32).to_be_bytes());
             buf.extend_from_slice(&(s.query_vec.len() as u32).to_be_bytes());
@@ -537,8 +539,8 @@ fn encode_step(step: &LogicalStep, buf: &mut Vec<u8>) {
                 buf.extend_from_slice(&f.to_le_bytes());
             }
         }
-        LogicalStep::VectorSimilarity(s) => {
-            buf.push(OP_VECTORSIMILARITY);
+        LogicalStep::Similarity(s) => {
+            buf.push(OP_SIMILARITY);
             encode_smolstr(&s.prop_key, buf);
             buf.extend_from_slice(&(s.query_vec.len() as u32).to_be_bytes());
             for f in &s.query_vec {
@@ -906,7 +908,7 @@ fn decode_step(bytes: &[u8], offset: &mut usize) -> Result<LogicalStep, StoreErr
         OP_CONSTANT => Ok(LogicalStep::Constant(ConstantStep { value: decode_primitive(bytes, offset)? })),
         OP_IDENTITY => Ok(LogicalStep::Identity(IdentityStep {})),
         OP_LOCAL => Ok(LogicalStep::Local(LocalStep { plan: decode_plan(bytes, offset)? })),
-        OP_VECTORNEAR => {
+        OP_NEAREST => {
             let prop_key = read_smolstr(bytes, offset)?;
             let k = read_u32(bytes, offset)? as usize;
             let dim = read_u32(bytes, offset)? as usize;
@@ -920,9 +922,9 @@ fn decode_step(bytes: &[u8], offset: &mut usize) -> Result<LogicalStep, StoreErr
                 ]));
                 *offset += 4;
             }
-            Ok(LogicalStep::VectorNear(VectorNearLogicalStep { prop_key: prop_key.to_string(), query_vec: q, k }))
+            Ok(LogicalStep::Nearest(NearestLogicalStep { prop_key: prop_key.to_string(), query_vec: q, k }))
         }
-        OP_VECTORSIMILARITY => {
+        OP_SIMILARITY => {
             let prop_key = read_smolstr(bytes, offset)?;
             let dim = read_u32(bytes, offset)? as usize;
             let mut q = Vec::with_capacity(dim);
@@ -935,10 +937,7 @@ fn decode_step(bytes: &[u8], offset: &mut usize) -> Result<LogicalStep, StoreErr
                 ]));
                 *offset += 4;
             }
-            Ok(LogicalStep::VectorSimilarity(VectorSimilarityLogicalStep {
-                prop_key: prop_key.to_string(),
-                query_vec: q,
-            }))
+            Ok(LogicalStep::Similarity(SimilarityLogicalStep { prop_key: prop_key.to_string(), query_vec: q }))
         }
         _ => Err(StoreError::UnsupportedOperation(format!("Unknown opcode 0x{:02x}", op))),
     }
@@ -1692,6 +1691,3 @@ mod tests {
         }
     }
 }
-
-pub const OP_VECTORNEAR: u8 = 61;
-pub const OP_VECTORSIMILARITY: u8 = 62;

@@ -25,16 +25,16 @@ finalised. All design decisions settled (§4).
     - [P12 — Paginated ANN retrieval](#p12--paginated-ann-retrieval)
   - [3. Step vocabulary](#3-step-vocabulary)
     - [3a. Core steps](#3a-core-steps)
-      - [`vectorSimilarity(prop_name, query_vec[, metric])`](#vectorsimilarityprop_name-query_vec-metric)
-      - [`nearestBy(source_prop, target_prop, k, entity_type)`](#nearestbysource_prop-target_prop-k-entity_type)
-    - [3b. `vectorNear` — syntactic sugar and ANN hint](#3b-vectornear--syntactic-sugar-and-ann-hint)
+      - [`similarity(prop_name, query_vec[, metric])`](#similarityprop_name-query_vec-metric)
+      - [`neighbors(source_prop, target_prop, k, entity_type)`](#neighborssource_prop-target_prop-k-entity_type)
+    - [3b. `nearest` — syntactic sugar and ANN hint](#3b-nearest--syntactic-sugar-and-ann-hint)
     - [3c. Removed from previous draft](#3c-removed-from-previous-draft)
   - [4. Design decisions](#4-design-decisions)
-    - [C1 — `vectorSimilarity` direction and naming](#c1--vectorsimilarity-direction-and-naming)
-    - [C2 — `nearestBy` entity type disambiguation](#c2--nearestby-entity-type-disambiguation)
+    - [C1 — `similarity` direction and naming](#c1--similarity-direction-and-naming)
+    - [C2 — `neighbors` entity type disambiguation](#c2--neighbors-entity-type-disambiguation)
     - [C3 — ANN hint surface for `order().by().limit()` form](#c3--ann-hint-surface-for-orderbylimit-form)
-    - [C4 — `vectorSimilarity` recomputation](#c4--vectorsimilarity-recomputation)
-    - [C5 — `nearestBy` per-traverser execution](#c5--nearestby-per-traverser-execution)
+    - [C4 — `similarity` recomputation](#c4--similarity-recomputation)
+    - [C5 — `neighbors` per-traverser execution](#c5--neighbors-per-traverser-execution)
     - [C6 — Skip/range overfetch rule](#c6--skiprange-overfetch-rule)
   - [5. Support plan](#5-support-plan)
   - [6. Index lifecycle management](#6-index-lifecycle-management)
@@ -76,7 +76,7 @@ patterns through composition with existing Gremlin primitives.
 | Barrier  | Consume all, emit a new set  | `order()`, `count()`, `limit()`  |
 
 **Optimizer-decides model**: the expression
-`V().order().by(__.vectorSimilarity("embedding", q), desc).limit(k)` is the
+`V().order().by(__.similarity("embedding", q), desc).limit(k)` is the
 logical form for "find the k vertices nearest to q by embedding." The query planner
 decides the physical execution:
 
@@ -89,8 +89,8 @@ This mirrors how relational databases rewrite `ORDER BY embedding <-> q LIMIT k`
 to an index scan when a vector index is available.
 
 **Reading the patterns**: each pattern shows the **core form** using only the two
-new steps (`vectorSimilarity`, `nearestBy`) and standard Gremlin. Where
-`vectorNear` sugar covers the same intent, it is shown as a secondary block
+new steps (`similarity`, `neighbors`) and standard Gremlin. Where
+`nearest` sugar covers the same intent, it is shown as a secondary block
 labelled `# sugar`.
 
 ---
@@ -104,22 +104,22 @@ labelled `# sugar`.
 ```python
 # core
 rs.traversal().V() \
-    .order().by(__.vectorSimilarity("embedding", query_vec), desc) \
+    .order().by(__.similarity("embedding", query_vec), desc) \
     .limit(k) \
     .to_list()
 
 # sugar
-rs.traversal().V().vectorNear("embedding", query_vec, k).to_list()
+rs.traversal().V().nearest("embedding", query_vec, k).to_list()
 ```
 
-`vectorSimilarity("embedding", query_vec)` extracts the `"embedding"` property from
+`similarity("embedding", query_vec)` extracts the `"embedding"` property from
 each vertex and computes its similarity to `query_vec`, emitting `f32`.
 `order().by(desc).limit(k)` selects the k most similar.
 
-**Optimizer**: for `V()` (full graph), rewrites `order().by(vectorSimilarity).limit(k)`
+**Optimizer**: for `V()` (full graph), rewrites `order().by(similarity).limit(k)`
 to an ANN index scan. Returns approximate top-k.
 
-**Alignment**: `vectorSimilarity` map → `order()`/`limit()` barriers. No new step kinds.
+**Alignment**: `similarity` map → `order()`/`limit()` barriers. No new step kinds.
 
 ---
 
@@ -130,13 +130,13 @@ to an ANN index scan. Returns approximate top-k.
 ```python
 # core
 rs.traversal().V().hasLabel("doc") \
-    .order().by(__.vectorSimilarity("embedding", query_vec), desc) \
+    .order().by(__.similarity("embedding", query_vec), desc) \
     .limit(k) \
     .to_list()
 
 # sugar
 rs.traversal().V().hasLabel("doc") \
-    .vectorNear("embedding", query_vec, k) \
+    .nearest("embedding", query_vec, k) \
     .to_list()
 ```
 
@@ -158,7 +158,7 @@ fail the label check.
 rs.traversal().V().hasLabel("doc") \
     .has("status", "published") \
     .has("category", "ML") \
-    .order().by(__.vectorSimilarity("embedding", query_vec), desc) \
+    .order().by(__.similarity("embedding", query_vec), desc) \
     .limit(k) \
     .to_list()
 
@@ -166,7 +166,7 @@ rs.traversal().V().hasLabel("doc") \
 rs.traversal().V().hasLabel("doc") \
     .has("status", "published") \
     .has("category", "ML") \
-    .vectorNear("embedding", query_vec, k) \
+    .nearest("embedding", query_vec, k) \
     .to_list()
 ```
 
@@ -183,13 +183,13 @@ uses ANN with pre-filter.
 ```python
 # core
 rs.traversal().V(author_id).out("wrote") \
-    .order().by(__.vectorSimilarity("embedding", query_vec), desc) \
+    .order().by(__.similarity("embedding", query_vec), desc) \
     .limit(k) \
     .to_list()
 
 # sugar
 rs.traversal().V(author_id).out("wrote") \
-    .vectorNear("embedding", query_vec, k) \
+    .nearest("embedding", query_vec, k) \
     .to_list()
 ```
 
@@ -207,14 +207,14 @@ selects the best.
 ```python
 # core
 rs.traversal().V() \
-    .order().by(__.vectorSimilarity("embedding", query_vec), desc) \
+    .order().by(__.similarity("embedding", query_vec), desc) \
     .limit(k) \
     .out("cites").values("title") \
     .to_list()
 # → ["Paper A", "Paper B", ...]
 
 # sugar
-rs.traversal().V().vectorNear("embedding", query_vec, k) \
+rs.traversal().V().nearest("embedding", query_vec, k) \
     .out("cites").values("title") \
     .to_list()
 ```
@@ -232,28 +232,28 @@ starting point of a normal graph traversal.
 ```python
 # core
 rs.traversal().V() \
-    .order().by(__.vectorSimilarity("embedding", query_vec), desc) \
+    .order().by(__.similarity("embedding", query_vec), desc) \
     .limit(k) \
     .project("vertex", "similarity") \
       .by(identity()) \
-      .by(__.vectorSimilarity("embedding", query_vec)) \
+      .by(__.similarity("embedding", query_vec)) \
     .to_list()
 # → [{"vertex": Vertex(...), "similarity": 0.97}, ...]
 
-# sugar — vectorNear for retrieval; project() annotation has no sugar form
+# sugar — nearest for retrieval; project() annotation has no sugar form
 rs.traversal().V() \
-    .vectorNear("embedding", query_vec, k) \
+    .nearest("embedding", query_vec, k) \
     .project("vertex", "similarity") \
       .by(identity()) \
-      .by(__.vectorSimilarity("embedding", query_vec)) \
+      .by(__.similarity("embedding", query_vec)) \
     .to_list()
 ```
 
 `project()` + `by()` is idiomatic Gremlin for building a result map. The traverser
-type inside each `by()` is still `Vertex` — `vectorSimilarity` computes the scalar
+type inside each `by()` is still `Vertex` — `similarity` computes the scalar
 inline. The output traverser is `Map<String, Object>`.
 
-**Note on recomputation**: `vectorSimilarity` is called once in `order().by()` and
+**Note on recomputation**: `similarity` is called once in `order().by()` and
 again inside `project().by()`. See open challenge C4.
 
 ---
@@ -265,26 +265,26 @@ again inside `project().by()`. See open challenge C4.
 ```python
 # core — threshold only: all vertices within distance t (exact, full scan)
 rs.traversal().V() \
-    .where(__.vectorSimilarity("embedding", query_vec).is_(gt(t))) \
+    .where(__.similarity("embedding", query_vec).is_(gt(t))) \
     .to_list()
 
 # core — top-k then threshold: nearest k, keep those within distance t
 rs.traversal().V() \
-    .order().by(__.vectorSimilarity("embedding", query_vec), desc) \
+    .order().by(__.similarity("embedding", query_vec), desc) \
     .limit(k) \
-    .where(__.vectorSimilarity("embedding", query_vec).is_(gt(t))) \
+    .where(__.similarity("embedding", query_vec).is_(gt(t))) \
     .to_list()
 
-# sugar — vectorNear for top-k retrieval; where() threshold has no sugar form
+# sugar — nearest for top-k retrieval; where() threshold has no sugar form
 rs.traversal().V() \
-    .vectorNear("embedding", query_vec, k) \
-    .where(__.vectorSimilarity("embedding", query_vec).is_(gt(t))) \
+    .nearest("embedding", query_vec, k) \
+    .where(__.similarity("embedding", query_vec).is_(gt(t))) \
     .to_list()
 ```
 
-`where()` + `is_()` is standard Gremlin predicate filtering. `vectorSimilarity` is
+`where()` + `is_()` is standard Gremlin predicate filtering. `similarity` is
 the computed predicate value. No special threshold step needed. The threshold-only
-form (no top-k) has no sugar equivalent — `vectorNear` always implies a `limit(k)`
+form (no top-k) has no sugar equivalent — `nearest` always implies a `limit(k)`
 barrier.
 
 ---
@@ -296,12 +296,12 @@ barrier.
 ```python
 # core
 rs.traversal().E() \
-    .order().by(__.vectorSimilarity("embedding", query_vec), desc) \
+    .order().by(__.similarity("embedding", query_vec), desc) \
     .limit(k) \
     .to_list()
 
 # sugar
-rs.traversal().E().vectorNear("embedding", query_vec, k).to_list()
+rs.traversal().E().nearest("embedding", query_vec, k).to_list()
 ```
 
 Scored variant — annotate results with distance (mirrors P6):
@@ -309,25 +309,25 @@ Scored variant — annotate results with distance (mirrors P6):
 ```python
 # core
 rs.traversal().E() \
-    .order().by(__.vectorSimilarity("embedding", query_vec), desc) \
+    .order().by(__.similarity("embedding", query_vec), desc) \
     .limit(k) \
     .project("edge", "similarity") \
       .by(identity()) \
-      .by(__.vectorSimilarity("embedding", query_vec)) \
+      .by(__.similarity("embedding", query_vec)) \
     .to_list()
 
-# sugar — vectorNear for retrieval; project() annotation has no sugar form
+# sugar — nearest for retrieval; project() annotation has no sugar form
 rs.traversal().E() \
-    .vectorNear("embedding", query_vec, k) \
+    .nearest("embedding", query_vec, k) \
     .project("edge", "similarity") \
       .by(identity()) \
-      .by(__.vectorSimilarity("embedding", query_vec)) \
+      .by(__.similarity("embedding", query_vec)) \
     .to_list()
 ```
 
 `E()` emits edge traversers. `values("embedding")` extracts the edge's vector.
-`vectorSimilarity` and `order().by().limit()` work identically on edges as on
-vertices. The incoming traverser type determines which index `vectorNear` and the
+`similarity` and `order().by().limit()` work identically on edges as on
+vertices. The incoming traverser type determines which index `nearest` and the
 optimizer use: edge traversers → edge index.
 
 ---
@@ -339,16 +339,16 @@ optimizer use: edge traversers → edge index.
 ```python
 # core
 rs.traversal().V() \
-    .order().by(__.vectorSimilarity("title_embedding", title_q), desc) \
+    .order().by(__.similarity("title_embedding", title_q), desc) \
     .limit(50) \
-    .order().by(__.vectorSimilarity("content_embedding", content_q), desc) \
+    .order().by(__.similarity("content_embedding", content_q), desc) \
     .limit(10) \
     .to_list()
 
-# sugar — chained vectorNear; each call is one barrier on the previous output
+# sugar — chained nearest; each call is one barrier on the previous output
 rs.traversal().V() \
-    .vectorNear("title_embedding", title_q, 50) \
-    .vectorNear("content_embedding", content_q, 10) \
+    .nearest("title_embedding", title_q, 50) \
+    .nearest("content_embedding", content_q, 10) \
     .to_list()
 ```
 
@@ -365,14 +365,14 @@ new step types needed.
 ```python
 # core
 rs.traversal().union(
-    __.V().order().by(__.vectorSimilarity("title_emb", query_vec), desc).limit(k),
-    __.V().order().by(__.vectorSimilarity("body_emb", query_vec), desc).limit(k)
+    __.V().order().by(__.similarity("title_emb", query_vec), desc).limit(k),
+    __.V().order().by(__.similarity("body_emb", query_vec), desc).limit(k)
 ).dedup().to_list()
 
-# sugar — vectorNear inside each union branch; union() itself has no sugar form
+# sugar — nearest inside each union branch; union() itself has no sugar form
 rs.traversal().union(
-    __.V().vectorNear("title_emb", query_vec, k),
-    __.V().vectorNear("body_emb", query_vec, k)
+    __.V().nearest("title_emb", query_vec, k),
+    __.V().nearest("body_emb", query_vec, k)
 ).dedup().to_list()
 ```
 
@@ -384,18 +384,18 @@ different index. `.dedup()` removes vertices that ranked in both.
 ```python
 # core
 rs.traversal().union(
-    __.V().order().by(__.vectorSimilarity("title_emb", query_vec), desc).limit(k)
-        .project("v", "sim").by(identity()).by(__.vectorSimilarity("title_emb", query_vec)),
-    __.V().order().by(__.vectorSimilarity("body_emb", query_vec), desc).limit(k)
-        .project("v", "sim").by(identity()).by(__.vectorSimilarity("body_emb", query_vec))
+    __.V().order().by(__.similarity("title_emb", query_vec), desc).limit(k)
+        .project("v", "sim").by(identity()).by(__.similarity("title_emb", query_vec)),
+    __.V().order().by(__.similarity("body_emb", query_vec), desc).limit(k)
+        .project("v", "sim").by(identity()).by(__.similarity("body_emb", query_vec))
 ).to_list()
 
-# sugar — vectorNear for retrieval; project() annotation has no sugar form
+# sugar — nearest for retrieval; project() annotation has no sugar form
 rs.traversal().union(
-    __.V().vectorNear("title_emb", query_vec, k)
-        .project("v", "sim").by(identity()).by(__.vectorSimilarity("title_emb", query_vec)),
-    __.V().vectorNear("body_emb", query_vec, k)
-        .project("v", "sim").by(identity()).by(__.vectorSimilarity("body_emb", query_vec))
+    __.V().nearest("title_emb", query_vec, k)
+        .project("v", "sim").by(identity()).by(__.similarity("title_emb", query_vec)),
+    __.V().nearest("body_emb", query_vec, k)
+        .project("v", "sim").by(identity()).by(__.similarity("body_emb", query_vec))
 ).to_list()
 # collect both result lists, apply RRF or weighted fusion at application level
 ```
@@ -410,28 +410,28 @@ embedding.*
 ```python
 # core — no sugar equivalent
 
-# Single source vertex — nearestBy used directly (no local() needed)
+# Single source vertex — neighbors used directly (no local() needed)
 rs.traversal().V(xx) \
-    .nearestBy("embedding", "embedding", k, VectorEntityType.VERTEX) \
+    .neighbors("embedding", "embedding", k, VectorEntityType.VERTEX) \
     .to_list()
 
 # Multiple source vertices — local() makes per-traverser scoping explicit:
 # each vertex runs its own ANN search independently
 rs.traversal().V().has("age", between(20, 30)) \
-    .local(__.nearestBy("embedding", "embedding", k, VectorEntityType.VERTEX)) \
+    .local(__.neighbors("embedding", "embedding", k, VectorEntityType.VERTEX)) \
     .to_list()
 
 # Cross-property — for each question, find k relevant answers.
 # Source: q_embedding (read from question traverser).
-# Target: a_embedding index (searched by nearestBy).
+# Target: a_embedding index (searched by neighbors).
 # Precondition: both embeddings share the same dimension and model.
 rs.traversal().V().hasLabel("question") \
-    .local(__.nearestBy("q_embedding", "a_embedding", k, VectorEntityType.VERTEX)) \
+    .local(__.neighbors("q_embedding", "a_embedding", k, VectorEntityType.VERTEX)) \
     .to_list()
 ```
 
-`nearestBy` is a flat-map step: each incoming traverser expands independently to k
-results. For a single source (`V(xx).nearestBy(...)`) this works without any wrapper.
+`neighbors` is a flat-map step: each incoming traverser expands independently to k
+results. For a single source (`V(xx).neighbors(...)`) this works without any wrapper.
 `local()` is the idiomatic choice when iterating over multiple source traversers — it
 makes the per-traverser scoping explicit and consistent with standard Gremlin style
 for sub-traversal steps.
@@ -447,24 +447,24 @@ for sub-traversal steps.
 ```python
 # core — page 2 (results 11–20)
 rs.traversal().V() \
-    .order().by(__.vectorSimilarity("embedding", query_vec), desc) \
+    .order().by(__.similarity("embedding", query_vec), desc) \
     .range(10, 20) \
     .to_list()
 
-# sugar — vectorNear followed by skip
-rs.traversal().V().vectorNear("embedding", query_vec, 10).skip(10).to_list()
+# sugar — nearest followed by skip
+rs.traversal().V().nearest("embedding", query_vec, 10).skip(10).to_list()
 ```
 
 **Planner overfetch rule**: the optimizer detects `skip(n)` or `range(s, e)` immediately
-downstream of an ANN-rewritten `order().by(vectorSimilarity).limit(k)` subtree and
+downstream of an ANN-rewritten `order().by(similarity).limit(k)` subtree and
 increases the ANN fetch count automatically. The skip/range is then applied in memory:
 
 | Expression                               | ANN fetches | In-memory slice |
 | ---------------------------------------- | :---------: | --------------- |
 | `order().by(vs).limit(k).skip(n)`        | `n + k`     | `[n : n+k]`     |
 | `order().by(vs).range(s, e)`             | `e`         | `[s : e]`       |
-| `vectorNear(prop, q, k).skip(n)`         | `n + k`     | `[n : n+k]`     |
-| `vectorNear(prop, q, k).range(s, e)`     | `e`         | `[s : e]`       |
+| `nearest(prop, q, k).skip(n)`         | `n + k`     | `[n : n+k]`     |
+| `nearest(prop, q, k).range(s, e)`     | `e`         | `[s : e]`       |
 
 No additional ANN call is made; the user writes idiomatic Gremlin and the planner
 handles the overfetch transparently (see §4 C6 for the design decision).
@@ -492,7 +492,7 @@ Two new steps are required. Everything else in §2 uses standard Gremlin.
 
 ---
 
-#### `vectorSimilarity(prop_name, query_vec[, metric])`
+#### `similarity(prop_name, query_vec[, metric])`
 
 **Kind**: map  
 **Type**: `Vertex/Edge → f32`  
@@ -504,7 +504,7 @@ Reads the `prop_name` `FloatVector` property from the incoming `Vertex/Edge` tra
 and computes a normalised similarity score against `query_vec`.
 
 ```
-vectorSimilarity("embedding", query_vec)   →   f32
+similarity("embedding", query_vec)   →   f32
 ```
 
 **Direction**: always emits **higher = more similar**, regardless of the underlying
@@ -522,12 +522,12 @@ Use cases:
 
 **Ranking** (P1–P5, P8, P9) — optimizer rewrites to ANN index scan for large streams:
 ```python
-.order().by(__.vectorSimilarity("embedding", query_vec), desc).limit(k)
+.order().by(__.similarity("embedding", query_vec), desc).limit(k)
 ```
 
 **Threshold filter** (P7) — brute-force exact scan; no index required:
 ```python
-.where(__.vectorSimilarity("embedding", query_vec).is_(gt(0.85)))
+.where(__.similarity("embedding", query_vec).is_(gt(0.85)))
 ```
 
 **Score annotation** (P6, P8 scored, P10 fusion) — reuses cached score from the
@@ -535,16 +535,16 @@ upstream `order()` barrier (see C4); no recomputation at k ≤ 1000:
 ```python
 .project("vertex", "similarity")
   .by(identity())
-  .by(__.vectorSimilarity("embedding", query_vec))
+  .by(__.similarity("embedding", query_vec))
 ```
 
 **Metric inference**: the metric is inferred from the declared index config for
 `prop_name`. When no index is declared, the `metric` parameter is required:
-`vectorSimilarity("prop", query_vec, DistanceMetric.COSINE)`.
+`similarity("prop", query_vec, DistanceMetric.COSINE)`.
 
 ---
 
-#### `nearestBy(source_prop, target_prop, k, entity_type)`
+#### `neighbors(source_prop, target_prop, k, entity_type)`
 
 **Kind**: flat-map  
 **Type**: `Vertex/Edge → [Vertex/Edge × k]`  
@@ -560,7 +560,7 @@ a unique key into `Graph.vector_indexes`, there is never ambiguity about which i
 — and which metric — applies. A caller-supplied metric would be either redundant (same
 as the declared metric) or actively wrong (HNSW's internal neighbour graph is built for
 its declared metric; searching with a different one produces nonsensical results).
-This contrasts with `vectorSimilarity`, which can run without any declared index (exact
+This contrasts with `similarity`, which can run without any declared index (exact
 brute-force) and in that case has no index config to infer the metric from — hence its
 optional `metric` parameter.
 
@@ -569,28 +569,28 @@ returns the k most similar entities from the `target_prop` index. Requires a dec
 vector index — raises `VectorError::NoVectorIndex` otherwise.
 
 ```
-nearestBy("q_embedding", "a_embedding", k, VectorEntityType.VERTEX)   →   Vertex × k
+neighbors("q_embedding", "a_embedding", k, VectorEntityType.VERTEX)   →   Vertex × k
 ```
 
 - The **source property** (query vector origin) is the first parameter.
 - The **target index** (which index to search) is the second parameter.
 - Source and target may differ, as long as both share the same dimension and model.
 - `local()` is recommended for multi-source traversals to make per-traverser
-  scoping explicit; for a single source, `nearestBy` can be used without `local()`.
+  scoping explicit; for a single source, `neighbors` can be used without `local()`.
 
 Use cases:
 
 **Same-index similarity** (P11 — find vertices similar to a single source):
 ```python
 rs.traversal().V(xx) \
-    .nearestBy("embedding", "embedding", k, VectorEntityType.VERTEX) \
+    .neighbors("embedding", "embedding", k, VectorEntityType.VERTEX) \
     .to_list()
 ```
 
 **Same-index similarity, multiple sources** — `local()` makes per-traverser scoping explicit:
 ```python
 rs.traversal().V().has("age", between(20, 30)) \
-    .local(__.nearestBy("embedding", "embedding", k, VectorEntityType.VERTEX)) \
+    .local(__.neighbors("embedding", "embedding", k, VectorEntityType.VERTEX)) \
     .to_list()
 ```
 
@@ -598,24 +598,24 @@ rs.traversal().V().has("age", between(20, 30)) \
 different index; both must share the same dimension and embedding model):
 ```python
 rs.traversal().V().hasLabel("question") \
-    .local(__.nearestBy("q_embedding", "a_embedding", k, VectorEntityType.VERTEX)) \
+    .local(__.neighbors("q_embedding", "a_embedding", k, VectorEntityType.VERTEX)) \
     .to_list()
 ```
 
 ---
 
-### 3b. `vectorNear` — syntactic sugar and ANN hint
+### 3b. `nearest` — syntactic sugar and ANN hint
 
-`vectorNear(prop, query_vec, k)` is retained as **syntactic sugar** for the common
+`nearest(prop, query_vec, k)` is retained as **syntactic sugar** for the common
 case and as the explicit surface for ANN execution hints.
 
 ```python
 # Sugar form
-rs.traversal().V().vectorNear("embedding", query_vec, k)
+rs.traversal().V().nearest("embedding", query_vec, k)
 
 # Expands logically to:
 rs.traversal().V() \
-    .order().by(__.vectorSimilarity("embedding", query_vec), desc) \
+    .order().by(__.similarity("embedding", query_vec), desc) \
     .limit(k)
 ```
 
@@ -628,7 +628,7 @@ form has no step to attach them to (see §4 C3):
 | `withEfSearch(ef)`      | Override HNSW `ef_search` for this query                              |
 | `withOverfetch(factor)` | Fetch `k × factor` candidates before applying graph predicate filters |
 
-**Skip/range interaction**: `vectorNear(prop, q, k).skip(n)` or `.range(s, e)` is
+**Skip/range interaction**: `nearest(prop, q, k).skip(n)` or `.range(s, e)` is
 handled automatically by the planner overfetch rule — the user writes plain Gremlin,
 no modulator needed. See §4 C6 and pattern P12.
 
@@ -638,9 +638,9 @@ no modulator needed. See §4 C6 and pattern P12.
 
 | Removed                                             | Replacement                                                                 |
 | --------------------------------------------------- | --------------------------------------------------------------------------- |
-| `vectorDistance(query_vec)`                         | `vectorSimilarity(prop, query_vec)` — higher = more similar for all metrics |
-| `withScore()` modulator                             | `project().by(identity()).by(__.vectorSimilarity(prop, q))`                 |
-| `withMinScore(t)` / `withMaxDistance(t)` modulators | `where(__.vectorSimilarity(prop, q).is_(gt(t)))`                            |
+| `vectorDistance(query_vec)`                         | `similarity(prop, query_vec)` — higher = more similar for all metrics |
+| `withScore()` modulator                             | `project().by(identity()).by(__.similarity(prop, q))`                 |
+| `withMinScore(t)` / `withMaxDistance(t)` modulators | `where(__.similarity(prop, q).is_(gt(t)))`                            |
 | `ScoredVertex { vertex, score }`                    | `Map { "vertex": Vertex, "similarity": f32 }` via `project()`               |
 | `ScoredEdge { edge, score }`                        | `Map { "edge": Edge, "similarity": f32 }` via `project()`                   |
 
@@ -648,9 +648,9 @@ no modulator needed. See §4 C6 and pattern P12.
 
 ## 4. Design decisions
 
-### C1 — `vectorSimilarity` direction and naming
+### C1 — `similarity` direction and naming
 
-**Decision**: `vectorSimilarity` is the single step for all metrics. The engine
+**Decision**: `similarity` is the single step for all metrics. The engine
 normalises each metric to a **higher = more similar** value in [0, 1] (or (0, 1)):
 
 | Metric         | Raw value     | Emitted similarity                |
@@ -666,13 +666,13 @@ it is an explicit parameter only when no index is declared.
 
 ---
 
-### C2 — `nearestBy` entity type disambiguation
+### C2 — `neighbors` entity type disambiguation
 
 **One index per `(entity_type, property_name)` pair.** `add_vector_index` raises
 `VectorError::IndexAlreadyExists` if a second index is declared for the same pair.
 The `Graph` struct's `vector_indexes` map is keyed by `(VectorEntityType, SmolStr)`,
 enforcing this at the data-structure level. Consequence: `(target_prop, entity_type)`
-is always a unique identifier for an index, which is why `nearestBy` needs no metric
+is always a unique identifier for an index, which is why `neighbors` needs no metric
 or algorithm parameter — there is never more than one candidate index to choose from.
 
 **Why multiple metrics per property do not arise in practice.** An embedding model's
@@ -703,10 +703,10 @@ cosine and inner product give identical rankings — still only needs one index,
 rankings are the same regardless of which label is declared.
 
 **Decision**: explicit `entity_type` parameter, always required.
-`nearestBy("src", "a_embedding", k, VectorEntityType.VERTEX)` is unambiguous
+`neighbors("src", "a_embedding", k, VectorEntityType.VERTEX)` is unambiguous
 because the one-index-per-pair constraint guarantees at most one vertex index and
 at most one edge index for any given property name. The verbosity is acceptable
-because `nearestBy` is a rare step (P11 only) and the entity type is semantically
+because `neighbors` is a rare step (P11 only) and the entity type is semantically
 meaningful information the user knows.
 
 **Multiple indexes on the same property are not supported.** If embeddings from two
@@ -719,27 +719,27 @@ the physical reality that each embedding model has exactly one correct distance 
 
 ### C3 — ANN hint surface for `order().by().limit()` form
 
-**Decision**: `vectorNear` is the only hint surface. Users who need execution
+**Decision**: `nearest` is the only hint surface. Users who need execution
 control (`withEfSearch`, `withOverfetch`) write the sugar form; others write the
-core `order().by(vectorSimilarity).limit()` form. Support for attaching hints to
+core `order().by(similarity).limit()` form. Support for attaching hints to
 the native form is left open for a future version.
 
 ---
 
-### C4 — `vectorSimilarity` recomputation
+### C4 — `similarity` recomputation
 
 **Decision**: ANN indexes (HNSW) return similarity scores alongside candidate
 IDs at no extra cost — the scores are a byproduct of the index scan. The engine
 attaches these scores to traversers during the `order().by().limit()` barrier. A
-subsequent `vectorSimilarity(prop, q)` call with the same `(prop_name, query_vec)` reads
+subsequent `similarity(prop, q)` call with the same `(prop_name, query_vec)` reads
 from this traverser-level cache instead of recomputing.
 
 ```python
-.order().by(__.vectorSimilarity("embedding", q), desc)  # ANN scan: scores cached
+.order().by(__.similarity("embedding", q), desc)  # ANN scan: scores cached
 .limit(k)
 .project("vertex", "similarity")
   .by(identity())
-  .by(__.vectorSimilarity("embedding", q))              # cache hit — no recompute
+  .by(__.similarity("embedding", q))              # cache hit — no recompute
 ```
 
 Cache is traverser-scoped and query-scoped; GC'd when the traversal completes.
@@ -748,9 +748,9 @@ For v0.1 BruteForce scans, the cache still applies (distances are computed durin
 
 ---
 
-### C5 — `nearestBy` per-traverser execution
+### C5 — `neighbors` per-traverser execution
 
-`local(__.nearestBy("embedding", "embedding", k, VectorEntityType.VERTEX))` on N source
+`local(__.neighbors("embedding", "embedding", k, VectorEntityType.VERTEX))` on N source
 vertices logically runs N ANN searches. The API form is fixed and correct.
 
 Whether the engine executes these as N serial calls or as one batched multi-query
@@ -764,7 +764,7 @@ as a performance improvement in any future version without touching the query su
 
 ANN libraries including usearch do not support stateless cursor pagination —
 `search(query, k=10)` returns the 10 nearest candidates; there is no "start from
-position 11" API. A naive `vectorNear(q, 10).skip(10)` would discard all 10 results
+position 11" API. A naive `nearest(q, 10).skip(10)` would discard all 10 results
 and return nothing.
 
 **Decision**: the query planner intercepts `skip(n)` or `range(s, e)` immediately
@@ -774,11 +774,11 @@ idiomatic Gremlin; the planner handles the overfetch automatically.
 
 ```python
 # User writes:
-.vectorNear("embedding", q, 10).skip(10)
+.nearest("embedding", q, 10).skip(10)
 # Planner fetches 20 from ANN, returns positions [10:20].
 
 # User writes:
-.order().by(__.vectorSimilarity("embedding", q), desc).range(20, 30)
+.order().by(__.similarity("embedding", q), desc).range(20, 30)
 # Planner fetches 30 from ANN, returns positions [20:30].
 ```
 
@@ -803,11 +803,11 @@ Tracks which steps, patterns, and lifecycle operations ship in each version.
 
 | Version   | Query steps and patterns                                                                                                                                                                                                                                                                 | Lifecycle and write                                                                                                                      |
 | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| **v0.1**  | `vectorSimilarity(prop, q)` map step; `order().by(vectorSimilarity).limit()` using BruteForce exact scan (no index needed); `where(vectorSimilarity.is_(gt(t)))` threshold (exact); `vectorNear` sugar (BruteForce); P1–P10 all work via exact scan; P11 (`nearestBy`) not yet available | Declare index at open (`BruteForce`); insert / update / delete vector properties; un-indexed `FloatVector` store and read                |
-| **v0.2**  | Optimizer rewrites `order().by(vectorSimilarity).limit()` to HNSW index scan for large streams; similarity score cache on traverser (C4); `nearestBy(source_prop, target_prop, k, entity_type)` inside `local()` (P11 available); `vectorNear` sugar (HNSW); planner skip/range overfetch rule (P12, C6); all P1–P12 patterns | `add_vector_index`; `drop_vector_index`; `rebuild_vector_index`; snapshot export / import (`export_vector_index`, `import_vector_index`) |
-| **v0.3**  | Optimizer pre-filter for P2/P3: `V().has*().order().by(vectorSimilarity).limit()` uses HNSW with eligible-key filter (exact recall within filtered set); optimizer batches `nearestBy` calls when ANN lib supports multi-query (transparent); `add_vector_index_async` progress handle   | `change_vector_index_algorithm`; `add_vector_index_async`; offline batch reindex via SST + `rebuild_vector_index` (§8c) |
+| **v0.1**  | `similarity(prop, q)` map step; `order().by(similarity).limit()` using BruteForce exact scan (no index needed); `where(similarity.is_(gt(t)))` threshold (exact); `nearest` sugar (BruteForce); P1–P10 all work via exact scan; P11 (`neighbors`) not yet available | Declare index at open (`BruteForce`); insert / update / delete vector properties; un-indexed `FloatVector` store and read                |
+| **v0.2**  | Optimizer rewrites `order().by(similarity).limit()` to HNSW index scan for large streams; similarity score cache on traverser (C4); `neighbors(source_prop, target_prop, k, entity_type)` inside `local()` (P11 available); `nearest` sugar (HNSW); planner skip/range overfetch rule (P12, C6); all P1–P12 patterns | `add_vector_index`; `drop_vector_index`; `rebuild_vector_index`; snapshot export / import (`export_vector_index`, `import_vector_index`) |
+| **v0.3**  | Optimizer pre-filter for P2/P3: `V().has*().order().by(similarity).limit()` uses HNSW with eligible-key filter (exact recall within filtered set); optimizer batches `neighbors` calls when ANN lib supports multi-query (transparent); `add_vector_index_async` progress handle   | `change_vector_index_algorithm`; `add_vector_index_async`; offline batch reindex via SST + `rebuild_vector_index` (§8c) |
 | **v0.4**  | RaBitQ quantization (`Quantization::RaBitQ`); `VectorIndexStats.quantization` introspection                                                                                                                                                                                               | `rebuild_vector_index` after quantization change                                                            |
-| **v0.5+** | Multi-query single-index: `vectorNear("emb", [q1, q2], k, fusion="rrf")`; streaming cursors for ANN results                                                                                                                                                                              | —                                                                                                           |
+| **v0.5+** | Multi-query single-index: `nearest("emb", [q1, q2], k, fusion="rrf")`; streaming cursors for ANN results                                                                                                                                                                              | —                                                                                                           |
 
 **Notes**:
 - v0.1 exact scan is always correct but O(N) — suitable for prototyping and small
@@ -821,9 +821,9 @@ Tracks which steps, patterns, and lifecycle operations ship in each version.
 
 ## 6. Index lifecycle management
 
-All vector indexes must be declared before ANN operations (`vectorNear`,
-`nearestBy`, optimizer index scan). `order().by(vectorSimilarity).limit()` and
-`where(vectorSimilarity)` work without a declared index via exact inline computation.
+All vector indexes must be declared before ANN operations (`nearest`,
+`neighbors`, optimizer index scan). `order().by(similarity).limit()` and
+`where(similarity)` work without a declared index via exact inline computation.
 
 **Structural config** (`VectorIndexConfig`: dimension, metric, algorithm) is declared
 once via `SchemaSession::add_vector_index()`, persisted to CF_SCHEMA, and reloaded
@@ -1148,14 +1148,14 @@ For initial corpus loads larger than ~10K vectors, use `SstBulkLoader` (see `doc
 Vertices and edges can carry `FloatVector` properties with no declared index.
 The behaviour under query steps:
 
-- **`order().by(__.vectorSimilarity(prop, q, metric)).limit(k)`** — works without
+- **`order().by(__.similarity(prop, q, metric)).limit(k)`** — works without
   an index. `metric` parameter required (no index to infer from). Optimizer computes
   similarities inline (exact brute-force). Correct but O(N) on large graphs.
-- **`where(__.vectorSimilarity(prop, q, metric).is_(gt(t)))`** — works without an
+- **`where(__.similarity(prop, q, metric).is_(gt(t)))`** — works without an
   index. Exact inline computation.
-- **`vectorNear(prop, q, k)`** — raises `VectorError::NoVectorIndex`. The sugar
+- **`nearest(prop, q, k)`** — raises `VectorError::NoVectorIndex`. The sugar
   form explicitly requests ANN index usage.
-- **`nearestBy(source_prop, target_prop, k, entity_type)`** — raises
+- **`neighbors(source_prop, target_prop, k, entity_type)`** — raises
   `VectorError::NoVectorIndex`. Requires a declared index to search.
 
 ```python
@@ -1164,8 +1164,8 @@ tx.commit()
 
 rs.traversal().V(1).values("raw_vec").next()                            # ✅ read value
 rs.traversal().V()                                                      # ✅ brute-force
-    .order().by(__.vectorSimilarity("raw_vec", q), desc).limit(10)
-rs.traversal().V().vectorNear("raw_vec", q, k=5).to_list()             # ❌ NoVectorIndex
+    .order().by(__.similarity("raw_vec", q), desc).limit(10)
+rs.traversal().V().nearest("raw_vec", q, k=5).to_list()             # ❌ NoVectorIndex
 ```
 
 **Ships in**: v0.1.
@@ -1260,12 +1260,12 @@ individual transactions.
 
 | Variant                                            | When raised                                                                                                                                          |
 | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `VectorError::NoVectorIndex { property }`          | `vectorNear` or `nearestBy` used on a property with no declared index. `vectorSimilarity` does NOT raise this — it computes inline without an index. |
+| `VectorError::NoVectorIndex { property }`          | `nearest` or `neighbors` used on a property with no declared index. `similarity` does NOT raise this — it computes inline without an index. |
 | `VectorError::DimensionMismatch { expected, got }` | Vector inserted or queried with wrong dimension                                                                                                      |
 | `VectorError::IndexAlreadyExists`                  | `add_vector_index` called for an existing `(entity_type, property)`                                                                                  |
 | `VectorError::IndexNotFound`                       | `drop_vector_index`, `rebuild_vector_index`, or `export_vector_index` on non-existent index                                                          |
-| `VectorError::MetricRequired { property }`         | `vectorSimilarity` used on a property with no declared index and no explicit `metric` parameter                                                      |
-| `VectorError::AmbiguousIndex { property }`         | Removed — `nearestBy` now always requires explicit `entity_type` parameter (see C2)                                                                  |
+| `VectorError::MetricRequired { property }`         | `similarity` used on a property with no declared index and no explicit `metric` parameter                                                      |
+| `VectorError::AmbiguousIndex { property }`         | Removed — `neighbors` now always requires explicit `entity_type` parameter (see C2)                                                                  |
 | `VectorError::RebuildInProgress`                   | `add_vector_index` or `rebuild_vector_index` called while a rebuild is running                                                                       |
 | `VectorError::SnapshotSeqAhead`                    | `import_vector_index` snapshot is from a future WAL state                                                                                            |
 | `VectorError::SnapshotCorrupt`                     | Snapshot file has invalid magic, truncated data, or checksum mismatch                                                                                |
@@ -1293,6 +1293,6 @@ TypeScript: all extend `VectorError` which extends `Error`.
 | Streaming cursors for ANN results                   | `to_list()` fetches all; streaming variant is v0.5                                                                                                                         |
 | Cross-graph ANN (federated search)                  | Out of scope for embedded single-process DB                                                                                                                                |
 | Cross-index union in one step                       | `union()` covers this without a new step (P10)                                                                                                                             |
-| Multi-query single-index fusion                     | `union()` approximation runs two separate ANN searches and deduplicates — not true batch RRF. Native form `vectorNear("emb", [q1, q2], k, fusion="rrf")` deferred to v0.5+ |
+| Multi-query single-index fusion                     | `union()` approximation runs two separate ANN searches and deduplicates — not true batch RRF. Native form `nearest("emb", [q1, q2], k, fusion="rrf")` deferred to v0.5+ |
 | Custom distance metric functions                    | Reserved for v0.4+; placeholder: `DistanceMetric::Custom(fn)`                                                                                                              |
-| `vectorNear` accepting anonymous traversal as query | Subsumed by `local(nearestBy())` pattern; deferred if still needed                                                                                                         |
+| `nearest` accepting anonymous traversal as query | Subsumed by `local(neighbors())` pattern; deferred if still needed                                                                                                         |

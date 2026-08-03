@@ -187,8 +187,8 @@ pub enum LogicalStep {
     Constant(ConstantStep),
     Identity(IdentityStep),
     Local(LocalStep),
-    VectorNear(VectorNearLogicalStep),
-    VectorSimilarity(VectorSimilarityLogicalStep),
+    Nearest(NearestLogicalStep),
+    Similarity(SimilarityLogicalStep),
 }
 
 /// Specifies when a repeat step should emit intermediate results.
@@ -777,7 +777,7 @@ impl Optimizer for HasIdStep {}
 
 /// Logical step: find k nearest vectors to a query vector.
 #[derive(Clone)]
-pub struct VectorNearLogicalStep {
+pub struct NearestLogicalStep {
     pub prop_key: String,
     pub query_vec: Vec<f32>,
     pub k: usize,
@@ -785,7 +785,7 @@ pub struct VectorNearLogicalStep {
 
 /// Logical step: compute similarity between each traverser's vector and query.
 #[derive(Clone)]
-pub struct VectorSimilarityLogicalStep {
+pub struct SimilarityLogicalStep {
     pub prop_key: String,
     pub query_vec: Vec<f32>,
 }

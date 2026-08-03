@@ -9,7 +9,7 @@ use crate::types::PIPELINE_PRODUCE_SIZE;
 use crate::types::{
     error::StoreError,
     gvalue::{GValue, Primitive},
-    keys::CanonicalKey,
+    keys::{CanonicalKey, VertexKey},
 };
 use smallvec::smallvec;
 use smol_str::SmolStr;
@@ -18,9 +18,11 @@ use std::rc::Rc;
 use std::sync::{Arc, RwLock};
 
 use crate::schema::Schema;
+use crate::vector::EntityKey;
+use crate::vector::VectorEntityType;
 
 #[derive(Debug)]
-pub struct VectorNearStep {
+pub struct NearestStep {
     upstream: Option<StepRef>,
     prop_key: SmolStr,
     query_vec: Vec<f32>,
@@ -31,7 +33,7 @@ pub struct VectorNearStep {
     prop_key_cache: HashMap<SmolStr, u16>,
 }
 
-impl VectorNearStep {
+impl NearestStep {
     pub fn new(prop_key: String, query_vec: Vec<f32>, k: usize) -> Self {
         Self {
             upstream: None,
@@ -79,7 +81,7 @@ fn resolve_vector(t: &Traverser, ctx: &mut dyn GraphCtx, prop_id: Option<u16>) -
     }
 }
 
-impl CoreStep for VectorNearStep {
+impl CoreStep for NearestStep {
     fn add_upper(&mut self, upstream: StepRef) {
         self.upstream = Some(upstream);
     }
@@ -102,15 +104,55 @@ impl CoreStep for VectorNearStep {
 
         if !self.drained {
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
-            let mut candidates: Vec<(Rc<Traverser>, f32)> = Vec::new();
-            while let Some(t) = upstream.next(ctx)? {
-                let vec = resolve_vector(&t, ctx, prop_id);
-                if let Some(v) = vec {
-                    candidates.push((t, crate::vector::cosine_sim(&v, &self.query_vec)));
+            let mut used_index = false;
+
+            // ── HNSW path ──────────────────────────────────────────────
+            // Check availability first without holding the guard across
+            // the upstream drain (which needs &mut ctx).
+            let hnsw_index = ctx.vector_indexes().and_then(|indexes| {
+                let guard = indexes.read().unwrap();
+                guard.get(&(VectorEntityType::Vertex, self.prop_key.clone())).cloned()
+            });
+
+            if let Some(index) = hnsw_index {
+                // Drain upstream to collect the set of vertex IDs the
+                // caller filtered on, keeping the original traverser so
+                // path history and sacks are preserved.
+                let mut allowed: HashMap<VertexKey, Rc<Traverser>> = HashMap::new();
+                while let Some(t) = upstream.next(ctx)? {
+                    if let GValue::Vertex(vk) = &t.value {
+                        allowed.insert(*vk, t);
+                    }
                 }
+
+                let results = index
+                    .read()
+                    .unwrap()
+                    .search(&self.query_vec, self.k)
+                    .map_err(|e| StoreError::UnsupportedOperation(format!("vector search: {e}")))?;
+                for (ek, _) in results {
+                    if let EntityKey::Vertex(vk) = ek {
+                        if let Some(t) = allowed.get(&vk) {
+                            self.buffer.push(Rc::clone(t));
+                        }
+                    }
+                }
+                self.buffer.truncate(self.k);
+                used_index = true;
             }
-            candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            self.buffer = candidates.into_iter().take(self.k).map(|(t, _)| t).collect();
+
+            // ── Brute-force fallback ───────────────────────────────────
+            if !used_index {
+                let mut candidates: Vec<(Rc<Traverser>, f32)> = Vec::new();
+                while let Some(t) = upstream.next(ctx)? {
+                    let vec = resolve_vector(&t, ctx, prop_id);
+                    if let Some(v) = vec {
+                        candidates.push((t, crate::vector::cosine_sim(&v, &self.query_vec)));
+                    }
+                }
+                candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                self.buffer = candidates.into_iter().take(self.k).map(|(t, _)| t).collect();
+            }
             self.cursor = 0;
             self.drained = true;
         }
@@ -123,23 +165,23 @@ impl CoreStep for VectorNearStep {
         }
     }
     fn explain(&self) -> ExplainNode {
-        ExplainNode::new("VectorNearStep")
+        ExplainNode::new("NearestStep")
     }
 }
 
 #[derive(Debug)]
-pub struct VectorSimilarityStep {
+pub struct SimilarityStep {
     upstream: Option<StepRef>,
     prop_key: SmolStr,
     query_vec: Vec<f32>,
     prop_key_cache: HashMap<SmolStr, u16>,
 }
-impl VectorSimilarityStep {
+impl SimilarityStep {
     pub fn new(prop_key: String, query_vec: Vec<f32>) -> Self {
         Self { upstream: None, prop_key: SmolStr::from(prop_key), query_vec, prop_key_cache: HashMap::new() }
     }
 }
-impl CoreStep for VectorSimilarityStep {
+impl CoreStep for SimilarityStep {
     fn add_upper(&mut self, upstream: StepRef) {
         self.upstream = Some(upstream);
     }
@@ -176,7 +218,7 @@ impl CoreStep for VectorSimilarityStep {
         }
     }
     fn explain(&self) -> ExplainNode {
-        ExplainNode::new("VectorSimilarityStep")
+        ExplainNode::new("SimilarityStep")
     }
 }
 

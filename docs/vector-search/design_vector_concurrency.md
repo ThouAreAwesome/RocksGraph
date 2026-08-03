@@ -73,7 +73,7 @@ Full design in `design_vector_wal.md` §4.
 Lock semantics:
 - **Write lock** — acquired in `TxSession::commit` after `db.write_opt()` returns,
   to call `insert`/`remove` on the index
-- **Read lock** — acquired for the full duration of a `vectorNear` search
+- **Read lock** — acquired for the full duration of a `nearest` search
 
 This allows concurrent searches to proceed without blocking each other, while
 serializing concurrent index mutations. A search never observes a
@@ -81,7 +81,7 @@ partially-inserted vector.
 
 **Read-your-own-writes is preserved**: after `TxSession::commit` returns
 successfully, the write lock has been released and the vector is visible to any
-subsequent `vectorNear` call in the same or any other session.
+subsequent `nearest` call in the same or any other session.
 
 ### 3a. Single-index commit sequence
 
@@ -357,18 +357,18 @@ in <5ms.
 
 ### 5d. Read-your-own-writes within an uncommitted transaction
 
-**Problem**: `vectorNear` operates on the committed HNSW index. If a transaction
-inserts a vertex with an embedding and then issues `vectorNear` in the same
+**Problem**: `nearest` operates on the committed HNSW index. If a transaction
+inserts a vertex with an embedding and then issues `nearest` in the same
 uncommitted transaction, the newly inserted vertex is invisible — its vector is
 in `pending_vector_ops` but not yet applied to the index.
 
 ```python
 tx = graph.tx()
 tx.addV('doc').property('embedding', [0.1, 0.2, ...])
-tx.V().vectorNear([0.1, 0.2, ...], 5)   # ← does NOT find 'doc'
+tx.V().nearest([0.1, 0.2, ...], 5)   # ← does NOT find 'doc'
 ```
 
-**Fix**: `VectorNearStep` merges HNSW results with a brute-force scan of the
+**Fix**: `NearestStep` merges HNSW results with a brute-force scan of the
 transaction's `pending_vector_ops`. The merge logic:
 
 1. Compute the **effective pending state**: replay `pending_vector_ops` in order;
@@ -382,8 +382,8 @@ transaction's `pending_vector_ops`. The merge logic:
 4. **Merge and truncate**: combine and sort by distance, return top k.
 
 ```rust
-fn execute_vector_near_with_pending(
-    step:        &VectorNearStep,
+fn execute_nearest_with_pending(
+    step:        &NearestStep,
     index:       &Arc<RwLock<Box<dyn VectorIndex>>>,
     pending_ops: &[(EntityKey, VectorOpKind)],
 ) -> Result<Vec<(EntityKey, f32)>> {

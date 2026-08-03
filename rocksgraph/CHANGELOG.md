@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Path filters: `simplePath()`, `cyclicPath()`
 - Composition: `identity()`, `constant()`, `local()`, `union()`, `coalesce()`
 - Mutation steps: `addV()`, `addE()`, `drop()`, property set/drop
-- **Vector search**: `FloatVector` property type; `vectorNear(prop, query, k)` (brute-force exact KNN, cosine similarity); `vectorSimilarity(prop, query)` (per-traverser score); Python `Vector([f32, ...])` input type with auto-coercion from `list[float]`
+- **Vector search**: `FloatVector` property type; `nearest(prop, query, k)` (brute-force exact KNN, cosine similarity); `similarity(prop, query)` (per-traverser score); Python `Vector([f32, ...])` input type with auto-coercion from `list[float]`
 - `addE()` upstream vertex support — `.from()` / `.to()` may be omitted to use the upstream
   traverser as that edge endpoint (e.g. `V([v1]).out("knows").addE("friends").to(v1)`),
   creating one edge per upstream traverser

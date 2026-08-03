@@ -46,11 +46,7 @@ pub struct HnswConfig {
 
 impl Default for HnswConfig {
     fn default() -> Self {
-        Self {
-            m: 16,
-            ef_construction: 200,
-            ef_search: 50,
-        }
+        Self { m: 16, ef_construction: 200, ef_search: 50 }
     }
 }
 
@@ -70,19 +66,14 @@ pub enum AnnAlgorithm {
 ///
 /// The public API and RocksDB storage always use f32. Quantization applies
 /// only to the in-memory ANN index — it is a transparent memory optimisation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Quantization {
     /// Half-precision float (IEEE 754 binary16). Halves memory at <0.1%
     /// additional recall loss. Default for v0.2.
+    #[default]
     F16 = 0,
     /// Full-precision float (IEEE 754 binary32). Opt-in for maximum recall.
     F32 = 1,
-}
-
-impl Default for Quantization {
-    fn default() -> Self {
-        Self::F16
-    }
 }
 
 // ── Structural configuration (persisted to CF_SCHEMA) ────────────────────────
@@ -128,7 +119,7 @@ pub struct IndexLimitOverride {
 ///
 /// These are **environmental** — never persisted to disk, so a database file
 /// created on a large server works correctly on a smaller machine.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct VectorRuntimeOptions {
     /// Default memory limit applied to every vector index.
     /// `None` = unlimited (expert escape hatch — can OOM if not sized to RAM).
@@ -136,15 +127,6 @@ pub struct VectorRuntimeOptions {
     /// Per-index overrides matched by (entity_type, property). Takes precedence
     /// over `default_limit`.
     pub per_index_overrides: Vec<IndexLimitOverride>,
-}
-
-impl Default for VectorRuntimeOptions {
-    fn default() -> Self {
-        Self {
-            default_limit: None,
-            per_index_overrides: Vec::new(),
-        }
-    }
 }
 
 // ── VectorIndex trait ────────────────────────────────────────────────────────

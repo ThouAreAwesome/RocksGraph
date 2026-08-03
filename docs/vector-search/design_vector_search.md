@@ -138,10 +138,10 @@ Pattern B gives the best fit for RocksGraph:
   │  Traversal pipeline                                                  │
   │                                                                      │
   │  rs.traversal().V().hasLabel("doc")                                  │
-  │    .vectorNear("embedding", query_vec, k)                            │
+  │    .nearest("embedding", query_vec, k)                            │
   │    .out("cites").values("title")                                     │
   └──────────────────┬──────────────────────────────────────┬───────────┘
-        graph steps  │                                      │  vectorNear
+        graph steps  │                                      │  nearest
                      ▼                                      ▼
   ┌───────────────────────────────┐         ┌───────────────────────────────┐
   │  Graph store (RocksDB)        │   WAL   │  VectorIndex   (per index)    │
@@ -271,7 +271,7 @@ data and enables zero-copy transfer to Rust via napi-rs `Buffer`.
 
 Vector properties can be stored on **both vertices and edges**. Each index
 declaration carries an `entity_type` that determines which storage CF is
-scanned at cold-start rebuild and which traverser type `vectorNear` produces.
+scanned at cold-start rebuild and which traverser type `nearest` produces.
 
 ```rust
 pub enum VectorEntityType {
@@ -336,15 +336,15 @@ readable via `.values("prop")`.
 
 Behaviour under query steps when no index is declared:
 
-- **`order().by(__.vectorSimilarity(prop, q, metric)).limit(k)`** — works; explicit
+- **`order().by(__.similarity(prop, q, metric)).limit(k)`** — works; explicit
   `metric` parameter required (nothing to infer from). Optimizer computes similarities
   inline (exact brute-force, O(N)).
-- **`where(__.vectorSimilarity(prop, q, metric).is_(gt(t)))`** — works; explicit
+- **`where(__.similarity(prop, q, metric).is_(gt(t)))`** — works; explicit
   `metric` parameter required.
-- **`vectorSimilarity(prop, q)` (no metric)**  — raises `VectorError::MetricRequired`.
-- **`vectorNear(prop, q, k)`** — raises `VectorError::NoVectorIndex`. The sugar form
+- **`similarity(prop, q)` (no metric)**  — raises `VectorError::MetricRequired`.
+- **`nearest(prop, q, k)`** — raises `VectorError::NoVectorIndex`. The sugar form
   explicitly requests ANN index usage.
-- **`nearestBy(source_prop, target_prop, k, entity_type)`** — raises
+- **`neighbors(source_prop, target_prop, k, entity_type)`** — raises
   `VectorError::NoVectorIndex`. Requires a declared index to search.
 
 ### 5d. Dimension validation on insert
@@ -370,12 +370,12 @@ Surfaced to Python/JS as `rocksgraph.DimensionMismatchError`.
 
 ## 6. Query API
 
-The core query steps are `vectorSimilarity(prop, query_vec)` (map, `Vertex/Edge → f32`)
-and `nearestBy(source_prop, target_prop, k, entity_type)` (flat-map, per-traverser
-ANN search). `vectorNear(prop, query_vec, k)` is syntactic sugar for the common
-`order().by(vectorSimilarity).limit(k)` pattern and is the ANN execution hint
-attachment point. Scoring is expressed via `project().by(vectorSimilarity(...))`;
-threshold filtering via `where(vectorSimilarity(...).is_(gt(t)))`. Full step
+The core query steps are `similarity(prop, query_vec)` (map, `Vertex/Edge → f32`)
+and `neighbors(source_prop, target_prop, k, entity_type)` (flat-map, per-traverser
+ANN search). `nearest(prop, query_vec, k)` is syntactic sugar for the common
+`order().by(similarity).limit(k)` pattern and is the ANN execution hint
+attachment point. Scoring is expressed via `project().by(similarity(...))`;
+threshold filtering via `where(similarity(...).is_(gt(t)))`. Full step
 catalogue, scenario coverage, and stability guarantees are in `design_vector_api.md`.
 
 Representative combined graph + vector examples:
@@ -383,34 +383,34 @@ Representative combined graph + vector examples:
 ```python
 # 1. Vertex semantic search → graph traversal (no scores needed)
 rs.traversal().V() \
-    .vectorNear("embedding", Vector(query_vec), 5) \
+    .nearest("embedding", Vector(query_vec), 5) \
     .out("cites").values("title") \
     .to_list()
 
 # 2. Graph filter → vertex semantic ranking with scores
 rs.traversal().V().has("status", "published") \
-    .vectorNear("embedding", Vector(query_vec), 10) \
+    .nearest("embedding", Vector(query_vec), 10) \
     .project("vertex", "similarity") \
       .by(identity()) \
-      .by(__.vectorSimilarity("embedding", Vector(query_vec))) \
+      .by(__.similarity("embedding", Vector(query_vec))) \
     .to_list()
 
 # 3. Multi-hop → vertex similarity
 rs.traversal().V(author_id) \
     .out("wrote") \
-    .vectorNear("embedding", Vector(query_vec), 3) \
+    .nearest("embedding", Vector(query_vec), 3) \
     .to_list()
 
 # 4. Edge semantic search → source vertices
 rs.traversal().E() \
-    .vectorNear("embedding", Vector(query_vec), 5) \
+    .nearest("embedding", Vector(query_vec), 5) \
     .outV().values("name") \
     .to_list()
 
 # 5. Traverse edges, then rank by edge vector similarity
 rs.traversal().V(doc_id) \
     .outE("related") \
-    .vectorNear("embedding", Vector(query_vec), 3) \
+    .nearest("embedding", Vector(query_vec), 3) \
     .inV().values("title") \
     .to_list()
 ```
@@ -486,7 +486,7 @@ pub fn load_vector_index(path: &Path) -> Result<Box<dyn VectorIndex>> { ... }
 ```
 
 `search` returns `(EntityKey, f32)` pairs in the ANN library's native ordering.
-`VectorNearStep` normalises these raw values to a unified **higher = more similar**
+`NearestStep` normalises these raw values to a unified **higher = more similar**
 score before caching them on traversers:
 
 | Metric | usearch output | Normalised similarity |
@@ -550,8 +550,8 @@ rationale for separate WAL CFs per index type) in `design_vector_wal.md`.
 | ------------------------------------- | ---------- | ----------------------------- |
 | Point lookup `V(id)`                  | 10–50 μs   | 3 key comparisons in LSM tree |
 | Edge traversal `out("label")`         | 50–200 μs  | prefix scan                   |
-| `vectorNear` brute-force (100K, k=10) | ~50 ms     | AVX2, 1536 dims               |
-| `vectorNear` HNSW (1M, k=10)          | 1–3 ms     | ~150 distance calcs           |
+| `nearest` brute-force (100K, k=10) | ~50 ms     | AVX2, 1536 dims               |
+| `nearest` HNSW (1M, k=10)          | 1–3 ms     | ~150 distance calcs           |
 | Insert vertex + vector (HNSW)         | 2–10 ms    | ~800 distance calcs in index  |
 | Commit (WAL sync)                     | 100–500 μs | single fsync                  |
 

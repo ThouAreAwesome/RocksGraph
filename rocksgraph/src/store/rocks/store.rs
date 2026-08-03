@@ -54,7 +54,7 @@ use crate::{
 ///
 /// # Example
 /// ```
-/// # use rocksgraph::{Graph, RocksOptions};
+/// # use rocksgraph::{Graph, RocksOptions, vector::VectorRuntimeOptions};
 /// # let dir = tempfile::tempdir().unwrap();
 /// // Small production server: 16 GB RAM
 /// let opts = RocksOptions {
@@ -64,7 +64,7 @@ use crate::{
 ///     max_background_jobs:      4,
 ///     ..RocksOptions::default()
 /// };
-/// let graph = Graph::open_with_rocksdb_options(dir.path(), Default::default(), opts).unwrap();
+/// let graph = Graph::open_with_rocksdb_options(dir.path(), Default::default(), opts, VectorRuntimeOptions::default()).unwrap();
 /// # graph.close().unwrap();
 /// ```
 ///
@@ -359,33 +359,38 @@ impl RocksStorage {
             if kind == SCHEMA_KIND_META {
                 continue;
             }
-            let name_bytes = &k[1..];
-            let name_str =
-                std::str::from_utf8(name_bytes).map_err(|_| StoreError::CorruptData("invalid schema name encoding"))?;
 
-            match kind {
-                SCHEMA_KIND_VERTEX_LABEL => {
-                    let id =
-                        decode_schema_label_value(&v).ok_or(StoreError::CorruptData("invalid vertex label value"))?;
-                    schema.vertex_labels.insert(id, smol_str::SmolStr::new(name_str));
-                    schema.persisted_vertex_labels.insert(id);
+            // Only label and prop-key records have UTF-8 names at k[1..];
+            // vector index keys (0x10) have a binary prefix and are handled
+            // by load_vector_configs.
+            if kind == SCHEMA_KIND_VERTEX_LABEL || kind == SCHEMA_KIND_EDGE_LABEL || kind == SCHEMA_KIND_PROP_KEY {
+                let name_str = std::str::from_utf8(&k[1..])
+                    .map_err(|_| StoreError::CorruptData("invalid schema name encoding"))?;
+
+                match kind {
+                    SCHEMA_KIND_VERTEX_LABEL => {
+                        let id = decode_schema_label_value(&v)
+                            .ok_or(StoreError::CorruptData("invalid vertex label value"))?;
+                        schema.vertex_labels.insert(id, smol_str::SmolStr::new(name_str));
+                        schema.persisted_vertex_labels.insert(id);
+                    }
+                    SCHEMA_KIND_EDGE_LABEL => {
+                        let id =
+                            decode_schema_label_value(&v).ok_or(StoreError::CorruptData("invalid edge label value"))?;
+                        schema.edge_labels.insert(id, smol_str::SmolStr::new(name_str));
+                        schema.persisted_edge_labels.insert(id);
+                    }
+                    SCHEMA_KIND_PROP_KEY => {
+                        let (id, data_type_u8) =
+                            decode_schema_prop_value(&v).ok_or(StoreError::CorruptData("invalid prop key value"))?;
+                        let data_type = DataType::from_u8(data_type_u8)
+                            .ok_or(StoreError::CorruptData("invalid data type discriminant"))?;
+                        schema.prop_keys.insert(id, smol_str::SmolStr::new(name_str));
+                        schema.prop_key_types.insert(id, PropKeyConfig { data_type });
+                        schema.persisted_prop_keys.insert(id);
+                    }
+                    _ => unreachable!(),
                 }
-                SCHEMA_KIND_EDGE_LABEL => {
-                    let id =
-                        decode_schema_label_value(&v).ok_or(StoreError::CorruptData("invalid edge label value"))?;
-                    schema.edge_labels.insert(id, smol_str::SmolStr::new(name_str));
-                    schema.persisted_edge_labels.insert(id);
-                }
-                SCHEMA_KIND_PROP_KEY => {
-                    let (id, data_type_u8) =
-                        decode_schema_prop_value(&v).ok_or(StoreError::CorruptData("invalid prop key value"))?;
-                    let data_type = DataType::from_u8(data_type_u8)
-                        .ok_or(StoreError::CorruptData("invalid data type discriminant"))?;
-                    schema.prop_keys.insert(id, smol_str::SmolStr::new(name_str));
-                    schema.prop_key_types.insert(id, PropKeyConfig { data_type });
-                    schema.persisted_prop_keys.insert(id);
-                }
-                _ => {}
             }
         }
 

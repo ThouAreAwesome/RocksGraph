@@ -440,11 +440,11 @@ fn search(&self, query: &[f32], k: usize) -> Result<Vec<(EntityKey, f32)>> {
 ```
 
 **Score semantics**: usearch returns raw distances, not similarities. For
-`MetricKind::Cos`, usearch returns `1 - cosine_similarity`. The `VectorNearStep`
+`MetricKind::Cos`, usearch returns `1 - cosine_similarity`. The `NearestStep`
 execution converts this to user-facing score:
 
 ```rust
-// In VectorNearStep executor — not in UsearchHnswIndex:
+// In NearestStep executor — not in UsearchHnswIndex:
 let user_score = match config.metric {
     DistanceMetric::Cosine       => 1.0 - raw_distance,   // [0,1], higher = better
     DistanceMetric::Euclidean    => raw_distance,          // raw L2 distance
@@ -650,7 +650,7 @@ Graph::open()
 
 **Result correctness with tombstones**: usearch filters tombstoned entries from
 result sets during search — they are traversed for graph navigation but never
-appear in `vectorNear` output. Results remain correct; the cost is roughly
+appear in `nearest` output. Results remain correct; the cost is roughly
 `tombstone_ratio` extra distance computations per query. At 30% tombstones,
 expect ~30% slower queries, not wrong answers.
 
@@ -966,12 +966,12 @@ pub trait VectorIndex: Send + Sync {
 ## 11. Per-query `ef_search` override
 
 `design_vector_api.md` §6e specifies `.withEfSearch(ef)` as a per-query override.
-The `VectorNearStep` executor resolves this as follows:
+The `NearestStep` executor resolves this as follows:
 
 ```rust
-// In the VectorNear step executor:
-fn execute_vector_near(
-    step:     &VectorNearStep,
+// In the Nearest step executor:
+fn execute_nearest(
+    step:     &NearestStep,
     ef_search: Option<usize>,          // from WithEfSearch modulator, if present
     index:    &Arc<RwLock<Box<dyn VectorIndex>>>,
 ) -> Result<Vec<(EntityKey, f32)>> {
@@ -1069,7 +1069,7 @@ The correct handling is:
    is present and will be replayed, restoring consistency
 
 The inconsistency is bounded to the window between the failed step 4 and the
-next restart (or explicit WAL replay). During this window, `vectorNear` queries
+next restart (or explicit WAL replay). During this window, `nearest` queries
 may omit the affected entity. This is identical to the crash-after-commit
 inconsistency window that the WAL design already handles. An "unindexed queue"
 with retry could shorten this window, but that complexity is deferred to v0.3.
@@ -1148,7 +1148,7 @@ vector  = ["dep:usearch"]
 - [ ] Add `vector_indexes: HashMap<(VectorEntityType, SmolStr), Arc<RwLock<Box<dyn VectorIndex>>>>` to `Graph`
 - [ ] Call `init_wal_clock(db)` on `Graph::open`; persist `WAL_CLOCK` to `vector_wal_clock_hwm` on snapshot flush
 - [ ] Wire `TxSession::commit` with pending vector ops (see `design_vector_wal.md` §5)
-- [ ] Wire `VectorNearStep` executor to merge HNSW results with `pending_vector_ops` (see `design_vector_concurrency.md` §5d)
+- [ ] Wire `NearestStep` executor to merge HNSW results with `pending_vector_ops` (see `design_vector_concurrency.md` §5d)
 - [ ] Wire `OP_PROPERTY` handler to detect `GValue::FloatVector` and push pending op
 - [ ] Wire `OP_DROP` (vertex) to push `VectorOpKind::Delete` for all indexed properties
 - [ ] Wire `OP_DROP` (edge) to push `VectorOpKind::Delete` for all indexed edge properties
@@ -1162,7 +1162,7 @@ vector  = ["dep:usearch"]
 - [ ] Unit test: `cold_start_rebuild` on a graph with pre-existing FloatVector props
 - [ ] Unit test: `wal_replay` replays 3 ops on top of a snapshot, verifies search results
 - [ ] Unit test: edge upsert via CF (same CanonicalEdgeKey inserted twice → same u64 label in CF, tombstone_count unchanged)
-- [ ] Unit test: `vectorNear` inside uncommitted transaction finds pending-insert vertex (RYOW fix §5d)
-- [ ] Unit test: `vectorNear` inside uncommitted transaction does NOT return pending-delete vertex
-- [ ] Integration test: full write → commit → close → reopen → vectorNear → correct results
+- [ ] Unit test: `nearest` inside uncommitted transaction finds pending-insert vertex (RYOW fix §5d)
+- [ ] Unit test: `nearest` inside uncommitted transaction does NOT return pending-delete vertex
+- [ ] Integration test: full write → commit → close → reopen → nearest → correct results
 - [ ] Integration test: crash simulation (write WAL, skip in-memory update) → reopen → correct results

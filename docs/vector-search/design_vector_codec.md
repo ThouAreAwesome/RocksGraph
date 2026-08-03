@@ -18,19 +18,19 @@ Status: proposal — implementation prerequisite for v0.1 end-to-end tests.
 - [7. Decoding `FloatVector` in responses](#7-decoding-floatvector-in-responses)
 - [8. New opcodes](#8-new-opcodes)
   - [8a. Opcode assignments](#8a-opcode-assignments)
-  - [8b. `OP_VECTORNEAR` (61)](#8b-op_vectornear-61)
-  - [8c. `OP_VECTORSIMILARITY` (62)](#8c-op_vectorsimilarity-62)
-  - [8d. `OP_NEARESTBY` (63)](#8d-op_nearestby-63)
+  - [8b. `OP_NEAREST` (61)](#8b-op_nearest-61)
+  - [8c. `OP_SIMILARITY` (62)](#8c-op_similarity-62)
+  - [8d. `OP_NEIGHBORS` (63)](#8d-op_neighbors-63)
   - [8e. `OP_WITHEFSEARCH` (64)](#8e-op_withefsearch-64)
   - [8f. `OP_WITHOVERFETCH` (66)](#8f-op_withoverfetch-66)
-  - [8h. `OP_VECTORNEAR_MULTI` (67)](#8h-op_vectornear_multi-67)
+  - [8h. `OP_NEAREST_MULTI` (67)](#8h-op_nearest_multi-67)
 - [9. Rust decoder additions](#9-rust-decoder-additions)
   - [9a. `bytecode/mod.rs` — new constants and `decode_step` arms](#9a-bytecodemodrs--new-constants-and-decode_step-arms)
   - [9b. `LogicalStep` additions](#9b-logicalstep-additions)
 - [10. Complete opcode and primitive tag tables](#10-complete-opcode-and-primitive-tag-tables)
 - [11. Wire format examples](#11-wire-format-examples)
   - [11a. Writing a vector property](#11a-writing-a-vector-property)
-  - [11b. `vectorNear` query with score annotation](#11b-vectornear-query-with-score-annotation)
+  - [11b. `nearest` query with score annotation](#11b-nearest-query-with-score-annotation)
 - [12. Endianness rules](#12-endianness-rules)
 - [13. Implementation checklist](#13-implementation-checklist)
 
@@ -44,12 +44,12 @@ Adding vector search requires extending this protocol in four places:
 
 1. A new primitive tag (`PRIM_FLOATVECTOR`) for encoding `Vector` values in
    `OP_PROPERTY` and `OP_ADDV`/`OP_ADDE` payloads.
-2. New opcodes for `vectorNear`, `vectorSimilarity`, `nearestBy`, and ANN search hints.
+2. New opcodes for `nearest`, `similarity`, `neighbors`, and ANN search hints.
 3. A new `Value` enum variant for `FloatVector` in the response path.
 4. New Python/TS classes (`Vector`) and updates to `_encode_primitive`,
    `_post_process`, and `value_to_py`.
 
-Score retrieval (`vectorSimilarity`) uses the standard `project()` pattern — no
+Score retrieval (`similarity`) uses the standard `project()` pattern — no
 dedicated response wrapper types are needed. See `design_vector_api.md` §3a.
 
 All changes are backward-compatible: existing opcodes and primitive tags are
@@ -142,7 +142,7 @@ etc.). FloatVector cannot meaningfully be used in a predicate and should not be
 processed by scalar filter steps. Keeping it at the top level makes the type
 system reject misuse at the Rust level.
 
-Similarity scores produced by `VectorSimilarityStep` are plain `f32` scalars
+Similarity scores produced by `SimilarityStep` are plain `f32` scalars
 (`GValue::Scalar(Primitive::Float32)`), surfaced to callers via the standard
 `project()` step. No dedicated `ScoredVertex`/`ScoredEdge` wrapper is needed.
 
@@ -360,7 +360,7 @@ fn value_to_py(py: Python<'_>, value: Value) -> PyResult<PyObject> {
 }
 ```
 
-Similarity scores (`f32`) returned by `VectorSimilarityStep` are plain
+Similarity scores (`f32`) returned by `SimilarityStep` are plain
 `Value::Scalar(Primitive::Float32)` and decoded by the existing scalar arm — no
 new arm is needed.
 
@@ -372,39 +372,39 @@ new arm is needed.
 
 ```python
 # rocksgraph/_codec.py — append after OP_LOCAL = 60
-OP_VECTORNEAR         = 61
-OP_VECTORSIMILARITY   = 62
-OP_NEARESTBY          = 63
+OP_NEAREST            = 61
+OP_SIMILARITY         = 62
+OP_NEIGHBORS          = 63
 OP_WITHEFSEARCH       = 64
 OP_WITHNPROBE         = 65
 OP_WITHOVERFETCH      = 66
-OP_VECTORNEAR_MULTI   = 67   # v0.5+
+OP_NEAREST_MULTI      = 67   # v0.5+
 ```
 
 ```rust
 // rocksgraph/src/bytecode/mod.rs — append after OP_LOCAL
-pub const OP_VECTORNEAR:         u8 = 61;
-pub const OP_VECTORSIMILARITY:   u8 = 62;
-pub const OP_NEARESTBY:          u8 = 63;
+pub const OP_NEAREST:            u8 = 61;
+pub const OP_SIMILARITY:         u8 = 62;
+pub const OP_NEIGHBORS:          u8 = 63;
 pub const OP_WITHEFSEARCH:       u8 = 64;
 pub const OP_WITHNPROBE:         u8 = 65;
 pub const OP_WITHOVERFETCH:      u8 = 66;
-pub const OP_VECTORNEAR_MULTI:   u8 = 67;  // v0.5+
+pub const OP_NEAREST_MULTI:      u8 = 67;  // v0.5+
 ```
 
 ---
 
-### 8b. `OP_VECTORNEAR` (61)
+### 8b. `OP_NEAREST` (61)
 
 **Semantics**: syntactic-sugar step that the optimizer rewrites to
-`order().by(vectorSimilarity(prop, q), desc).limit(k)`. Returns the `k` most
+`order().by(similarity(prop, q), desc).limit(k)`. Returns the `k` most
 similar entities to `query` on property `prop_key`. This is the only attachment
 point for ANN hint modulators (`withEfSearch`, `withOverfetch`).
 
 **Wire encoding**:
 
 ```
-[OP_VECTORNEAR: u8 = 61]
+[OP_NEAREST: u8 = 61]
 [prop_key_len: u16 BE]
 [prop_key: prop_key_len bytes, UTF-8]
 [k: u32 BE]
@@ -416,7 +416,7 @@ point for ANN hint modulators (`withEfSearch`, `withOverfetch`).
 
 ```python
 # rocksgraph/_codec.py — in _encode_step:
-elif opcode == OP_VECTORNEAR:
+elif opcode == OP_NEAREST:
     prop_key, query, k = args         # query is a Vector instance
     _encode_string(prop_key, buf)
     buf.extend(struct.pack(">I", k))
@@ -424,20 +424,20 @@ elif opcode == OP_VECTORNEAR:
     buf.extend(query._data)           # LE f32 bytes
 
 # rocksgraph/_builder.py — in Traversal:
-def vectorNear(self, property: str, query: "Vector", k: int) -> "Traversal":
-    return self._add(OP_VECTORNEAR, (property, query, k))
+def nearest(self, property: str, query: "Vector", k: int) -> "Traversal":
+    return self._add(OP_NEAREST, (property, query, k))
 ```
 
 **Rust decoder** (in `decode_step`):
 
 ```rust
-OP_VECTORNEAR => {
+OP_NEAREST => {
     let prop_key = read_smolstr(bytes, offset)?;
     let k        = read_u32_be(bytes, offset)? as usize;
     let dim      = read_u32_be(bytes, offset)? as usize;
     let byte_len = dim * 4;
     if *offset + byte_len > bytes.len() {
-        return Err(StoreError::CodecError("truncated vectorNear query".into()));
+        return Err(StoreError::CodecError("truncated nearest query".into()));
     }
     let mut query = Vec::with_capacity(dim);
     for i in 0..dim {
@@ -446,13 +446,13 @@ OP_VECTORNEAR => {
         ));
     }
     *offset += byte_len;
-    Ok(LogicalStep::VectorNear(VectorNearStep { prop_key, k, query }))
+    Ok(LogicalStep::Nearest(NearestStep { prop_key, k, query }))
 }
 ```
 
 ---
 
-### 8c. `OP_VECTORSIMILARITY` (62)
+### 8c. `OP_SIMILARITY` (62)
 
 **Semantics**: map step `Vertex/Edge → f32`. Reads the named property from the
 incoming traverser, computes normalized similarity against `query_vec` using the
@@ -465,15 +465,15 @@ omitted). Higher score always means more similar, regardless of metric:
 | L2 / Euclidean | `1 / (1 + l2_distance)` |
 | InnerProduct | `sigmoid(inner_product)` |
 
-**Cache behavior**: when the ANN index scan for `vectorNear` has already computed
+**Cache behavior**: when the ANN index scan for `nearest` has already computed
 similarity scores, the engine caches `(prop_name, query_vec) → score` on each
-traverser. A subsequent `vectorSimilarity(prop, query_vec)` call with the same
+traverser. A subsequent `similarity(prop, query_vec)` call with the same
 `(prop_name, query_vec)` pair is a cache hit with zero re-computation cost.
 
 **Wire encoding**:
 
 ```
-[OP_VECTORSIMILARITY: u8 = 62]
+[OP_SIMILARITY: u8 = 62]
 [prop_key_len: u16 BE]
 [prop_key: prop_key_len bytes, UTF-8]
 [metric: u8]                  // 0x00=infer-from-index, 0x01=cosine, 0x02=l2, 0x03=ip
@@ -484,7 +484,7 @@ traverser. A subsequent `vectorSimilarity(prop, query_vec)` call with the same
 Metric tag `0x00` ("infer from index") is the default. When no declared
 `VectorIndexConfig` exists for `prop_key`, the engine raises
 `VectorError::MetricRequired { property }` — not `VectorError::NoVectorIndex`
-(that is reserved for `vectorNear` and `nearestBy`). Explicit metric tags
+(that is reserved for `nearest` and `neighbors`). Explicit metric tags
 `0x01`–`0x03` allow brute-force similarity on un-indexed `FloatVector` properties
 without raising any error.
 
@@ -500,7 +500,7 @@ METRIC_IP     = 0x03
 _METRIC_TAG = {"cosine": METRIC_COSINE, "l2": METRIC_L2, "ip": METRIC_IP}
 
 # rocksgraph/_codec.py — in _encode_step:
-elif opcode == OP_VECTORSIMILARITY:
+elif opcode == OP_SIMILARITY:
     prop_key, query, metric = args    # metric is str | None
     _encode_string(prop_key, buf)
     buf.append(_METRIC_TAG.get(metric, METRIC_INFER))
@@ -508,21 +508,21 @@ elif opcode == OP_VECTORSIMILARITY:
     buf.extend(query._data)
 
 # rocksgraph/_builder.py — in Traversal (and in AnonymousTraversal / __):
-def vectorSimilarity(self, prop_name: str, query_vec: "Vector",
+def similarity(self, prop_name: str, query_vec: "Vector",
                      metric: str | None = None) -> "Traversal":
-    return self._add(OP_VECTORSIMILARITY, (prop_name, query_vec, metric))
+    return self._add(OP_SIMILARITY, (prop_name, query_vec, metric))
 ```
 
 **Rust decoder**:
 
 ```rust
-OP_VECTORSIMILARITY => {
+OP_SIMILARITY => {
     let prop_key = read_smolstr(bytes, offset)?;
     let metric   = read_u8(bytes, offset)?;
     let dim      = read_u32_be(bytes, offset)? as usize;
     let byte_len = dim * 4;
     if *offset + byte_len > bytes.len() {
-        return Err(StoreError::CodecError("truncated vectorSimilarity query".into()));
+        return Err(StoreError::CodecError("truncated similarity query".into()));
     }
     let mut query = Vec::with_capacity(dim);
     for i in 0..dim {
@@ -531,13 +531,13 @@ OP_VECTORSIMILARITY => {
         ));
     }
     *offset += byte_len;
-    Ok(LogicalStep::VectorSimilarity(VectorSimilarityStep { prop_key, metric, query }))
+    Ok(LogicalStep::Similarity(SimilarityStep { prop_key, metric, query }))
 }
 ```
 
 ---
 
-### 8d. `OP_NEARESTBY` (63)
+### 8d. `OP_NEIGHBORS` (63)
 
 **Semantics**: flat-map step `Vertex/Edge → [Vertex/Edge × k]`. Reads the vector
 stored in `source_prop` of the incoming traverser, searches the ANN index on
@@ -547,7 +547,7 @@ Must always appear inside `local()`.
 **Wire encoding**:
 
 ```
-[OP_NEARESTBY: u8 = 63]
+[OP_NEIGHBORS: u8 = 63]
 [source_prop_len: u16 BE]
 [source_prop: source_prop_len bytes, UTF-8]
 [target_prop_len: u16 BE]
@@ -563,7 +563,7 @@ Must always appear inside `local()`.
 ENTITY_VERTEX = 0x00
 ENTITY_EDGE   = 0x01
 
-elif opcode == OP_NEARESTBY:
+elif opcode == OP_NEIGHBORS:
     source_prop, target_prop, k, entity_type = args
     _encode_string(source_prop, buf)
     _encode_string(target_prop, buf)
@@ -571,22 +571,22 @@ elif opcode == OP_NEARESTBY:
     buf.append(entity_type)
 
 # rocksgraph/_builder.py — in AnonymousTraversal / __:
-def nearestBy(self, source_prop: str, target_prop: str, k: int,
+def neighbors(self, source_prop: str, target_prop: str, k: int,
               entity_type: "VectorEntityType") -> "Traversal":
     from ._codec import ENTITY_VERTEX, ENTITY_EDGE
     tag = ENTITY_VERTEX if entity_type == VectorEntityType.VERTEX else ENTITY_EDGE
-    return self._add(OP_NEARESTBY, (source_prop, target_prop, k, tag))
+    return self._add(OP_NEIGHBORS, (source_prop, target_prop, k, tag))
 ```
 
 **Rust decoder**:
 
 ```rust
-OP_NEARESTBY => {
+OP_NEIGHBORS => {
     let source_prop = read_smolstr(bytes, offset)?;
     let target_prop = read_smolstr(bytes, offset)?;
     let k           = read_u32_be(bytes, offset)? as usize;
     let entity_type = read_u8(bytes, offset)?;
-    Ok(LogicalStep::NearestBy(NearestByStep { source_prop, target_prop, k, entity_type }))
+    Ok(LogicalStep::Neighbors(NeighborsStep { source_prop, target_prop, k, entity_type }))
 }
 ```
 
@@ -663,7 +663,7 @@ OP_WITHOVERFETCH => {
 
 ---
 
-### 8h. `OP_VECTORNEAR_MULTI` (67)
+### 8h. `OP_NEAREST_MULTI` (67)
 
 **Semantics**: ANN search with multiple query vectors, results merged via a fusion
 strategy. Deferred to v0.5+ — the opcode and wire format are defined now so that
@@ -673,7 +673,7 @@ Python/TS builders can be written today; the Rust decoder returns
 **Wire encoding**:
 
 ```
-[OP_VECTORNEAR_MULTI: u8 = 67]
+[OP_NEAREST_MULTI: u8 = 67]
 [prop_key_len: u16 BE]
 [prop_key: bytes]
 [k: u32 BE]
@@ -695,7 +695,7 @@ FUSION_MEAN = 0x02   # per-candidate mean score
 **Python builder**:
 
 ```python
-elif opcode == OP_VECTORNEAR_MULTI:
+elif opcode == OP_NEAREST_MULTI:
     prop_key, queries, k, fusion = args
     _encode_string(prop_key, buf)
     buf.extend(struct.pack(">I", k))
@@ -705,15 +705,15 @@ elif opcode == OP_VECTORNEAR_MULTI:
         buf.extend(struct.pack(">I", q.dim))
         buf.extend(q._data)
 
-# In Traversal — overloads vectorNear to accept a list:
-def vectorNear(self, property: str, query, k: int,
+# In Traversal — overloads nearest to accept a list:
+def nearest(self, property: str, query, k: int,
                fusion: str = "rrf") -> "Traversal":
     from ._codec import FUSION_RRF, FUSION_MAX, FUSION_MEAN
     if isinstance(query, list):
         fusion_tag = {"rrf": FUSION_RRF, "max": FUSION_MAX,
                       "mean": FUSION_MEAN}[fusion]
-        return self._add(OP_VECTORNEAR_MULTI, (property, query, k, fusion_tag))
-    return self._add(OP_VECTORNEAR, (property, query, k))
+        return self._add(OP_NEAREST_MULTI, (property, query, k, fusion_tag))
+    return self._add(OP_NEAREST, (property, query, k))
 ```
 
 ---
@@ -755,34 +755,34 @@ pub enum LogicalStep {
     // ... existing 61 variants unchanged ...
 
     // ── Vector search steps ──────────────────────────────────────────
-    VectorNear(VectorNearStep),
-    VectorSimilarity(VectorSimilarityStep),
-    NearestBy(NearestByStep),
-    VectorNearMulti(VectorNearMultiStep),  // v0.5+
+    Nearest(NearestStep),
+    Similarity(SimilarityStep),
+    Neighbors(NeighborsStep),
+    NearestMulti(NearestMultiStep),  // v0.5+
     WithEfSearch(usize),
     WithOverfetch(f32),
 }
 
-pub struct VectorNearStep {
+pub struct NearestStep {
     pub prop_key: SmolStr,
     pub k:        usize,
     pub query:    Vec<f32>,
 }
 
-pub struct VectorSimilarityStep {
+pub struct SimilarityStep {
     pub prop_key: SmolStr,
     pub metric:   u8,       // 0x00=infer, 0x01=cosine, 0x02=l2, 0x03=ip
     pub query:    Vec<f32>,
 }
 
-pub struct NearestByStep {
+pub struct NeighborsStep {
     pub source_prop: SmolStr,
     pub target_prop: SmolStr,
     pub k:           usize,
     pub entity_type: u8,    // 0x00=vertex, 0x01=edge
 }
 
-pub struct VectorNearMultiStep {              // v0.5+
+pub struct NearestMultiStep {              // v0.5+
     pub prop_key: SmolStr,
     pub k:        usize,
     pub queries:  Vec<Vec<f32>>,
@@ -817,13 +817,13 @@ pub enum FusionStrategy { Rrf, Max, Mean }   // v0.5+
 | Opcode | Constant | Ships | Payload summary |
 |:------:|----------|:-----:|-----------------|
 | 1–60 | `OP_BOTH` … `OP_LOCAL` | v0.1 | Unchanged — see existing `bytecode/mod.rs` |
-| **61** | **`OP_VECTORNEAR`** | **v0.1** | `[prop_key][k: u32 BE][dim: u32 BE][dim × f32 LE]` |
-| **62** | **`OP_VECTORSIMILARITY`** | **v0.1** | `[prop_key][metric: u8][dim: u32 BE][dim × f32 LE]` |
-| **63** | **`OP_NEARESTBY`** | **v0.2** | `[source_prop][target_prop][k: u32 BE][entity_type: u8]` |
+| **61** | **`OP_NEAREST`** | **v0.1** | `[prop_key][k: u32 BE][dim: u32 BE][dim × f32 LE]` |
+| **62** | **`OP_SIMILARITY`** | **v0.1** | `[prop_key][metric: u8][dim: u32 BE][dim × f32 LE]` |
+| **63** | **`OP_NEIGHBORS`** | **v0.2** | `[source_prop][target_prop][k: u32 BE][entity_type: u8]` |
 | **64** | **`OP_WITHEFSEARCH`** | **v0.2** | `[ef: u32 BE]` |
 | **65** | reserved (was `OP_WITHNPROBE`; IVF removed from roadmap) | — | — |
 | **66** | **`OP_WITHOVERFETCH`** | **v0.3** | `[factor: f32 BE]` |
-| **67** | **`OP_VECTORNEAR_MULTI`** | **v0.5+** | `[prop_key][k][fusion: u8][count: u16][dim][data]…` |
+| **67** | **`OP_NEAREST_MULTI`** | **v0.5+** | `[prop_key][k][fusion: u8][count: u16][dim][data]…` |
 
 ---
 
@@ -859,15 +859,15 @@ cd cc 4c 3e                  0.2 as LE f32
 9a 99 99 3e                  0.3 as LE f32
 ```
 
-### 11b. `vectorNear` query with score annotation
+### 11b. `nearest` query with score annotation
 
 Python call:
 ```python
 rs.g().V() \
-    .vectorNear("embedding", Vector([0.1, 0.2, 0.3]), k=5) \
+    .nearest("embedding", Vector([0.1, 0.2, 0.3]), k=5) \
     .project("vertex", "similarity") \
       .by(identity()) \
-      .by(__.vectorSimilarity("embedding", Vector([0.1, 0.2, 0.3]))) \
+      .by(__.similarity("embedding", Vector([0.1, 0.2, 0.3]))) \
     .to_list()
 ```
 
@@ -882,8 +882,8 @@ existing opcodes and are omitted here for brevity; only the vector steps shown):
 18                           opcode = OP_V
 00 00                        ids count = 0 (all vertices)
 
--- Step 2: OP_VECTORNEAR (61) --
-3d                           opcode = OP_VECTORNEAR (0x3d = 61)
+-- Step 2: OP_NEAREST (61) --
+3d                           opcode = OP_NEAREST (0x3d = 61)
 00 09 65 6d 62 65 64 64
       69 6e 67              prop_key = "embedding" (len=9)
 00 00 00 05                  k = 5
@@ -892,8 +892,8 @@ cd cc cc 3d                  0.1 as LE f32
 cd cc 4c 3e                  0.2 as LE f32
 9a 99 99 3e                  0.3 as LE f32
 
--- Step 3 (inside project by): OP_VECTORSIMILARITY (62) --
-3e                           opcode = OP_VECTORSIMILARITY (0x3e = 62)
+-- Step 3 (inside project by): OP_SIMILARITY (62) --
+3e                           opcode = OP_SIMILARITY (0x3e = 62)
 00 09 65 6d 62 65 64 64
       69 6e 67              prop_key = "embedding" (len=9)
 00                           metric = 0x00 (infer from index)
@@ -929,7 +929,7 @@ After `_post_process` (standard `project()` dict — no wrapper type needed):
 |------------|:----------:|-----------|
 | All structural integers (step count, string lengths, `k`, `dim`, `ef`, `nprobe`) | Big-endian | Consistent with existing protocol |
 | `f32` in predicate values (`PRIM_FLOAT32`, `OP_WITHOVERFETCH`) | Big-endian | Consistent with existing `PRIM_FLOAT32` encoding |
-| `f32` elements in vector data (`PRIM_FLOATVECTOR`, `OP_VECTORNEAR`, `OP_VECTORSIMILARITY`, `OP_VECTORNEAR_MULTI`) | **Little-endian** | Native format on x86/ARM; numpy `tobytes()` and JS `Float32Array.buffer` are LE; zero-copy encode/decode on common platforms |
+| `f32` elements in vector data (`PRIM_FLOATVECTOR`, `OP_NEAREST`, `OP_SIMILARITY`, `OP_NEAREST_MULTI`) | **Little-endian** | Native format on x86/ARM; numpy `tobytes()` and JS `Float32Array.buffer` are LE; zero-copy encode/decode on common platforms |
 
 The asymmetry (LE for bulk vector data, BE for everything else) is intentional and
 permanently fixed. The `dim` field immediately before the vector data is always
@@ -942,27 +942,27 @@ big-endian; only the f32 elements themselves are little-endian.
 ### Python (`rocksgraph/_codec.py`, `rocksgraph/_builder.py`, `rocksgraph/_types.py`)
 
 - [ ] Add `PRIM_FLOATVECTOR = 10` to `_codec.py`
-- [ ] Add `OP_VECTORNEAR = 61` … `OP_VECTORNEAR_MULTI = 67` to `_codec.py`
+- [ ] Add `OP_NEAREST = 61` … `OP_NEAREST_MULTI = 67` to `_codec.py`
 - [ ] Add `METRIC_INFER`, `METRIC_COSINE`, `METRIC_L2`, `METRIC_IP` constants to `_codec.py`
 - [ ] Add `ENTITY_VERTEX`, `ENTITY_EDGE` constants to `_codec.py`
 - [ ] Add `FUSION_RRF`, `FUSION_MAX`, `FUSION_MEAN` constants to `_codec.py`
 - [ ] Extend `_encode_primitive` to handle `Vector` → `PRIM_FLOATVECTOR`
 - [ ] Add `_encode_step` cases for all 7 new opcodes
 - [ ] Add `Vector` class to `_types.py` (numpy optional dependency)
-- [ ] Add `vectorNear`, `vectorSimilarity`, `nearestBy`, `withEfSearch`, `withOverfetch` methods to `Traversal` and `AnonymousTraversal` (`__`)
+- [ ] Add `nearest`, `similarity`, `neighbors`, `withEfSearch`, `withOverfetch` methods to `Traversal` and `AnonymousTraversal` (`__`)
 - [ ] Export `Vector` from `rocksgraph/__init__.py`
 - [ ] Add `Vector` to `rocksgraph/__init__.pyi` type stubs
 
 ### Rust (`rocksgraph/src/`)
 
 - [ ] Add `PRIM_FLOATVECTOR = 10` to `bytecode/mod.rs`
-- [ ] Add `OP_VECTORNEAR = 61` … `OP_VECTORNEAR_MULTI = 67` to `bytecode/mod.rs`
+- [ ] Add `OP_NEAREST = 61` … `OP_NEAREST_MULTI = 67` to `bytecode/mod.rs`
 - [ ] Add `read_u32_be` and `read_f32_be` helpers to `bytecode/mod.rs`
 - [ ] Extend `decode_primitive` with `PRIM_FLOATVECTOR` arm
 - [ ] Add 7 new `decode_step` match arms in `bytecode/mod.rs`
 - [ ] Add `GValue::FloatVector` to `types/gvalue.rs`
 - [ ] Add `Hash` impl arm for `GValue::FloatVector`
 - [ ] Add `Value::FloatVector` to `gremlin/value.rs`
-- [ ] Add `VectorNearStep`, `VectorSimilarityStep`, `NearestByStep`, `WithEfSearch`, `WithOverfetch` to `planner/logical_step/mod.rs`
+- [ ] Add `NearestStep`, `SimilarityStep`, `NeighborsStep`, `WithEfSearch`, `WithOverfetch` to `planner/logical_step/mod.rs`
 - [ ] Add `value_to_py` arm for `FloatVector` in `bindings/python/src/lib.rs`
 - [ ] Add codec round-trip tests to `bindings/python/tests/test_codec.py`

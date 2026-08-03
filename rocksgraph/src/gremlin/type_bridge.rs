@@ -65,6 +65,7 @@ pub(crate) fn value_to_primitive(v: Value) -> Option<Primitive> {
         Value::String(s) => Some(Primitive::String(SmolStr::from(s))),
         Value::Uuid(u) => Some(Primitive::Uuid(u)),
         Value::Bytes(b) => Some(Primitive::Bytes(b)),
+        Value::FloatVector(v) => Some(Primitive::FloatVector(v)),
         _ => None,
     }
 }

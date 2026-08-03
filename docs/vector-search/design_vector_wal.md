@@ -278,7 +278,7 @@ to the time until the next restart. See `design_hnsw_impl.md` §13 for the
 rationale against an inline retry queue.
 
 The write lock in step 4 is **per-operation**, released between each
-`insert`/`remove`. This means a concurrent `vectorNear` search can acquire the
+`insert`/`remove`. This means a concurrent `nearest` search can acquire the
 read lock between two pending ops and observe a partially-applied batch.
 This is acceptable — the partially-applied state is consistent (no half-written
 vector), and full visibility is guaranteed only after `commit()` returns.

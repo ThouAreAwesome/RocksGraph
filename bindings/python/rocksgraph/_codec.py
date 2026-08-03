@@ -63,8 +63,8 @@ OP_HASRANK = 57
 OP_CONSTANT = 58
 OP_IDENTITY = 59
 OP_LOCAL = 60
-OP_VECTORNEAR = 61
-OP_VECTORSIMILARITY = 62
+OP_NEAREST = 61
+OP_SIMILARITY = 62
 
 # Primitive types matching rocksgraph/src/types/gvalue.rs
 PRIM_NULL = 0
@@ -293,7 +293,7 @@ def _encode_step(opcode: int, args: Any, buf: bytearray):
         else:
             buf.append(0)
             
-    elif opcode == OP_VECTORNEAR:
+    elif opcode == OP_NEAREST:
         from ._types import Vector
         prop, query, k = args
         _encode_string(prop, buf)
@@ -307,7 +307,7 @@ def _encode_step(opcode: int, args: Any, buf: bytearray):
         buf.extend(struct.pack(">I", len(vec.values)))
         for f in vec.values:
             buf.extend(struct.pack("<f", f))
-    elif opcode == OP_VECTORSIMILARITY:
+    elif opcode == OP_SIMILARITY:
         from ._types import Vector
         prop, query = args
         _encode_string(prop, buf)

@@ -24,7 +24,8 @@ fn open() -> (RocksStorage, tempfile::TempDir) {
     {
         let loaded = store.load_schema(crate::schema::GraphOptions::default()).unwrap();
         let schema = std::sync::Arc::new(std::sync::RwLock::new(loaded));
-        let mut c = LogicalGraph::<RocksStorage>::new(store.begin(), schema.clone());
+        let mut c =
+            LogicalGraph::<RocksStorage>::new(store.begin(), schema.clone(), crate::vector::empty_vector_index_map());
         {
             let mut s = schema.write().unwrap();
             s.resolve_prop_key("age", crate::schema::DataType::Int32).unwrap();
@@ -57,7 +58,7 @@ fn open() -> (RocksStorage, tempfile::TempDir) {
 fn ctx(store: &RocksStorage) -> LogicalGraph<RocksStorage> {
     let loaded = store.load_schema(crate::schema::GraphOptions::default()).unwrap();
     let schema = std::sync::Arc::new(std::sync::RwLock::new(loaded));
-    LogicalGraph::new(store.begin(), schema)
+    LogicalGraph::new(store.begin(), schema, crate::vector::empty_vector_index_map())
 }
 
 fn cek(src: i64, label: LabelId, dst: i64) -> CanonicalEdgeKey {
@@ -1940,6 +1941,7 @@ fn test_snapshot_scan_isolation() {
     let mut snap = crate::graph::LogicalSnapshot::<RocksStorage>::new(
         store.snapshot(),
         std::sync::Arc::new(std::sync::RwLock::new(crate::schema::Schema::new())),
+        crate::vector::empty_vector_index_map(),
     );
 
     // Perform first paginated scan (limit 1)
@@ -2480,4 +2482,317 @@ fn g21_blob_vertex_not_dirtied_by_read() {
     // Vertex must be readable and correct after the no-op commit.
     let mut c = ctx(&store);
     assert_eq!(c.get_value(&CanonicalKey::Vertex(id), 10).unwrap(), Some(Primitive::Int32(7)));
+}
+
+#[test]
+fn rebuild_vector_index_empty_db() {
+    use crate::vector::{AnnAlgorithm, DistanceMetric, Quantization, VectorEntityType, VectorIndexConfig};
+    let dir = tempfile::tempdir().unwrap();
+    let g = crate::Graph::open(dir.path()).unwrap();
+    let mut sess = g.open_schema();
+    sess.add_vector_index(VectorIndexConfig {
+        property: "emb".into(),
+        entity_type: VectorEntityType::Vertex,
+        dimension: 4,
+        metric: DistanceMetric::Cosine,
+        algorithm: AnnAlgorithm::Hnsw(Default::default()),
+        quantization: Quantization::F32,
+    });
+    sess.commit().unwrap();
+    g.rebuild_vector_index(VectorEntityType::Vertex, "emb").unwrap();
+    g.close().unwrap();
+}
+
+#[test]
+fn rebuild_vector_index_roundtrip() {
+    use crate::{
+        schema::GraphOptions,
+        vector::{
+            AnnAlgorithm, DistanceMetric, HnswConfig, Quantization, VectorEntityType, VectorIndexConfig,
+            VectorRuntimeOptions,
+        },
+        Graph, RocksOptions, TraversalBuilder,
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+
+    // 1. Declare vector index + property key via SchemaSession.
+    {
+        let g = Graph::open_with_rocksdb_options(
+            path,
+            GraphOptions::default(),
+            RocksOptions::default(),
+            VectorRuntimeOptions::default(),
+        )
+        .unwrap();
+        let mut sess = g.open_schema();
+        sess.add_vector_index(VectorIndexConfig {
+            property: "emb".into(),
+            entity_type: VectorEntityType::Vertex,
+            dimension: 4,
+            metric: DistanceMetric::Cosine,
+            algorithm: AnnAlgorithm::Hnsw(HnswConfig::default()),
+            quantization: Quantization::F32,
+        });
+        sess.commit().unwrap();
+        g.close().unwrap();
+    }
+
+    // 2. Insert 3 vertices with FloatVector embeddings via public insert path.
+    {
+        let g = Graph::open_with_rocksdb_options(
+            path,
+            GraphOptions::default(),
+            RocksOptions::default(),
+            VectorRuntimeOptions::default(),
+        )
+        .unwrap();
+        let mut tx = g.begin();
+        tx.g()
+            .addV("test")
+            .property("id", 1i64)
+            .property("emb", crate::Value::FloatVector(vec![1.0, 0.0, 0.0, 0.0]))
+            .next()
+            .unwrap();
+        tx.g()
+            .addV("test")
+            .property("id", 2i64)
+            .property("emb", crate::Value::FloatVector(vec![0.0, 1.0, 0.0, 0.0]))
+            .next()
+            .unwrap();
+        tx.g()
+            .addV("test")
+            .property("id", 3i64)
+            .property("emb", crate::Value::FloatVector(vec![0.7, 0.7, 0.0, 0.0]))
+            .next()
+            .unwrap();
+        tx.commit().unwrap();
+        g.close().unwrap();
+    }
+
+    // 3. Re-open, rebuild, and verify search correctness.
+    {
+        let g = Graph::open_with_rocksdb_options(
+            path,
+            GraphOptions::default(),
+            RocksOptions::default(),
+            VectorRuntimeOptions::default(),
+        )
+        .unwrap();
+        g.rebuild_vector_index(VectorEntityType::Vertex, "emb").unwrap();
+
+        let mut snap = g.read();
+        let results: Vec<i64> = snap
+            .g()
+            .V([])
+            .nearest("emb", vec![1.0, 0.0, 0.0, 0.0], 3)
+            .id()
+            .to_list()
+            .unwrap()
+            .into_iter()
+            .filter_map(|v| match v {
+                crate::Value::Int64(id) => Some(id),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(results.len(), 3, "should return 3 results");
+        assert_eq!(results[0], 1, "exact match [1,0,0,0] should be first");
+        g.close().unwrap();
+    }
+}
+
+#[test]
+fn test_schema_vector_index_validation_and_drop() {
+    use crate::{
+        vector::{AnnAlgorithm, DistanceMetric, Quantization, VectorEntityType, VectorIndexConfig},
+        Graph, StoreError,
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+
+    // 1. Edge entity type is rejected
+    {
+        let g = Graph::open(path).unwrap();
+        let mut sess = g.open_schema();
+        sess.add_vector_index(VectorIndexConfig {
+            property: "edge_emb".into(),
+            entity_type: VectorEntityType::Edge,
+            dimension: 4,
+            metric: DistanceMetric::Cosine,
+            algorithm: AnnAlgorithm::Hnsw(Default::default()),
+            quantization: Quantization::F32,
+        });
+        let err = sess.commit().unwrap_err();
+        assert!(matches!(err, StoreError::UnsupportedOperation(_)));
+
+        let mut sess_drop = g.open_schema();
+        sess_drop.drop_vector_index(VectorEntityType::Edge, "edge_emb");
+        let err_drop = sess_drop.commit().unwrap_err();
+        assert!(matches!(err_drop, StoreError::UnsupportedOperation(_)));
+        g.close().unwrap();
+    }
+
+    // 2. Declare vector index and test idempotent re-declaration vs conflicting declaration
+    {
+        let g = Graph::open(path).unwrap();
+        let mut sess = g.open_schema();
+        sess.add_vector_index(VectorIndexConfig {
+            property: "emb".into(),
+            entity_type: VectorEntityType::Vertex,
+            dimension: 4,
+            metric: DistanceMetric::Cosine,
+            algorithm: AnnAlgorithm::Hnsw(Default::default()),
+            quantization: Quantization::F32,
+        });
+        sess.commit().unwrap();
+
+        // Idempotent re-declaration succeeds
+        let mut sess_same = g.open_schema();
+        sess_same.add_vector_index(VectorIndexConfig {
+            property: "emb".into(),
+            entity_type: VectorEntityType::Vertex,
+            dimension: 4,
+            metric: DistanceMetric::Cosine,
+            algorithm: AnnAlgorithm::Hnsw(Default::default()),
+            quantization: Quantization::F32,
+        });
+        sess_same.commit().unwrap();
+
+        // Conflicting declaration (dim=8 instead of 4) is rejected
+        let mut sess_conflict = g.open_schema();
+        sess_conflict.add_vector_index(VectorIndexConfig {
+            property: "emb".into(),
+            entity_type: VectorEntityType::Vertex,
+            dimension: 8,
+            metric: DistanceMetric::Cosine,
+            algorithm: AnnAlgorithm::Hnsw(Default::default()),
+            quantization: Quantization::F32,
+        });
+        let err = sess_conflict.commit().unwrap_err();
+        assert!(matches!(err, StoreError::SchemaConflict(_)));
+        g.close().unwrap();
+    }
+
+    // 3. Drop vector index and verify removal
+    {
+        let g = Graph::open(path).unwrap();
+        assert!(g.vector_indexes.read().unwrap().contains_key(&(VectorEntityType::Vertex, "emb".into())));
+
+        let mut sess = g.open_schema();
+        sess.drop_vector_index(VectorEntityType::Vertex, "emb");
+        // Dropping non-existent is safe / idempotent
+        sess.drop_vector_index(VectorEntityType::Vertex, "nonexistent");
+        sess.commit().unwrap();
+        g.close().unwrap();
+
+        // Reopening should no longer load the dropped index from CF_SCHEMA
+        let g_reopened = Graph::open(path).unwrap();
+        assert!(!g_reopened.vector_indexes.read().unwrap().contains_key(&(VectorEntityType::Vertex, "emb".into())));
+        g_reopened.close().unwrap();
+    }
+}
+
+#[test]
+fn test_nearest_upstream_filter_and_missing_props() {
+    use crate::{
+        vector::{AnnAlgorithm, DistanceMetric, Quantization, VectorEntityType, VectorIndexConfig},
+        Graph, TraversalBuilder, Value,
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+
+    // 1. Declare schema
+    {
+        let g = Graph::open(path).unwrap();
+        let mut sess = g.open_schema();
+        sess.add_vector_index(VectorIndexConfig {
+            property: "emb".into(),
+            entity_type: VectorEntityType::Vertex,
+            dimension: 4,
+            metric: DistanceMetric::Cosine,
+            algorithm: AnnAlgorithm::Hnsw(Default::default()),
+            quantization: Quantization::F32,
+        });
+        sess.commit().unwrap();
+        g.close().unwrap();
+    }
+
+    // 2. Insert mixed vertices (some match filter, some don't, some lack embedding)
+    {
+        let g = Graph::open(path).unwrap();
+        let mut tx = g.begin();
+        // v1: tech, emb [1, 0, 0, 0] (exact match to query)
+        tx.g()
+            .addV("node")
+            .property("id", 1i64)
+            .property("category", "tech")
+            .property("emb", Value::FloatVector(vec![1.0, 0.0, 0.0, 0.0]))
+            .next()
+            .unwrap();
+        // v2: finance, emb [0.99, 0.01, 0.0, 0.0] (high similarity, but different category)
+        tx.g()
+            .addV("node")
+            .property("id", 2i64)
+            .property("category", "finance")
+            .property("emb", Value::FloatVector(vec![0.99, 0.01, 0.0, 0.0]))
+            .next()
+            .unwrap();
+        // v3: tech, emb [0.0, 1.0, 0.0, 0.0] (orthogonal)
+        tx.g()
+            .addV("node")
+            .property("id", 3i64)
+            .property("category", "tech")
+            .property("emb", Value::FloatVector(vec![0.0, 1.0, 0.0, 0.0]))
+            .next()
+            .unwrap();
+        // v4: tech, no embedding property at all
+        tx.g().addV("node").property("id", 4i64).property("category", "tech").next().unwrap();
+        tx.commit().unwrap();
+
+        g.rebuild_vector_index(VectorEntityType::Vertex, "emb").unwrap();
+
+        let mut snap = g.read();
+
+        // Query with upstream filter .has("category", "tech")
+        let filtered_results: Vec<i64> = snap
+            .g()
+            .V([])
+            .has("category", "tech")
+            .nearest("emb", vec![1.0, 0.0, 0.0, 0.0], 5)
+            .id()
+            .to_list()
+            .unwrap()
+            .into_iter()
+            .filter_map(|v| match v {
+                Value::Int64(id) => Some(id),
+                _ => None,
+            })
+            .collect();
+
+        // v2 (finance) is filtered out, v4 (no emb) is ignored -> only v1 and v3 remain
+        assert_eq!(filtered_results, vec![1, 3]);
+
+        // Unfiltered query returns all 3 vector-bearing vertices in order: v1, v2, v3
+        let unfiltered_results: Vec<i64> = snap
+            .g()
+            .V([])
+            .nearest("emb", vec![1.0, 0.0, 0.0, 0.0], 5)
+            .id()
+            .to_list()
+            .unwrap()
+            .into_iter()
+            .filter_map(|v| match v {
+                Value::Int64(id) => Some(id),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(unfiltered_results, vec![1, 2, 3]);
+
+        g.close().unwrap();
+    }
 }

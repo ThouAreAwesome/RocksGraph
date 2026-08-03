@@ -62,7 +62,7 @@ All user-facing query inputs and outputs use types from `gremlin::value`, re-exp
 | `Property` | Key-value property element returned by `.properties()` |
 | `Map` | Ordered key-value map returned by `.group()` or `.group_count()` |
 | `Path` | Sequence of values with per-step labels returned by `.path()` |
-| `FloatVector` | Dense f32 vector stored as a vertex/edge property (`Value::FloatVector(Vec<f32>)`). Used with `.vector_near()` and `.vector_similarity()` traversal steps. |
+| `FloatVector` | Dense f32 vector stored as a vertex/edge property (`Value::FloatVector(Vec<f32>)`). Used with `.nearest()` and `.similarity()` traversal steps. |
 
 Predicate constructors are free functions: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `between`, `within`, `without`.
 
@@ -238,8 +238,9 @@ the traversal API. The `schema` module interns them to compact numeric IDs inter
 
 | Step | Method | Notes |
 |------|--------|-------|
-| `vectorNear(prop, query, k)` | `.vector_near("emb", vec![0.1, 0.9], 5)` | Returns the `k` nearest vertices/edges by cosine similarity on property `prop`, ordered by descending similarity. |
-| `vectorSimilarity(prop, query)` | `.vector_similarity("emb", vec![0.1, 0.9])` | Emits the cosine similarity score (`Float32`) between each traverser's vector property and `query`. |
+| `nearest(prop, query, k)` | `.nearest("emb", vec![0.1, 0.9], 5)` | Returns the `k` nearest vertices/edges by cosine similarity on property `prop`, ordered by descending similarity. |
+| `similarity(prop, query)` | `.similarity("emb", vec![0.1, 0.9])` | Emits the cosine similarity score (`Float32`) between each traverser's vector property and `query`. |
+| `neighbors(prop, k)` | `.neighbors("emb", 5)` | From the current vertex, traverses to its `k` nearest neighbors in vector space. |
 
 ### Terminal Operations
 
@@ -740,7 +741,7 @@ format changes will require a major version bump and a documented migration path
 
 ### Vector Search
 
-- [x] **v0.1** — `FloatVector` property type, brute-force exact KNN (`vectorNear`, `vectorSimilarity`), Python bindings
+- [x] **v0.1** — `FloatVector` property type, brute-force exact KNN (`nearest`, `similarity`), Python bindings
 - [ ] **v0.2** — HNSW index via `usearch`; `VectorIndex` trait; WAL + crash-consistent snapshots; per-index memory limits; RYOW isolation (see [design doc](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/vector-search/design_vector_v0.2_implementation_plan.md))
 - [ ] **v0.3** — Edge vector indexes; `change_vector_index_algorithm`; auto-rebuild on schema change
 
