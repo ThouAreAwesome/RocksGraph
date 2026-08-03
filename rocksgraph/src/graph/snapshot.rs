@@ -13,8 +13,10 @@ use crate::{
         prop_key::{ID_KEY_ID, LABEL_KEY_ID},
         Primitive, StoreError,
     },
+    vector::VectorIndexMap,
 };
 use std::collections::{hash_map::Entry, HashMap};
+use std::sync::{Arc, RwLock};
 
 use super::ScanConfig;
 
@@ -37,11 +39,16 @@ pub(crate) struct LogicalSnapshot<S: GraphStore> {
     /// the data cannot change for the lifetime of this `LogicalSnapshot`.
     vertex_degree: HashMap<VertexKey, (u32, u32, LabelId)>,
     pub(crate) scan_config: ScanConfig,
-    pub(crate) schema: std::sync::Arc<std::sync::RwLock<crate::schema::Schema>>,
+    pub(crate) schema: Arc<RwLock<crate::schema::Schema>>,
+    pub(crate) vector_indexes: Arc<RwLock<VectorIndexMap>>,
 }
 
 impl<S: GraphStore> LogicalSnapshot<S> {
-    pub fn new(snapshot: S::Snapshot, schema: std::sync::Arc<std::sync::RwLock<crate::schema::Schema>>) -> Self {
+    pub fn new(
+        snapshot: S::Snapshot,
+        schema: Arc<RwLock<crate::schema::Schema>>,
+        vector_indexes: Arc<RwLock<VectorIndexMap>>,
+    ) -> Self {
         Self {
             store: snapshot,
             vertices: HashMap::new(),
@@ -49,6 +56,7 @@ impl<S: GraphStore> LogicalSnapshot<S> {
             vertex_degree: HashMap::new(),
             scan_config: ScanConfig::default(),
             schema,
+            vector_indexes,
         }
     }
 

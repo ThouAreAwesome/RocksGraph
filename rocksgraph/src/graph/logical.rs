@@ -15,6 +15,7 @@ use crate::{
         prop_key::{ID_KEY_ID, LABEL_KEY_ID},
         Primitive, Rank, StoreError,
     },
+    vector::VectorIndexMap,
 };
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
@@ -38,11 +39,12 @@ pub(crate) struct LogicalGraph<S: GraphStore> {
     pub(crate) scan_config: ScanConfig,
     pub(crate) schema: Arc<RwLock<Schema>>,
     pub(crate) staged_schema: StagedSchema,
+    pub(crate) vector_indexes: Arc<RwLock<VectorIndexMap>>,
 }
 
 impl<S: GraphStore> LogicalGraph<S> {
     /// Create a new logical graph context wrapping the given transaction.
-    pub fn new(store: S::Txn, schema: Arc<RwLock<Schema>>) -> Self {
+    pub fn new(store: S::Txn, schema: Arc<RwLock<Schema>>, vector_indexes: Arc<RwLock<VectorIndexMap>>) -> Self {
         // Creates a new `LogicalGraph` instance, initializing its in-memory caches
         // and associating it with a store transaction.
         Self {
@@ -55,6 +57,7 @@ impl<S: GraphStore> LogicalGraph<S> {
             scan_config: ScanConfig::default(),
             schema,
             staged_schema: StagedSchema::default(),
+            vector_indexes,
         }
     }
 

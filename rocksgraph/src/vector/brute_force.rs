@@ -39,23 +39,14 @@ pub fn cosine_sim(a: &[f32], b: &[f32]) -> f32 {
 /// and performs exact linear-scan KNN searches.
 ///
 /// In v0.1 this is not directly wired into the traversal engine — the
-/// [`VectorNearStep`](crate::engine::volcano::steps::vector::VectorNearStep)
+/// [`NearestStep`](crate::engine::volcano::steps::vector::NearestStep)
 /// does inline brute-force. v0.2 will route searches through the
 /// [`VectorIndex`](super::traits::VectorIndex) trait, with this struct
 /// serving as the fallback / reference implementation.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct BruteForceIndex {
     entries: Vec<(EntityKey, Vec<f32>)>,
     last_replayed_timestamp: u64,
-}
-
-impl Default for BruteForceIndex {
-    fn default() -> Self {
-        Self {
-            entries: Vec::new(),
-            last_replayed_timestamp: 0,
-        }
-    }
 }
 
 impl BruteForceIndex {
@@ -106,8 +97,8 @@ impl BruteForceIndex {
 
 // ── VectorIndex trait impl ──────────────────────────────────────────────────
 
-use super::traits::VectorIndex;
 use super::error::VectorError;
+use super::traits::VectorIndex;
 
 impl VectorIndex for BruteForceIndex {
     fn insert(&mut self, key: &EntityKey, vector: &[f32]) -> Result<(), VectorError> {
@@ -128,11 +119,8 @@ impl VectorIndex for BruteForceIndex {
         if k == 0 || self.entries.is_empty() {
             return Ok(Vec::new());
         }
-        let mut scored: Vec<(EntityKey, f32)> = self
-            .entries
-            .iter()
-            .map(|(key, vec)| (key.clone(), cosine_sim(vec, query)))
-            .collect();
+        let mut scored: Vec<(EntityKey, f32)> =
+            self.entries.iter().map(|(key, vec)| (key.clone(), cosine_sim(vec, query))).collect();
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         scored.truncate(k);
         Ok(scored)

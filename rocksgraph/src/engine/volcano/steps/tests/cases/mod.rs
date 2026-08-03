@@ -53,7 +53,11 @@ pub(super) fn open_rocks_store() -> (RocksStorage, tempfile::TempDir) {
 /// Creates a new `LogicalGraph` instance from the given `RocksStorage`.
 pub(super) fn create_logical_graph(store: &RocksStorage) -> LogicalGraph<RocksStorage> {
     let schema = store.load_schema(crate::schema::GraphOptions::default()).unwrap();
-    LogicalGraph::new(store.begin(), std::sync::Arc::new(std::sync::RwLock::new(schema)))
+    LogicalGraph::new(
+        store.begin(),
+        std::sync::Arc::new(std::sync::RwLock::new(schema)),
+        crate::vector::empty_vector_index_map(),
+    )
 }
 
 pub(super) fn get_adjacent_edges_test(
@@ -1641,7 +1645,8 @@ fn test_get_e_step_exact_rank_point_lookup() {
         s.register_edge_label("dummy3").unwrap(); // 3
         s.register_edge_label("knows").unwrap(); // 4 (KNOWS_LABEL_ID)
     }
-    let mut graph: LogicalGraph<RocksStorage> = LogicalGraph::new(store.begin(), schema);
+    let mut graph: LogicalGraph<RocksStorage> =
+        LogicalGraph::new(store.begin(), schema, crate::vector::empty_vector_index_map());
     graph.staged_schema.staged_vertex_labels.insert(1);
     graph.staged_schema.staged_vertex_labels.insert(2);
     graph.staged_schema.staged_edge_labels.insert(1);
@@ -1731,7 +1736,8 @@ fn test_multi_edge_label_without_rank_filter_falls_back_to_scan() {
         s.register_edge_label("dummy3").unwrap(); // 3
         s.register_edge_label("knows").unwrap(); // 4 (KNOWS_LABEL_ID)
     }
-    let mut graph: LogicalGraph<RocksStorage> = LogicalGraph::new(store.begin(), schema);
+    let mut graph: LogicalGraph<RocksStorage> =
+        LogicalGraph::new(store.begin(), schema, crate::vector::empty_vector_index_map());
     graph.staged_schema.staged_vertex_labels.insert(1);
     graph.staged_schema.staged_vertex_labels.insert(2);
     graph.staged_schema.staged_edge_labels.insert(1);

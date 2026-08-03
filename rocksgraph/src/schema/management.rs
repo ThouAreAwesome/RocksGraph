@@ -7,7 +7,31 @@ use crate::{
     schema::definition::{DataType, EdgeMode, Schema, SchemaMode},
     store::RocksStorage,
     types::StoreError,
+    vector::{VectorEntityType, VectorIndexConfig},
 };
+
+fn encode_vector_index_config(config: &VectorIndexConfig) -> Vec<u8> {
+    let mut val = Vec::with_capacity(1 + 4 + 1 + 1 + 4 + 4 + 4 + 1);
+    val.push(config.entity_type as u8);
+    val.extend_from_slice(&(config.dimension as u32).to_le_bytes());
+    val.push(config.metric as u8);
+    match &config.algorithm {
+        crate::vector::AnnAlgorithm::BruteForce => {
+            val.push(0u8);
+            val.extend_from_slice(&0u32.to_le_bytes());
+            val.extend_from_slice(&0u32.to_le_bytes());
+            val.extend_from_slice(&0u32.to_le_bytes());
+        }
+        crate::vector::AnnAlgorithm::Hnsw(h) => {
+            val.push(1u8);
+            val.extend_from_slice(&(h.m as u32).to_le_bytes());
+            val.extend_from_slice(&(h.ef_construction as u32).to_le_bytes());
+            val.extend_from_slice(&(h.ef_search as u32).to_le_bytes());
+        }
+    }
+    val.push(config.quantization as u8);
+    val
+}
 
 /// High-level management interface for defining schema labels and properties.
 ///
@@ -83,6 +107,8 @@ pub struct SchemaSession {
     pending_prop_keys: Vec<(String, DataType)>,
     pending_edge_mode: Option<EdgeMode>,
     pending_schema_mode: Option<SchemaMode>,
+    pending_vector_indexes: Vec<VectorIndexConfig>,
+    pending_drop_vector_indexes: Vec<(VectorEntityType, String)>,
 }
 
 impl SchemaSession {
@@ -98,6 +124,8 @@ impl SchemaSession {
             pending_prop_keys: Vec::new(),
             pending_edge_mode: None,
             pending_schema_mode: None,
+            pending_vector_indexes: Vec::new(),
+            pending_drop_vector_indexes: Vec::new(),
         }
     }
 
@@ -132,6 +160,18 @@ impl SchemaSession {
     /// Stage a graph-wide schema-mode change.
     pub fn set_schema_mode(&mut self, mode: SchemaMode) -> &mut Self {
         self.pending_schema_mode = Some(mode);
+        self
+    }
+
+    /// Stage a vector index declaration for persistent registration.
+    pub fn add_vector_index(&mut self, config: VectorIndexConfig) -> &mut Self {
+        self.pending_vector_indexes.push(config);
+        self
+    }
+
+    /// Stage a vector index removal.
+    pub fn drop_vector_index(&mut self, entity_type: VectorEntityType, property: &str) -> &mut Self {
+        self.pending_drop_vector_indexes.push((entity_type, property.to_string()));
         self
     }
 
@@ -214,6 +254,72 @@ impl SchemaSession {
             staged.persisted_prop_keys.insert(id);
         }
 
+        // 4. Process vector indexes
+        const SCHEMA_KIND_VECTOR_INDEX: u8 = 0x10;
+
+        for config in &self.pending_vector_indexes {
+            if config.entity_type == VectorEntityType::Edge {
+                return Err(StoreError::UnsupportedOperation(
+                    "edge vector indexes are not yet supported (v0.3)".into(),
+                ));
+            }
+
+            // Auto-register the property key as FloatVector if not already declared.
+            // The design requires add_property_key to be optional — add_vector_index
+            // implicitly registers the type so prop_key_id lookups succeed later.
+            if staged.prop_key_id(&config.property).is_none() {
+                changed = true;
+                let id = staged.declare_prop_key(&config.property, DataType::FloatVector)?;
+                let pk_key = encode_schema_key(SCHEMA_KIND_PROP_KEY, &config.property);
+                let pk_val = encode_schema_prop_value(id, DataType::FloatVector.to_u8());
+                batch.put_cf(&cf, pk_key, pk_val);
+                staged.persisted_prop_keys.insert(id);
+            }
+            // NOTE: if the key already exists with a non-FloatVector type, we
+            // silently proceed.  The actual type‑mismatch will surface at
+            // write time in the prop‑codec path.  Full type‑tracking per
+            // prop‑key is deferred to a future schema revision.
+
+            // Key: [0x10][entity_type_byte][prop_name_bytes] — includes entity_type
+            // so a vertex "emb" and an edge "emb" index don't overwrite each other.
+            let mut key = Vec::with_capacity(2 + config.property.len());
+            key.push(SCHEMA_KIND_VECTOR_INDEX);
+            key.push(config.entity_type as u8);
+            key.extend_from_slice(config.property.as_bytes());
+
+            let new_val = encode_vector_index_config(config);
+            match self.store.db.get_cf(&cf, &key).map_err(StoreError::RocksDb)? {
+                Some(existing) => {
+                    if existing != new_val {
+                        return Err(StoreError::SchemaConflict(format!(
+                            "vector index '{}' already declared with different parameters",
+                            config.property
+                        )));
+                    }
+                    // idempotent re-declaration — skip write
+                }
+                None => {
+                    changed = true;
+                    batch.put_cf(&cf, key, new_val);
+                }
+            }
+        }
+
+        for (entity_type, property) in &self.pending_drop_vector_indexes {
+            if *entity_type == VectorEntityType::Edge {
+                return Err(StoreError::UnsupportedOperation(
+                    "edge vector indexes are not yet supported (v0.3)".into(),
+                ));
+            }
+            // Key: [0x10][entity_type_byte][prop_name_bytes]
+            let mut key = Vec::with_capacity(2 + property.len());
+            key.push(SCHEMA_KIND_VECTOR_INDEX);
+            key.push(*entity_type as u8);
+            key.extend_from_slice(property.as_bytes());
+            batch.delete_cf(&cf, key);
+            changed = true;
+        }
+
         // A batch that only re-declared already-existing names with identical configs (or
         // staged nothing at all) is a no-op: idempotent re-runs of a schema-setup script
         // must not bump `version` or touch RocksDB.
@@ -221,7 +327,7 @@ impl SchemaSession {
             return Ok(());
         }
 
-        // 4. Increment and write meta
+        // 5. Increment and write meta
         staged.version += 1;
         let meta_bytes = encode_schema_meta(staged.version, staged.edge_mode.to_u8(), staged.mode.to_u8());
         batch.put_cf(&cf, SCHEMA_META_KEY, meta_bytes);

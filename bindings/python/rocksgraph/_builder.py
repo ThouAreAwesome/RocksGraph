@@ -334,15 +334,13 @@ class Traversal:
     def values(self, *keys): return self._add(OP_VALUES, keys)
     def properties(self, *keys): return self._add(OP_PROPERTIES, keys)
 
-    def vectorNear(self, property, query, k):
-        """Find the k most similar elements to the query vector (brute-force exact KNN)."""
-        from ._codec import OP_VECTORNEAR
-        return self._add(OP_VECTORNEAR, (property, query, k))
+    def nearest(self, property, query, k):
+        """Find the k most similar elements to the query vector."""
+        return self._add(OP_NEAREST, (property, query, k))
 
-    def vectorSimilarity(self, property, query):
+    def similarity(self, property, query):
         """Compute cosine similarity between each element's vector and the query."""
-        from ._codec import OP_VECTORSIMILARITY
-        return self._add(OP_VECTORSIMILARITY, (property, query))
+        return self._add(OP_SIMILARITY, (property, query))
 
     def id(self): return self._add(OP_ID, None)
     def label(self): return self._add(OP_LABEL, None)
@@ -541,6 +539,10 @@ class __:
     def to(v): return Traversal(None).to(v)
     @staticmethod
     def property(key: str, value): return Traversal(None).property(key, value)
+    @staticmethod
+    def nearest(property, query, k): return Traversal(None).nearest(property, query, k)
+    @staticmethod
+    def similarity(property, query): return Traversal(None).similarity(property, query)
 
 class P:
     def __init__(self, tag, value):

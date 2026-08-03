@@ -128,6 +128,12 @@ pub trait GraphCtx {
     /// (e.g. to check a label's single-/multi-edge mode before choosing `GetEStep`), never
     /// from inside a volcano step's `produce()`.
     fn schema(&self) -> Arc<RwLock<Schema>>;
+
+    /// Registered vector indexes, if any.
+    /// Returns `None` when no indexes are declared — steps fall back to brute-force.
+    fn vector_indexes(&self) -> Option<&Arc<RwLock<crate::vector::VectorIndexMap>>> {
+        None
+    }
 }
 
 /// Zero-cost context used in unit tests where no real graph is needed.
@@ -298,6 +304,9 @@ impl<S: GraphStore> GraphCtx for LogicalGraph<S> {
     fn schema(&self) -> Arc<RwLock<Schema>> {
         Arc::clone(&self.schema)
     }
+    fn vector_indexes(&self) -> Option<&Arc<RwLock<crate::vector::VectorIndexMap>>> {
+        Some(&self.vector_indexes)
+    }
 }
 
 impl<S: GraphStore> GraphCtx for LogicalSnapshot<S> {
@@ -382,6 +391,9 @@ impl<S: GraphStore> GraphCtx for LogicalSnapshot<S> {
     }
     fn schema(&self) -> Arc<RwLock<Schema>> {
         Arc::clone(&self.schema)
+    }
+    fn vector_indexes(&self) -> Option<&Arc<RwLock<crate::vector::VectorIndexMap>>> {
+        Some(&self.vector_indexes)
     }
 }
 

@@ -59,11 +59,11 @@ use crate::{
             AddEStep, AddVStep, AndStep, AsStep, BothEStep, BothStep, ChooseStep, CoalesceStep, ConstantStep,
             CountStep, CyclicPathStep, DedupStep, DropStep, EStep, EmitSpec, FoldStep, FromStep, GroupCountStep,
             GroupStep, HasIdStep, HasLabelStep, HasRankStep, IdStep, IdentityStep, InEStep, InStep, InVStep, LabelStep,
-            LimitStep, LocalStep, LogicalPlan, LogicalStep, MaxStep, MeanStep, MinStep, NotStep, OrStep, Order,
-            OrderKey, OrderKeySpec, OrderStep, OtherVStep, OutEStep, OutStep, OutVStep, PathStep, PropertiesStep,
-            PropertyStep, RangeStep, RankStep, RepeatStep, ScalarFilterStep, SelectStep, SimplePathStep, SkipStep,
-            SumStep, TailStep, ToStep, UnfoldStep, UnionStep, ValuesStep, VectorNearLogicalStep,
-            VectorSimilarityLogicalStep, WhereStep,
+            LimitStep, LocalStep, LogicalPlan, LogicalStep, MaxStep, MeanStep, MinStep, NearestLogicalStep, NotStep,
+            OrStep, Order, OrderKey, OrderKeySpec, OrderStep, OtherVStep, OutEStep, OutStep, OutVStep, PathStep,
+            PropertiesStep, PropertyStep, RangeStep, RankStep, RepeatStep, ScalarFilterStep, SelectStep,
+            SimilarityLogicalStep, SimplePathStep, SkipStep, SumStep, TailStep, ToStep, UnfoldStep, UnionStep,
+            ValuesStep, WhereStep,
         },
     },
     types::{prop_key::LABEL, StoreError},
@@ -499,8 +499,8 @@ pub trait TraversalBuilder: PlanAppender {
         self
     }
 
-    fn vector_near(mut self, prop_key: &str, query: Vec<f32>, k: usize) -> Self {
-        self.push_step(LogicalStep::VectorNear(VectorNearLogicalStep {
+    fn nearest(mut self, prop_key: &str, query: Vec<f32>, k: usize) -> Self {
+        self.push_step(LogicalStep::Nearest(NearestLogicalStep {
             prop_key: prop_key.to_string(),
             query_vec: query,
             k,
@@ -508,8 +508,8 @@ pub trait TraversalBuilder: PlanAppender {
         self
     }
 
-    fn vector_similarity(mut self, prop_key: &str, query: Vec<f32>) -> Self {
-        self.push_step(LogicalStep::VectorSimilarity(VectorSimilarityLogicalStep {
+    fn similarity(mut self, prop_key: &str, query: Vec<f32>) -> Self {
+        self.push_step(LogicalStep::Similarity(SimilarityLogicalStep {
             prop_key: prop_key.to_string(),
             query_vec: query,
         }));

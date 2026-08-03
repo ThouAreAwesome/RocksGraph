@@ -312,7 +312,7 @@ exact `f32` vectors durably in the `props` CF — the database has access to the
 ground truth data. It must **never** leak the quantization penalty to the user.
 Re-ranking is strictly internal.
 
-The execution pipeline for a `vectorNear` step on a quantized index:
+The execution pipeline for a `nearest` step on a quantized index:
 
 1. **Overfetch (memory)**: query the quantized HNSW graph for `k × overfetch_factor`
    candidates using the fast hardware distance metric (e.g., `popcnt` for RaBitQ).
@@ -336,8 +336,8 @@ eliminated at query time.
 
 | Feature            |                             f16                             |                   RaBitQ                   |
 | ------------------ | :---------------------------------------------------------: | :----------------------------------------: |
-| `vectorSimilarity` |          Works as-is (usearch returns f32 scores)           | Works as-is (popcnt → exact re-rank score) |
-| `nearestBy`        | Source vector stored f32 in graph, query encoded on the fly |                    Same                    |
+| `similarity` |          Works as-is (usearch returns f32 scores)           | Works as-is (popcnt → exact re-rank score) |
+| `neighbors`        | Source vector stored f32 in graph, query encoded on the fly |                    Same                    |
 | Filtered ANN       |                       No interaction                        |               No interaction               |
 | `withEfSearch`     |                       No interaction                        |               No interaction               |
 | Bulk load          |           `VectorIndex.insert()` handles encoding           | Goes into fallback index; count check triggers training when threshold hit |

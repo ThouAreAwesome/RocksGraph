@@ -444,10 +444,11 @@ Filters do not change the traverser type — they pass through whatever they rec
 
 | Step | Builder | Returns |
 |------|---------|---------|
-| `vectorNear(prop, query, k)` | `.vectorNear("emb", Vector([0.1, 0.9]), 5)` | Vertex/Edge — top-k by cosine similarity, descending |
-| `vectorSimilarity(prop, query)` | `.vectorSimilarity("emb", Vector([0.1, 0.9]))` | `float` — cosine similarity score |
+| `nearest(prop, query, k)` | `.nearest("emb", Vector([0.1, 0.9]), 5)` | Vertex/Edge — top-k by cosine similarity, descending |
+| `similarity(prop, query)` | `.similarity("emb", Vector([0.1, 0.9]))` | `float` — cosine similarity score |
+| `neighbors(prop, k)` | `.neighbors("emb", 5)` | Vertex — k nearest neighbors in vector space |
 
-`Vector([f32, ...])` is the query type. A plain `list[float]` is auto-coerced. Results from `vectorNear` are ordered by descending similarity.
+`Vector([f32, ...])` is the query type. A plain `list[float]` is auto-coerced. Results from `nearest` are ordered by descending similarity.
 
 ```python
 from rocksgraph import Graph, Vector
@@ -461,9 +462,9 @@ with graph.tx() as tx:
 
 snap = graph.read()
 # top-2 nearest to [1.0, 0.0]
-results = snap.traversal().V().hasLabel("doc").vectorNear("emb", Vector([1.0, 0.0]), 2).to_list()
+results = snap.traversal().V().hasLabel("doc").nearest("emb", Vector([1.0, 0.0]), 2).to_list()
 # cosine similarity of vertex 1's embedding
-score = snap.traversal().V(1).vectorSimilarity("emb", Vector([1.0, 0.0])).next()  # 1.0
+score = snap.traversal().V(1).similarity("emb", Vector([1.0, 0.0])).next()  # 1.0
 ```
 
 ### Extraction

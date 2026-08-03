@@ -177,7 +177,7 @@ Key constraints:
 | Category | Entry point | Examples | Why here |
 | -------- | ----------- | -------- | -------- |
 | **DDL** — changes what exists in the schema | `open_schema()` | `add_vector_index`, `drop_vector_index`, `change_vector_index_algorithm`, `add_vector_index_async`, `add_property_key`, `add_vertex_label` | Atomic CAS commit; must be visible to all sessions before taking effect |
-| **Data reads** | `read()` / `begin()` | `.V().out().values()`, `.vectorNear()`, `.vectorSimilarity()` | Gremlin traversal; consistent snapshot semantics |
+| **Data reads** | `read()` / `begin()` | `.V().out().values()`, `.nearest()`, `.similarity()` | Gremlin traversal; consistent snapshot semantics |
 | **Data writes** | `begin()` | `.addV()`, `.addE()`, `.property()` | OCC transaction; WAL-backed |
 | **Operational / maintenance** | `Graph` directly | `rebuild_vector_index`, `export_vector_index`, `import_vector_index`, `vector_index_stats` | Work on existing indexes; don't change schema; not traversal operations |
 | **Initial bulk load** | `open_bulk_loader()` | `load_vertices`, `load_edges`, `commit()` | Bypasses WAL and OCC entirely; overwrites existing data |
@@ -317,7 +317,7 @@ Volcano steps
   ├── Graph steps (V, E, out, in, has…)
   │     → LogicalSnapshot / LogicalGraph → CF point lookups / range scans
   │
-  └── Vector steps (vectorNear, vectorSimilarity, nearestBy)
+  └── Vector steps (nearest, similarity, neighbors)
         → VectorIndex::search() (under RwLock read lock)
         → merge results with traverser pipeline
         → RYOW: pending_vector_ops merged in for uncommitted TxSession
@@ -530,7 +530,7 @@ Phase 2 — cleanup (fast, no CAS):
 
 #### Query behaviour during transitions
 
-| State | vectorNear / vectorSimilarity | Writes to indexed property |
+| State | nearest / similarity | Writes to indexed property |
 | ----- | ----------------------------- | -------------------------- |
 | `Building` | Index treated as absent — no results returned from HNSW; planner may fall back to brute force | WAL entries written normally; applied to index once it reaches `Ready` |
 | `Rebuilding` | Served from the **old** in-memory index until phase 2 completes; then atomically swapped | WAL entries written to old index; WAL catch-up applied to new index before swap |
@@ -701,5 +701,5 @@ and adds camelCase per JS convention.
 | **Async management operations** | `add_vector_index_async` (v0.3) returns a progress handle. How is this handle surfaced in Python/TS? Polling vs async/await vs callback. |
 | **Operational methods placement** | `rebuild_vector_index`, `export_vector_index`, `import_vector_index` are on `Graph` directly. As the surface grows, consider whether a `graph.admin()` session makes sense for grouping. See §3a for the split-vs-merge comparison. |
 | **Auto-rebuild on open for `Building` / `Rebuilding` state** | When `Graph::open` finds an index in `Building` or `Rebuilding` state (crash during phase 2), should it auto-trigger `rebuild_vector_index` from CF_VERTICES before accepting queries, or leave the index in a `NotReady` state and require explicit user action? Trade-off: auto-rebuild is safer but may block startup for minutes on a large index; `NotReady` is faster to open but forces users to know they must call `rebuild_vector_index`. Same question applies to `BulkLoader` `"post-ingest"` crash (see `docs/api/design_bulk_loader.md` §7). |
-| **Query behaviour during `Building` state** | §5e currently specifies that `vectorNear` returns no HNSW results when an index is `Building`. Whether the planner silently falls back to brute force or surfaces an explicit `IndexNotReady` error to the caller is a UX decision that affects application error handling. |
+| **Query behaviour during `Building` state** | §5e currently specifies that `nearest` returns no HNSW results when an index is `Building`. Whether the planner silently falls back to brute force or surfaces an explicit `IndexNotReady` error to the caller is a UX decision that affects application error handling. |
 | **BulkLoader crash recovery blocking** | After a `"post-ingest"` crash, if `Graph::open()` auto-triggers `rebuild_vector_index` for all schema-declared indexes, does it block queries until the rebuild completes? Deferred to implementation; see `docs/api/design_bulk_loader.md` §7. |

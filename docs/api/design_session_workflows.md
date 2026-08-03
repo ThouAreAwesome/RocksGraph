@@ -78,7 +78,7 @@ Only vector indexes require an explicit declaration before the first vector writ
          HNSW: vector inserted in-memory
          (repeat for each document)
 
-[4]  g.read().traversal().vectorNear("embedding", q, k).to_list()
+[4]  g.read().traversal().nearest("embedding", q, k).to_list()
      ──▶ HNSW in-memory search (brute-force v0.1, ANN v0.2)
 ```
 
@@ -138,7 +138,7 @@ Labels, property keys, and vector indexes are all declared in the same `SchemaSe
      ──▶ CF_VERTICES + CF_VECTOR_WAL written; HNSW updated
          addV("unknown") or .property("new_key", ...) → StoreError::SchemaViolation
 
-[4]  g.read().traversal().vectorNear("embedding", q, k).to_list()
+[4]  g.read().traversal().nearest("embedding", q, k).to_list()
      ──▶ HNSW in-memory search
 ```
 
@@ -195,7 +195,7 @@ after ingestion completes.
      ──▶ CF_SCHEMA: vector index persisted (state=Ready)
          HNSW: all pre-existing FloatVector values indexed
 
-[4]  g.read().traversal().vectorNear("embedding", q, k).to_list()
+[4]  g.read().traversal().nearest("embedding", q, k).to_list()
      ──▶ HNSW in-memory search
 ```
 
@@ -263,7 +263,7 @@ no separate schema step after load.
          HNSW: all vectors indexed in one pass
          HNSW snapshot: written to disk
 
-[4]  g.read().traversal().vectorNear("embedding", q, k).to_list()
+[4]  g.read().traversal().nearest("embedding", q, k).to_list()
      ──▶ HNSW in-memory search (immediately, no rebuild needed)
 ```
 
@@ -317,7 +317,7 @@ values already exist in CF_VERTICES. You want to enable ANN search retroactively
        └── After scan: WAL catch-up replays those entries into the new HNSW
            No writes lost. No writes blocked.
 
-[3]  g.read().traversal().vectorNear("embedding", q, k).to_list()
+[3]  g.read().traversal().nearest("embedding", q, k).to_list()
      ──▶ HNSW in-memory search (all pre-existing + new data included)
 ```
 
@@ -375,8 +375,8 @@ canary-test the new model before discarding the old one.
          (v1 "embedding" index continues serving queries in parallel)
 
      # Optional canary test before dropping v1:
-     old = g.read().traversal().V([sample_id]).vectorNear("embedding",    q, 5).to_list()
-     new = g.read().traversal().V([sample_id]).vectorNear("embedding_v2", q, 5).to_list()
+     old = g.read().traversal().V([sample_id]).nearest("embedding",    q, 5).to_list()
+     new = g.read().traversal().V([sample_id]).nearest("embedding_v2", q, 5).to_list()
      # V() takes a list of IDs; V([id]) is the canonical single-ID form
      # compare quality, then proceed
 
@@ -389,7 +389,7 @@ canary-test the new model before discarding the old one.
          HNSW v1: freed from memory
          "embedding" blobs remain in CF_VERTICES (still readable via .values())
 
-[4]  g.read().traversal().vectorNear("embedding_v2", q, k).to_list()
+[4]  g.read().traversal().nearest("embedding_v2", q, k).to_list()
      ──▶ HNSW v2 in-memory search only
 ```
 

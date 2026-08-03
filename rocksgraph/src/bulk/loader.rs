@@ -50,6 +50,7 @@ use crate::{
         },
         prop_codec, StoreError,
     },
+    vector::VectorRuntimeOptions,
 };
 
 use super::sort::ExternalSorter;
@@ -758,7 +759,12 @@ impl SstBulkLoader {
         graph_opts: GraphOptions,
         rocks_opts: &crate::RocksOptions,
     ) -> Result<BulkLoadStats, StoreError> {
-        let graph = crate::Graph::open_with_rocksdb_options(&self.db_path, graph_opts, rocks_opts.clone())?;
+        let graph = crate::Graph::open_with_rocksdb_options(
+            &self.db_path,
+            graph_opts,
+            rocks_opts.clone(),
+            VectorRuntimeOptions::default(),
+        )?;
         if graph_opts.mode == SchemaMode::Strict {
             let mut session = graph.open_schema();
             for vl in &schema.vertex_labels {

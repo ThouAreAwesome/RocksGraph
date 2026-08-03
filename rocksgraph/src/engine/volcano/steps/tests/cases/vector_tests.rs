@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Physical step tests for `VectorNearStep` and `VectorSimilarityStep`.
+//! Physical step tests for `NearestStep` and `SimilarityStep`.
 //!
 //! Traversers carry `GValue::FloatVector` directly so no graph context is
 //! needed — `resolve_vector` handles that branch without a property lookup.
@@ -12,7 +12,7 @@ use crate::{
         volcano::steps::{
             traits::{BufferedStep, CoreStep, StepRef},
             vec_source::VecSourceStep,
-            vector::{VectorNearStep, VectorSimilarityStep},
+            vector::{NearestStep, SimilarityStep},
         },
     },
     types::gvalue::{GValue, Primitive},
@@ -24,7 +24,7 @@ fn fv(values: Vec<f32>) -> Rc<Traverser> {
     Traverser::new_rc(GValue::FloatVector(values))
 }
 
-fn drain_all(step: &mut VectorNearStep, ctx: &mut NoopCtx) -> Vec<Rc<Traverser>> {
+fn drain_all(step: &mut NearestStep, ctx: &mut NoopCtx) -> Vec<Rc<Traverser>> {
     let mut out = Vec::new();
     while let Some(batch) = step.produce(ctx).unwrap() {
         out.extend(batch);
@@ -32,7 +32,7 @@ fn drain_all(step: &mut VectorNearStep, ctx: &mut NoopCtx) -> Vec<Rc<Traverser>>
     out
 }
 
-fn drain_similarity(step: &mut VectorSimilarityStep, ctx: &mut NoopCtx) -> Vec<f32> {
+fn drain_similarity(step: &mut SimilarityStep, ctx: &mut NoopCtx) -> Vec<f32> {
     let mut scores = Vec::new();
     while let Some(batch) = step.produce(ctx).unwrap() {
         for t in batch {
@@ -44,17 +44,17 @@ fn drain_similarity(step: &mut VectorSimilarityStep, ctx: &mut NoopCtx) -> Vec<f
     scores
 }
 
-// ── VectorNearStep ────────────────────────────────────────────────────────────
+// ── NearestStep ────────────────────────────────────────────────────────────
 
 #[test]
-fn test_vector_near_returns_top_k() {
+fn test_nearest_returns_top_k() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![
         fv(vec![1.0, 0.0]), // id would be 0 — exact match for query
         fv(vec![0.0, 1.0]), // orthogonal
         fv(vec![0.7, 0.7]), // 45 degrees
     ]);
-    let mut step = VectorNearStep::new("emb".into(), vec![1.0, 0.0], 2);
+    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 2);
     step.add_upper(src as StepRef);
     let mut ctx = NoopCtx;
     let results = drain_all(&mut step, &mut ctx);
@@ -62,7 +62,7 @@ fn test_vector_near_returns_top_k() {
 }
 
 #[test]
-fn test_vector_near_ordering() {
+fn test_nearest_ordering() {
     let src = BufferedStep::new(VecSourceStep::empty());
     // Feed in order: orthogonal, 45-deg, exact — result must be re-ordered by similarity
     src.inner.borrow_mut().core.inject(smallvec![
@@ -70,7 +70,7 @@ fn test_vector_near_ordering() {
         fv(vec![0.7, 0.7]), // sim ≈ 0.71
         fv(vec![1.0, 0.0]), // sim = 1.0
     ]);
-    let mut step = VectorNearStep::new("emb".into(), vec![1.0, 0.0], 3);
+    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 3);
     step.add_upper(src as StepRef);
     let mut ctx = NoopCtx;
     let results = drain_all(&mut step, &mut ctx);
@@ -82,10 +82,10 @@ fn test_vector_near_ordering() {
 }
 
 #[test]
-fn test_vector_near_k_larger_than_input() {
+fn test_nearest_k_larger_than_input() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![fv(vec![1.0, 0.0]), fv(vec![0.0, 1.0])]);
-    let mut step = VectorNearStep::new("emb".into(), vec![1.0, 0.0], 10);
+    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 10);
     step.add_upper(src as StepRef);
     let mut ctx = NoopCtx;
     let results = drain_all(&mut step, &mut ctx);
@@ -93,9 +93,9 @@ fn test_vector_near_k_larger_than_input() {
 }
 
 #[test]
-fn test_vector_near_empty_input() {
+fn test_nearest_empty_input() {
     let src = BufferedStep::new(VecSourceStep::empty());
-    let mut step = VectorNearStep::new("emb".into(), vec![1.0, 0.0], 5);
+    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 5);
     step.add_upper(src as StepRef);
     let mut ctx = NoopCtx;
     let results = drain_all(&mut step, &mut ctx);
@@ -103,27 +103,27 @@ fn test_vector_near_empty_input() {
 }
 
 #[test]
-fn test_vector_near_skips_non_vector_traversers() {
+fn test_nearest_skips_non_vector_traversers() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![
         fv(vec![1.0, 0.0]),
         Traverser::new_rc(GValue::Scalar(Primitive::Int64(42))), // non-vector — must be skipped
         fv(vec![0.0, 1.0]),
     ]);
-    let mut step = VectorNearStep::new("emb".into(), vec![1.0, 0.0], 5);
+    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 5);
     step.add_upper(src as StepRef);
     let mut ctx = NoopCtx;
     let results = drain_all(&mut step, &mut ctx);
     assert_eq!(results.len(), 2, "non-vector traversers must be silently skipped");
 }
 
-// ── VectorSimilarityStep ──────────────────────────────────────────────────────
+// ── SimilarityStep ──────────────────────────────────────────────────────
 
 #[test]
-fn test_vector_similarity_identical() {
+fn test_similarity_identical() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![fv(vec![1.0, 0.0])]);
-    let mut step = VectorSimilarityStep::new("emb".into(), vec![1.0, 0.0]);
+    let mut step = SimilarityStep::new("emb".into(), vec![1.0, 0.0]);
     step.add_upper(src as StepRef);
     let mut ctx = NoopCtx;
     let scores = drain_similarity(&mut step, &mut ctx);
@@ -132,10 +132,10 @@ fn test_vector_similarity_identical() {
 }
 
 #[test]
-fn test_vector_similarity_orthogonal() {
+fn test_similarity_orthogonal() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![fv(vec![1.0, 0.0])]);
-    let mut step = VectorSimilarityStep::new("emb".into(), vec![0.0, 1.0]);
+    let mut step = SimilarityStep::new("emb".into(), vec![0.0, 1.0]);
     step.add_upper(src as StepRef);
     let mut ctx = NoopCtx;
     let scores = drain_similarity(&mut step, &mut ctx);
@@ -144,10 +144,10 @@ fn test_vector_similarity_orthogonal() {
 }
 
 #[test]
-fn test_vector_similarity_opposite() {
+fn test_similarity_opposite() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![fv(vec![1.0, 0.0])]);
-    let mut step = VectorSimilarityStep::new("emb".into(), vec![-1.0, 0.0]);
+    let mut step = SimilarityStep::new("emb".into(), vec![-1.0, 0.0]);
     step.add_upper(src as StepRef);
     let mut ctx = NoopCtx;
     let scores = drain_similarity(&mut step, &mut ctx);
@@ -156,10 +156,10 @@ fn test_vector_similarity_opposite() {
 }
 
 #[test]
-fn test_vector_similarity_multiple_traversers() {
+fn test_similarity_multiple_traversers() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![fv(vec![1.0, 0.0]), fv(vec![0.0, 1.0]), fv(vec![0.7, 0.7]),]);
-    let mut step = VectorSimilarityStep::new("emb".into(), vec![1.0, 0.0]);
+    let mut step = SimilarityStep::new("emb".into(), vec![1.0, 0.0]);
     step.add_upper(src as StepRef);
     let mut ctx = NoopCtx;
     let scores = drain_similarity(&mut step, &mut ctx);
@@ -170,9 +170,9 @@ fn test_vector_similarity_multiple_traversers() {
 }
 
 #[test]
-fn test_vector_similarity_empty_input() {
+fn test_similarity_empty_input() {
     let src = BufferedStep::new(VecSourceStep::empty());
-    let mut step = VectorSimilarityStep::new("emb".into(), vec![1.0, 0.0]);
+    let mut step = SimilarityStep::new("emb".into(), vec![1.0, 0.0]);
     step.add_upper(src as StepRef);
     let mut ctx = NoopCtx;
     let scores = drain_similarity(&mut step, &mut ctx);
@@ -180,14 +180,14 @@ fn test_vector_similarity_empty_input() {
 }
 
 #[test]
-fn test_vector_similarity_skips_non_vector_traversers() {
+fn test_similarity_skips_non_vector_traversers() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![
         fv(vec![1.0, 0.0]),
         Traverser::new_rc(GValue::Scalar(Primitive::Int64(99))), // skipped
         fv(vec![0.0, 1.0]),
     ]);
-    let mut step = VectorSimilarityStep::new("emb".into(), vec![1.0, 0.0]);
+    let mut step = SimilarityStep::new("emb".into(), vec![1.0, 0.0]);
     step.add_upper(src as StepRef);
     let mut ctx = NoopCtx;
     let scores = drain_similarity(&mut step, &mut ctx);
