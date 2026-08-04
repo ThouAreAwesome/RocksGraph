@@ -76,7 +76,7 @@ impl CoreStep for ValuesStep {
                     let mut results = smallvec![];
                     if self.emit_property {
                         let schema = ctx.schema();
-                        let guard = schema.read().unwrap();
+                        let guard = schema.read();
                         for (name, value) in props {
                             let Some(key_id) = guard.prop_key_id(&name) else { continue };
                             let mut val = value;
@@ -95,7 +95,7 @@ impl CoreStep for ValuesStep {
                         }
                     } else {
                         let schema = ctx.schema();
-                        let guard = schema.read().unwrap();
+                        let guard = schema.read();
                         for (name, value) in props {
                             let mut val = value;
                             if name == crate::types::prop_key::LABEL {
@@ -117,7 +117,7 @@ impl CoreStep for ValuesStep {
                     if let Some(mut value) = ctx.get_property(&canonical_key, *key_id)? {
                         if *key_id == LABEL_KEY_ID {
                             let schema_guard = ctx.schema();
-                            value.value = schema_guard.read().unwrap().decode_label_value(&canonical_key, value.value);
+                            value.value = schema_guard.read().decode_label_value(&canonical_key, value.value);
                         }
                         results.push(Traverser::new_rc_conditional(GValue::Property(value), &t, self.track_path));
                     }
@@ -127,7 +127,7 @@ impl CoreStep for ValuesStep {
                     if let Some(mut value) = ctx.get_value(&canonical_key, *key_id)? {
                         if *key_id == LABEL_KEY_ID {
                             let schema_guard = ctx.schema();
-                            value = schema_guard.read().unwrap().decode_label_value(&canonical_key, value);
+                            value = schema_guard.read().decode_label_value(&canonical_key, value);
                         }
                         results.push(Traverser::new_rc_conditional(GValue::Scalar(value), &t, self.track_path));
                     }

@@ -7,7 +7,7 @@ Status: implemented (Phase 1 + Phase 2 external sort complete)
 
 > **⚠️ API superseded.** This document describes the original standalone
 > `SstBulkLoader` API. The current user-facing API is the graph-based session
-> `graph.open_bulk_loader()` — see [`docs/api/design_bulk_loader.md`](api/design_bulk_loader.md).
+> `graph.open_bulk_loader()` — see [`docs/api/design_bulk_loader.md`](../api/design_bulk_loader.md).
 > The internal pipeline is the same; only the public interface has changed.
 - Zero WAL overhead; zero memtable pressure; zero compaction during load
 - Atomic visibility — data appears all-at-once

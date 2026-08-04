@@ -24,7 +24,6 @@ pub struct Traverser {
     /// Back-pointer to the spawning traverser — `Some` only when path tracking is active.
     pub parent: Option<Rc<Traverser>>,
     /// Labels assigned to the current step via `as(…)`.  `None` = no labels.
-    #[allow(dead_code)]
     pub labels: Option<SmallVec<[SmolStr; STEP_LABEL_INLINE]>>,
 }
 

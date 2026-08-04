@@ -56,7 +56,7 @@ impl HasPropertyStep {
         if self.prop_key_id != LABEL_KEY_ID {
             return value;
         }
-        ctx.schema().read().unwrap().decode_label_value(key, value)
+        ctx.schema().read().decode_label_value(key, value)
     }
 }
 

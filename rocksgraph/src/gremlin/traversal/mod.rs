@@ -86,7 +86,7 @@ pub(crate) struct RepeatBuilder {
     emit: EmitSpec,
 }
 
-/// `group()`/`group_count()` do not yet support a `by()` modulator (`docs/design_group_step.md`).
+/// `group()`/`group_count()` do not yet support a `by()` modulator (`docs/query-engine/design_group_step.md`).
 /// Without this check, `.by()`/`.order_by()` would silently insert a new `order()`
 /// step after them instead — sorting the resulting `Map` traverser by a property it
 /// doesn't have, rather than doing what the caller almost certainly intended.
@@ -97,7 +97,7 @@ fn follows_group_step(plan: &LogicalPlan) -> bool {
 fn by_after_group_error(caller: &str) -> StoreError {
     StoreError::TraversalError(format!(
         "{caller} is not yet supported after group()/group_count(); the by() modulator for \
-         group is not yet implemented — see docs/design_group_step.md"
+         group is not yet implemented — see docs/query-engine/design_group_step.md"
     ))
 }
 
@@ -172,7 +172,7 @@ impl GraphTraversal {
         let schema_lock = graph.schema();
         let plan = PhysicalPlanBuilder::default().build(&logical, &schema_lock)?;
         let schema = graph.schema();
-        let cache = built::SchemaCache::from_schema(&schema.read().unwrap());
+        let cache = built::SchemaCache::from_schema(&schema.read());
         Ok(BuiltTraversal { graph, plan, cache, prop_keys })
     }
 
@@ -357,7 +357,7 @@ pub trait TraversalBuilder: PlanAppender {
     /// Filter by a user-defined property key and predicate.
     ///
     /// `key` is a plain property name — `"id"`/`"label"`/`"rank"` are rejected (use
-    /// `hasId()`/`hasLabel()`/`hasRank()` instead; see `docs/design_reserved_keys.md`).
+    /// `hasId()`/`hasLabel()`/`hasRank()` instead; see `docs/schema/design_reserved_keys.md`).
     /// `pred` accepts any scalar (→ `Predicate::Eq`) or an explicit predicate from
     /// [`eq`](crate::gremlin::value::eq), [`gt`](crate::gremlin::value::gt), etc.
     fn has(mut self, key: impl Into<SmolStr>, pred: impl Into<Predicate>) -> Self {
@@ -462,7 +462,7 @@ pub trait TraversalBuilder: PlanAppender {
     /// Extract scalar property values for the given keys.
     ///
     /// `"id"`/`"label"`/`"rank"` are rejected (use `id()`/`label()`/`rank()` instead;
-    /// see `docs/design_reserved_keys.md`). Plain `&'a str` rather than `impl Into<SmolStr>`
+    /// see `docs/schema/design_reserved_keys.md`). Plain `&'a str` rather than `impl Into<SmolStr>`
     /// so `values([])` infers without a type annotation, matching `out()`/`properties()`.
     fn values<'a>(mut self, keys: impl IntoIterator<Item = &'a str>) -> Self {
         self.push_step(LogicalStep::Values(ValuesStep {
@@ -613,7 +613,7 @@ pub trait TraversalBuilder: PlanAppender {
     ///
     /// `by()` is not yet supported immediately after `group()`/`group_count()` —
     /// the `by()` modulator for those steps is not yet implemented (see
-    /// `docs/design_group_step.md`). Using `by()` here would silently sort the
+    /// `docs/query-engine/design_group_step.md`). Using `by()` here would silently sort the
     /// resulting `Map` traverser by a property it doesn't have, rather than act as
     /// a group key/value modulator.
     fn by(mut self, key: impl Into<SmolStr>) -> Self {
@@ -906,7 +906,15 @@ pub trait TraversalBuilder: PlanAppender {
             return self;
         }
         match self.pending_repeat_mut() {
-            Some(ref mut rb) => rb.times = Some(n),
+            Some(ref mut rb) => {
+                if rb.times.is_some() || rb.until.is_some() {
+                    self.record_error(StoreError::TraversalError(
+                        "repeat() cannot specify both times() and until() conditions or duplicate termination conditions.".to_string(),
+                    ));
+                } else {
+                    rb.times = Some(n);
+                }
+            }
             None => {
                 self.record_error(StoreError::TraversalError("times() must immediately follow repeat().".to_string()))
             }
@@ -920,7 +928,15 @@ pub trait TraversalBuilder: PlanAppender {
             self.record_error(err);
         }
         match self.pending_repeat_mut() {
-            Some(ref mut rb) => rb.until = Some(cond.into_plan()),
+            Some(ref mut rb) => {
+                if rb.times.is_some() || rb.until.is_some() {
+                    self.record_error(StoreError::TraversalError(
+                        "repeat() cannot specify both times() and until() conditions or duplicate termination conditions.".to_string(),
+                    ));
+                } else {
+                    rb.until = Some(cond.into_plan());
+                }
+            }
             None => {
                 self.record_error(StoreError::TraversalError("until() must immediately follow repeat().".to_string()))
             }

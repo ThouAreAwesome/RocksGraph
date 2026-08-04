@@ -6,28 +6,14 @@
 //! HNSW (Hierarchical Navigable Small World) graph. Vertex keys are directly
 //! bit-cast `i64 → u64`; edge indexes are not yet supported (v0.3).
 
-use std::io::Write;
 use std::path::Path;
 
 use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
 
 use super::brute_force::EntityKey;
 use super::error::VectorError;
+use super::persistence::{load_snapshot_file, save_snapshot_file, SnapshotHeader};
 use super::traits::{DistanceMetric, Quantization, VectorIndex, VectorIndexConfig};
-
-// ── Snapshot constants ──────────────────────────────────────────────────────
-
-/// Magic bytes: "RG_V" in ASCII, big-endian u32.
-#[allow(dead_code)]
-const SNAPSHOT_MAGIC: u32 = 0x52475F56;
-/// Current snapshot format version.
-#[allow(dead_code)]
-const SNAPSHOT_FORMAT_VERSION: u16 = 2;
-
-/// Header size in bytes: magic(4) + version(2) + timestamp(8) + dim(4) +
-/// metric(1) + algorithm(1) + tombstone(8) + next_edge_label(8) + payload_len(8) = 44
-#[allow(dead_code)]
-const SNAPSHOT_HEADER_SIZE: usize = 44;
 
 fn metric_to_usearch(m: DistanceMetric) -> MetricKind {
     match m {
@@ -112,7 +98,12 @@ impl UsearchHnswIndex {
 
     fn key_to_label(key: &EntityKey) -> Result<u64, VectorError> {
         match key {
-            EntityKey::Vertex(id) => Ok(*id as u64),
+            EntityKey::Vertex(id) => {
+                if *id < 0 {
+                    return Err(VectorError::Internal(format!("invalid negative vertex id for vector index: {id}")));
+                }
+                Ok(*id as u64)
+            }
             EntityKey::Edge(_) => {
                 Err(VectorError::Unsupported("edge vector indexes are not yet supported (v0.3)".into()))
             }
@@ -167,7 +158,14 @@ impl VectorIndex for UsearchHnswIndex {
             // Pre-flight: check projected memory before reserving so the limit is
             // enforced before any allocation and the entry is never added to the WAL.
             if let Some(limit) = self.memory_limit_bytes {
-                let projected_used = new_cap * self.config.dimension * 4;
+                let projected_used = new_cap
+                    .checked_mul(self.config.dimension)
+                    .and_then(|x| x.checked_mul(4))
+                    .ok_or_else(|| VectorError::MemoryLimitExceeded {
+                        index: self.config.property.clone(),
+                        used: usize::MAX,
+                        limit,
+                    })?;
                 if projected_used >= limit {
                     return Err(VectorError::MemoryLimitExceeded {
                         index: self.config.property.clone(),
@@ -220,56 +218,14 @@ impl VectorIndex for UsearchHnswIndex {
         let mut usearch_buf = vec![0u8; buf_len];
         self.inner.save_to_buffer(&mut usearch_buf).map_err(|e| VectorError::Internal(format!("usearch save: {e}")))?;
 
-        // Write composite snapshot: header + usearch payload + CRC-32C.
-        let tmp_path = path.with_extension("snapshot.tmp");
-        let mut file = std::fs::File::create(&tmp_path)?;
-
-        // Header (44 bytes)
-        file.write_all(&SNAPSHOT_MAGIC.to_be_bytes())?;
-        file.write_all(&SNAPSHOT_FORMAT_VERSION.to_be_bytes())?;
-        file.write_all(&last_replayed_timestamp.to_le_bytes())?;
-        file.write_all(&(self.config.dimension as u32).to_le_bytes())?;
-        file.write_all(&[self.config.metric as u8])?;
-        // algorithm byte: 0=BruteForce, 1=HNSW
-        file.write_all(&[1u8])?; // Always HNSW for this index type
-        file.write_all(&self.tombstone_count.to_le_bytes())?;
-        // next_edge_label: always 0 in v0.2 (no edge support)
-        file.write_all(&0u64.to_le_bytes())?;
-        file.write_all(&(usearch_buf.len() as u64).to_le_bytes())?;
-
-        // usearch payload
-        file.write_all(&usearch_buf)?;
-
-        // CRC-32C of all bytes written so far
-        // TODO: compute CRC by streaming through the file writer (or via a
-        // multiplexing writer) rather than duplicating the header encoding
-        // here.  Any header field added in save must also be added in the
-        // hasher block below and in load_vector_index — three edit points for
-        // one logical field.  A tee-writer that hashes on the fly would
-        // collapse this to one.
-        let crc = {
-            let mut hasher = crc32fast::Hasher::new();
-            // Recompute from what we've written — since File doesn't expose
-            // already-written data easily, we compute offline.
-            // Magic
-            hasher.update(&SNAPSHOT_MAGIC.to_be_bytes());
-            hasher.update(&SNAPSHOT_FORMAT_VERSION.to_be_bytes());
-            hasher.update(&last_replayed_timestamp.to_le_bytes());
-            hasher.update(&(self.config.dimension as u32).to_le_bytes());
-            hasher.update(&[self.config.metric as u8]);
-            hasher.update(&[1u8]); // algorithm
-            hasher.update(&self.tombstone_count.to_le_bytes());
-            hasher.update(&0u64.to_le_bytes()); // next_edge_label
-            hasher.update(&(usearch_buf.len() as u64).to_le_bytes());
-            hasher.update(&usearch_buf);
-            hasher.finalize()
+        let header = SnapshotHeader {
+            last_replayed_timestamp,
+            dimension: self.config.dimension,
+            metric: self.config.metric,
+            tombstone_count: self.tombstone_count,
+            payload_len: usearch_buf.len(),
         };
-        file.write_all(&crc.to_le_bytes())?;
-
-        file.sync_all()?;
-        drop(file);
-        std::fs::rename(&tmp_path, path)?;
-        Ok(())
+        save_snapshot_file(path, &header, &usearch_buf)
     }
 
     fn last_replayed_timestamp(&self) -> u64 {
@@ -291,68 +247,9 @@ impl VectorIndex for UsearchHnswIndex {
 ///
 /// This is a free function (not a trait method) to avoid `dyn` object-safety
 /// issues with constructors returning `Self`.
-#[allow(dead_code)]
 pub fn load_vector_index(path: &Path, config: &VectorIndexConfig) -> Result<UsearchHnswIndex, VectorError> {
-    let bytes = std::fs::read(path)?;
+    let (header, usearch_bytes) = load_snapshot_file(path, config.dimension, config.metric)?;
 
-    if bytes.len() < SNAPSHOT_HEADER_SIZE + 4 {
-        return Err(VectorError::Internal("snapshot file too short".into()));
-    }
-
-    // Read header fields
-    let magic = u32::from_be_bytes(bytes[0..4].try_into().unwrap());
-    if magic != SNAPSHOT_MAGIC {
-        return Err(VectorError::Internal("snapshot magic mismatch".into()));
-    }
-
-    let format_version = u16::from_be_bytes(bytes[4..6].try_into().unwrap());
-    if format_version != SNAPSHOT_FORMAT_VERSION {
-        return Err(VectorError::Unsupported(format!("unsupported snapshot format version {format_version}")));
-    }
-
-    let timestamp = u64::from_le_bytes(bytes[6..14].try_into().unwrap());
-    let stored_dim = u32::from_le_bytes(bytes[14..18].try_into().unwrap()) as usize;
-    let stored_metric_byte = bytes[18];
-    // algorithm byte at offset 19 — read but ignored (we know it's HNSW)
-    let stored_tombstone = u64::from_le_bytes(bytes[20..28].try_into().unwrap());
-    // next_edge_label at offset 28 — always 0 in v0.2
-    let payload_len = u64::from_le_bytes(bytes[36..44].try_into().unwrap()) as usize;
-
-    // Guard against truncated/corrupt files where payload_len extends past the
-    // actual bytes (would panic on the CRC slice below).
-    if bytes.len() < 44 + payload_len + 4 {
-        return Err(VectorError::Internal("snapshot file too short".into()));
-    }
-
-    if stored_dim != config.dimension {
-        return Err(VectorError::DimensionMismatch { expected: config.dimension, actual: stored_dim });
-    }
-
-    // Verify metric match
-    let stored_metric = match stored_metric_byte {
-        0 => DistanceMetric::Cosine,
-        1 => DistanceMetric::Euclidean,
-        2 => DistanceMetric::DotProduct,
-        _ => return Err(VectorError::Internal("unknown metric in snapshot".into())),
-    };
-    if stored_metric != config.metric {
-        return Err(VectorError::Unsupported(format!(
-            "snapshot metric ({stored_metric:?}) does not match config ({:?})",
-            config.metric
-        )));
-    }
-
-    // Verify CRC-32C
-    let expected_crc = u32::from_le_bytes(bytes[44 + payload_len..44 + payload_len + 4].try_into().unwrap());
-    let mut hasher = crc32fast::Hasher::new();
-    hasher.update(&bytes[..44 + payload_len]);
-    let actual_crc = hasher.finalize();
-    if expected_crc != actual_crc {
-        return Err(VectorError::Internal("snapshot CRC mismatch — file may be corrupt".into()));
-    }
-
-    // Load usearch from buffer
-    let usearch_bytes = &bytes[44..44 + payload_len];
     let options = IndexOptions {
         dimensions: config.dimension,
         metric: metric_to_usearch(config.metric),
@@ -364,13 +261,13 @@ pub fn load_vector_index(path: &Path, config: &VectorIndexConfig) -> Result<Usea
     };
 
     let inner = Index::new(&options).map_err(|e| VectorError::Internal(format!("usearch create for load: {e}")))?;
-    inner.load_from_buffer(usearch_bytes).map_err(|e| VectorError::Internal(format!("usearch load: {e}")))?;
+    inner.load_from_buffer(&usearch_bytes).map_err(|e| VectorError::Internal(format!("usearch load: {e}")))?;
 
     Ok(UsearchHnswIndex {
         inner,
         config: config.clone(),
-        tombstone_count: stored_tombstone,
-        last_replayed_timestamp: timestamp,
+        tombstone_count: header.tombstone_count,
+        last_replayed_timestamp: header.last_replayed_timestamp,
         memory_limit_bytes: None,
     })
 }
@@ -593,5 +490,13 @@ mod tests {
         // k > size returns all available items without error or overflow
         let res_large = idx.search(&[1.0, 0.0, 0.0, 0.0], 100).unwrap();
         assert_eq!(res_large.len(), 2);
+    }
+
+    #[test]
+    fn test_reject_negative_vertex_id() {
+        let mut idx = UsearchHnswIndex::new(&test_config()).unwrap();
+        let res = idx.insert(&EntityKey::Vertex(-5), &[1.0, 0.0, 0.0, 0.0]);
+        assert!(res.is_err());
+        assert!(matches!(res.unwrap_err(), VectorError::Internal(msg) if msg.contains("invalid negative vertex id")));
     }
 }

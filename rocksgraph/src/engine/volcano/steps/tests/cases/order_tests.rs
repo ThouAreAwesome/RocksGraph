@@ -113,7 +113,7 @@ use std::sync::Arc;
 
 /// A minimal context that serves property values for testing OrderStep.
 struct PropTestCtx {
-    schema: Arc<std::sync::RwLock<Schema>>,
+    schema: Arc<parking_lot::RwLock<Schema>>,
     /// VertexKey -> (prop_key_id -> Primitive)
     vertex_props: HashMap<VertexKey, HashMap<u16, Primitive>>,
     /// EdgeKey -> (prop_key_id -> Primitive)
@@ -123,7 +123,7 @@ struct PropTestCtx {
 impl PropTestCtx {
     fn new(schema: Schema) -> Self {
         PropTestCtx {
-            schema: Arc::new(std::sync::RwLock::new(schema)),
+            schema: Arc::new(parking_lot::RwLock::new(schema)),
             vertex_props: HashMap::new(),
             edge_props: HashMap::new(),
         }
@@ -220,7 +220,7 @@ impl GraphCtx for PropTestCtx {
     ) -> Result<u64, StoreError> {
         Ok(0)
     }
-    fn schema(&self) -> Arc<std::sync::RwLock<Schema>> {
+    fn schema(&self) -> Arc<parking_lot::RwLock<Schema>> {
         self.schema.clone()
     }
 }
@@ -414,7 +414,7 @@ fn test_builder_by_without_order_auto_creates_order_step() {
 
 // `by()`/`order_by()` immediately after `group()`/`group_count()` must be rejected rather
 // than silently auto-inserting an `order()` step that sorts the resulting `Map` by a
-// property it doesn't have (see `docs/design_group_step.md`, compatibility risk #1).
+// property it doesn't have (see `docs/query-engine/design_group_step.md`, compatibility risk #1).
 
 #[test]
 fn test_builder_by_after_group_rejected() {

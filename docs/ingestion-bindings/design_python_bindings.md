@@ -5,7 +5,7 @@ Status: proposal — awaiting implementation.
 ## Problem
 
 RocksGraph is a Rust crate. The two largest user segments identified in
-[market_landscape_and_positioning.md](./market_landscape_and_positioning.md) are:
+[market_landscape_and_positioning.md](../market_landscape_and_positioning.md) are:
 
 1. Rust application developers (`cargo add rocksgraph`)
 2. **Python developers using Gremlin semantics** — data scientists, ML engineers,

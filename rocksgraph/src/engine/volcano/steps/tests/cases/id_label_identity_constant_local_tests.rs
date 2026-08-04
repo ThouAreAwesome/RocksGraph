@@ -28,10 +28,11 @@ use crate::types::{
     prop_key::LABEL_KEY_ID,
     BatchScenario, Direction,
 };
+use parking_lot::RwLock;
 use smallvec::smallvec;
 use smol_str::SmolStr;
 use std::collections::HashMap;
-use std::{rc::Rc, sync::RwLock};
+use std::rc::Rc;
 
 fn scalar_t(value: i64) -> Rc<Traverser> {
     Traverser::new_rc(GValue::Scalar(Primitive::Int64(value)))
@@ -289,7 +290,7 @@ fn test_decode_label_vertex_edge_namespace_collision() {
     let knows_id = schema.register_edge_label(SmolStr::from("knows")).unwrap();
     assert_eq!(knows_id, 1);
 
-    let schema = std::sync::Arc::new(std::sync::RwLock::new(schema));
+    let schema = std::sync::Arc::new(parking_lot::RwLock::new(schema));
     let v_name = crate::engine::volcano::steps::label_step::decode_label(1, true, schema.clone());
     assert_eq!(v_name.as_str(), "person");
     let e_name = crate::engine::volcano::steps::label_step::decode_label(1, false, schema.clone());
@@ -300,7 +301,7 @@ fn test_decode_label_vertex_edge_namespace_collision() {
 fn test_decode_label_vertex_only() {
     let mut schema = crate::schema::Schema::default();
     schema.register_vertex_label(SmolStr::from("person")).unwrap();
-    let schema = std::sync::Arc::new(std::sync::RwLock::new(schema));
+    let schema = std::sync::Arc::new(parking_lot::RwLock::new(schema));
     assert_eq!(crate::engine::volcano::steps::label_step::decode_label(1, true, schema.clone()).as_str(), "person");
 }
 
@@ -308,13 +309,13 @@ fn test_decode_label_vertex_only() {
 fn test_decode_label_edge_only() {
     let mut schema = crate::schema::Schema::default();
     schema.register_edge_label(SmolStr::from("knows")).unwrap();
-    let schema = std::sync::Arc::new(std::sync::RwLock::new(schema));
+    let schema = std::sync::Arc::new(parking_lot::RwLock::new(schema));
     assert_eq!(crate::engine::volcano::steps::label_step::decode_label(1, false, schema.clone()).as_str(), "knows");
 }
 
 #[test]
 fn test_decode_label_unknown_falls_back() {
-    let schema = std::sync::Arc::new(std::sync::RwLock::new(crate::schema::Schema::default()));
+    let schema = std::sync::Arc::new(parking_lot::RwLock::new(crate::schema::Schema::default()));
     let name = crate::engine::volcano::steps::label_step::decode_label(99, true, schema.clone());
     assert_eq!(name.as_str(), "label_99");
 }

@@ -12,11 +12,12 @@ use crate::types::{
     gvalue::{GValue, Primitive},
     keys::{CanonicalKey, VertexKey},
 };
+use parking_lot::RwLock;
 use smallvec::smallvec;
 use smol_str::SmolStr;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use crate::schema::Schema;
 use crate::vector::EntityKey;
@@ -53,7 +54,7 @@ fn resolve_prop_key_id(schema: &Arc<RwLock<Schema>>, cache: &mut HashMap<SmolStr
     if let Some(&id) = cache.get(name) {
         return Some(id);
     }
-    let guard = schema.read().unwrap();
+    let guard = schema.read();
     let id = guard.prop_key_id(name)?;
     cache.insert(name.clone(), id);
     Some(id)
@@ -64,6 +65,11 @@ fn resolve_prop_key_id(schema: &Arc<RwLock<Schema>>, cache: &mut HashMap<SmolStr
 fn resolve_vector(t: &Traverser, ctx: &mut dyn GraphCtx, prop_id: Option<u16>) -> Option<Vec<f32>> {
     match &t.value {
         GValue::FloatVector(v) => Some(v.clone()),
+        GValue::Scalar(Primitive::FloatVector(v)) => Some(v.clone()),
+        GValue::Property(p) => match &p.value {
+            Primitive::FloatVector(v) => Some(v.clone()),
+            _ => None,
+        },
         GValue::Vertex(vk) => {
             let pid = prop_id?;
             match ctx.get_value(&CanonicalKey::Vertex(*vk), pid).ok()? {
@@ -87,12 +93,12 @@ impl CoreStep for NearestStep {
         self.upstream = Some(upstream);
     }
     fn reset(&mut self) {
-        self.buffer.clear();
-        self.cursor = 0;
-        self.drained = false;
         if let Some(u) = &self.upstream {
             u.reset();
         }
+        self.buffer.clear();
+        self.cursor = 0;
+        self.drained = false;
     }
     fn upper(&self) -> Option<StepRef> {
         self.upstream.clone()
@@ -111,7 +117,7 @@ impl CoreStep for NearestStep {
             // Check availability first without holding the guard across
             // the upstream drain (which needs &mut ctx).
             let hnsw_index = ctx.vector_indexes().and_then(|indexes| {
-                let guard = indexes.read().unwrap();
+                let guard = indexes.read();
                 guard.get(&(VectorEntityType::Vertex, self.prop_key.clone())).cloned()
             });
 
@@ -128,7 +134,6 @@ impl CoreStep for NearestStep {
 
                 let results = index
                     .read()
-                    .unwrap()
                     .search(&self.query_vec, self.k)
                     .map_err(|e| StoreError::UnsupportedOperation(format!("vector search: {e}")))?;
 

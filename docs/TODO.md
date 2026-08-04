@@ -1,6 +1,6 @@
 # Step Coverage TODO
 
-RocksGraph provides a Gremlin-style traversal API (see [design_principles.md](design_principles.md)).
+RocksGraph provides a Gremlin-style traversal API (see [design_principles.md](architecture/design_principles.md)).
 This list is not a TinkerPop compliance checklist. It tracks which Gremlin-vocabulary steps are
 still missing from the traversal API
 (`gremlin/traversal.rs`) and the physical engine (`engine/volcano/steps/`), prioritized by how

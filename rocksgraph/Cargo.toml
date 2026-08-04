@@ -46,6 +46,8 @@ usearch = "2"
 rustc-hash = "2"
 # CRC-32C checksum for snapshot headers
 crc32fast = "1"
+# Concurrency: poison-free synchronization primitives
+parking_lot = "0.12"
 
 [dev-dependencies]
 

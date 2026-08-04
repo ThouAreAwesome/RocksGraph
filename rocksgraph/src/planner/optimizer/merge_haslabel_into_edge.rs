@@ -4,7 +4,7 @@
 //! Folds `hasLabel` / `has("label", …)` into a preceding `outE` / `inE` /
 //! `bothE` step when the edge step carries no label restriction yet.
 //!
-//! `"label"` is a reserved key (`docs/design_reserved_keys.md`) — this fold is what lets
+//! `"label"` is a reserved key (`docs/schema/design_reserved_keys.md`) — this fold is what lets
 //! `.outE().has("label", N)` keep working; an unfolded `.has("label", …)` not adjacent to
 //! an edge-traversal step is rejected by `reject_reserved_key` in `build_step.rs` instead
 //! of reaching `HasPropertyStep`.

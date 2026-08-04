@@ -100,8 +100,8 @@ fn encode_vector_index_config(config: &VectorIndexConfig) -> Vec<u8> {
 /// [`SchemaMode`] (`Auto`/`Strict`) is also a single graph-wide setting rather than per-label.
 pub struct SchemaSession {
     store: Arc<RocksStorage>,
-    schema: Arc<std::sync::RwLock<Schema>>,
-    vector_indexes: Option<Arc<std::sync::RwLock<crate::vector::VectorIndexMap>>>,
+    schema: Arc<parking_lot::RwLock<Schema>>,
+    vector_indexes: Option<Arc<parking_lot::RwLock<crate::vector::VectorIndexMap>>>,
     base_version: u64,
     pending_vertex_labels: Vec<String>,
     pending_edge_labels: Vec<String>,
@@ -116,10 +116,10 @@ impl SchemaSession {
     /// Crate-internal: obtain a `SchemaSession` session via [`Graph::open_schema`](crate::api::Graph::open_schema).
     pub(crate) fn new(
         store: Arc<RocksStorage>,
-        schema: Arc<std::sync::RwLock<Schema>>,
-        vector_indexes: Option<Arc<std::sync::RwLock<crate::vector::VectorIndexMap>>>,
+        schema: Arc<parking_lot::RwLock<Schema>>,
+        vector_indexes: Option<Arc<parking_lot::RwLock<crate::vector::VectorIndexMap>>>,
     ) -> Self {
-        let base_version = schema.read().unwrap().version;
+        let base_version = schema.read().version;
         Self {
             store,
             schema,
@@ -198,7 +198,7 @@ impl SchemaSession {
         };
         use rocksdb::WriteBatchWithTransaction;
 
-        let mut schema = self.schema.write().map_err(|_| StoreError::LockError)?;
+        let mut schema = self.schema.write();
 
         // CAS check
         if schema.version != self.base_version {
@@ -347,19 +347,20 @@ impl SchemaSession {
         // Synchronize in-memory vector index map with added and dropped indexes.
         if let Some(ref vi_arc) = self.vector_indexes {
             use crate::vector::traits::VectorIndex;
-            let mut vi_guard = vi_arc.write().unwrap();
+            let mut vi_guard = vi_arc.write();
             for config in &self.pending_vector_indexes {
                 let key = (config.entity_type, config.property.clone());
                 if let std::collections::hash_map::Entry::Vacant(e) = vi_guard.entry(key) {
                     if let Ok(mut idx) = crate::vector::hnsw::UsearchHnswIndex::new(config) {
                         idx.set_last_replayed_timestamp(crate::vector::wal::next_timestamp());
-                        e.insert(Arc::new(std::sync::RwLock::new(Box::new(idx))));
+                        e.insert(Arc::new(parking_lot::RwLock::new(Box::new(idx))));
                     }
                 }
             }
             for (entity_type, property) in &self.pending_drop_vector_indexes {
                 vi_guard.remove(&(*entity_type, smol_str::SmolStr::from(property.as_str())));
-                let snap_path = crate::api::vector_snapshot_path(&self.store.path, *entity_type, property);
+                let snap_path =
+                    crate::vector::persistence::vector_snapshot_path(&self.store.path, *entity_type, property);
                 let _ = std::fs::remove_file(snap_path);
             }
         }
@@ -370,7 +371,7 @@ impl SchemaSession {
 
 impl std::fmt::Display for SchemaSession {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let schema = self.schema.read().map_err(|_| std::fmt::Error)?;
+        let schema = self.schema.read();
 
         writeln!(f, "=== RocksGraph Schema (Version: {}) ===", schema.version)?;
         writeln!(f, "Schema Mode: {:?}", schema.mode)?;

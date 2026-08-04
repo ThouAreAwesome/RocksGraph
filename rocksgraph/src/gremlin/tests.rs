@@ -38,7 +38,7 @@ mod integration_test {
         let graph = Graph::open(dir.path()).unwrap();
         {
             let schema_arc = graph.schema();
-            let mut schema = schema_arc.write().unwrap();
+            let mut schema = schema_arc.write();
             schema.register_vertex_label("dummy").unwrap(); // 0
             schema.register_vertex_label("person").unwrap(); // 1
             schema.register_vertex_label("software").unwrap(); // 2
@@ -529,7 +529,7 @@ mod integration_test {
         let graph = Graph::open(dir.path()).unwrap();
         {
             let schema_arc = graph.schema();
-            let mut schema = schema_arc.write().unwrap();
+            let mut schema = schema_arc.write();
             schema.register_vertex_label("dummy").unwrap(); // 0
             schema.register_vertex_label("person").unwrap(); // 1
             schema.register_edge_label("dummy").unwrap(); // 0
@@ -1027,7 +1027,7 @@ mod integration_test {
             let graph = Graph::open(dir.path()).unwrap();
             {
                 let schema_arc = graph.schema();
-                let mut schema = schema_arc.write().unwrap();
+                let mut schema = schema_arc.write();
                 schema.register_vertex_label("person").unwrap();
                 schema.register_edge_label("knows").unwrap();
             }
@@ -1318,6 +1318,22 @@ mod integration_test {
 
         let res = tx.g().V([1]).repeat(__().out(["knows", "created"])).times(0).next();
         assert!(matches!(res, Err(StoreError::TraversalError(msg)) if msg.contains("times(0)")));
+    }
+
+    #[test]
+    fn test_repeat_both_times_and_until_is_error() {
+        let graph = setup_modern_graph();
+        let mut tx = graph.begin();
+
+        let res1 = tx.g().V([1]).repeat(__().out(["knows"])).times(2).until(__().hasLabel(["software"])).next();
+        assert!(
+            matches!(res1, Err(StoreError::TraversalError(msg)) if msg.contains("cannot specify both times() and until()"))
+        );
+
+        let res2 = tx.g().V([1]).repeat(__().out(["knows"])).until(__().hasLabel(["software"])).times(2).next();
+        assert!(
+            matches!(res2, Err(StoreError::TraversalError(msg)) if msg.contains("cannot specify both times() and until()"))
+        );
     }
 
     #[test]

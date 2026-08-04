@@ -182,7 +182,7 @@ fn test_repeat_cycle_terminates_with_times() {
     // Add a back-edge to create a cycle: vadas(2) → marko(1)
     let vadas_id = graph.get_vertex(2).unwrap().unwrap();
     let marko_id = graph.get_vertex(1).unwrap().unwrap();
-    let knows_label_id = graph.schema.read().unwrap().edge_label_id("knows").unwrap();
+    let knows_label_id = graph.schema.read().edge_label_id("knows").unwrap();
     graph
         .add_edge(&EdgeKey {
             primary_id: vadas_id,

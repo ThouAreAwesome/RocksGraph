@@ -6,8 +6,13 @@
 //! Provides the [`BulkLoader`] session for high-throughput initial database bootstrap,
 //! bypassing transaction and WAL overhead via offline external sorting and RocksDB SST ingestion.
 
+pub(crate) mod degree;
+pub(crate) mod edge_annotator;
 pub(crate) mod loader;
 pub(crate) mod sort;
+
+#[cfg(test)]
+mod tests;
 
 #[allow(deprecated)]
 pub use loader::{

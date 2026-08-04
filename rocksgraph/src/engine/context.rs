@@ -8,7 +8,8 @@
 //! The trait is implemented by `LogicalGraph` (read-write overlay) and
 //! `LogicalSnapshot` (read-only snapshot). A zero-cost `NoopCtx` is available
 //! for unit tests.
-use std::sync::{Arc, RwLock};
+use parking_lot::RwLock;
+use std::sync::Arc;
 
 use crate::{
     graph::{LogicalGraph, LogicalSnapshot},
