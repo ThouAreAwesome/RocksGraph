@@ -104,8 +104,8 @@ impl CoreStep for LabelStep {
 /// Decode a numeric label_id into its string name using the schema registry.
 /// `is_vertex` determines which namespace to look in — vertex and edge labels
 /// are independent id spaces that both start at 1.
-pub(super) fn decode_label(label_id: LabelId, is_vertex: bool, schema: Arc<std::sync::RwLock<Schema>>) -> SmolStr {
-    let guard = schema.read().unwrap();
+pub(super) fn decode_label(label_id: LabelId, is_vertex: bool, schema: Arc<parking_lot::RwLock<Schema>>) -> SmolStr {
+    let guard = schema.read();
     let name = if is_vertex { guard.vertex_label_str(label_id) } else { guard.edge_label_str(label_id) };
     name.cloned().unwrap_or_else(|| SmolStr::from(format!("label_{}", label_id)))
 }

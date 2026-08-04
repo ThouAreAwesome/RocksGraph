@@ -63,17 +63,17 @@ pub(super) fn resolve_read_edge_label(name: &str, schema: &Schema) -> Result<Opt
 /// before acquiring the schema lock.  Writes back on cache miss.
 pub(super) fn resolve_write_vertex_label(
     name: &str,
-    schema_lock: &std::sync::RwLock<Schema>,
+    schema_lock: &parking_lot::RwLock<Schema>,
     cache: &mut HashMap<SmolStr, LabelId>,
 ) -> Result<LabelId, StoreError> {
     if let Some(&id) = cache.get(name) {
         return Ok(id);
     }
-    if let Some(id) = schema_lock.read().unwrap().vertex_label_id(name) {
+    if let Some(id) = schema_lock.read().vertex_label_id(name) {
         cache.insert(name.into(), id);
         return Ok(id);
     }
-    let id = schema_lock.write().unwrap().resolve_vertex_label(name)?;
+    let id = schema_lock.write().resolve_vertex_label(name)?;
     cache.insert(name.into(), id);
     Ok(id)
 }
@@ -81,17 +81,17 @@ pub(super) fn resolve_write_vertex_label(
 /// Same rationale as [`resolve_write_vertex_label`], for edge labels.
 pub(super) fn resolve_write_edge_label(
     name: &str,
-    schema_lock: &std::sync::RwLock<Schema>,
+    schema_lock: &parking_lot::RwLock<Schema>,
     cache: &mut HashMap<SmolStr, LabelId>,
 ) -> Result<LabelId, StoreError> {
     if let Some(&id) = cache.get(name) {
         return Ok(id);
     }
-    if let Some(id) = schema_lock.read().unwrap().edge_label_id(name) {
+    if let Some(id) = schema_lock.read().edge_label_id(name) {
         cache.insert(name.into(), id);
         return Ok(id);
     }
-    let id = schema_lock.write().unwrap().resolve_edge_label(name)?;
+    let id = schema_lock.write().resolve_edge_label(name)?;
     cache.insert(name.into(), id);
     Ok(id)
 }
@@ -100,14 +100,14 @@ pub(super) fn resolve_write_edge_label(
 pub(super) fn resolve_write_prop_key(
     name: &str,
     inferred_type: DataType,
-    schema_lock: &std::sync::RwLock<Schema>,
+    schema_lock: &parking_lot::RwLock<Schema>,
     cache: &mut HashMap<SmolStr, u16>,
 ) -> Result<u16, StoreError> {
     if let Some(&id) = cache.get(name) {
         return Ok(id);
     }
     {
-        let schema = schema_lock.read().unwrap();
+        let schema = schema_lock.read();
         if let Some(id) = schema.prop_key_id(name) {
             if let Some(cfg) = schema.prop_key_types.get(&id) {
                 if cfg.data_type != inferred_type {
@@ -121,7 +121,7 @@ pub(super) fn resolve_write_prop_key(
             }
         }
     }
-    let id = schema_lock.write().unwrap().resolve_prop_key(name, inferred_type)?;
+    let id = schema_lock.write().resolve_prop_key(name, inferred_type)?;
     cache.insert(name.into(), id);
     Ok(id)
 }
@@ -129,7 +129,7 @@ pub(super) fn resolve_write_prop_key(
 /// Rejects `"id"`/`"label"`/`"rank"` reaching a generic property-access step
 /// (`HasProperty`/`Values`/`Properties`) unfolded. These three are read exclusively
 /// through dedicated steps (`id()`/`label()`/`rank()`, `hasId()`/`hasLabel()`/`hasRank()`)
-/// — see `docs/design_reserved_keys.md`. Optimizer-folded uses (e.g. `.outE(...).has("rank",
+/// — see `docs/schema/design_reserved_keys.md`. Optimizer-folded uses (e.g. `.outE(...).has("rank",
 /// N)` immediately after an edge-traversal step) never reach this check: `apply_rules` runs
 /// before physical build and removes the step entirely, folding it into the traversal step's
 /// structural field instead.
@@ -152,7 +152,7 @@ impl PhysicalPlanBuilder {
         &mut self,
         step: &LogicalStep,
         upstream: Option<steps::traits::StepRef>,
-        schema_lock: &std::sync::RwLock<Schema>,
+        schema_lock: &parking_lot::RwLock<Schema>,
         track_path: bool,
     ) -> Result<Option<steps::traits::StepRef>, StoreError> {
         use crate::engine::volcano::steps::traits::{BufferedStep, GremlinStep, StepRef};
@@ -206,7 +206,7 @@ impl PhysicalPlanBuilder {
             }};
         }
 
-        let schema = schema_lock.read().unwrap();
+        let schema = schema_lock.read();
         // Captured once here so the `get_e_or_scan!` macro below can check
         // edge_mode without re-acquiring the RwLock inside the macro body.
         let edge_mode = schema.edge_mode;

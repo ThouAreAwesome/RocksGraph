@@ -12,7 +12,7 @@ use crate::{
 /// Two sources produce an id filter immediately after an empty `V`:
 /// - `HasIdStep` — from `.hasId(N)`.
 /// - `HasPropertyStep { key: "id" }` — from `.has("id", N)`. `"id"` is a reserved key
-///   (`docs/design_reserved_keys.md`) — this fold is exactly what lets `V([]).has("id", N)`
+///   (`docs/schema/design_reserved_keys.md`) — this fold is exactly what lets `V([]).has("id", N)`
 ///   keep working; an unfolded `.has("id", N)` not adjacent to `V([])` is rejected by
 ///   `reject_reserved_key` in `build_step.rs` instead of reaching `HasPropertyStep`.
 ///

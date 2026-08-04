@@ -16,7 +16,7 @@ fn test_management_explicit_declaration_and_cas() {
     // Check initial empty schema version is 0
     {
         let schema = graph.schema();
-        assert_eq!(schema.read().unwrap().version, 0);
+        assert_eq!(schema.read().version, 0);
     }
 
     // Declare vertex label, edge label, property key
@@ -29,7 +29,7 @@ fn test_management_explicit_declaration_and_cas() {
     // Check schema version bumped to 1, and declarations persisted
     {
         let schema = graph.schema();
-        let s = schema.read().unwrap();
+        let s = schema.read();
         assert_eq!(s.version, 1);
         assert!(s.vertex_label_id("person").is_some());
         assert!(s.edge_label_id("knows").is_some());
@@ -41,7 +41,7 @@ fn test_management_explicit_declaration_and_cas() {
     let graph_reopened = Graph::open(dir.path()).unwrap();
     {
         let schema = graph_reopened.schema();
-        let s = schema.read().unwrap();
+        let s = schema.read();
         assert_eq!(s.version, 1);
         assert!(s.vertex_label_id("person").is_some());
         assert!(s.edge_label_id("knows").is_some());
@@ -67,7 +67,7 @@ fn test_management_explicit_declaration_and_cas() {
     }
     {
         let schema = graph_reopened.schema();
-        assert_eq!(schema.read().unwrap().edge_mode, EdgeMode::Multi);
+        assert_eq!(schema.read().edge_mode, EdgeMode::Multi);
     }
 
     // Edge mode multiplicity ratchet: Multi -> Single rejected
@@ -97,7 +97,7 @@ fn test_schema_mode_auto_implicit_writes_and_types() {
 
     {
         let schema = graph.schema();
-        let s = schema.read().unwrap();
+        let s = schema.read();
         assert!(s.vertex_label_id("person").is_some());
         assert!(s.prop_key_id("name").is_some());
         assert_eq!(s.prop_key_types.get(&s.prop_key_id("name").unwrap()).unwrap().data_type, DataType::String);
@@ -124,7 +124,7 @@ fn test_schema_mode_auto_implicit_writes_and_types() {
     let graph_reopened = Graph::open(dir.path()).unwrap();
     {
         let schema = graph_reopened.schema();
-        let s = schema.read().unwrap();
+        let s = schema.read();
         assert!(s.vertex_label_id("animal").is_none());
         assert!(s.prop_key_id("species").is_none());
     }
@@ -144,7 +144,7 @@ fn test_management_commit_atomic_on_partial_failure() {
         mgmt.add_property_key("age", DataType::Int32);
         mgmt.commit().unwrap();
     }
-    assert_eq!(graph.schema().read().unwrap().version, 1);
+    assert_eq!(graph.schema().read().version, 1);
 
     {
         let mut mgmt = graph.open_schema();
@@ -155,7 +155,7 @@ fn test_management_commit_atomic_on_partial_failure() {
     }
 
     let schema = graph.schema();
-    let s = schema.read().unwrap();
+    let s = schema.read();
     assert_eq!(s.version, 1, "version must not change on a failed commit");
     assert!(s.vertex_label_id("ghost").is_none(), "ghost must not leak into the live schema from a failed batch");
 }
@@ -173,7 +173,7 @@ fn test_management_commit_noop_does_not_bump_version() {
         let mgmt = graph.open_schema();
         mgmt.commit().unwrap();
     }
-    assert_eq!(graph.schema().read().unwrap().version, 0);
+    assert_eq!(graph.schema().read().version, 0);
 
     // Declare "age" for the first time -> version bumps to 1.
     {
@@ -181,7 +181,7 @@ fn test_management_commit_noop_does_not_bump_version() {
         mgmt.add_property_key("age", DataType::Int32);
         mgmt.commit().unwrap();
     }
-    assert_eq!(graph.schema().read().unwrap().version, 1);
+    assert_eq!(graph.schema().read().version, 1);
 
     // Re-declaring "age" with the identical type is idempotent -> no version bump.
     {
@@ -189,7 +189,7 @@ fn test_management_commit_noop_does_not_bump_version() {
         mgmt.add_property_key("age", DataType::Int32);
         mgmt.commit().unwrap();
     }
-    assert_eq!(graph.schema().read().unwrap().version, 1, "idempotent redeclare must not bump version");
+    assert_eq!(graph.schema().read().version, 1, "idempotent redeclare must not bump version");
 }
 
 /// Regression test: a single write that introduces exactly one new vertex label must bump
@@ -199,7 +199,7 @@ fn test_management_commit_noop_does_not_bump_version() {
 fn test_auto_mode_version_bumps_once_per_new_label() {
     let dir = tempdir().unwrap();
     let graph = Graph::open(dir.path()).unwrap();
-    assert_eq!(graph.schema().read().unwrap().version, 0);
+    assert_eq!(graph.schema().read().version, 0);
     {
         let mut tx = graph.begin();
         // "id" is a reserved, pre-registered key, so this introduces exactly one new
@@ -207,7 +207,7 @@ fn test_auto_mode_version_bumps_once_per_new_label() {
         tx.g().addV("person").property("id", 1i64).next().unwrap();
         tx.commit().unwrap();
     }
-    assert_eq!(graph.schema().read().unwrap().version, 1);
+    assert_eq!(graph.schema().read().version, 1);
 }
 
 #[test]
@@ -276,7 +276,7 @@ fn test_open_with_options_ignored_on_existing_db() {
             GraphOptions { mode: SchemaMode::Strict, edge_mode: EdgeMode::Single, ..Default::default() },
         )
         .unwrap();
-        assert_eq!(graph.schema().read().unwrap().mode, SchemaMode::Strict);
+        assert_eq!(graph.schema().read().mode, SchemaMode::Strict);
     }
 
     // Re-open with the opposite options -- the persisted Strict/Single must win.
@@ -286,7 +286,7 @@ fn test_open_with_options_ignored_on_existing_db() {
     )
     .unwrap();
     let s = reopened.schema();
-    let s = s.read().unwrap();
+    let s = s.read();
     assert_eq!(s.mode, SchemaMode::Strict, "persisted schema_mode must win over new GraphOptions");
     assert_eq!(s.edge_mode, EdgeMode::Single, "persisted edge_mode must win over new GraphOptions");
 }
@@ -312,7 +312,7 @@ fn test_auto_mode_write_invalidates_concurrent_schema_management_session() {
         tx.g().addV("person").property("id", 1i64).next().unwrap();
         tx.commit().unwrap();
     }
-    assert_eq!(graph.schema().read().unwrap().version, 1);
+    assert_eq!(graph.schema().read().version, 1);
 
     // The stale management session must now see a CAS conflict, not silently apply.
     let err = mgmt.commit().unwrap_err();
@@ -524,7 +524,7 @@ fn test_concurrent_auto_mode_complex_distinct_schemas() {
 
     // Verification step
     let schema_lock = graph.schema();
-    let schema = schema_lock.read().unwrap();
+    let schema = schema_lock.read();
 
     // Verify all labels and property keys were successfully created in the schema
     for t in 0..THREADS {
@@ -590,7 +590,7 @@ fn test_schema_persistence_across_restart() {
 
         // Verify persisted_* sets are populated after restart.
         let s = graph.schema();
-        let schema = s.read().unwrap();
+        let schema = s.read();
         assert!(!schema.persisted_vertex_labels.is_empty(), "persisted_vertex_labels should be non-empty after reopen");
         assert!(!schema.persisted_edge_labels.is_empty(), "persisted_edge_labels should be non-empty after reopen");
         assert!(!schema.persisted_prop_keys.is_empty(), "persisted_prop_keys should be non-empty after reopen");
@@ -759,7 +759,7 @@ fn test_schema_management_fluent_api_and_display() {
     // Verify committed state
     {
         let s = graph.schema();
-        let s = s.read().unwrap();
+        let s = s.read();
         assert!(s.vertex_label_id("person").is_some());
         assert!(s.edge_label_id("knows").is_some());
         assert!(s.prop_key_id("age").is_some());
@@ -787,7 +787,7 @@ fn test_schema_management_fluent_api_and_display() {
     // Verify second commit state
     {
         let s = graph.schema();
-        let s = s.read().unwrap();
+        let s = s.read();
         assert!(s.vertex_label_id("software").is_some());
         assert!(s.prop_key_id("lang").is_some());
 

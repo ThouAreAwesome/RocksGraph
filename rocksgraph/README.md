@@ -621,7 +621,7 @@ println!("{} vertices, {} edges loaded", stats.vertices_written, stats.edges_wri
   `Graph::open` if ingest succeeded, or returns `StoreError::IncompleteLoad` if it didn't.
 - Temporary files go in `work_dir` and are cleaned up automatically (RAII guard).
 
-See [`docs/design_bulkload_sst_ingest.md`](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/design_bulkload_sst_ingest.md) for the
+See [`docs/ingestion-bindings/design_bulkload_sst_ingest.md`](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/ingestion-bindings/design_bulkload_sst_ingest.md) for the
 full pipeline, memory budget allocation, and format details.
 
 ## Development
@@ -708,7 +708,7 @@ widely audited.
 - **Embedded only:** no server/client mode; queries are executed in-process.
 - **Single-threaded per query:** each volcano pipeline runs single-threaded; multiple sessions can run concurrently against a shared `Graph`.
 - **Schema ID space limits:** up to `i32::MAX` (~2.1 billion) distinct vertex labels and edge labels (independent namespaces), and 32767 property keys per graph — registering past that fails with `StoreError::SchemaExhausted`. (Label IDs are stored as `i32`; property-key IDs remain `u16`.)
-- **Not a TinkerPop driver:** RocksGraph is an embedded library with a Gremlin-style traversal API; it does not implement the Gremlin Server protocol and is not a drop-in replacement for TinkerPop-based systems. See [docs/design_principles.md](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/design_principles.md).
+- **Not a TinkerPop driver:** RocksGraph is an embedded library with a Gremlin-style traversal API; it does not implement the Gremlin Server protocol and is not a drop-in replacement for TinkerPop-based systems. See [docs/architecture/design_principles.md](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/architecture/design_principles.md).
 - **Embedded only (no distribution):** RocksGraph targets single-machine deployments. Distributed or server-client operation is not on the roadmap.
 
 ## Operations

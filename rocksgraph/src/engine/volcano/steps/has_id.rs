@@ -21,7 +21,7 @@ use crate::{
 };
 
 /// Pre-parsed edge-id predicate — avoids per-traverser allocation (see §6 of
-/// `docs/design_edge_id_string.md`).  Strings in the raw `PrimitivePredicate`
+/// `docs/schema/design_edge_id_string.md`).  Strings in the raw `PrimitivePredicate`
 /// are parsed into `CanonicalEdgeKey` once at construction.
 #[derive(Debug, Clone)]
 enum EdgeIdPredicate {

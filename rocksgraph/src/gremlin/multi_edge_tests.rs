@@ -20,7 +20,7 @@ mod multi_edge_integration_test {
         // Pre-register labels
         {
             let schema_arc = graph.schema();
-            let mut schema = schema_arc.write().unwrap();
+            let mut schema = schema_arc.write();
             schema.register_vertex_label("person").unwrap();
             schema.register_edge_label("purchased").unwrap();
             schema.register_edge_label("reviewed").unwrap();

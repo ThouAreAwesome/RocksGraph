@@ -20,11 +20,12 @@ use crate::{
         ORDER_KEY_INLINE,
     },
 };
+use parking_lot::RwLock;
 use smallvec::{smallvec, SmallVec};
 use smol_str::SmolStr;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 /// Sorts all upstream traversers and emits them in order.
 #[derive(Debug)]
@@ -49,7 +50,7 @@ fn resolve_prop_key_id(schema: &Arc<RwLock<Schema>>, cache: &mut HashMap<SmolStr
     if let Some(&id) = cache.get(name) {
         return Some(id);
     }
-    let guard = schema.read().unwrap();
+    let guard = schema.read();
     let id = guard.prop_key_id(name)?;
     cache.insert(name.clone(), id);
     Some(id)

@@ -3,13 +3,15 @@
 //! Vector search module. v0.1 provides brute-force KNN via the volcano step;
 //! v0.2 adds the `VectorIndex` trait and HNSW via usearch.
 
-use std::{collections::HashMap, sync::Arc, sync::RwLock};
+use parking_lot::RwLock;
+use std::{collections::HashMap, sync::Arc};
 
 use smol_str::SmolStr;
 
 pub(crate) mod brute_force;
 pub(crate) mod error;
 pub(crate) mod hnsw;
+pub(crate) mod persistence;
 pub(crate) mod traits;
 pub(crate) mod wal;
 

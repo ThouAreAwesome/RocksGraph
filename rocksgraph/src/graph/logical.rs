@@ -17,13 +17,14 @@ use crate::{
     },
     vector::VectorIndexMap,
 };
+use parking_lot::RwLock;
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
-    sync::{Arc, RwLock},
+    sync::Arc,
 };
 
 use super::helpers::edge_matches;
-use super::{Existence, ScanConfig, StagedSchema};
+use super::{Existence, ScanConfig, StagedSchema, TxSchemaCache};
 
 // ── LogicalGraph ──────────────────────────────────────────────────────────────
 /// Query-scoped logical graph wrapping a store transaction.
@@ -38,6 +39,7 @@ pub(crate) struct LogicalGraph {
     pub(crate) dirty: HashMap<CanonicalKey, Existence>,
     pub(crate) scan_config: ScanConfig,
     pub(crate) schema: Arc<RwLock<Schema>>,
+    pub(crate) schema_cache: TxSchemaCache,
     pub(crate) staged_schema: StagedSchema,
     pub(crate) vector_indexes: Arc<RwLock<VectorIndexMap>>,
     pub(crate) vector_pending_ops: Vec<crate::vector::PendingVectorOp>,
@@ -48,6 +50,7 @@ impl LogicalGraph {
     pub fn new(store: Transaction, schema: Arc<RwLock<Schema>>, vector_indexes: Arc<RwLock<VectorIndexMap>>) -> Self {
         // Creates a new `LogicalGraph` instance, initializing its in-memory caches
         // and associating it with a store transaction.
+        let schema_cache = TxSchemaCache::from_schema(&schema.read());
         Self {
             store,
             vertices: HashMap::new(),
@@ -57,6 +60,7 @@ impl LogicalGraph {
             dirty: HashMap::new(),
             scan_config: ScanConfig::default(),
             schema,
+            schema_cache,
             staged_schema: StagedSchema::default(),
             vector_indexes,
             vector_pending_ops: Vec::new(),
@@ -547,12 +551,12 @@ impl LogicalGraph {
                 self.ensure_vertex_props_loaded(vk)?;
                 let vt = self.vertices.get_mut(&vk).unwrap();
                 let label_id = vt.label_id;
-                let schema = self.schema.read().unwrap();
                 let props = vt
                     .props()
                     .iter()
                     .map(|(&k, v)| {
-                        let name = schema
+                        let name = self
+                            .schema_cache
                             .prop_key_str(k)
                             .cloned()
                             .unwrap_or_else(|| smol_str::SmolStr::from(format!("__key_{}", k)));
@@ -567,12 +571,12 @@ impl LogicalGraph {
                 }
                 let eg = self.edges.get_mut(&ek).unwrap();
                 let label_id = eg.label_id;
-                let schema = self.schema.read().unwrap();
                 let props = eg
                     .props()
                     .iter()
                     .map(|(&k, v)| {
-                        let name = schema
+                        let name = self
+                            .schema_cache
                             .prop_key_str(k)
                             .cloned()
                             .unwrap_or_else(|| smol_str::SmolStr::from(format!("__key_{}", k)));
@@ -643,11 +647,8 @@ impl LogicalGraph {
             return Err(StoreError::DuplicateVertex(id));
         }
 
-        {
-            let schema = self.schema.read().unwrap();
-            if !schema.persisted_vertex_labels.contains(&label_id) {
-                self.staged_schema.staged_vertex_labels.insert(label_id);
-            }
+        if !self.schema_cache.persisted_vertex_labels.contains(&label_id) {
+            self.staged_schema.staged_vertex_labels.insert(label_id);
         }
 
         let vertex = Vertex::new(id, label_id);
@@ -692,18 +693,15 @@ impl LogicalGraph {
     /// # Locking
     /// No lock is acquired.  The new edge's `props` field starts empty.
     pub(crate) fn add_edge(&mut self, ek: &EdgeKey) -> Result<EdgeKey, StoreError> {
-        let edge_mode = self.schema.read().unwrap().edge_mode;
+        let edge_mode = self.schema_cache.edge_mode;
         if edge_mode == crate::schema::EdgeMode::Single && ek.rank != DEFAULT_RANK {
             return Err(StoreError::UnsupportedOperation(format!(
                 "Non-zero rank {} is not allowed for single-edge relationship of label id {}",
                 ek.rank, ek.label_id
             )));
         }
-        {
-            let schema = self.schema.read().unwrap();
-            if !schema.persisted_edge_labels.contains(&ek.label_id) {
-                self.staged_schema.staged_edge_labels.insert(ek.label_id);
-            }
+        if !self.schema_cache.persisted_edge_labels.contains(&ek.label_id) {
+            self.staged_schema.staged_edge_labels.insert(ek.label_id);
         }
         let cek = ek.canonical_edge_key();
         if self.edges.contains_key(&cek) {
@@ -763,19 +761,16 @@ impl LogicalGraph {
     /// # Locking
     /// No lock is acquired. Mutates the properties in place via an exclusive borrow.
     pub(crate) fn set_property(&mut self, prop: &Property) -> Result<(), StoreError> {
-        {
-            let schema = self.schema.read().unwrap();
-            if !schema.persisted_prop_keys.contains(&prop.key) {
-                self.staged_schema.staged_prop_keys.insert(prop.key);
-            }
-            if let Some(cfg) = schema.prop_key_types.get(&prop.key) {
-                let incoming_type = crate::schema::DataType::from_primitive(&prop.value);
-                if cfg.data_type != incoming_type {
-                    return Err(StoreError::SchemaViolation(format!(
-                        "Type mismatch for property key id {}: expected {:?}",
-                        prop.key, cfg.data_type
-                    )));
-                }
+        if !self.schema_cache.persisted_prop_keys.contains(&prop.key) {
+            self.staged_schema.staged_prop_keys.insert(prop.key);
+        }
+        if let Some(cfg) = self.schema_cache.prop_key_type(prop.key) {
+            let incoming_type = crate::schema::DataType::from_primitive(&prop.value);
+            if cfg.data_type != incoming_type {
+                return Err(StoreError::SchemaViolation(format!(
+                    "Type mismatch for property key id {}: expected {:?}",
+                    prop.key, cfg.data_type
+                )));
             }
         }
         let key = prop.owner;
@@ -930,12 +925,11 @@ impl LogicalGraph {
                 }
                 self.mark_dirty(*key, Existence::Tombstone);
                 let vertex_prop_ids: Vec<u16> = {
-                    let indexes = self.vector_indexes.read().unwrap();
-                    let schema = self.schema.read().unwrap();
+                    let indexes = self.vector_indexes.read();
                     indexes
                         .keys()
                         .filter(|(ent, _)| *ent == crate::vector::VectorEntityType::Vertex)
-                        .filter_map(|(_, prop_name)| schema.prop_key_id(prop_name))
+                        .filter_map(|(_, prop_name)| self.schema_cache.prop_key_id(prop_name))
                         .collect()
                 };
                 if !vertex_prop_ids.is_empty() {
@@ -982,9 +976,8 @@ impl LogicalGraph {
 
     /// If a vector index exists for `prop_key_id`, record a WAL insert pending op.
     fn maybe_record_wal_insert(&mut self, owner: &CanonicalKey, prop_key_id: u16, vec: &[f32]) {
-        let indexes = self.vector_indexes.read().unwrap();
-        let schema = self.schema.read().unwrap();
-        if let Some(prop_name) = schema.prop_key_str(prop_key_id) {
+        let indexes = self.vector_indexes.read();
+        if let Some(prop_name) = self.schema_cache.prop_key_str(prop_key_id) {
             let key = (crate::vector::VectorEntityType::Vertex, prop_name.clone());
             if indexes.contains_key(&key) {
                 if let CanonicalKey::Vertex(vk) = owner {
@@ -1003,9 +996,8 @@ impl LogicalGraph {
 
     /// If a vector index exists for `prop_key_id`, record a WAL remove pending op.
     fn maybe_record_wal_remove(&mut self, owner: &CanonicalKey, prop_key_id: u16) {
-        let indexes = self.vector_indexes.read().unwrap();
-        let schema = self.schema.read().unwrap();
-        if let Some(prop_name) = schema.prop_key_str(prop_key_id) {
+        let indexes = self.vector_indexes.read();
+        if let Some(prop_name) = self.schema_cache.prop_key_str(prop_key_id) {
             let key = (crate::vector::VectorEntityType::Vertex, prop_name.clone());
             if indexes.contains_key(&key) {
                 if let CanonicalKey::Vertex(vk) = owner {
@@ -1109,7 +1101,7 @@ impl LogicalGraph {
 
         let mut schema_changed = false;
         {
-            let schema = self.schema.read().unwrap();
+            let schema = self.schema.read();
             for &label_id in &self.staged_schema.staged_vertex_labels {
                 if let Some(name) = schema.vertex_label_str(label_id) {
                     let val = kv_codec::encode_schema_label_value(label_id);
@@ -1147,27 +1139,9 @@ impl LogicalGraph {
 
         // Write vector WAL entries from pending vector ops before the transaction commits.
         if !self.vector_pending_ops.is_empty() {
-            let schema = self.schema.read().unwrap();
-            for op in &self.vector_pending_ops {
-                match op {
-                    crate::vector::PendingVectorOp::Inserted { key, prop_name, vector, ts } => {
-                        if let Some(prop_key_id) = schema.prop_key_id(prop_name) {
-                            let wal_key = crate::vector::wal::encode_wal_key(prop_key_id, 0x00, *ts);
-                            if let Ok(wal_val) = crate::vector::wal::encode_wal_insert(key, vector) {
-                                self.store.put_wal_entry(&wal_key, &wal_val)?;
-                            }
-                        }
-                    }
-                    crate::vector::PendingVectorOp::Removed { key, prop_name, ts } => {
-                        if let Some(prop_key_id) = schema.prop_key_id(prop_name) {
-                            let wal_key = crate::vector::wal::encode_wal_key(prop_key_id, 0x00, *ts);
-                            if let Ok(wal_val) = crate::vector::wal::encode_wal_remove(key) {
-                                self.store.put_wal_entry(&wal_key, &wal_val)?;
-                            }
-                        }
-                    }
-                }
-            }
+            crate::vector::wal::flush_vector_wal(&mut self.store, &self.vector_pending_ops, |p| {
+                self.schema_cache.prop_key_id(p)
+            })?;
         }
 
         let commit_result = self.store.commit();
@@ -1175,7 +1149,7 @@ impl LogicalGraph {
         // Mark these persisted only once the underlying store commit actually succeeded;
         // must run before `self.reset()` below clears `self.staged_schema`.
         if schema_changed && commit_result.is_ok() {
-            let mut schema = self.schema.write().unwrap();
+            let mut schema = self.schema.write();
             for &label_id in &self.staged_schema.staged_vertex_labels {
                 schema.persisted_vertex_labels.insert(label_id);
             }
@@ -1189,13 +1163,13 @@ impl LogicalGraph {
 
         // Apply committed vector mutations to in-memory indexes.
         if commit_result.is_ok() {
-            let indexes = self.vector_indexes.read().unwrap();
+            let indexes = self.vector_indexes.read();
             for op in &self.vector_pending_ops {
                 match op {
                     crate::vector::PendingVectorOp::Inserted { key, prop_name, vector, ts, .. } => {
                         let idx_key = (crate::vector::VectorEntityType::Vertex, prop_name.clone());
                         if let Some(arc) = indexes.get(&idx_key) {
-                            let mut guard = arc.write().unwrap();
+                            let mut guard = arc.write();
                             // Only advance the WAL timestamp on success. If insert fails (e.g.
                             // memory limit exceeded), leaving the timestamp behind allows WAL
                             // replay on the next open to retry the entry once the limit is raised.
@@ -1211,7 +1185,7 @@ impl LogicalGraph {
                     crate::vector::PendingVectorOp::Removed { key, prop_name, ts, .. } => {
                         let idx_key = (crate::vector::VectorEntityType::Vertex, prop_name.clone());
                         if let Some(arc) = indexes.get(&idx_key) {
-                            let mut guard = arc.write().unwrap();
+                            let mut guard = arc.write();
                             let _ = guard.remove(key);
                             guard.set_last_replayed_timestamp(*ts);
                         }
@@ -1239,5 +1213,6 @@ impl LogicalGraph {
         self.vertex_degree.clear();
         self.staged_schema.clear();
         self.vector_pending_ops.clear();
+        self.schema_cache = TxSchemaCache::from_schema(&self.schema.read());
     }
 }

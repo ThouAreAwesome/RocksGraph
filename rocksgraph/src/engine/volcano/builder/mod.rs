@@ -144,7 +144,7 @@ impl PhysicalPlanBuilder {
     pub fn build(
         &mut self,
         plan: &LogicalPlan,
-        schema_lock: &std::sync::RwLock<Schema>,
+        schema_lock: &parking_lot::RwLock<Schema>,
     ) -> Result<PhysicalPlan, StoreError> {
         let track_path = plan.has_path_consumer();
         self.build_steps(plan, schema_lock, track_path)
@@ -153,7 +153,7 @@ impl PhysicalPlanBuilder {
     fn build_steps(
         &mut self,
         plan: &LogicalPlan,
-        schema_lock: &std::sync::RwLock<Schema>,
+        schema_lock: &parking_lot::RwLock<Schema>,
         track_path: bool,
     ) -> Result<PhysicalPlan, StoreError> {
         let source = BufferedStep::new(VecSourceStep::empty());
@@ -203,7 +203,7 @@ mod tests {
         };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let schema_lock = std::sync::RwLock::new(Schema::default());
+        let schema_lock = parking_lot::RwLock::new(Schema::default());
         let physical_plan = builder.build(&plan, &schema_lock).unwrap();
 
         physical_plan.inject(smallvec![traverser(1), traverser(2), traverser(3)]);
@@ -219,7 +219,7 @@ mod tests {
         let plan = LogicalPlan { steps: vec![LogicalStep::Count(CountStep {})] };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let schema_lock = std::sync::RwLock::new(Schema::default());
+        let schema_lock = parking_lot::RwLock::new(Schema::default());
         let physical_plan = builder.build(&plan, &schema_lock).unwrap();
 
         physical_plan.inject(smallvec![traverser(1), traverser(2), traverser(3)]);
@@ -245,7 +245,7 @@ mod tests {
         let plan = LogicalPlan { steps: vec![LogicalStep::Where(WhereStep { plan: sub_plan })] };
 
         let mut builder: PhysicalPlanBuilder = Default::default();
-        let schema_lock = std::sync::RwLock::new(Schema::default());
+        let schema_lock = parking_lot::RwLock::new(Schema::default());
         let physical_plan = builder.build(&plan, &schema_lock).unwrap();
 
         physical_plan.inject(smallvec![traverser(1), traverser(2), traverser(3)]);
@@ -278,7 +278,7 @@ mod tests {
             let mut plan = LogicalPlan { steps };
             apply_rules(&mut plan).expect("Optimizer rules failed");
             let mut builder: PhysicalPlanBuilder = Default::default();
-            let schema_lock = std::sync::RwLock::new(Schema::default());
+            let schema_lock = parking_lot::RwLock::new(Schema::default());
             let physical_plan = builder.build(&plan, &schema_lock).unwrap();
             let debug_str = format!("{:?}", physical_plan);
 
@@ -430,7 +430,7 @@ mod tests {
             let mut plan = LogicalPlan { steps };
             apply_rules(&mut plan).expect("Optimizer rules failed");
             let mut builder: PhysicalPlanBuilder = Default::default();
-            let schema_lock = std::sync::RwLock::new(Schema::default());
+            let schema_lock = parking_lot::RwLock::new(Schema::default());
             let physical_plan = builder.build(&plan, &schema_lock).unwrap();
             crate::engine::volcano::builder::render_explain(&physical_plan.explain(), 0, "")
         }

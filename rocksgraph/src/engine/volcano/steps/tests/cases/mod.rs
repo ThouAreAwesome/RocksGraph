@@ -55,7 +55,7 @@ pub(super) fn create_logical_graph(store: &RocksStorage) -> LogicalGraph {
     let schema = store.load_schema(crate::schema::SchemaMode::Auto, crate::schema::EdgeMode::Single).unwrap();
     LogicalGraph::new(
         store.begin(),
-        std::sync::Arc::new(std::sync::RwLock::new(schema)),
+        std::sync::Arc::new(parking_lot::RwLock::new(schema)),
         crate::vector::empty_vector_index_map(),
     )
 }
@@ -82,7 +82,7 @@ pub(super) fn create_tinkerpop_modern_graph(store: &RocksStorage) -> LogicalGrap
     let mut graph = create_logical_graph(store);
 
     let (name_key, age_key, lang_key, weight_key) = {
-        let mut schema = graph.schema.write().unwrap();
+        let mut schema = graph.schema.write();
         schema.register_vertex_label("dummy").unwrap(); // ID 1
         schema.register_vertex_label("person").unwrap(); // ID 2 (PERSON_LABEL_ID)
         schema.register_vertex_label("software").unwrap(); // ID 3 (SOFTWARE_LABEL_ID)
@@ -255,10 +255,10 @@ pub(super) fn create_tinkerpop_modern_graph(store: &RocksStorage) -> LogicalGrap
     let mut verification_graph = create_logical_graph(store);
 
     // Verify Vertices
-    let name_key = verification_graph.schema.read().unwrap().prop_key_id("name").unwrap();
-    let age_key = verification_graph.schema.read().unwrap().prop_key_id("age").unwrap();
-    let lang_key = verification_graph.schema.read().unwrap().prop_key_id("lang").unwrap();
-    let weight_key = verification_graph.schema.read().unwrap().prop_key_id("weight").unwrap();
+    let name_key = verification_graph.schema.read().prop_key_id("name").unwrap();
+    let age_key = verification_graph.schema.read().prop_key_id("age").unwrap();
+    let lang_key = verification_graph.schema.read().prop_key_id("lang").unwrap();
+    let weight_key = verification_graph.schema.read().prop_key_id("weight").unwrap();
 
     let _marko_v = verification_graph.get_vertex(v_marko).unwrap().unwrap();
     assert_eq!(
@@ -458,8 +458,8 @@ fn test_add_v_step_to_empty_graph() {
     if let GValue::Vertex(v_key) = &result.value {
         assert_eq!(*v_key, test_vertex_id); // Check the returned VertexKey
         let _ = graph.get_vertex(*v_key).unwrap().unwrap(); // Fetch the actual vertex (populates overlay)
-        let name_id = graph.schema.read().unwrap().prop_key_id("name").unwrap();
-        let age_id = graph.schema.read().unwrap().prop_key_id("age").unwrap();
+        let name_id = graph.schema.read().prop_key_id("name").unwrap();
+        let age_id = graph.schema.read().prop_key_id("age").unwrap();
         assert_eq!(
             graph.get_value(&CanonicalKey::Vertex(*v_key), name_id).unwrap().unwrap(),
             Primitive::String(SmolStr::new("marko"))
@@ -506,7 +506,7 @@ fn test_add_e_step_to_tinkerpop_modern_graph() {
         assert_eq!(added_edge.label_id, FRIENDS_LABEL_ID);
         assert_eq!(added_edge.primary_id, marko_id);
         assert_eq!(added_edge.secondary_id, vadas_id);
-        let since_id = graph.schema.read().unwrap().prop_key_id("since").unwrap();
+        let since_id = graph.schema.read().prop_key_id("since").unwrap();
         assert_eq!(
             graph.get_value(&CanonicalKey::Edge(e_key.canonical_edge_key()), since_id).unwrap().unwrap(),
             Primitive::Int32(2020)
@@ -540,8 +540,8 @@ fn test_property_step_update_vertex_in_tinkerpop_modern_graph() {
     if let GValue::Vertex(v_key) = &result.value {
         let updated_vertex = graph.get_vertex(*v_key).unwrap().unwrap();
         assert_eq!(updated_vertex, marko_id);
-        let name_id = graph.schema.read().unwrap().prop_key_id("name").unwrap();
-        let age_id = graph.schema.read().unwrap().prop_key_id("age").unwrap();
+        let name_id = graph.schema.read().prop_key_id("name").unwrap();
+        let age_id = graph.schema.read().prop_key_id("age").unwrap();
         assert_eq!(
             graph.get_value(&CanonicalKey::Vertex(*v_key), name_id).unwrap().unwrap(),
             Primitive::String(SmolStr::new("marko"))
@@ -583,7 +583,7 @@ fn test_property_step_add_new_property_to_edge() {
     if let GValue::Edge(e_key) = &result.value {
         let updated_edge = graph.get_edge(e_key).unwrap().unwrap();
         assert_eq!(updated_edge.canonical_edge_key(), knows_edge_key);
-        let duration_id = graph.schema.read().unwrap().prop_key_id("duration").unwrap();
+        let duration_id = graph.schema.read().prop_key_id("duration").unwrap();
         assert_eq!(
             graph.get_value(&CanonicalKey::Edge(e_key.canonical_edge_key()), duration_id).unwrap().unwrap(),
             Primitive::Int32(12)
@@ -591,7 +591,7 @@ fn test_property_step_add_new_property_to_edge() {
     } else {
         panic!("Expected an Edge GValue");
     }
-    let duration_id = graph.schema.read().unwrap().prop_key_id("duration").unwrap();
+    let duration_id = graph.schema.read().prop_key_id("duration").unwrap();
     assert_eq!(
         graph.get_value(&CanonicalKey::Edge(knows_edge_key), duration_id).unwrap().unwrap(),
         Primitive::Int32(12)
@@ -1000,7 +1000,7 @@ fn test_properties_step() {
         .iter()
         .map(|p| match p {
             GValue::Property(Property { owner: _, key, value: _ }) => {
-                graph.schema.read().unwrap().prop_key_str(*key).unwrap().clone()
+                graph.schema.read().prop_key_str(*key).unwrap().clone()
             }
             _ => unreachable!("unexpecte result"),
         })
@@ -1267,8 +1267,8 @@ fn test_drop_property_on_vertex_step() {
 
     let mut verify = create_logical_graph(&store);
     let _ = verify.get_vertex(marko_id).unwrap().unwrap();
-    let age_id = verify.schema.read().unwrap().prop_key_id("age").unwrap();
-    let name_id = verify.schema.read().unwrap().prop_key_id("name").unwrap();
+    let age_id = verify.schema.read().prop_key_id("age").unwrap();
+    let name_id = verify.schema.read().prop_key_id("name").unwrap();
     assert!(verify.get_value(&CanonicalKey::Vertex(marko_id), age_id).unwrap().is_none());
     // "name" is untouched.
     assert_eq!(
@@ -1306,7 +1306,7 @@ fn test_drop_property_on_edge_step() {
 
     let mut verify = create_logical_graph(&store);
     let _ = verify.get_edge(&edge_cek.out_key()).unwrap().unwrap();
-    let weight_id = verify.schema.read().unwrap().prop_key_id("weight").unwrap();
+    let weight_id = verify.schema.read().prop_key_id("weight").unwrap();
     assert!(verify.get_value(&CanonicalKey::Edge(edge_cek), weight_id).unwrap().is_none());
 }
 
@@ -1634,9 +1634,9 @@ fn test_get_e_step_exact_rank_point_lookup() {
     // end_vertex_id from where(), and explicit hasRank()), GetEStep should still
     // resolve to an exact point lookup.
     let (store, _dir) = open_rocks_store();
-    let schema = std::sync::Arc::new(std::sync::RwLock::new(crate::schema::Schema::new()));
+    let schema = std::sync::Arc::new(parking_lot::RwLock::new(crate::schema::Schema::new()));
     {
-        let mut s = schema.write().unwrap();
+        let mut s = schema.write();
         s.edge_mode = crate::schema::definition::EdgeMode::Multi;
         s.register_vertex_label("dummy").unwrap(); // 1
         s.register_vertex_label("person").unwrap(); // 2 (PERSON_LABEL_ID)
@@ -1724,9 +1724,9 @@ fn test_multi_edge_label_without_rank_filter_falls_back_to_scan() {
     // the rank=1 edge); it must fall back to the scan, which correctly returns both edges
     // regardless of rank.
     let (store, _dir) = open_rocks_store();
-    let schema = std::sync::Arc::new(std::sync::RwLock::new(crate::schema::Schema::new()));
+    let schema = std::sync::Arc::new(parking_lot::RwLock::new(crate::schema::Schema::new()));
     {
-        let mut s = schema.write().unwrap();
+        let mut s = schema.write();
         s.edge_mode = crate::schema::definition::EdgeMode::Multi;
         s.register_vertex_label("dummy").unwrap(); // 1
         s.register_vertex_label("person").unwrap(); // 2 (PERSON_LABEL_ID)
@@ -2113,7 +2113,7 @@ fn test_step_edge_cases_with_graph() {
 
     // 12. HasPropertyStep matching vertex and non-matching vertex
     {
-        let age_id = graph.schema.read().unwrap().prop_key_id("age").unwrap();
+        let age_id = graph.schema.read().prop_key_id("age").unwrap();
 
         let src = BufferedStep::new(VecSourceStep::empty());
         src.inner.borrow_mut().core.inject(smallvec![
@@ -2245,7 +2245,7 @@ fn test_additional_physical_steps_coverage() {
 
     // 4. DropStep property dropping
     {
-        let name_id = graph.schema.read().unwrap().prop_key_id("name").unwrap();
+        let name_id = graph.schema.read().prop_key_id("name").unwrap();
         let src = BufferedStep::new(VecSourceStep::empty());
         src.inner.borrow_mut().core.inject(smallvec![Rc::new(Traverser::new(GValue::Property(Property {
             owner: CanonicalKey::Vertex(1),
@@ -2283,7 +2283,7 @@ fn test_additional_physical_steps_coverage() {
         step.reset();
 
         // Lookup a real edge: Marko (1) -> created -> Lop (3)
-        let created_label_id = graph.schema.read().unwrap().edge_label_id("created").unwrap();
+        let created_label_id = graph.schema.read().edge_label_id("created").unwrap();
         let cek = CanonicalEdgeKey { src_id: 1, label_id: created_label_id, dst_id: 3, rank: 0 };
         let mut step = EStep::new(smallvec![cek.to_id_string()]);
         let res = step.produce(&mut graph).unwrap().unwrap();
@@ -2510,7 +2510,7 @@ fn test_additional_physical_steps_coverage() {
 
     // 18. HasPropertyStep extra coverage
     {
-        let age_id = graph.schema.read().unwrap().prop_key_id("age").unwrap();
+        let age_id = graph.schema.read().prop_key_id("age").unwrap();
         let mut step = HasPropertyStep::new(age_id, PrimitivePredicate::Eq(Primitive::Int32(29)));
         assert!(step.produce(&mut graph).unwrap().is_none());
         assert!(step.upper().is_none());

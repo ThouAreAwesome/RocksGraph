@@ -14,7 +14,7 @@
 //! reject them. Use the dedicated steps instead: [`id()`](crate::TraversalBuilder::id) /
 //! [`hasId()`](crate::TraversalBuilder::hasId), [`label()`](crate::TraversalBuilder::label) /
 //! [`hasLabel()`](crate::TraversalBuilder::hasLabel), [`rank()`](crate::TraversalBuilder::rank) /
-//! [`hasRank()`](crate::TraversalBuilder::hasRank). See `docs/design_reserved_keys.md`.
+//! [`hasRank()`](crate::TraversalBuilder::hasRank). See `docs/schema/design_reserved_keys.md`.
 //!
 //! ```
 //! # use rocksgraph::{Graph, TraversalBuilder, Value};

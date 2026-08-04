@@ -55,7 +55,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn verify_degree_integrity(graph: &Graph) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n--- Verifying degree integrity (vertex_degree CF vs adjacency scan) ---");
 
-    let edge_labels: Vec<String> = graph.edge_label_names();
+    let edge_labels: Vec<smol_str::SmolStr> = graph.edge_label_names();
     if edge_labels.is_empty() {
         println!("  No edge labels found — skipping degree integrity check.");
         return Ok(());

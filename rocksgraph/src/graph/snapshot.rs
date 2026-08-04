@@ -15,10 +15,11 @@ use crate::{
     },
     vector::VectorIndexMap,
 };
+use parking_lot::RwLock;
 use std::collections::{hash_map::Entry, HashMap};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
-use super::ScanConfig;
+use super::{ScanConfig, TxSchemaCache};
 
 // ── LogicalSnapshot ───────────────────────────────────────────────────────────
 
@@ -40,6 +41,7 @@ pub(crate) struct LogicalSnapshot {
     vertex_degree: HashMap<VertexKey, (u32, u32, LabelId)>,
     pub(crate) scan_config: ScanConfig,
     pub(crate) schema: Arc<RwLock<crate::schema::Schema>>,
+    pub(crate) schema_cache: TxSchemaCache,
     pub(crate) vector_indexes: Arc<RwLock<VectorIndexMap>>,
 }
 
@@ -49,6 +51,7 @@ impl LogicalSnapshot {
         schema: Arc<RwLock<crate::schema::Schema>>,
         vector_indexes: Arc<RwLock<VectorIndexMap>>,
     ) -> Self {
+        let schema_cache = TxSchemaCache::from_schema(&schema.read());
         Self {
             store: snapshot,
             vertices: HashMap::new(),
@@ -56,6 +59,7 @@ impl LogicalSnapshot {
             vertex_degree: HashMap::new(),
             scan_config: ScanConfig::default(),
             schema,
+            schema_cache,
             vector_indexes,
         }
     }
@@ -297,12 +301,12 @@ impl LogicalSnapshot {
                 self.ensure_vertex_props_loaded(vk)?;
                 let vt = self.vertices.get_mut(&vk).unwrap();
                 let label_id = vt.label_id;
-                let schema = self.schema.read().unwrap();
                 let props = vt
                     .props()
                     .iter()
                     .map(|(&k, v)| {
-                        let name = schema
+                        let name = self
+                            .schema_cache
                             .prop_key_str(k)
                             .cloned()
                             .unwrap_or_else(|| smol_str::SmolStr::from(format!("__key_{}", k)));
@@ -317,12 +321,12 @@ impl LogicalSnapshot {
                 }
                 let eg = self.edges.get_mut(&ek).unwrap();
                 let label_id = eg.label_id;
-                let schema = self.schema.read().unwrap();
                 let props = eg
                     .props()
                     .iter()
                     .map(|(&k, v)| {
-                        let name = schema
+                        let name = self
+                            .schema_cache
                             .prop_key_str(k)
                             .cloned()
                             .unwrap_or_else(|| smol_str::SmolStr::from(format!("__key_{}", k)));

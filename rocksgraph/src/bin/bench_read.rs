@@ -473,7 +473,6 @@ mod tests {
             let graph =
                 Graph::open_with_options(dir.path(), GraphOptions { mode: SchemaMode::Strict, ..Default::default() })
                     .unwrap();
-            let mut snap = graph.begin();
             {
                 use rocksgraph::schema::DataType;
                 let mut mgmt = graph.open_schema();
@@ -485,6 +484,7 @@ mod tests {
                     .add_property_key("timestamp", DataType::Int64);
                 mgmt.commit().unwrap();
             }
+            let mut snap = graph.begin();
             snap.g()
                 .addV(VERTEX_LABEL)
                 .property("id", 1i64)
