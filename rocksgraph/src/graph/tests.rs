@@ -2771,3 +2771,354 @@ fn test_nearest_upstream_filter_and_missing_props() {
         g.close().unwrap();
     }
 }
+
+#[test]
+fn test_vector_index_in_memory_commit_ryow_and_wal_replay() {
+    use crate::{
+        gremlin::traversal::TraversalBuilder,
+        vector::{AnnAlgorithm, DistanceMetric, Quantization, VectorEntityType, VectorIndexConfig},
+        Graph, Value,
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+
+    // 1. Declare HNSW vector index and test uncommitted RYOW & in-memory commit update.
+    {
+        let g = Graph::open(path).unwrap();
+        let mut sess = g.open_schema();
+        sess.add_vector_index(VectorIndexConfig {
+            property: "emb".into(),
+            entity_type: VectorEntityType::Vertex,
+            dimension: 4,
+            metric: DistanceMetric::Cosine,
+            algorithm: AnnAlgorithm::Hnsw(Default::default()),
+            quantization: Quantization::F32,
+        });
+        sess.commit().unwrap();
+
+        // Transaction 1: Add vertex 1, verify RYOW, add vertex 2, commit.
+        let mut tx = g.begin();
+        tx.g()
+            .addV("doc")
+            .property("id", 1i64)
+            .property("emb", Value::FloatVector(vec![1.0f32, 0.0, 0.0, 0.0]))
+            .next()
+            .unwrap();
+
+        // Uncommitted RYOW: nearest() should find vertex 1
+        let ryow_1: Vec<i64> = tx
+            .g()
+            .V([])
+            .nearest("emb", vec![1.0, 0.0, 0.0, 0.0], 5)
+            .id()
+            .to_list()
+            .unwrap()
+            .into_iter()
+            .filter_map(|v| match v {
+                Value::Int64(id) => Some(id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ryow_1, vec![1], "RYOW should see uncommitted vertex 1");
+
+        tx.g()
+            .addV("doc")
+            .property("id", 2i64)
+            .property("emb", Value::FloatVector(vec![0.0f32, 1.0, 0.0, 0.0]))
+            .next()
+            .unwrap();
+
+        let ryow_2: Vec<i64> = tx
+            .g()
+            .V([])
+            .nearest("emb", vec![1.0, 0.0, 0.0, 0.0], 5)
+            .id()
+            .to_list()
+            .unwrap()
+            .into_iter()
+            .filter_map(|v| match v {
+                Value::Int64(id) => Some(id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ryow_2, vec![1, 2], "RYOW should see uncommitted vertices 1 and 2 in score order");
+
+        tx.commit().unwrap();
+
+        // Query immediately on existing open graph instance — in-memory index was updated on commit!
+        let mut snap = g.read();
+        let committed_results: Vec<i64> = snap
+            .g()
+            .V([])
+            .nearest("emb", vec![1.0, 0.0, 0.0, 0.0], 5)
+            .id()
+            .to_list()
+            .unwrap()
+            .into_iter()
+            .filter_map(|v| match v {
+                Value::Int64(id) => Some(id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(committed_results, vec![1, 2], "Committed vectors should be visible immediately in-memory");
+
+        // Transaction 2: Drop vertex 2, verify RYOW removal, commit.
+        let mut tx2 = g.begin();
+        tx2.g().V([2]).drop().next().unwrap();
+
+        let ryow_after_drop: Vec<i64> = tx2
+            .g()
+            .V([])
+            .nearest("emb", vec![1.0, 0.0, 0.0, 0.0], 5)
+            .id()
+            .to_list()
+            .unwrap()
+            .into_iter()
+            .filter_map(|v| match v {
+                Value::Int64(id) => Some(id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ryow_after_drop, vec![1], "RYOW should exclude dropped vertex 2");
+
+        tx2.commit().unwrap();
+
+        // Verify post-commit in-memory index updated on deletion
+        let mut snap2 = g.read();
+        let post_delete: Vec<i64> = snap2
+            .g()
+            .V([])
+            .nearest("emb", vec![1.0, 0.0, 0.0, 0.0], 5)
+            .id()
+            .to_list()
+            .unwrap()
+            .into_iter()
+            .filter_map(|v| match v {
+                Value::Int64(id) => Some(id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(post_delete, vec![1]);
+
+        g.close().unwrap();
+    }
+
+    // 2. Re-open graph without rebuild — WAL replay should populate in-memory index automatically!
+    {
+        let g = Graph::open(path).unwrap();
+        let mut snap = g.read();
+        let recovered_results: Vec<i64> = snap
+            .g()
+            .V([])
+            .nearest("emb", vec![1.0, 0.0, 0.0, 0.0], 5)
+            .id()
+            .to_list()
+            .unwrap()
+            .into_iter()
+            .filter_map(|v| match v {
+                Value::Int64(id) => Some(id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(recovered_results, vec![1], "WAL replay on open should restore vector index without rebuild");
+        g.close().unwrap();
+    }
+}
+
+#[test]
+fn test_vector_index_snapshot_save_on_close_and_incremental_wal_seek_replay() {
+    use crate::{
+        gremlin::traversal::TraversalBuilder,
+        vector::{AnnAlgorithm, DistanceMetric, Quantization, VectorEntityType, VectorIndexConfig},
+        Graph, Value,
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+    let snapshot_file = path.join("vector_idx_emb.snapshot");
+
+    // Phase 1: Define schema, insert vectors 1 and 2, close cleanly.
+    {
+        let g = Graph::open(path).unwrap();
+        let mut sess = g.open_schema();
+        sess.add_vector_index(VectorIndexConfig {
+            property: "emb".into(),
+            entity_type: VectorEntityType::Vertex,
+            dimension: 4,
+            metric: DistanceMetric::Cosine,
+            algorithm: AnnAlgorithm::Hnsw(Default::default()),
+            quantization: Quantization::F32,
+        });
+        sess.commit().unwrap();
+
+        let mut tx = g.begin();
+        tx.g()
+            .addV("doc")
+            .property("id", 1i64)
+            .property("emb", Value::FloatVector(vec![1.0f32, 0.0, 0.0, 0.0]))
+            .next()
+            .unwrap();
+        tx.g()
+            .addV("doc")
+            .property("id", 2i64)
+            .property("emb", Value::FloatVector(vec![0.0f32, 1.0, 0.0, 0.0]))
+            .next()
+            .unwrap();
+        tx.commit().unwrap();
+
+        // Clean close — saves snapshot (WAL entries for 1 and 2 are GC'd afterwards).
+        g.close().unwrap();
+    }
+
+    // Verify snapshot file was created on close.
+    assert!(snapshot_file.exists(), "Snapshot file should exist after clean close");
+
+    // Phase 2 (crash simulation): Open, verify [1, 2], insert vector 3, commit.
+    // Drop the graph WITHOUT calling close() — the snapshot is NOT updated and WAL
+    // entries for vector 3 are NOT GC'd, simulating a process crash.
+    {
+        let g = Graph::open(path).unwrap();
+        let mut snap = g.read();
+        let results: Vec<i64> = snap
+            .g()
+            .V([])
+            .nearest("emb", vec![1.0, 0.0, 0.0, 0.0], 2)
+            .id()
+            .to_list()
+            .unwrap()
+            .into_iter()
+            .filter_map(|v| match v {
+                Value::Int64(id) => Some(id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(results, vec![1, 2]);
+
+        let mut tx = g.begin();
+        tx.g()
+            .addV("doc")
+            .property("id", 3i64)
+            .property("emb", Value::FloatVector(vec![0.9f32, 0.1, 0.0, 0.0]))
+            .next()
+            .unwrap();
+        tx.commit().unwrap();
+
+        // Drop g without close() — leaves Phase 1 snapshot on disk and WAL entry for
+        // vector 3 un-GC'd.
+        drop(g);
+    }
+
+    // Phase 3: Open graph -> loads Phase 1 snapshot (vectors 1 and 2) and
+    // replays the WAL entry for vector 3.  Nearest to [1, 0, 0, 0] should be [1, 3].
+    {
+        let g = Graph::open(path).unwrap();
+        let mut snap = g.read();
+        let results: Vec<i64> = snap
+            .g()
+            .V([])
+            .nearest("emb", vec![1.0, 0.0, 0.0, 0.0], 2)
+            .id()
+            .to_list()
+            .unwrap()
+            .into_iter()
+            .filter_map(|v| match v {
+                Value::Int64(id) => Some(id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(results, vec![1, 3], "Incremental WAL seek replay must catch up from snapshot timestamp");
+
+        // Drop vector index via schema session -> should remove snapshot file.
+        let mut sess = g.open_schema();
+        sess.drop_vector_index(VectorEntityType::Vertex, "emb");
+        sess.commit().unwrap();
+
+        assert!(!snapshot_file.exists(), "Snapshot file should be deleted when vector index is dropped");
+        g.close().unwrap();
+    }
+}
+
+#[test]
+fn test_vector_index_drop_property_wal_remove_and_replay() {
+    use crate::{
+        gremlin::traversal::TraversalBuilder,
+        vector::{AnnAlgorithm, DistanceMetric, Quantization, VectorEntityType, VectorIndexConfig},
+        Graph, Value,
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+
+    // 1. Open graph, define index, add two vertices with embeddings.
+    {
+        let g = Graph::open(path).unwrap();
+        let mut sess = g.open_schema();
+        sess.add_vector_index(VectorIndexConfig {
+            property: "emb".into(),
+            entity_type: VectorEntityType::Vertex,
+            dimension: 4,
+            metric: DistanceMetric::Cosine,
+            algorithm: AnnAlgorithm::Hnsw(Default::default()),
+            quantization: Quantization::F32,
+        });
+        sess.commit().unwrap();
+
+        let mut tx = g.begin();
+        tx.g()
+            .addV("doc")
+            .property("id", 1i64)
+            .property("emb", Value::FloatVector(vec![1.0f32, 0.0, 0.0, 0.0]))
+            .next()
+            .unwrap();
+        tx.g()
+            .addV("doc")
+            .property("id", 2i64)
+            .property("emb", Value::FloatVector(vec![0.0f32, 1.0, 0.0, 0.0]))
+            .next()
+            .unwrap();
+        tx.commit().unwrap();
+
+        // Drop property "emb" from vertex 2
+        let mut tx2 = g.begin();
+        tx2.g().V([2]).properties(["emb"]).drop().next().unwrap();
+        tx2.commit().unwrap();
+
+        // Immediate read in memory: vertex 2 should be gone from vector index
+        let mut snap = g.read();
+        let results: Vec<i64> = snap
+            .g()
+            .V([])
+            .nearest("emb", vec![0.0, 1.0, 0.0, 0.0], 5)
+            .id()
+            .to_list()
+            .unwrap()
+            .into_iter()
+            .filter_map(|v| match v {
+                Value::Int64(id) => Some(id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(results, vec![1], "Vertex 2 emb property was dropped, only vertex 1 should match");
+    }
+
+    // 2. Reopen graph without explicit snapshot saving (simulating crash/reopen) -> WAL replay must remove vertex 2
+    {
+        let g = Graph::open(path).unwrap();
+        let mut snap = g.read();
+        let results: Vec<i64> = snap
+            .g()
+            .V([])
+            .nearest("emb", vec![0.0, 1.0, 0.0, 0.0], 5)
+            .id()
+            .to_list()
+            .unwrap()
+            .into_iter()
+            .filter_map(|v| match v {
+                Value::Int64(id) => Some(id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(results, vec![1], "WAL replay must remove vertex 2 from vector index");
+    }
+}

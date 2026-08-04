@@ -40,6 +40,7 @@ pub(crate) struct LogicalGraph {
     pub(crate) schema: Arc<RwLock<Schema>>,
     pub(crate) staged_schema: StagedSchema,
     pub(crate) vector_indexes: Arc<RwLock<VectorIndexMap>>,
+    pub(crate) vector_pending_ops: Vec<crate::vector::PendingVectorOp>,
 }
 
 impl LogicalGraph {
@@ -58,6 +59,7 @@ impl LogicalGraph {
             schema,
             staged_schema: StagedSchema::default(),
             vector_indexes,
+            vector_pending_ops: Vec::new(),
         }
     }
 
@@ -797,6 +799,10 @@ impl LogicalGraph {
                     let vt = self.vertices.get_mut(&id).expect("just loaded");
                     vt.props_mut().insert(prop.key, prop.value.clone());
                 }
+                // Record WAL entry if this is a FloatVector for an indexed property.
+                if let Primitive::FloatVector(ref vec) = prop.value {
+                    self.maybe_record_wal_insert(&key, prop.key, vec);
+                }
                 self.mark_dirty(key, Existence::Modified);
             }
             CanonicalKey::Edge(ek) => {
@@ -846,6 +852,7 @@ impl LogicalGraph {
                     let vt = self.vertices.get_mut(&id).expect("just loaded");
                     vt.props_mut().remove(&prop.key);
                 }
+                self.maybe_record_wal_remove(&key, prop.key);
                 self.mark_dirty(key, Existence::Modified);
             }
             CanonicalKey::Edge(ek) => {
@@ -858,6 +865,7 @@ impl LogicalGraph {
                         eg.props_mut().remove(&prop.key);
                     }
                 }
+                // Note: Edge vector index support is deferred to v0.3 per design roadmap.
                 self.mark_dirty(key, Existence::Modified);
             }
             CanonicalKey::Empty => {
@@ -921,6 +929,31 @@ impl LogicalGraph {
                     return Err(StoreError::IncidentEdges);
                 }
                 self.mark_dirty(*key, Existence::Tombstone);
+                let vertex_prop_ids: Vec<u16> = {
+                    let indexes = self.vector_indexes.read().unwrap();
+                    let schema = self.schema.read().unwrap();
+                    indexes
+                        .keys()
+                        .filter(|(ent, _)| *ent == crate::vector::VectorEntityType::Vertex)
+                        .filter_map(|(_, prop_name)| schema.prop_key_id(prop_name))
+                        .collect()
+                };
+                if !vertex_prop_ids.is_empty() {
+                    let mut pids_to_remove = Vec::new();
+                    if let Ok(Some(_)) = self.get_vertex(id) {
+                        let _ = self.ensure_vertex_props_loaded(id);
+                        if let Some(vt) = self.vertices.get(&id) {
+                            for pid in vertex_prop_ids {
+                                if let Some(crate::types::Primitive::FloatVector(_)) = vt.get_value(pid) {
+                                    pids_to_remove.push(pid);
+                                }
+                            }
+                        }
+                    }
+                    for pid in pids_to_remove {
+                        self.maybe_record_wal_remove(key, pid);
+                    }
+                }
             }
             CanonicalKey::Edge(ek) => {
                 if !self.edges.contains_key(&ek) {
@@ -945,6 +978,47 @@ impl LogicalGraph {
             }
         }
         Ok(())
+    }
+
+    /// If a vector index exists for `prop_key_id`, record a WAL insert pending op.
+    fn maybe_record_wal_insert(&mut self, owner: &CanonicalKey, prop_key_id: u16, vec: &[f32]) {
+        let indexes = self.vector_indexes.read().unwrap();
+        let schema = self.schema.read().unwrap();
+        if let Some(prop_name) = schema.prop_key_str(prop_key_id) {
+            let key = (crate::vector::VectorEntityType::Vertex, prop_name.clone());
+            if indexes.contains_key(&key) {
+                if let CanonicalKey::Vertex(vk) = owner {
+                    let ts = crate::vector::wal::next_timestamp();
+                    let ek = crate::vector::EntityKey::Vertex(*vk);
+                    self.vector_pending_ops.push(crate::vector::PendingVectorOp::Inserted {
+                        key: ek,
+                        prop_name: prop_name.clone(),
+                        vector: vec.to_vec(),
+                        ts,
+                    });
+                }
+            }
+        }
+    }
+
+    /// If a vector index exists for `prop_key_id`, record a WAL remove pending op.
+    fn maybe_record_wal_remove(&mut self, owner: &CanonicalKey, prop_key_id: u16) {
+        let indexes = self.vector_indexes.read().unwrap();
+        let schema = self.schema.read().unwrap();
+        if let Some(prop_name) = schema.prop_key_str(prop_key_id) {
+            let key = (crate::vector::VectorEntityType::Vertex, prop_name.clone());
+            if indexes.contains_key(&key) {
+                if let CanonicalKey::Vertex(vk) = owner {
+                    let ts = crate::vector::wal::next_timestamp();
+                    let ek = crate::vector::EntityKey::Vertex(*vk);
+                    self.vector_pending_ops.push(crate::vector::PendingVectorOp::Removed {
+                        key: ek,
+                        prop_name: prop_name.clone(),
+                        ts,
+                    });
+                }
+            }
+        }
     }
 
     // ── Transaction control ───────────────────────────────────────────────────
@@ -1071,6 +1145,31 @@ impl LogicalGraph {
             }
         }
 
+        // Write vector WAL entries from pending vector ops before the transaction commits.
+        if !self.vector_pending_ops.is_empty() {
+            let schema = self.schema.read().unwrap();
+            for op in &self.vector_pending_ops {
+                match op {
+                    crate::vector::PendingVectorOp::Inserted { key, prop_name, vector, ts } => {
+                        if let Some(prop_key_id) = schema.prop_key_id(prop_name) {
+                            let wal_key = crate::vector::wal::encode_wal_key(prop_key_id, 0x00, *ts);
+                            if let Ok(wal_val) = crate::vector::wal::encode_wal_insert(key, vector) {
+                                self.store.put_wal_entry(&wal_key, &wal_val)?;
+                            }
+                        }
+                    }
+                    crate::vector::PendingVectorOp::Removed { key, prop_name, ts } => {
+                        if let Some(prop_key_id) = schema.prop_key_id(prop_name) {
+                            let wal_key = crate::vector::wal::encode_wal_key(prop_key_id, 0x00, *ts);
+                            if let Ok(wal_val) = crate::vector::wal::encode_wal_remove(key) {
+                                self.store.put_wal_entry(&wal_key, &wal_val)?;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         let commit_result = self.store.commit();
 
         // Mark these persisted only once the underlying store commit actually succeeded;
@@ -1085,6 +1184,39 @@ impl LogicalGraph {
             }
             for &prop_key_id in &self.staged_schema.staged_prop_keys {
                 schema.persisted_prop_keys.insert(prop_key_id);
+            }
+        }
+
+        // Apply committed vector mutations to in-memory indexes.
+        if commit_result.is_ok() {
+            let indexes = self.vector_indexes.read().unwrap();
+            for op in &self.vector_pending_ops {
+                match op {
+                    crate::vector::PendingVectorOp::Inserted { key, prop_name, vector, ts, .. } => {
+                        let idx_key = (crate::vector::VectorEntityType::Vertex, prop_name.clone());
+                        if let Some(arc) = indexes.get(&idx_key) {
+                            let mut guard = arc.write().unwrap();
+                            // Only advance the WAL timestamp on success. If insert fails (e.g.
+                            // memory limit exceeded), leaving the timestamp behind allows WAL
+                            // replay on the next open to retry the entry once the limit is raised.
+                            match guard.insert(key, vector) {
+                                Ok(()) => guard.set_last_replayed_timestamp(*ts),
+                                Err(e) => eprintln!(
+                                    "vector index: insert failed for '{}' after commit (ts={}): {e}",
+                                    prop_name, ts
+                                ),
+                            }
+                        }
+                    }
+                    crate::vector::PendingVectorOp::Removed { key, prop_name, ts, .. } => {
+                        let idx_key = (crate::vector::VectorEntityType::Vertex, prop_name.clone());
+                        if let Some(arc) = indexes.get(&idx_key) {
+                            let mut guard = arc.write().unwrap();
+                            let _ = guard.remove(key);
+                            guard.set_last_replayed_timestamp(*ts);
+                        }
+                    }
+                }
             }
         }
 
@@ -1106,5 +1238,6 @@ impl LogicalGraph {
         self.edges.clear();
         self.vertex_degree.clear();
         self.staged_schema.clear();
+        self.vector_pending_ops.clear();
     }
 }

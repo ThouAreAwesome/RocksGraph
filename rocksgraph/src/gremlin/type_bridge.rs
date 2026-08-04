@@ -108,7 +108,7 @@ pub(crate) fn validate_label_predicate(pred: &Predicate) -> Result<(), StoreErro
         }
         other => {
             return Err(StoreError::UnsupportedOperation(format!(
-                "Unsupported predicate for Label has-filter, got: {:?}",
+                "Label has-filter does not yet support range predicates (gt, gte, lt, lte, between), got: {:?}",
                 other
             )));
         }

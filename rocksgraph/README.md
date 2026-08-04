@@ -6,8 +6,8 @@ vector similarity — no server, no cluster, no JVM.
 
 RocksGraph is built for the places where a full graph database server is overkill:
 local development, embedded applications, CI pipelines, desktop apps, and single-machine
-production deployments. It uses RocksDB for persistent storage and offers a pragmatic
-take on the Gremlin traversal model — keeping what works, simplifying what doesn't.
+production deployments. It uses RocksDB for persistent storage and offers a pragmatic Gremlin-style traversal API,
+with most core traversal primitives implemented and additional steps being added over time.
 
 > **Status:** Beta (v0.1.0). Under active development. Preparing for release on crates.io.
 
@@ -708,7 +708,7 @@ widely audited.
 - **Embedded only:** no server/client mode; queries are executed in-process.
 - **Single-threaded per query:** each volcano pipeline runs single-threaded; multiple sessions can run concurrently against a shared `Graph`.
 - **Schema ID space limits:** up to `i32::MAX` (~2.1 billion) distinct vertex labels and edge labels (independent namespaces), and 32767 property keys per graph — registering past that fails with `StoreError::SchemaExhausted`. (Label IDs are stored as `i32`; property-key IDs remain `u16`.)
-- **Not TinkerPop-compatible:** RocksGraph is Gremlin-inspired but intentionally departs from the standard. See [docs/design_principles.md](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/design_principles.md).
+- **Not a TinkerPop driver:** RocksGraph is an embedded library with a Gremlin-style traversal API; it does not implement the Gremlin Server protocol and is not a drop-in replacement for TinkerPop-based systems. See [docs/design_principles.md](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/design_principles.md).
 - **Embedded only (no distribution):** RocksGraph targets single-machine deployments. Distributed or server-client operation is not on the roadmap.
 
 ## Operations

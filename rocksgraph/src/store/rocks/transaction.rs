@@ -42,7 +42,7 @@ use rocksdb::{Direction as ScanDir, IteratorMode, OptimisticTransactionDB, ReadO
 
 use std::collections::HashMap;
 
-use super::{CF_EDGES_IN, CF_EDGES_OUT, CF_SCHEMA, CF_VERTEX_DEGREE, CF_VERTICES};
+use super::{CF_EDGES_IN, CF_EDGES_OUT, CF_SCHEMA, CF_VECTOR_WAL, CF_VERTEX_DEGREE, CF_VERTICES};
 use crate::types::{
     kv_codec::{
         build_lazy_edge, build_lazy_vertex, decode_edge_key, decode_vertex_key, edge_scan_prefix, encode_edge_key,
@@ -465,6 +465,13 @@ impl Transaction {
         let cf_schema = self.db.cf_handle(CF_SCHEMA).ok_or(StoreError::MissingColumnFamily(CF_SCHEMA))?;
         let key = encode_schema_key(kind, name);
         txn.put_cf(&cf_schema, key, value).map_err(StoreError::RocksDb)
+    }
+
+    /// Writes a vector index WAL entry into CF_VECTOR_WAL within the current transaction.
+    pub(crate) fn put_wal_entry(&mut self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
+        let txn = self.db_txn.as_ref().expect("no active transaction");
+        let cf = self.db.cf_handle(CF_VECTOR_WAL).ok_or(StoreError::MissingColumnFamily(CF_VECTOR_WAL))?;
+        txn.put_cf(&cf, key, value).map_err(StoreError::RocksDb)
     }
 
     /// Deletes a vertex record.

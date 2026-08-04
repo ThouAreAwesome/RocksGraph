@@ -1,13 +1,16 @@
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use std::{path::Path, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use rocksdb::{Cache, ColumnFamilyDescriptor, OptimisticTransactionDB, Options};
 
 use crate::{
     store::rocks::{
-        cf_options, snapshot::Snapshot, transaction::Transaction, CF_EDGES_IN, CF_EDGES_OUT, CF_SCHEMA,
+        cf_options, snapshot::Snapshot, transaction::Transaction, CF_EDGES_IN, CF_EDGES_OUT, CF_SCHEMA, CF_VECTOR_WAL,
         CF_VERTEX_DEGREE, CF_VERTICES,
     },
     types::StoreError,
@@ -195,6 +198,7 @@ impl Default for RocksOptions {
 /// Call the `begin` method to start a new transaction against this store.
 pub struct RocksStorage {
     pub(crate) db: Arc<OptimisticTransactionDB>,
+    pub(crate) path: PathBuf,
     /// Retained so `get_ticker_count` can be called after the DB is open.
     /// `open_cf_descriptors` takes `&Options`, so `opts` is not consumed.
     /// Wrapped in Mutex because Options is Send but not Sync.
@@ -208,6 +212,7 @@ impl RocksStorage {
     /// Creates all four column families if they do not exist yet:
     /// `vertices`, `vertex_degree`, `edges_out`, and `edges_in`.
     pub fn open(path: impl AsRef<Path>, storage_opts: &RocksOptions) -> Result<Self, StoreError> {
+        let path_buf = path.as_ref().to_path_buf();
         let mut opts = Options::default();
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
@@ -236,12 +241,15 @@ impl RocksStorage {
             ColumnFamilyDescriptor::new(CF_VERTEX_DEGREE, vertex_cf),
             ColumnFamilyDescriptor::new(CF_EDGES_OUT, edge_cf.clone()),
             ColumnFamilyDescriptor::new(CF_EDGES_IN, edge_cf),
+            ColumnFamilyDescriptor::new(CF_VECTOR_WAL, Options::default()),
         ];
 
-        let db = OptimisticTransactionDB::open_cf_descriptors(&opts, path, descriptors).map_err(StoreError::RocksDb)?;
+        let db =
+            OptimisticTransactionDB::open_cf_descriptors(&opts, &path_buf, descriptors).map_err(StoreError::RocksDb)?;
 
         Ok(Self {
             db: Arc::new(db),
+            path: path_buf,
             #[cfg(feature = "rocksdb-stats")]
             opts: std::sync::Mutex::new(opts),
         })

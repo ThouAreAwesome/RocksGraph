@@ -6,11 +6,11 @@ RocksGraph follows the Gremlin traversal model closely. Users familiar with Janu
 AWS Neptune, or TinkerPop will find the core traversal primitives — `.g().V().out().values()`,
 filter steps, path tracking, and aggregations — behave as expected.
 
-We diverge from TinkerPop selectively and reluctantly: only when the standard's design
-creates problems that cannot be resolved within its constraints (forced allocations on the
-hot path, ambiguous access to structural values, type information that is genuinely
-unrepresentable at compile time). Each divergence is documented below with the specific
-problem it solves.
+Some TinkerPop features are not yet fully supported — either because the standard's design
+creates problems that cannot be resolved within RocksGraph's constraints (forced allocations
+on the hot path, ambiguous access to structural values, type information that is genuinely
+unrepresentable at compile time), or because the implementation simply hasn't been done yet.
+Each area is documented below with the specific context.
 
 ---
 
@@ -47,14 +47,13 @@ level, and uses typed terminal methods.
 
 **`by()` modulator complexity.** The `by()` modulator is powerful but opaque — it changes
 the behavior of the preceding step in non-obvious ways. RocksGraph currently supports
-`order().by(key)` but has not adopted the full `by()` modulator semantics because the
-added expressiveness has not yet been shown to justify the API complexity in an embedded
-context. This is an active area of design evaluation (see `docs/design_group_step.md`),
-not a permanent exclusion.
+`order().by(key)` but full `by()` modulator semantics are not yet supported for steps like
+`group()`/`groupCount()`. See `docs/design_group_step.md` for the open design questions
+and compatibility risks that need to be resolved before implementation.
 
 ---
 
-## Necessary Divergences
+## Design Decisions and Gaps
 
 ### Compile-time read/write separation *(implemented)*
 
@@ -134,17 +133,18 @@ This addresses a real-world need in embedded contexts — selective property loa
 without losing the typed `Vertex`/`Edge` structure — that the standard Gremlin API has
 no mechanism for.
 
-#### Why no `valueMap()` / `elementMap()`
+#### `valueMap()` / `elementMap()` — not yet supported
 
 These TinkerPop steps extract properties into an unstructured `Map`, losing the typed
 `Vertex`/`Edge` wrapper. They exist in Gremlin because TinkerPop cannot return a `Vertex`
 with partial properties — the only choices are the full `Vertex` (all properties) or
 `valueMap()` (untyped map of values).
 
-`withProperties()` is the RocksGraph equivalent: the result stays typed as `Vertex`/`Edge`,
-and the caller picks which properties to fetch. TinkerPop users accustomed to `valueMap()`
-or `elementMap()` can use `withProperties()` instead — it achieves the same selective
-loading without losing the typed wrapper.
+`valueMap()` and `elementMap()` are not yet supported in RocksGraph. The current alternative
+is `withProperties()`: the result stays typed as `Vertex`/`Edge`, and the caller picks which
+properties to fetch. TinkerPop users accustomed to `valueMap()` or `elementMap()` can use
+`withProperties()` in the meantime — it achieves the same selective loading without losing
+the typed wrapper.
 
 ### Reserved-key disjoint model *(implemented)*
 

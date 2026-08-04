@@ -11,6 +11,16 @@ pub(crate) mod brute_force;
 pub(crate) mod error;
 pub(crate) mod hnsw;
 pub(crate) mod traits;
+pub(crate) mod wal;
+
+/// Pending vector mutation — tracked for RYOW isolation within a transaction.
+#[derive(Debug, Clone)]
+pub(crate) enum PendingVectorOp {
+    /// An entity was inserted with this FloatVector value.
+    Inserted { key: EntityKey, prop_name: SmolStr, vector: Vec<f32>, ts: u64 },
+    /// An entity's FloatVector property was removed.
+    Removed { key: EntityKey, prop_name: SmolStr, ts: u64 },
+}
 
 /// Shared, lockable map of declared vector indexes, keyed by
 /// `(entity_type, property_name)`.

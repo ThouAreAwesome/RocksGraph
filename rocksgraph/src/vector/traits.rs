@@ -159,4 +159,7 @@ pub(crate) trait VectorIndex: Send + Sync {
 
     /// Advance the replayed timestamp after WAL catch-up or cold-start rebuild.
     fn set_last_replayed_timestamp(&mut self, seq: u64);
+
+    /// Apply memory limit from `IndexOptions`. No-op for BruteForce.
+    fn set_memory_limit(&mut self, _limit_bytes: usize) {}
 }
