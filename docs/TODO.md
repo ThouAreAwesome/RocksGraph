@@ -1,8 +1,8 @@
 # Step Coverage TODO
 
-RocksGraph follows Gremlin semantics closely, with selective departures where necessary
-(see [design_principles.md](design_principles.md)). This list is not a TinkerPop compliance
-checklist. It tracks which Gremlin-vocabulary steps are still missing from the traversal API
+RocksGraph provides a Gremlin-style traversal API (see [design_principles.md](design_principles.md)).
+This list is not a TinkerPop compliance checklist. It tracks which Gremlin-vocabulary steps are
+still missing from the traversal API
 (`gremlin/traversal.rs`) and the physical engine (`engine/volcano/steps/`), prioritized by how
 much they'd unblock real use cases versus how niche they are for a single-threaded, embedded,
 lambda-free engine.
@@ -51,14 +51,20 @@ These block entire classes of queries, not just convenience.
 
 - **`valueMap()` / `elementMap()`** — bulk property extraction as a map. Workaround:
   `.properties([...])` + `.values([...])` as two separate steps. Ergonomic gap, not a
-  functional one — deliberately deferred past v0.1.0.
+  functional one — not yet implemented.
 - **`branch()`** — multi-way conditional branching (sibling to `choose()`). Workaround:
-  nested/chained `.choose()` calls. Deliberately deferred past v0.1.0.
+  nested/chained `.choose()` calls. Not yet implemented.
 - **`aggregate()` / `sideEffect()` / `store()` / `map()` / `flatMap()`** — depend on lambda
-  support, which isn't planned (see the main README roadmap).
+  support, which is not yet available (see the main README roadmap).
 - **`inject()`** — minor utility step, low value on its own.
 - **`explain()` / `profile()`** — `explain()` is implemented; `profile()` (runtime timing
-  breakdown per step) is not.
+  breakdown per step) is not yet implemented.
 - **OLAP-style steps** (`pageRank`, `connectedComponent`, `program()`, `subgraph()`/`tree()`) —
-  likely a permanent non-goal for a single-threaded, embedded OLTP engine rather than a
-  "not yet."
+  not yet implemented for the embedded OLTP engine.
+
+---
+
+## Vector Search & Extensions
+
+For the Vector Search feature production-readiness roadmap and tasks, see [docs/vector-search/TODO.md](file:///Users/austinhan/Workplace/RocksGraph/docs/vector-search/TODO.md).
+

@@ -45,7 +45,7 @@ The [action roadmap](./market_landscape_and_positioning.md#31-工程路线图) m
 
 - **Non-goals (v0.1):**
   - Gremlin WebSocket server mode — separate design.
-  - `group().by()` / `groupCount().by()` — the `by()` modulator is not supported
+  - `group().by()` / `groupCount().by()` — the `by()` modulator is not yet supported
     in v0.1.  `group()` groups by the current traverser value only; `groupCount()`
     counts occurrences of the current value.  `by()` support is tracked in
     `docs/design_group_step.md`.
@@ -53,7 +53,7 @@ The [action roadmap](./market_landscape_and_positioning.md#31-工程路线图) m
   - Schema management (`open_management()`) — separate design.
   - TinkerPop Gremlin Bytecode (GLV) adapter — the compact binary protocol is
     the primary entry point.  GLV (the wire format used by `gremlinpython`)
-    is primarily a remote-server protocol and is **not a goal for the embedded
+    is primarily a remote-server protocol and is **not yet available for the embedded
     use case**.  Migrating from JanusGraph/Neptune to an embedded library is an
     architectural change that requires code changes regardless of query-language
     compatibility.  The binary protocol infrastructure (§1.2) is explicitly
@@ -704,7 +704,7 @@ RocksGraph/
 ## 4. TinkerPop Bytecode adapter (community contribution)
 
 GLV (TinkerPop Bytecode / `gremlinpython` wire format) is primarily a
-remote-server protocol and is **not a goal for RocksGraph's embedded use case**.
+remote-server protocol and is **not yet available for RocksGraph's embedded use case**.
 
 From JanusGraph or Neptune to an embedded library is an architectural change —
 the user switches from a network client to a process-in library.  That change
@@ -819,7 +819,7 @@ All builder, encoder, and type-conversion logic in pure Python.
 13. Implement `_builder.py` — `ReadTraversal`, `WriteTraversal`, `GraphTraversal`,
     `__()`, all steps, predicate constructors.
     **Note:** `group()` and `groupCount()` docstrings must state that `.by()`
-    is not supported in this release (see Non-goals, §Goals).  The first thing
+    is not yet supported (see Non-goals, §Goals).  The first thing
     any TinkerPop user will try is `group().by("name")` — catching this in
     documentation prevents a wave of bug reports.
 14. Implement `_types.py` — Value type helpers.
@@ -892,7 +892,7 @@ All builder, encoder, and type-conversion logic in pure Python.
 
 ## 8. Out of scope (deferred to v0.2+)
 
-- TinkerPop Bytecode (GLV) adapter — not a goal for the embedded use case;
+- TinkerPop Bytecode (GLV) adapter — not yet available for the embedded use case;
   explicitly left open for community contribution (see §4).
 - Bulk load — planned for v0.2.
 - Schema management — separate design.

@@ -14,3 +14,4 @@ pub(crate) const CF_VERTEX_DEGREE: &str = "vertex_degree";
 pub(crate) const CF_EDGES_OUT: &str = "edges_out";
 pub(crate) const CF_EDGES_IN: &str = "edges_in";
 pub(crate) const CF_SCHEMA: &str = "schema";
+pub(crate) const CF_VECTOR_WAL: &str = "vector_wal";

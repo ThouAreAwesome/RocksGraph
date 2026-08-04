@@ -86,7 +86,7 @@ pub(crate) struct RepeatBuilder {
     emit: EmitSpec,
 }
 
-/// `group()`/`group_count()` have no `by()` modulator yet (`docs/design_group_step.md`).
+/// `group()`/`group_count()` do not yet support a `by()` modulator (`docs/design_group_step.md`).
 /// Without this check, `.by()`/`.order_by()` would silently insert a new `order()`
 /// step after them instead — sorting the resulting `Map` traverser by a property it
 /// doesn't have, rather than doing what the caller almost certainly intended.
@@ -96,8 +96,8 @@ fn follows_group_step(plan: &LogicalPlan) -> bool {
 
 fn by_after_group_error(caller: &str) -> StoreError {
     StoreError::TraversalError(format!(
-        "{caller} is not supported immediately after group()/group_count() — they have no by() \
-         modulator yet; see docs/design_group_step.md"
+        "{caller} is not yet supported after group()/group_count(); the by() modulator for \
+         group is not yet implemented — see docs/design_group_step.md"
     ))
 }
 
@@ -611,12 +611,11 @@ pub trait TraversalBuilder: PlanAppender {
     /// snap.g().V([]).order().by("age").by("name");
     /// ```
     ///
-    /// `by()` is not supported immediately after `group()`/`group_count()` — unlike
-    /// every other step, where a missing `order()` is auto-inserted, doing that here
-    /// would silently sort the resulting `Map` traverser by a property it doesn't
-    /// have, rather than setting a group key/value modulator (`group()`/
-    /// `group_count()` don't have modulators at all yet — see
-    /// `docs/design_group_step.md`).
+    /// `by()` is not yet supported immediately after `group()`/`group_count()` —
+    /// the `by()` modulator for those steps is not yet implemented (see
+    /// `docs/design_group_step.md`). Using `by()` here would silently sort the
+    /// resulting `Map` traverser by a property it doesn't have, rather than act as
+    /// a group key/value modulator.
     fn by(mut self, key: impl Into<SmolStr>) -> Self {
         if follows_group_step(self.plan_mut()) {
             self.record_error(by_after_group_error("by()"));

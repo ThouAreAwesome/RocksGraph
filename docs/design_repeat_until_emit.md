@@ -17,17 +17,15 @@ established for `where()`/`union()`/`coalesce()`: sub-traversals built via `__()
 
 ---
 
-## 2. Departures from standard Gremlin
+## 2. RocksGraph semantics for repeat/until/emit
 
-RocksGraph follows Gremlin semantics closely where possible, but makes selective departures
-where an embedded engine's safety and simplicity constraints differ from a server-side
-implementation. Two such departures here:
+Two design choices specific to RocksGraph's embedded, single-threaded engine:
 
 1. **Post-check only.** `.until()`/`.emit()` are only valid immediately after `.repeat()` in the
-   chain — always do-while semantics (body runs at least once). TinkerPop's call-order-flips-
-   semantics behavior (`until().repeat()` = pre-check vs `repeat().until()` = post-check) can be
-   surprising in practice: the same two steps in different order produce different semantics.
-   RocksGraph simplifies this by supporting post-check only.
+   chain — always do-while semantics (body runs at least once). Placing `.until()` before
+   `.repeat()` to get pre-check semantics is not yet supported; this eliminates an order-sensitive
+   ambiguity where the same two steps in different positions produce different traversal behavior.
+   RocksGraph uses the simpler, explicit post-check model.
 2. **Mandatory bound.** Building a `repeat()` with neither `.times()` nor `.until()` configured
    is a build-time `StoreError`, not a silent infinite loop. This engine is synchronous,
    single-threaded, and embedded with no query timeout — an unbounded `repeat()` on a cyclic

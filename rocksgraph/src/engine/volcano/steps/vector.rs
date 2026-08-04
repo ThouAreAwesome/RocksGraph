@@ -131,14 +131,48 @@ impl CoreStep for NearestStep {
                     .unwrap()
                     .search(&self.query_vec, self.k)
                     .map_err(|e| StoreError::UnsupportedOperation(format!("vector search: {e}")))?;
-                for (ek, _) in results {
+
+                let mut candidates: HashMap<VertexKey, (Rc<Traverser>, f32)> = HashMap::new();
+                for (ek, dist) in results {
                     if let EntityKey::Vertex(vk) = ek {
                         if let Some(t) = allowed.get(&vk) {
-                            self.buffer.push(Rc::clone(t));
+                            let sim = 1.0 - dist;
+                            candidates.insert(vk, (Rc::clone(t), sim));
                         }
                     }
                 }
-                self.buffer.truncate(self.k);
+
+                // ── RYOW merge ──────────────────────────────────────────
+                // Merge uncommitted pending vector ops from the current
+                // transaction so the write is visible within the same session.
+                let pending = ctx.vector_pending_ops();
+                if !pending.is_empty() {
+                    for op in pending {
+                        match op {
+                            crate::vector::PendingVectorOp::Removed { key, prop_name, .. } => {
+                                if prop_name == &self.prop_key {
+                                    if let EntityKey::Vertex(vk) = key {
+                                        candidates.remove(vk);
+                                    }
+                                }
+                            }
+                            crate::vector::PendingVectorOp::Inserted { key, prop_name, vector, .. } => {
+                                if prop_name == &self.prop_key {
+                                    if let EntityKey::Vertex(vk) = key {
+                                        if let Some(t) = allowed.get(vk) {
+                                            let sim = crate::vector::cosine_sim(vector, &self.query_vec);
+                                            candidates.insert(*vk, (Rc::clone(t), sim));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let mut sorted: Vec<(Rc<Traverser>, f32)> = candidates.into_values().collect();
+                sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                self.buffer = sorted.into_iter().take(self.k).map(|(t, _)| t).collect();
                 used_index = true;
             }
 

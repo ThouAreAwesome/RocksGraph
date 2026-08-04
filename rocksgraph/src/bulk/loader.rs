@@ -145,6 +145,12 @@ impl IntoBulkEdge for Result<BulkEdge, StoreError> {
 /// Created via [`Graph::open_bulk_loader`](crate::Graph::open_bulk_loader).
 /// Streams vertices and edges through external sorters, builds sorted SST files offline,
 /// and atomically ingests them via `IngestExternalFile`.
+///
+/// # Vector Indexes
+/// Bulk loading writes SST files directly to RocksDB and bypasses the transaction WAL.
+/// Upon [`commit`](Self::commit), any declared vertex vector indexes are automatically
+/// rebuilt from the ingested data and saved to snapshot files, making them immediately
+/// queryable.
 pub struct BulkLoader<'a> {
     graph: &'a crate::Graph,
     work_dir: PathBuf,
@@ -516,6 +522,10 @@ impl<'a> BulkLoader<'a> {
     }
 
     /// Atomically ingests all generated SST files and synchronizes schema changes.
+    ///
+    /// # Vector Indexes
+    /// Any declared vertex vector indexes are automatically rebuilt from the newly
+    /// ingested vertices and persisted to snapshot files during commit.
     pub fn commit(mut self) -> Result<BulkLoadStats, StoreError> {
         if !self.vertices_loaded {
             return Err(StoreError::VerticesNotLoaded);
@@ -661,12 +671,16 @@ impl<'a> BulkLoader<'a> {
             }
         }
 
-        // TODO(v0.2): Phase 4 (commit): Build HNSW indexes for declared VectorIndexConfigs.
-        // Scan CF_VERTICES for FloatVector values matching each (entity_type, prop_key_id),
-        // batch-insert into HNSW, update marker to MARKER_POST_INDEX.
-        //
-        // TODO(v0.2): Phase 5 (commit): Write HNSW snapshots.
-        // For each built index, write snapshot atomically, update marker to MARKER_POST_SNAPSHOT.
+        // Phase 4 & 5 (commit): Build HNSW indexes and write snapshots for declared VectorIndexConfigs.
+        let vector_indexes_to_rebuild: Vec<(crate::vector::VectorEntityType, smol_str::SmolStr)> = {
+            let vi = self.graph.vector_indexes.read().map_err(|_| StoreError::LockError)?;
+            vi.keys().cloned().collect()
+        };
+        for (entity_type, prop_name) in vector_indexes_to_rebuild {
+            if entity_type == crate::vector::VectorEntityType::Vertex {
+                self.graph.rebuild_vector_index(entity_type, &prop_name)?;
+            }
+        }
 
         // Phase 6 (commit): Clear crash marker
         let mut cleanup_batch = WriteBatchWithTransaction::<true>::default();
@@ -1285,7 +1299,9 @@ mod tests {
 
         {
             use crate::store::rocks::cf_options;
-            use crate::store::rocks::{CF_EDGES_IN, CF_EDGES_OUT, CF_SCHEMA, CF_VERTEX_DEGREE, CF_VERTICES};
+            use crate::store::rocks::{
+                CF_EDGES_IN, CF_EDGES_OUT, CF_SCHEMA, CF_VECTOR_WAL, CF_VERTEX_DEGREE, CF_VERTICES,
+            };
             use rocksdb::{
                 ColumnFamilyDescriptor, MultiThreaded, OptimisticTransactionDB, Options, WriteBatchWithTransaction,
             };
@@ -1300,6 +1316,7 @@ mod tests {
                 ColumnFamilyDescriptor::new(CF_EDGES_OUT, cf_options::edge_cf_opts(&storage_opts, &e_bo)),
                 ColumnFamilyDescriptor::new(CF_EDGES_IN, cf_options::edge_cf_opts(&storage_opts, &e_bo)),
                 ColumnFamilyDescriptor::new(CF_SCHEMA, Options::default()),
+                ColumnFamilyDescriptor::new(CF_VECTOR_WAL, Options::default()),
             ];
             let db: OptimisticTransactionDB<MultiThreaded> =
                 OptimisticTransactionDB::open_cf_descriptors(&dbo, &db_path, cfs).unwrap();
@@ -1949,5 +1966,88 @@ mod tests {
         let mut snap = graph.read();
         assert_eq!(snap.g().V([]).count().next().unwrap().unwrap(), Value::Int64(3));
         assert_eq!(snap.g().V([1_i64]).out([]).count().next().unwrap().unwrap(), Value::Int64(1));
+    }
+
+    #[test]
+    fn test_bulk_loader_auto_rebuilds_vector_indexes() {
+        use crate::gremlin::value::Value;
+        use crate::vector::{AnnAlgorithm, DistanceMetric, Quantization, VectorEntityType, VectorIndexConfig};
+
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("db");
+
+        // 1. Open graph and declare a vector index on "emb"
+        {
+            let graph = Graph::open(&db_path).unwrap();
+            let mut sess = graph.open_schema();
+            sess.add_vector_index(VectorIndexConfig {
+                property: "emb".into(),
+                entity_type: VectorEntityType::Vertex,
+                dimension: 4,
+                metric: DistanceMetric::Cosine,
+                algorithm: AnnAlgorithm::Hnsw(Default::default()),
+                quantization: Quantization::F32,
+            });
+            sess.commit().unwrap();
+
+            // 2. Open bulk loader and load vertices with embeddings
+            let mut loader = graph.open_bulk_loader().unwrap();
+            let mut props1 = HashMap::new();
+            props1.insert("emb".into(), Primitive::FloatVector(vec![1.0, 0.0, 0.0, 0.0]));
+            let mut props2 = HashMap::new();
+            props2.insert("emb".into(), Primitive::FloatVector(vec![0.0, 1.0, 0.0, 0.0]));
+            let mut props3 = HashMap::new();
+            props3.insert("emb".into(), Primitive::FloatVector(vec![0.9, 0.1, 0.0, 0.0]));
+
+            let vertices = vec![
+                BulkVertex { id: 1, label: "Doc".into(), props: props1 },
+                BulkVertex { id: 2, label: "Doc".into(), props: props2 },
+                BulkVertex { id: 3, label: "Doc".into(), props: props3 },
+            ];
+
+            loader.load_vertices(vertices).unwrap();
+            let stats = loader.commit().unwrap();
+            assert_eq!(stats.vertices_written, 3);
+
+            // 3. Immediately query vector index without manual rebuild
+            let mut snap = graph.read();
+            let results: Vec<i64> = snap
+                .g()
+                .V([])
+                .nearest("emb", vec![1.0, 0.0, 0.0, 0.0], 2)
+                .id()
+                .to_list()
+                .unwrap()
+                .into_iter()
+                .filter_map(|v| match v {
+                    Value::Int64(id) => Some(id),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(results, vec![1, 3], "BulkLoader::commit must auto-populate vector indexes");
+
+            graph.close().unwrap();
+        }
+
+        // 4. Reopen graph and verify index persistence via snapshot
+        {
+            let graph = Graph::open(&db_path).unwrap();
+            let mut snap = graph.read();
+            let results: Vec<i64> = snap
+                .g()
+                .V([])
+                .nearest("emb", vec![0.0, 1.0, 0.0, 0.0], 1)
+                .id()
+                .to_list()
+                .unwrap()
+                .into_iter()
+                .filter_map(|v| match v {
+                    Value::Int64(id) => Some(id),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(results, vec![2]);
+            graph.close().unwrap();
+        }
     }
 }

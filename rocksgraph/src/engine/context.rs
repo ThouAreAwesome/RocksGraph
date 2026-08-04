@@ -133,6 +133,13 @@ pub(crate) trait GraphCtx {
     fn vector_indexes(&self) -> Option<&Arc<RwLock<crate::vector::VectorIndexMap>>> {
         None
     }
+
+    /// Pending vector mutations in the current transaction (RYOW isolation).
+    /// Uncommitted inserts/removes that vector search steps must merge into
+    /// their results so the write is visible within the same session.
+    fn vector_pending_ops(&self) -> &[crate::vector::PendingVectorOp] {
+        &[]
+    }
 }
 
 /// Zero-cost context used in unit tests where no real graph is needed.
@@ -305,6 +312,9 @@ impl GraphCtx for LogicalGraph {
     }
     fn vector_indexes(&self) -> Option<&Arc<RwLock<crate::vector::VectorIndexMap>>> {
         Some(&self.vector_indexes)
+    }
+    fn vector_pending_ops(&self) -> &[crate::vector::PendingVectorOp] {
+        &self.vector_pending_ops
     }
 }
 

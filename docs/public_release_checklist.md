@@ -17,8 +17,8 @@
 
 ### Deferred past v0.1.0
 
-`valueMap()` / `elementMap()` and `branch()` are deliberately deferred (ergonomic gaps with
-existing workarounds, not functional blockers) — see `docs/TODO.md` for rationale.
+`valueMap()` / `elementMap()` and `branch()` are not yet implemented (ergonomic gaps with
+existing workarounds, not functional blockers) — see `docs/TODO.md` for details.
 
 ---
 

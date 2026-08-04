@@ -101,6 +101,7 @@ fn encode_vector_index_config(config: &VectorIndexConfig) -> Vec<u8> {
 pub struct SchemaSession {
     store: Arc<RocksStorage>,
     schema: Arc<std::sync::RwLock<Schema>>,
+    vector_indexes: Option<Arc<std::sync::RwLock<crate::vector::VectorIndexMap>>>,
     base_version: u64,
     pending_vertex_labels: Vec<String>,
     pending_edge_labels: Vec<String>,
@@ -113,11 +114,16 @@ pub struct SchemaSession {
 
 impl SchemaSession {
     /// Crate-internal: obtain a `SchemaSession` session via [`Graph::open_schema`](crate::api::Graph::open_schema).
-    pub(crate) fn new(store: Arc<RocksStorage>, schema: Arc<std::sync::RwLock<Schema>>) -> Self {
+    pub(crate) fn new(
+        store: Arc<RocksStorage>,
+        schema: Arc<std::sync::RwLock<Schema>>,
+        vector_indexes: Option<Arc<std::sync::RwLock<crate::vector::VectorIndexMap>>>,
+    ) -> Self {
         let base_version = schema.read().unwrap().version;
         Self {
             store,
             schema,
+            vector_indexes,
             base_version,
             pending_vertex_labels: Vec::new(),
             pending_edge_labels: Vec::new(),
@@ -337,6 +343,26 @@ impl SchemaSession {
         // Only now, after the batch is durably written, does the validated clone replace
         // the live schema.
         *schema = staged;
+
+        // Synchronize in-memory vector index map with added and dropped indexes.
+        if let Some(ref vi_arc) = self.vector_indexes {
+            use crate::vector::traits::VectorIndex;
+            let mut vi_guard = vi_arc.write().unwrap();
+            for config in &self.pending_vector_indexes {
+                let key = (config.entity_type, config.property.clone());
+                if let std::collections::hash_map::Entry::Vacant(e) = vi_guard.entry(key) {
+                    if let Ok(mut idx) = crate::vector::hnsw::UsearchHnswIndex::new(config) {
+                        idx.set_last_replayed_timestamp(crate::vector::wal::next_timestamp());
+                        e.insert(Arc::new(std::sync::RwLock::new(Box::new(idx))));
+                    }
+                }
+            }
+            for (entity_type, property) in &self.pending_drop_vector_indexes {
+                vi_guard.remove(&(*entity_type, smol_str::SmolStr::from(property.as_str())));
+                let snap_path = crate::api::vector_snapshot_path(&self.store.path, *entity_type, property);
+                let _ = std::fs::remove_file(snap_path);
+            }
+        }
 
         Ok(())
     }

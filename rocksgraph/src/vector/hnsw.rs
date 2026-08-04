@@ -60,6 +60,7 @@ pub struct UsearchHnswIndex {
     config: VectorIndexConfig,
     tombstone_count: u64,
     last_replayed_timestamp: u64,
+    memory_limit_bytes: Option<usize>,
 }
 
 impl std::fmt::Debug for UsearchHnswIndex {
@@ -100,7 +101,13 @@ impl UsearchHnswIndex {
 
         inner.reserve(DEFAULT_RESERVE_CAPACITY).map_err(|e| VectorError::Internal(format!("usearch reserve: {e}")))?;
 
-        Ok(Self { inner, config: config.clone(), tombstone_count: 0, last_replayed_timestamp: 0 })
+        Ok(Self {
+            inner,
+            config: config.clone(),
+            tombstone_count: 0,
+            last_replayed_timestamp: 0,
+            memory_limit_bytes: None,
+        })
     }
 
     fn key_to_label(key: &EntityKey) -> Result<u64, VectorError> {
@@ -156,6 +163,20 @@ impl VectorIndex for UsearchHnswIndex {
         let cur_cap = self.inner.capacity();
         if self.inner.size() >= cur_cap {
             let new_cap = (cur_cap * 2).max(DEFAULT_RESERVE_CAPACITY);
+
+            // Pre-flight: check projected memory before reserving so the limit is
+            // enforced before any allocation and the entry is never added to the WAL.
+            if let Some(limit) = self.memory_limit_bytes {
+                let projected_used = new_cap * self.config.dimension * 4;
+                if projected_used >= limit {
+                    return Err(VectorError::MemoryLimitExceeded {
+                        index: self.config.property.clone(),
+                        used: projected_used,
+                        limit,
+                    });
+                }
+            }
+
             self.inner.reserve(new_cap).map_err(|e| VectorError::Internal(format!("usearch reserve: {e}")))?;
         }
 
@@ -258,6 +279,10 @@ impl VectorIndex for UsearchHnswIndex {
     fn set_last_replayed_timestamp(&mut self, seq: u64) {
         self.last_replayed_timestamp = seq;
     }
+
+    fn set_memory_limit(&mut self, limit_bytes: usize) {
+        self.memory_limit_bytes = Some(limit_bytes);
+    }
 }
 
 // ── Snapshot loading ────────────────────────────────────────────────────────
@@ -346,6 +371,7 @@ pub fn load_vector_index(path: &Path, config: &VectorIndexConfig) -> Result<Usea
         config: config.clone(),
         tombstone_count: stored_tombstone,
         last_replayed_timestamp: timestamp,
+        memory_limit_bytes: None,
     })
 }
 

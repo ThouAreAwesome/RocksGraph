@@ -30,7 +30,7 @@ g.V().group().by(label).by(count())    // {"person": 4, "software": 2}          
 ```
 
 RocksGraph's `group()` / `groupCount()` (`src/engine/volcano/steps/group.rs`,
-`src/gremlin/traversal/mod.rs:709-717`) have **no `by()` modulator at all**, on
+`src/gremlin/traversal/mod.rs:709-717`) **do not yet support the `by()` modulator**, on
 either side:
 
 - `GroupStep::produce` (`group.rs:37-57`) groups incoming traverser values by
@@ -55,7 +55,7 @@ this narrow form; no prior design doc covers the gap.
 
 - **Goals:** record the verified TinkerPop baseline; document RocksGraph's current
   behavior precisely, including the dead `key` field; enumerate the options for
-  closing (or intentionally not closing) the gap.
+  closing the gap.
 - **Non-goals:** decide an implementation. This is a decision-support document, not
   yet an implementation plan (same role as `design_vertex_label.md`).
 
