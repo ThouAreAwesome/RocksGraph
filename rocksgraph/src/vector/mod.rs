@@ -45,6 +45,6 @@ pub(crate) use error::{VectorEntityType, VectorError};
 pub(crate) use hnsw::load_vector_index;
 #[allow(unused_imports)]
 pub(crate) use traits::{
-    AnnAlgorithm, DistanceMetric, HnswConfig, IndexLimitOverride, IndexOptions, Quantization, VectorIndex,
+    AnnAlgorithm, DistanceMetric, HnswConfig, IndexOptions, PerIndexOptions, Quantization, VectorIndex,
     VectorIndexConfig, VectorIndexLimit,
 };

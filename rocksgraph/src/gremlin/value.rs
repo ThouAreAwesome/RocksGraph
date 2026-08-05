@@ -307,14 +307,13 @@ impl From<&[u8]> for Value {
 /// `SmolStr` derefs to `&str`, so lookups/comparisons against string literals are unaffected
 /// (e.g. `vertex.properties.get("name")`, `edge.label == "knows"`).
 ///
-/// `properties` uses multi-cardinality: each key maps to a `Vec<Value>` to
-/// support TinkerPop VertexProperty semantics.  For the common single-value
-/// case, read `vertex.properties["name"][0]`.
+/// Each property key maps to a single [`Value`]. RocksGraph does not support
+/// multi-cardinality vertex properties; the storage layer enforces one value per key.
 #[derive(Debug, Clone)]
 pub struct Vertex {
     pub id: i64,
     pub label: SmolStr,
-    pub properties: HashMap<SmolStr, Vec<Value>>,
+    pub properties: HashMap<SmolStr, Value>,
 }
 
 impl PartialEq for Vertex {

@@ -10,7 +10,7 @@ mod integration_test {
             traversal::{TraversalBuilder, __},
             value::{eq, ne, Value},
         },
-        types::{BatchScenario, StoreError},
+        types::StoreError,
     };
     use smol_str::SmolStr;
 
@@ -467,14 +467,17 @@ mod integration_test {
 
     #[test]
     fn test_custom_batch_sizes_correctness() {
-        let graph = setup_modern_graph();
+        use crate::engine::ExecutionOptions;
 
-        // Test with ReadSession
+        let graph = setup_modern_graph();
+        let tiny_batch_opts = ExecutionOptions::default()
+            .with_scan_vertices_batch_size(1)
+            .with_scan_edges_batch_size(1)
+            .with_get_adjacent_edges_batch_size(1);
+
+        // Test with ReadSession using tiny batch sizes (forces 1-by-1 pagination)
         {
-            let mut snap = graph.read();
-            snap.set_batch_size(BatchScenario::ScanVertices, 1);
-            snap.set_batch_size(BatchScenario::ScanEdges, 1);
-            snap.set_batch_size(BatchScenario::GetAdjacentEdges, 1);
+            let mut snap = graph.read().with_execution_options(tiny_batch_opts);
 
             // Vertices scan
             let v_count = snap.g().V([]).count().next().unwrap().unwrap();
@@ -496,12 +499,9 @@ mod integration_test {
             assert!(names.contains(&Value::String("josh".into())));
         }
 
-        // Test with TxSession
+        // Test with TxSession using tiny batch sizes
         {
-            let mut tx = graph.begin();
-            tx.set_batch_size(BatchScenario::ScanVertices, 1);
-            tx.set_batch_size(BatchScenario::ScanEdges, 1);
-            tx.set_batch_size(BatchScenario::GetAdjacentEdges, 1);
+            let mut tx = graph.begin().with_execution_options(tiny_batch_opts);
 
             // Vertices scan
             let v_count = tx.g().V([]).count().next().unwrap().unwrap();
@@ -685,14 +685,14 @@ mod integration_test {
         let mut read = graph.read();
         let val_v = read.g().withProperties([]).V([1]).next().unwrap().unwrap();
         if let Value::Vertex(v) = val_v {
-            assert_eq!(v.properties.get("p_bool").unwrap()[0], Value::Bool(true));
-            assert_eq!(v.properties.get("p_i32").unwrap()[0], Value::Int32(42));
-            assert_eq!(v.properties.get("p_i64").unwrap()[0], Value::Int64(999999));
-            assert_eq!(v.properties.get("p_f32").unwrap()[0], Value::Float32(1.25));
-            assert_eq!(v.properties.get("p_f64").unwrap()[0], Value::Float64(123.456));
-            assert_eq!(v.properties.get("p_string").unwrap()[0], Value::String("rocks_graph_db".to_string()));
-            assert_eq!(v.properties.get("p_uuid").unwrap()[0], Value::Uuid(123456789012345678901234567890u128));
-            assert_eq!(v.properties.get("p_u16").unwrap()[0], Value::UInt16(123));
+            assert_eq!(*v.properties.get("p_bool").unwrap(), Value::Bool(true));
+            assert_eq!(*v.properties.get("p_i32").unwrap(), Value::Int32(42));
+            assert_eq!(*v.properties.get("p_i64").unwrap(), Value::Int64(999999));
+            assert_eq!(*v.properties.get("p_f32").unwrap(), Value::Float32(1.25));
+            assert_eq!(*v.properties.get("p_f64").unwrap(), Value::Float64(123.456));
+            assert_eq!(*v.properties.get("p_string").unwrap(), Value::String("rocks_graph_db".to_string()));
+            assert_eq!(*v.properties.get("p_uuid").unwrap(), Value::Uuid(123456789012345678901234567890u128));
+            assert_eq!(*v.properties.get("p_u16").unwrap(), Value::UInt16(123));
         } else {
             panic!("Expected Vertex");
         }
@@ -1467,8 +1467,8 @@ mod integration_test {
         if let Value::Vertex(v) = val {
             assert_eq!(v.id, 1);
             assert_eq!(v.label, SmolStr::from("person"));
-            assert_eq!(v.properties.get("name").unwrap()[0], Value::String("marko".to_string()));
-            assert_eq!(v.properties.get("age").unwrap()[0], Value::Int32(29));
+            assert_eq!(*v.properties.get("name").unwrap(), Value::String("marko".to_string()));
+            assert_eq!(*v.properties.get("age").unwrap(), Value::Int32(29));
         } else {
             panic!("Expected Vertex");
         }
@@ -1486,7 +1486,7 @@ mod integration_test {
             assert_eq!(v.label, SmolStr::from("person"));
             assert!(v.properties.contains_key("age"), "age should be present");
             assert!(!v.properties.contains_key("name"), "name should NOT be present");
-            assert_eq!(v.properties.get("age").unwrap()[0], Value::Int32(29));
+            assert_eq!(*v.properties.get("age").unwrap(), Value::Int32(29));
         } else {
             panic!("Expected Vertex");
         }

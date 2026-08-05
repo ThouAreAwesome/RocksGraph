@@ -24,7 +24,8 @@ use std::{
 };
 
 use super::helpers::edge_matches;
-use super::{Existence, ScanConfig, StagedSchema, TxSchemaCache};
+use super::{Existence, StagedSchema, TxSchemaCache};
+use crate::engine::ExecutionOptions;
 
 // ── LogicalGraph ──────────────────────────────────────────────────────────────
 /// Query-scoped logical graph wrapping a store transaction.
@@ -37,7 +38,7 @@ pub(crate) struct LogicalGraph {
     edges: HashMap<CanonicalEdgeKey, Edge>,
     vertex_degree: HashMap<VertexKey, (u32, u32, LabelId)>,
     pub(crate) dirty: HashMap<CanonicalKey, Existence>,
-    pub(crate) scan_config: ScanConfig,
+    pub(crate) execution_options: ExecutionOptions,
     pub(crate) schema: Arc<RwLock<Schema>>,
     pub(crate) schema_cache: TxSchemaCache,
     pub(crate) staged_schema: StagedSchema,
@@ -47,7 +48,12 @@ pub(crate) struct LogicalGraph {
 
 impl LogicalGraph {
     /// Create a new logical graph context wrapping the given transaction.
-    pub fn new(store: Transaction, schema: Arc<RwLock<Schema>>, vector_indexes: Arc<RwLock<VectorIndexMap>>) -> Self {
+    pub fn new(
+        store: Transaction,
+        schema: Arc<RwLock<Schema>>,
+        vector_indexes: Arc<RwLock<VectorIndexMap>>,
+        execution_options: ExecutionOptions,
+    ) -> Self {
         // Creates a new `LogicalGraph` instance, initializing its in-memory caches
         // and associating it with a store transaction.
         let schema_cache = TxSchemaCache::from_schema(&schema.read());
@@ -58,13 +64,18 @@ impl LogicalGraph {
             vertex_degree: HashMap::new(),
             // Tracks the mutation state of elements within this transaction.
             dirty: HashMap::new(),
-            scan_config: ScanConfig::default(),
+            execution_options,
             schema,
             schema_cache,
             staged_schema: StagedSchema::default(),
             vector_indexes,
             vector_pending_ops: Vec::new(),
         }
+    }
+
+    /// Set runtime execution options for this transaction.
+    pub fn set_execution_options(&mut self, options: ExecutionOptions) {
+        self.execution_options = options;
     }
 
     #[cfg(test)]

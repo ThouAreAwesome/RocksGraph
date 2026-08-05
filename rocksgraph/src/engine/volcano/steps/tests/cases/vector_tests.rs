@@ -55,7 +55,7 @@ fn test_nearest_returns_top_k() {
         fv(vec![0.0, 1.0]), // orthogonal
         fv(vec![0.7, 0.7]), // 45 degrees
     ]);
-    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 2);
+    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 2, None);
     step.add_upper(src as StepRef);
     let mut ctx = NoopCtx;
     let results = drain_all(&mut step, &mut ctx);
@@ -71,7 +71,7 @@ fn test_nearest_ordering() {
         fv(vec![0.7, 0.7]), // sim ≈ 0.71
         fv(vec![1.0, 0.0]), // sim = 1.0
     ]);
-    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 3);
+    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 3, None);
     step.add_upper(src as StepRef);
     let mut ctx = NoopCtx;
     let results = drain_all(&mut step, &mut ctx);
@@ -86,7 +86,7 @@ fn test_nearest_ordering() {
 fn test_nearest_k_larger_than_input() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![fv(vec![1.0, 0.0]), fv(vec![0.0, 1.0])]);
-    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 10);
+    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 10, None);
     step.add_upper(src as StepRef);
     let mut ctx = NoopCtx;
     let results = drain_all(&mut step, &mut ctx);
@@ -96,7 +96,7 @@ fn test_nearest_k_larger_than_input() {
 #[test]
 fn test_nearest_empty_input() {
     let src = BufferedStep::new(VecSourceStep::empty());
-    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 5);
+    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 5, None);
     step.add_upper(src as StepRef);
     let mut ctx = NoopCtx;
     let results = drain_all(&mut step, &mut ctx);
@@ -111,7 +111,7 @@ fn test_nearest_skips_non_vector_traversers() {
         Traverser::new_rc(GValue::Scalar(Primitive::Int64(42))), // non-vector — must be skipped
         fv(vec![0.0, 1.0]),
     ]);
-    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 5);
+    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 5, None);
     step.add_upper(src as StepRef);
     let mut ctx = NoopCtx;
     let results = drain_all(&mut step, &mut ctx);

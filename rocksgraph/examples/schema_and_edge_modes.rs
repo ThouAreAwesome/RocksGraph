@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== Part 1: Strict Schema Mode ===");
 
     // Set custom options: strict mode prevents implicit/auto registration.
-    let options = GraphOptions { mode: SchemaMode::Strict, edge_mode: EdgeMode::Single, ..Default::default() };
+    let options = GraphOptions::default().with_mode(SchemaMode::Strict).with_edge_mode(EdgeMode::Single);
 
     let graph = Graph::open_with_options(db_path, options)?;
 

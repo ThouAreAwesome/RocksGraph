@@ -137,7 +137,7 @@ Pattern B gives the best fit for RocksGraph:
   ┌──────────────────────────────────────────────────────────────────────┐
   │  Traversal pipeline                                                  │
   │                                                                      │
-  │  rs.traversal().V().hasLabel("doc")                                  │
+  │  rs.g().V().hasLabel("doc")                                  │
   │    .nearest("embedding", query_vec, k)                            │
   │    .out("cites").values("title")                                     │
   └──────────────────┬──────────────────────────────────────┬───────────┘
@@ -239,7 +239,7 @@ Rationale:
 from rocksgraph import Graph, Vector
 
 embedding = model.encode("hello world")   # numpy array or list[float]
-tx.traversal().addV("doc") \
+tx.g().addV("doc") \
     .property("id", 1) \
     .property("title", "hello world") \
     .property("embedding", Vector(embedding)) \
@@ -254,7 +254,7 @@ It raises `TypeError` if elements cannot be cast to `f32`.
 ```typescript
 import { Graph, Vector } from "rocksgraph";
 
-tx.traversal().addV("doc")
+tx.g().addV("doc")
     .property("id", 1)
     .property("embedding", new Vector(Float32Array.from(embedding)))
     .next();
@@ -382,13 +382,13 @@ Representative combined graph + vector examples:
 
 ```python
 # 1. Vertex semantic search → graph traversal (no scores needed)
-rs.traversal().V() \
+rs.g().V() \
     .nearest("embedding", Vector(query_vec), 5) \
     .out("cites").values("title") \
     .to_list()
 
 # 2. Graph filter → vertex semantic ranking with scores
-rs.traversal().V().has("status", "published") \
+rs.g().V().has("status", "published") \
     .nearest("embedding", Vector(query_vec), 10) \
     .project("vertex", "similarity") \
       .by(identity()) \
@@ -396,19 +396,19 @@ rs.traversal().V().has("status", "published") \
     .to_list()
 
 # 3. Multi-hop → vertex similarity
-rs.traversal().V(author_id) \
+rs.g().V(author_id) \
     .out("wrote") \
     .nearest("embedding", Vector(query_vec), 3) \
     .to_list()
 
 # 4. Edge semantic search → source vertices
-rs.traversal().E() \
+rs.g().E() \
     .nearest("embedding", Vector(query_vec), 5) \
     .outV().values("name") \
     .to_list()
 
 # 5. Traverse edges, then rank by edge vector similarity
-rs.traversal().V(doc_id) \
+rs.g().V(doc_id) \
     .outE("related") \
     .nearest("embedding", Vector(query_vec), 3) \
     .inV().values("title") \

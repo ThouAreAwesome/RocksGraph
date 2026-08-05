@@ -13,6 +13,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use smol_str::SmolStr;
 
+use super::brute_force::BruteForceIndex;
 use super::error::{VectorEntityType, VectorError};
 use super::hnsw::UsearchHnswIndex;
 use super::traits::{AnnAlgorithm, DistanceMetric, HnswConfig, Quantization, VectorIndexConfig};
@@ -252,7 +253,9 @@ pub(crate) fn load_vector_configs(store: &RocksStorage, map: &mut VectorIndexMap
         let Ok(prop_name) = std::str::from_utf8(&key[2..]) else { continue };
         let Some(config) = decode_vector_config_bytes(prop_name, &value) else { continue };
         if !matches!(config.algorithm, AnnAlgorithm::Hnsw(_)) {
-            eprintln!("vector index load warning: skipping non-HNSW index '{}'", prop_name);
+            // BruteForce: ephemeral — no snapshot. WAL replay will rebuild the entries.
+            let index = BruteForceIndex::with_config(&config);
+            map.insert((config.entity_type, SmolStr::from(prop_name)), Arc::new(RwLock::new(Box::new(index))));
             continue;
         }
         let snap_path = vector_snapshot_path(&store.path, config.entity_type, prop_name);

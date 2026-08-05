@@ -7,7 +7,8 @@ pub(crate) mod snapshot;
 mod store;
 pub(crate) mod transaction;
 
-pub use store::{RocksOptions, RocksStorage};
+pub use store::RocksOptions;
+pub(crate) use store::RocksStorage;
 
 pub(crate) const CF_VERTICES: &str = "vertices";
 pub(crate) const CF_VERTEX_DEGREE: &str = "vertex_degree";

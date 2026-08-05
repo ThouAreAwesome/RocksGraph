@@ -238,7 +238,9 @@ Only one edge per label between any two vertices is allowed (rank=0 default).
 - [x] `pyproject.toml` has `readme = "README.md"`
 - [x] `rocksgraph/__init__.pyi` type stubs exist — covers all public classes
   (`Graph`, `ReadSession`, `TxSession`, `Traversal`, `__`, `P`, typed wrappers)
-- [ ] [v0.2] Map `StoreError` variants to a `rocksgraph.StoreError` Python exception
+- [x] Map `StoreError` variants to a `rocksgraph.StoreError` Python exception hierarchy
+  (`StoreError` base + `StorageError`/`TransactionError`/`SchemaError`/`IntegrityError`/
+  `VectorError`/`QueryError`, mirroring `StoreError::category()`)
 
 ---
 
@@ -312,11 +314,10 @@ or no builder method). Listed in rough priority order.
 
 | Feature | Rust API | Effort |
 |---------|----------|:------:|
-| `explain()` | returns physical plan tree string | small |
+| `explain()` | returns physical plan tree string | ✅ Done |
 | `iter()` lazy traversal | returns Iterator | medium |
 | `Graph.open_with_options()` | schema mode, edge mode | medium |
 | `Graph.statistics()` | RocksDB stats | small |
-| `set_batch_size()` / `clear_caches()` | performance tuning | small |
 | Schema management | `open_schema()` | large |
 | Bulk loading | `SstBulkLoader` | large |
 

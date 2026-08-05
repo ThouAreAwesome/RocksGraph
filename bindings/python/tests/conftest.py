@@ -25,7 +25,7 @@ _id_counter = itertools.count(1)
 def addv(tx, label, **properties):
     """Add a vertex with an auto-generated id. Returns the vertex dict."""
     vid = next(_id_counter)
-    t = tx.traversal().addV(label).property("id", vid)
+    t = tx.g().addV(label).property("id", vid)
     for k, v in properties.items():
         t = t.property(k, v)
     return t.next()

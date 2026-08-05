@@ -22,7 +22,7 @@ fn rebuild_vector_index_empty_db() {
         quantization: Quantization::F32,
     });
     sess.commit().unwrap();
-    g.rebuild_vector_index(VectorEntityType::Vertex, "emb").unwrap();
+    g.index_manager().rebuild(VectorEntityType::Vertex, "emb").unwrap();
     g.close().unwrap();
 }
 
@@ -81,7 +81,7 @@ fn rebuild_vector_index_roundtrip() {
     // 3. Re-open, rebuild, and verify search correctness.
     {
         let g = Graph::open(path).unwrap();
-        g.rebuild_vector_index(VectorEntityType::Vertex, "emb").unwrap();
+        g.index_manager().rebuild(VectorEntityType::Vertex, "emb").unwrap();
 
         let mut snap = g.read();
         let results: Vec<i64> = snap
@@ -236,7 +236,7 @@ fn test_nearest_upstream_filter_and_missing_props() {
         tx.g().addV("node").property("id", 4i64).property("category", "tech").next().unwrap();
         tx.commit().unwrap();
 
-        g.rebuild_vector_index(VectorEntityType::Vertex, "emb").unwrap();
+        g.index_manager().rebuild(VectorEntityType::Vertex, "emb").unwrap();
 
         let mut snap = g.read();
 

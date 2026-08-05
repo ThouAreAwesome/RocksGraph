@@ -57,6 +57,7 @@ pub(super) fn create_logical_graph(store: &RocksStorage) -> LogicalGraph {
         store.begin(),
         std::sync::Arc::new(parking_lot::RwLock::new(schema)),
         crate::vector::empty_vector_index_map(),
+        Default::default(),
     )
 }
 
@@ -1645,7 +1646,8 @@ fn test_get_e_step_exact_rank_point_lookup() {
         s.register_edge_label("dummy3").unwrap(); // 3
         s.register_edge_label("knows").unwrap(); // 4 (KNOWS_LABEL_ID)
     }
-    let mut graph: LogicalGraph = LogicalGraph::new(store.begin(), schema, crate::vector::empty_vector_index_map());
+    let mut graph: LogicalGraph =
+        LogicalGraph::new(store.begin(), schema, crate::vector::empty_vector_index_map(), Default::default());
     graph.staged_schema.staged_vertex_labels.insert(1);
     graph.staged_schema.staged_vertex_labels.insert(2);
     graph.staged_schema.staged_edge_labels.insert(1);
@@ -1735,7 +1737,8 @@ fn test_multi_edge_label_without_rank_filter_falls_back_to_scan() {
         s.register_edge_label("dummy3").unwrap(); // 3
         s.register_edge_label("knows").unwrap(); // 4 (KNOWS_LABEL_ID)
     }
-    let mut graph: LogicalGraph = LogicalGraph::new(store.begin(), schema, crate::vector::empty_vector_index_map());
+    let mut graph: LogicalGraph =
+        LogicalGraph::new(store.begin(), schema, crate::vector::empty_vector_index_map(), Default::default());
     graph.staged_schema.staged_vertex_labels.insert(1);
     graph.staged_schema.staged_vertex_labels.insert(2);
     graph.staged_schema.staged_edge_labels.insert(1);

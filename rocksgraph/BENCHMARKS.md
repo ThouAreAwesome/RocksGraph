@@ -97,8 +97,8 @@ back-off.
 ### Read (soc-LiveJournal1, full shuffled — 69 M edges, 4.85 M vertices)
 
 One `ReadSession` is created per worker thread and reused for all queries in that thread's
-chunk (snapshot pinned at session creation). Caches are cleared between queries via
-`snap.clear_caches()` to simulate cold-start per-query access (this clears only the
+chunk (snapshot pinned at session creation). Caches are cleared automatically between queries via
+`snap.g()` to simulate cold-start per-query access (this clears only the
 session-local vertex/edge maps — the shared RocksDB block cache persists across queries).
 
 | | |

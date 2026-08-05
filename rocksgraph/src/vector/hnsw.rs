@@ -194,7 +194,7 @@ impl VectorIndex for UsearchHnswIndex {
         Ok(())
     }
 
-    fn search(&self, query: &[f32], k: usize) -> Result<Vec<(EntityKey, f32)>, VectorError> {
+    fn search(&self, query: &[f32], k: usize, ef_search: Option<usize>) -> Result<Vec<(EntityKey, f32)>, VectorError> {
         if query.len() != self.config.dimension {
             return Err(VectorError::DimensionMismatch { expected: self.config.dimension, actual: query.len() });
         }
@@ -203,6 +203,9 @@ impl VectorIndex for UsearchHnswIndex {
             return Ok(Vec::new());
         }
 
+        if let Some(ef) = ef_search {
+            self.inner.change_expansion_search(ef);
+        }
         let matches = self.inner.search(query, k).map_err(|e| VectorError::Internal(format!("usearch search: {e}")))?;
 
         let mut results = Vec::with_capacity(matches.keys.len());
@@ -321,7 +324,7 @@ mod tests {
         idx.insert(&EntityKey::Vertex(2), &[0.0, 1.0, 0.0, 0.0]).unwrap();
         idx.insert(&EntityKey::Vertex(3), &[0.7, 0.7, 0.0, 0.0]).unwrap();
 
-        let results = idx.search(&[1.0, 0.0, 0.0, 0.0], 2).unwrap();
+        let results = idx.search(&[1.0, 0.0, 0.0, 0.0], 2, None).unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].0, EntityKey::Vertex(1)); // exact match
     }
@@ -357,7 +360,7 @@ mod tests {
         let loaded = load_vector_index(&path, &test_config()).unwrap();
         assert_eq!(loaded.last_replayed_timestamp(), 42);
         assert_eq!(loaded.live_count(), 2);
-        let results = loaded.search(&[1.0, 0.0, 0.0, 0.0], 2).unwrap();
+        let results = loaded.search(&[1.0, 0.0, 0.0, 0.0], 2, None).unwrap();
         assert_eq!(results[0].0, EntityKey::Vertex(1));
     }
 
@@ -424,7 +427,7 @@ mod tests {
             let ground_truth: HashSet<i64> = exact.iter().take(k).map(|(id, _)| *id).collect();
 
             // HNSW top-k
-            let hnsw_results = index.search(&query, k).unwrap();
+            let hnsw_results = index.search(&query, k, None).unwrap();
             let hnsw_ids: HashSet<i64> = hnsw_results
                 .iter()
                 .map(|(ek, _)| match ek {
@@ -484,11 +487,11 @@ mod tests {
         idx.insert(&EntityKey::Vertex(2), &[0.0, 1.0, 0.0, 0.0]).unwrap();
 
         // k = 0 returns empty results without error
-        let res_zero = idx.search(&[1.0, 0.0, 0.0, 0.0], 0).unwrap();
+        let res_zero = idx.search(&[1.0, 0.0, 0.0, 0.0], 0, None).unwrap();
         assert_eq!(res_zero.len(), 0);
 
         // k > size returns all available items without error or overflow
-        let res_large = idx.search(&[1.0, 0.0, 0.0, 0.0], 100).unwrap();
+        let res_large = idx.search(&[1.0, 0.0, 0.0, 0.0], 100, None).unwrap();
         assert_eq!(res_large.len(), 2);
     }
 

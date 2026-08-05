@@ -5,6 +5,8 @@
 
 use std::path::Path;
 
+use smol_str::SmolStr;
+
 use crate::types::keys::CanonicalEdgeKey;
 
 /// Identifies a vertex or edge that owns a vector property.
@@ -50,12 +52,19 @@ pub fn cosine_sim(a: &[f32], b: &[f32]) -> f32 {
 pub struct BruteForceIndex {
     entries: Vec<(EntityKey, Vec<f32>)>,
     last_replayed_timestamp: u64,
+    property: SmolStr,
+    memory_limit_bytes: Option<usize>,
 }
 
 #[allow(dead_code)]
 impl BruteForceIndex {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Create a BruteForceIndex seeded with the index's property name (used in error messages).
+    pub fn with_config(config: &super::traits::VectorIndexConfig) -> Self {
+        Self { property: config.property.clone(), ..Self::default() }
     }
 
     pub fn len(&self) -> usize {
@@ -106,6 +115,23 @@ use super::traits::VectorIndex;
 
 impl VectorIndex for BruteForceIndex {
     fn insert(&mut self, key: &EntityKey, vector: &[f32]) -> Result<(), VectorError> {
+        let is_update = self.entries.iter().any(|(k, _)| k == key);
+        if !is_update {
+            if let Some(limit) = self.memory_limit_bytes {
+                // Each entry occupies `dim * 4` bytes of vector data.
+                let projected =
+                    (self.entries.len() + 1).checked_mul(vector.len()).and_then(|x| x.checked_mul(4)).ok_or_else(
+                        || VectorError::MemoryLimitExceeded { index: self.property.clone(), used: usize::MAX, limit },
+                    )?;
+                if projected > limit {
+                    return Err(VectorError::MemoryLimitExceeded {
+                        index: self.property.clone(),
+                        used: projected,
+                        limit,
+                    });
+                }
+            }
+        }
         if let Some(pos) = self.entries.iter().position(|(k, _)| k == key) {
             self.entries[pos].1 = vector.to_vec();
         } else {
@@ -114,12 +140,16 @@ impl VectorIndex for BruteForceIndex {
         Ok(())
     }
 
+    fn set_memory_limit(&mut self, limit_bytes: usize) {
+        self.memory_limit_bytes = Some(limit_bytes);
+    }
+
     fn remove(&mut self, key: &EntityKey) -> Result<(), VectorError> {
         self.entries.retain(|(k, _)| k != key);
         Ok(())
     }
 
-    fn search(&self, query: &[f32], k: usize) -> Result<Vec<(EntityKey, f32)>, VectorError> {
+    fn search(&self, query: &[f32], k: usize, _ef_search: Option<usize>) -> Result<Vec<(EntityKey, f32)>, VectorError> {
         if k == 0 || self.entries.is_empty() {
             return Ok(Vec::new());
         }

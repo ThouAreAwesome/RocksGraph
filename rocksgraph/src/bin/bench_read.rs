@@ -404,7 +404,6 @@ where
                 }
                 let (src, dst) = (parts[0], parts[1]);
 
-                snap.clear_caches();
                 let op_start = Instant::now();
                 match query_fn(&mut snap, src, dst) {
                     Ok(ct) => local_count_hist.record(ct as u64).unwrap(),
@@ -471,8 +470,7 @@ mod tests {
         let dir = tempdir().unwrap();
         {
             let graph =
-                Graph::open_with_options(dir.path(), GraphOptions { mode: SchemaMode::Strict, ..Default::default() })
-                    .unwrap();
+                Graph::open_with_options(dir.path(), GraphOptions::default().with_mode(SchemaMode::Strict)).unwrap();
             {
                 use rocksgraph::schema::DataType;
                 let mut mgmt = graph.open_schema();

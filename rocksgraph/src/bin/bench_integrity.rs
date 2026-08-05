@@ -24,6 +24,7 @@
 //! immediately and progress is visible from the first 0.5 s tick.
 
 use rocksgraph::{Graph, StoreError, TraversalBuilder, Value, __};
+use smol_str::SmolStr;
 
 use std::{
     env,
@@ -55,13 +56,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn verify_degree_integrity(graph: &Graph) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n--- Verifying degree integrity (vertex_degree CF vs adjacency scan) ---");
 
-    let edge_labels: Vec<smol_str::SmolStr> = graph.edge_label_names();
+    let mut snap = graph.read();
+    let edge_labels: Vec<SmolStr> = snap
+        .g()
+        .E([])
+        .label()
+        .dedup()
+        .to_list()?
+        .into_iter()
+        .filter_map(|v| match v {
+            Value::String(s) => Some(SmolStr::from(s)),
+            _ => None,
+        })
+        .collect();
+
     if edge_labels.is_empty() {
         println!("  No edge labels found — skipping degree integrity check.");
         return Ok(());
     }
 
-    let mut snap = graph.read();
     let v_count = match snap.g().V([]).count().next()? {
         Some(Value::Int64(n)) => n as usize,
         _ => 0,
@@ -199,8 +212,7 @@ mod tests {
     fn test_bench_integrity_clean_graph() {
         let dir = tempdir().unwrap();
         let graph =
-            Graph::open_with_options(dir.path(), GraphOptions { mode: SchemaMode::Strict, ..Default::default() })
-                .unwrap();
+            Graph::open_with_options(dir.path(), GraphOptions::default().with_mode(SchemaMode::Strict)).unwrap();
         {
             let mut mgmt = graph.open_schema();
             mgmt.add_vertex_label(VERTEX_LABEL).add_edge_label(EDGE_LABEL);
@@ -221,8 +233,7 @@ mod tests {
     fn test_bench_integrity_self_loop() {
         let dir = tempdir().unwrap();
         let graph =
-            Graph::open_with_options(dir.path(), GraphOptions { mode: SchemaMode::Strict, ..Default::default() })
-                .unwrap();
+            Graph::open_with_options(dir.path(), GraphOptions::default().with_mode(SchemaMode::Strict)).unwrap();
         {
             let mut mgmt = graph.open_schema();
             mgmt.add_vertex_label(VERTEX_LABEL).add_edge_label(EDGE_LABEL);

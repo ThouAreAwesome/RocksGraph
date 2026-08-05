@@ -19,7 +19,7 @@ mod snapshot;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use config::{ScanConfig, StagedSchema};
+pub(crate) use config::StagedSchema;
 pub(crate) use existence::Existence;
 pub(crate) use logical::LogicalGraph;
 pub(crate) use schema_cache::TxSchemaCache;

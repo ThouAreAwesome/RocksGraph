@@ -578,7 +578,7 @@ fn test_schema_persistence_across_restart() {
         let v = snap.g().withProperties([]).V([1]).next().unwrap().unwrap();
         if let Value::Vertex(v) = v {
             assert_eq!(v.label, SmolStr::from("person"));
-            assert_eq!(v.properties.get("name").unwrap()[0], Value::String("alice".to_string()));
+            assert_eq!(*v.properties.get("name").unwrap(), Value::String("alice".to_string()));
         } else {
             panic!("Expected Vertex");
         }

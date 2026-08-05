@@ -79,7 +79,7 @@ explicit registration call before the first vector write:
 # Everything up to here works exactly like today:
 g = Graph("./data")
 tx = g.tx()
-tx.traversal().addV("doc").property("id", 1).property("title", "hello").next()
+tx.g().addV("doc").property("id", 1).property("title", "hello").next()
 tx.commit()
 
 # Before any vector writes, declare the index via SchemaSession:
@@ -98,7 +98,7 @@ with g.open_schema() as mgmt:
 
 # Now vector writes work normally:
 tx = g.tx()
-tx.traversal().addV("doc").property("id", 2) \
+tx.g().addV("doc").property("id", 2) \
     .property("embedding", Vector(embedding)).next()
 tx.commit()
 ```

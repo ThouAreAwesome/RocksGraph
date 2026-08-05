@@ -295,9 +295,10 @@ def _encode_step(opcode: int, args: Any, buf: bytearray):
             
     elif opcode == OP_NEAREST:
         from ._types import Vector
-        prop, query, k = args
+        prop, query, k, ef_search = args
         _encode_string(prop, buf)
         buf.extend(struct.pack(">I", k))
+        buf.extend(struct.pack(">I", ef_search if ef_search is not None else 0))
         if isinstance(query, Vector):
             vec = query
         elif isinstance(query, list):

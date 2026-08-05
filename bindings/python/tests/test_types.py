@@ -4,12 +4,12 @@ from rocksgraph import Graph, Int32, Int64, UInt16, Float32, Float64, Uuid
 
 def assert_roundtrip(graph, key, value, checker=None):
     """Write a vertex with property(key, value), commit, read it back."""
-    tx = graph.tx()
+    tx = graph.begin()
     addv(tx, "test", **{key: value})
     tx.commit()
 
     rs = graph.read()
-    results = rs.traversal().V().hasLabel("test").values(key).to_list()
+    results = rs.g().V().hasLabel("test").values(key).to_list()
     assert len(results) >= 1, f"No results for key={key}"
     got = results[0]
     if checker:
@@ -86,23 +86,23 @@ class TestHasExistence:
     """§5: has("key") — property existence check."""
 
     def test_has_key_matches_vertex_with_property(self, graph):
-        tx = graph.tx()
+        tx = graph.begin()
         addv(tx, "user", email="a@b.com")
         addv(tx, "user")  # no email
         tx.commit()
 
         rs = graph.read()
-        with_email = rs.traversal().V().has("email").count().to_list()
+        with_email = rs.g().V().has("email").count().to_list()
         assert with_email == [1]
 
     def test_has_key_does_not_match_vertex_without_property(self, graph):
-        tx = graph.tx()
+        tx = graph.begin()
         addv(tx, "user", email="a@b.com")
         addv(tx, "user")
         tx.commit()
 
         rs = graph.read()
-        total = rs.traversal().V().count().to_list()
-        with_email = rs.traversal().V().has("email").count().to_list()
+        total = rs.g().V().count().to_list()
+        with_email = rs.g().V().has("email").count().to_list()
         assert total == [2]
         assert with_email == [1]

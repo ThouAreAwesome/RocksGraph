@@ -54,7 +54,8 @@
 
 pub mod api;
 pub mod bulk;
-pub mod bytecode;
+#[doc(hidden)]
+pub(crate) mod bytecode;
 pub(crate) mod engine;
 pub(crate) mod graph;
 pub(crate) mod gremlin;
@@ -66,11 +67,11 @@ pub(crate) mod types;
 pub(crate) mod vector;
 
 // ── User-facing re-exports ────────────────────────────────────────────────────
-pub use api::{Graph, ReadSession, TxSession};
-#[allow(deprecated)]
-pub use bulk::{
-    BulkEdge, BulkLoadStats, BulkLoader, BulkSchema, BulkVertex, IntoBulkEdge, IntoBulkVertex, SstBulkLoader,
-};
+pub use api::{Graph, IndexManager, ReadSession, TxSession};
+pub use bulk::{BulkEdge, BulkLoadStats, BulkLoader, BulkSchema, BulkVertex, IntoBulkEdge, IntoBulkVertex};
+pub use engine::ExecutionOptions;
+pub use schema::GraphOptions;
+pub use smol_str::SmolStr;
 pub use store::RocksOptions;
 // GraphTraversal is doc-hidden but must be pub so users can pass `__()` values
 // to where/coalesce/union without naming the type.
