@@ -29,6 +29,7 @@ pub struct NearestStep {
     prop_key: SmolStr,
     query_vec: Vec<f32>,
     k: usize,
+    ef_search: Option<usize>,
     buffer: Vec<Rc<Traverser>>,
     cursor: usize,
     drained: bool,
@@ -36,12 +37,13 @@ pub struct NearestStep {
 }
 
 impl NearestStep {
-    pub fn new(prop_key: String, query_vec: Vec<f32>, k: usize) -> Self {
+    pub fn new(prop_key: String, query_vec: Vec<f32>, k: usize, ef_search: Option<usize>) -> Self {
         Self {
             upstream: None,
             prop_key: SmolStr::from(prop_key),
             query_vec,
             k,
+            ef_search,
             buffer: Vec::new(),
             cursor: 0,
             drained: false,
@@ -134,7 +136,7 @@ impl CoreStep for NearestStep {
 
                 let results = index
                     .read()
-                    .search(&self.query_vec, self.k)
+                    .search(&self.query_vec, self.k, self.ef_search)
                     .map_err(|e| StoreError::UnsupportedOperation(format!("vector search: {e}")))?;
 
                 let mut candidates: HashMap<VertexKey, (Rc<Traverser>, f32)> = HashMap::new();

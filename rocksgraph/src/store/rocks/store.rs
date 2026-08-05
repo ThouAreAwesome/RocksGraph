@@ -57,21 +57,20 @@ use crate::{
 /// # use rocksgraph::{Graph, schema::GraphOptions, RocksOptions};
 /// # let dir = tempfile::tempdir().unwrap();
 /// // Small production server: 16 GB RAM
-/// let opts = GraphOptions {
-///     storage: RocksOptions {
-///         block_cache_size:         5 * 1024 * 1024 * 1024, // 5 GiB
-///         write_buffer_size:        256 * 1024 * 1024,       // 256 MiB
-///         max_write_buffer_number:  4,
-///         max_background_jobs:      4,
-///         ..RocksOptions::default()
-///     },
-///     ..Default::default()
-/// };
+/// let opts = GraphOptions::default()
+///     .with_storage(
+///         RocksOptions::default()
+///             .with_block_cache_size(5 * 1024 * 1024 * 1024) // 5 GiB
+///             .with_write_buffer_size(256 * 1024 * 1024)      // 256 MiB
+///             .with_max_write_buffer_number(4)
+///             .with_max_background_jobs(4),
+///     );
 /// let graph = Graph::open_with_options(dir.path(), opts).unwrap();
 /// # graph.close().unwrap();
 /// ```
 ///
 /// [`GraphOptions`]: crate::schema::GraphOptions
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct RocksOptions {
     // ── In-process memory (retroactive: effective immediately on next open) ──
@@ -90,7 +89,7 @@ pub struct RocksOptions {
     /// large-memory host. This is a conservative baseline suitable for a
     /// modest single-node deployment; it does not assume the multi-GB headroom
     /// a dedicated production box would have. For CI / unit tests, override
-    /// with `with_block_cache(256 * 1024 * 1024)`. In production, set to
+    /// with `with_block_cache_size(256 * 1024 * 1024)`. In production, set to
     /// 30–50% of available RAM (see the deployment table above).
     pub block_cache_size: usize,
 
@@ -193,10 +192,54 @@ impl Default for RocksOptions {
     }
 }
 
+impl RocksOptions {
+    /// Set the shared LRU block cache size in bytes.
+    pub fn with_block_cache_size(mut self, size: usize) -> Self {
+        self.block_cache_size = size;
+        self
+    }
+
+    /// Set the per-CF memtable (write buffer) size in bytes before a flush is triggered.
+    pub fn with_write_buffer_size(mut self, size: usize) -> Self {
+        self.write_buffer_size = size;
+        self
+    }
+
+    /// Set the maximum number of memtables held in memory simultaneously per CF.
+    pub fn with_max_write_buffer_number(mut self, n: i32) -> Self {
+        self.max_write_buffer_number = n;
+        self
+    }
+
+    /// Set the total background worker threads for flush and compaction.
+    pub fn with_max_background_jobs(mut self, n: i32) -> Self {
+        self.max_background_jobs = n;
+        self
+    }
+
+    /// Set the uncompressed block size for the `vertices` and `vertex_degree` CFs.
+    pub fn with_vertex_block_size(mut self, size: usize) -> Self {
+        self.vertex_block_size = size;
+        self
+    }
+
+    /// Set the uncompressed block size for the `edges_out` and `edges_in` CFs.
+    pub fn with_edge_block_size(mut self, size: usize) -> Self {
+        self.edge_block_size = size;
+        self
+    }
+
+    /// Set whether bloom filter and index blocks are stored in the shared block cache.
+    pub fn with_cache_index_and_filter_blocks(mut self, enabled: bool) -> Self {
+        self.cache_index_and_filter_blocks = enabled;
+        self
+    }
+}
+
 /// RocksDB-backed graph store using `OptimisticTransactionDB`.
 /// This struct owns the underlying RocksDB database handle.
 /// Call the `begin` method to start a new transaction against this store.
-pub struct RocksStorage {
+pub(crate) struct RocksStorage {
     pub(crate) db: Arc<OptimisticTransactionDB>,
     pub(crate) path: PathBuf,
     /// Retained so `get_ticker_count` can be called after the DB is open.

@@ -1,7 +1,35 @@
 """Type stubs for rocksgraph — enables IDE autocompletion and suppresses Pylance warnings."""
 from __future__ import annotations
-from typing import Any, Optional, List, Set
-from enum import Enum
+from typing import Any, Optional, List, Set, Dict, Union
+from enum import Enum, IntEnum
+
+class StoreError(Exception):
+    """Base exception for all RocksGraph storage/query errors. Never raised
+    directly — always one of its subclasses below."""
+
+class StorageError(StoreError):
+    """The storage engine itself is unhealthy (RocksDB failure, I/O error,
+    corrupt data, misconfiguration). Not retryable."""
+
+class TransactionError(StoreError):
+    """A transaction could not proceed due to concurrent access (OCC
+    conflict, lock error) or an in-progress bulk load."""
+
+class SchemaError(StoreError):
+    """A schema declaration or strictness rule was violated, conflicted, or
+    exhausted its ID space."""
+
+class IntegrityError(StoreError):
+    """A data integrity constraint was violated: missing key, duplicate
+    vertex/edge, dropping a vertex with incident edges, or writing to a
+    read-only snapshot."""
+
+class VectorError(StoreError):
+    """A vector index operation failed (dimension mismatch, capacity, I/O, etc.)."""
+
+class QueryError(StoreError):
+    """The query itself is invalid: unsupported construct, type mismatch, or
+    malformed traversal."""
 
 class T:
     id: str
@@ -17,6 +45,134 @@ class Direction(Enum):
 class Order(Enum):
     asc = "asc"
     desc = "desc"
+
+class DataType(IntEnum):
+    Null = 0
+    Bool = 1
+    Int32 = 2
+    Int64 = 3
+    Float32 = 4
+    Float64 = 5
+    String = 6
+    Uuid = 7
+    UInt16 = 8
+    Bytes = 9
+    FloatVector = 10
+
+class SchemaMode(str, Enum):
+    Auto = "auto"
+    Strict = "strict"
+
+class EdgeMode(str, Enum):
+    Single = "single"
+    Multi = "multi"
+
+class VectorEntityType(str, Enum):
+    Vertex = "vertex"
+    Edge = "edge"
+
+class DistanceMetric(str, Enum):
+    Cosine = "cosine"
+    Euclidean = "euclidean"
+    L2 = "l2"
+    DotProduct = "dot_product"
+
+class AnnAlgorithm(str, Enum):
+    BruteForce = "brute_force"
+    Hnsw = "hnsw"
+
+class Quantization(str, Enum):
+    F16 = "f16"
+    F32 = "f32"
+
+class VectorIndexConfig:
+    property: str
+    dimension: int
+    entity_type: str
+    metric: str
+    algorithm: str
+    m: int
+    ef_construction: int
+    ef_search: int
+    quantization: str
+    def __init__(
+        self,
+        property: str,
+        dimension: int,
+        *,
+        entity_type: Union[str, VectorEntityType] = VectorEntityType.Vertex,
+        metric: Union[str, DistanceMetric] = DistanceMetric.Cosine,
+        algorithm: Union[str, AnnAlgorithm] = AnnAlgorithm.Hnsw,
+        m: int = 16,
+        ef_construction: int = 200,
+        ef_search: int = 50,
+        quantization: Union[str, Quantization] = Quantization.F16,
+    ) -> None: ...
+
+class BulkVertex:
+    id: int
+    label: str
+    props: dict
+    def __init__(self, id: int, label: str, props: Optional[dict] = None) -> None: ...
+
+class BulkEdge:
+    src: int
+    dst: int
+    label: str
+    props: dict
+    rank: Optional[int]
+    def __init__(self, src: int, dst: int, label: str, props: Optional[dict] = None, rank: Optional[int] = None) -> None: ...
+
+class BulkLoadStats:
+    vertices_written: int
+    edges_written: int
+    sst_files: int
+    duration_secs: float
+    def __init__(self, vertices_written: int, edges_written: int, sst_files: int, duration_secs: float) -> None: ...
+
+class RocksOptions:
+    block_cache_size: int
+    write_buffer_size: int
+    max_write_buffer_number: int
+    max_background_jobs: int
+    vertex_block_size: int
+    edge_block_size: int
+    cache_index_and_filter_blocks: bool
+    def __init__(
+        self,
+        *,
+        block_cache_size: int = 1024 * 1024 * 1024,
+        write_buffer_size: int = 64 * 1024 * 1024,
+        max_write_buffer_number: int = 3,
+        max_background_jobs: int = 2,
+        vertex_block_size: int = 4096,
+        edge_block_size: int = 4096,
+        cache_index_and_filter_blocks: bool = True,
+    ) -> None: ...
+
+class IndexOptions:
+    default_memory_limit: int
+    per_index_overrides: list
+    def __init__(
+        self,
+        *,
+        default_memory_limit: int = 0,
+        per_index_overrides: Optional[list] = None,
+    ) -> None: ...
+
+class GraphOptions:
+    mode: Union[str, SchemaMode]
+    edge_mode: Union[str, EdgeMode]
+    storage: RocksOptions
+    index: IndexOptions
+    def __init__(
+        self,
+        *,
+        mode: Union[str, SchemaMode] = "auto",
+        edge_mode: Union[str, EdgeMode] = "single",
+        storage: Optional[RocksOptions] = None,
+        index: Optional[IndexOptions] = None,
+    ) -> None: ...
 
 class P:
     tag: int
@@ -169,9 +325,9 @@ class Traversal:
     def outE(self, *labels: str) -> Traversal: ...
     def inE(self, *labels: str) -> Traversal: ...
     def bothE(self, *labels: str) -> Traversal: ...
-    def outV(self) -> Traversal: ...
-    def inV(self) -> Traversal: ...
-    def otherV(self) -> Traversal: ...
+    def outV() -> Traversal: ...
+    def inV() -> Traversal: ...
+    def otherV() -> Traversal: ...
     def has(self, *args: Any) -> Traversal: ...
     def hasLabel(self, *labels: str) -> Traversal: ...
     def hasId(self, value: Any) -> Traversal: ...
@@ -179,6 +335,7 @@ class Traversal:
     def values(self, *keys: str) -> Traversal: ...
     def properties(self, *keys: str) -> Traversal: ...
     def nearest(self, property: str, query: Any, k: int) -> Traversal: ...
+    def with_ef_search(self, ef: int) -> Traversal: ...
     def similarity(self, property: str, query: Any) -> Traversal: ...
     def id(self) -> Traversal: ...
     def label(self) -> Traversal: ...
@@ -226,19 +383,70 @@ class Traversal:
     def to_set(self) -> Set: ...
     def toSet(self) -> Set: ...
     def iterate(self) -> None: ...
+    def explain(self) -> str: ...
 
 class GraphTraversal(Traversal): ...
 
+class IndexManager:
+    """Handle for vector index maintenance operations (rebuild, save, future export/import)."""
+    def rebuild(self, entity_type: Union[str, VectorEntityType], property: str) -> None: ...
+    def save(self, entity_type: Union[str, VectorEntityType], property: str) -> None: ...
+    def save_all(self) -> None: ...
+
 class Graph:
-    def __init__(self, path: str) -> None: ...
+    def __init__(self, path: str, *, options: Optional[GraphOptions] = None) -> None: ...
+    @staticmethod
+    def open_with_options(path: str, *, options: Optional[GraphOptions] = None) -> Graph: ...
     def read(self) -> ReadSession: ...
-    def tx(self) -> TxSession: ...
+    def begin(self) -> TxSession: ...
+    def open_schema(self) -> SchemaSession: ...
+    def open_bulk_loader(self) -> BulkLoader: ...
+    def index_manager(self) -> IndexManager: ...
+    def close(self) -> None: ...
+
+class SchemaSession:
+    def add_vertex_label(self, name: str) -> SchemaSession: ...
+    def add_edge_label(self, name: str) -> SchemaSession: ...
+    def add_property_key(self, name: str, data_type: Union[int, DataType]) -> SchemaSession: ...
+    def set_edge_mode(self, mode: Union[str, EdgeMode]) -> SchemaSession: ...
+    def set_schema_mode(self, mode: Union[str, SchemaMode]) -> SchemaSession: ...
+    def add_vector_index(
+        self,
+        config: Optional[VectorIndexConfig] = None,
+        *,
+        entity_type: Union[str, VectorEntityType] = VectorEntityType.Vertex,
+        property: Optional[str] = None,
+        dimension: Optional[int] = None,
+        metric: Union[str, DistanceMetric] = DistanceMetric.Cosine,
+        algorithm: Union[str, AnnAlgorithm] = AnnAlgorithm.Hnsw,
+        m: int = 16,
+        ef_construction: int = 200,
+        ef_search: int = 50,
+        quantization: Union[str, Quantization] = Quantization.F16,
+    ) -> SchemaSession: ...
+    def drop_vector_index(self, entity_type: Union[str, VectorEntityType], property: str) -> SchemaSession: ...
+    def commit(self) -> None: ...
+    def __enter__(self) -> SchemaSession: ...
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool: ...
+
+class BulkLoader:
+    def with_work_dir(self, path: str) -> BulkLoader: ...
+    def with_max_sst_size(self, bytes: int) -> BulkLoader: ...
+    def with_max_memory(self, bytes: int) -> BulkLoader: ...
+    def load_vertices(self, vertices: List[Union[BulkVertex, dict]]) -> BulkLoader: ...
+    def load_edges(self, edges: List[Union[BulkEdge, dict]]) -> BulkLoader: ...
+    def commit(self) -> BulkLoadStats: ...
+    def __enter__(self) -> BulkLoader: ...
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool: ...
 
 class ReadSession:
-    def traversal(self) -> GraphTraversal: ...
+    def g(self) -> GraphTraversal: ...
+    def close(self) -> None: ...
+    def __enter__(self) -> ReadSession: ...
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool: ...
 
 class TxSession:
-    def traversal(self) -> GraphTraversal: ...
+    def g(self) -> GraphTraversal: ...
     def commit(self) -> None: ...
     def rollback(self) -> None: ...
     def __enter__(self) -> TxSession: ...
@@ -279,7 +487,6 @@ class Edge:
     def rank(self) -> int: ...
     @property
     def properties(self) -> dict: ...
-
 
 class Property:
     def __init__(self, d: dict) -> None: ...

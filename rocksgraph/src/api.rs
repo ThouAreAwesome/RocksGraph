@@ -5,17 +5,14 @@
 //!
 //! ```text
 //! Graph::open("./db")
-//!   ├── .read()  → ReadSession   (snapshot, read-only)
-//!   │               └── .g() → ReadTraversal
-//!   │                           .V([1]).out(&["knows"]).next()?       // Option<GValue>
-//!   │                           .V([]).values(&["name"]).to_list()? // Vec<GValue>
-//!   │                           .V([]).out([]).iter().unwrap()             // BuiltTraversal (Iterator)
-//!   └── .begin() → TxSession     (OCC transaction, read-write)
-//!                   ├── .g() → WriteTraversal
-//!                   │           .addV(label).property(…).next()?
-//!                   │           .V([]).out([]).to_list()?
-//!                   ├── .commit()
-//!                   └── .rollback()
+//!   ├── .read()           → ReadSession      (snapshot, read-only)
+//!   │                         └── .g() → ReadTraversal
+//!   ├── .begin()          → TxSession        (OCC transaction, read-write)
+//!   │                         ├── .g() → WriteTraversal
+//!   │                         ├── .commit()
+//!   │                         └── .rollback()
+//!   ├── .open_schema()    → SchemaSession    (schema DDL — add labels, declare indexes)
+//!   └── .index_manager()  → IndexManager     (index maintenance — rebuild, save, future export/import)
 //! ```
 //!
 //! Sessions manage lifecycle only; traversal steps live on the traversal
@@ -40,7 +37,7 @@ use std::{
     path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Weak,
     },
 };
 
@@ -56,7 +53,7 @@ use crate::{
     types::{
         gvalue::Primitive,
         keys::{CanonicalKey, VertexKey},
-        BatchScenario, StoreError,
+        StoreError,
     },
     vector::{
         error::{VectorEntityType, VectorError},
@@ -72,7 +69,8 @@ use crate::{
 
 /// The top-level handle to a RocksDB-backed property graph.
 ///
-/// Cheap to clone — wraps an `Arc` internally.
+/// Cheap to clone — wraps an `Arc` internally. Safe to share across threads;
+/// create one `Graph` per process and hand out sessions per thread or per request.
 ///
 /// # Example
 /// ```
@@ -84,12 +82,26 @@ use crate::{
 /// let names  = snap.g().V([1]).out(["knows"]).values(["name"]).to_list().unwrap();
 /// # graph.close().unwrap();
 /// ```
+///
+/// # Session methods
+///
+/// - [`read`](Self::read) — open a read-only snapshot
+/// - [`begin`](Self::begin) — open a read-write OCC transaction
+/// - [`open_schema`](Self::open_schema) — declare schema in [`SchemaMode::Strict`](crate::schema::SchemaMode::Strict)
+/// - [`open_bulk_loader`](Self::open_bulk_loader) — high-throughput SST-based data ingestion
+/// - [`close`](Self::close) — flush vector index snapshots and release the RocksDB handle
+///
+/// # Maintenance methods
+///
+/// For index maintenance operations (rebuild after bulk ingestion, checkpointing, future
+/// export/import), obtain an [`IndexManager`] handle via [`Graph::index_manager`].
 pub struct Graph {
     pub(crate) store: Arc<RocksStorage>,
     pub(crate) schema: Arc<RwLock<Schema>>,
     pub(crate) bulk_load_in_progress: AtomicBool,
     pub(crate) vector_indexes: Arc<RwLock<VectorIndexMap>>,
     pub(crate) index_options: IndexOptions,
+    pub(crate) execution_options: crate::engine::ExecutionOptions,
 }
 
 impl Graph {
@@ -112,14 +124,9 @@ impl Graph {
     /// # let dir = tempfile::tempdir().unwrap();
     /// let graph = Graph::open_with_options(
     ///     dir.path(),
-    ///     GraphOptions {
-    ///         mode: SchemaMode::Strict,
-    ///         storage: RocksOptions {
-    ///             block_cache_size: 5 * 1024 * 1024 * 1024, // 5 GiB
-    ///             ..Default::default()
-    ///         },
-    ///         ..Default::default()
-    ///     },
+    ///     GraphOptions::default()
+    ///         .with_mode(SchemaMode::Strict)
+    ///         .with_storage(RocksOptions::default().with_block_cache_size(5 * 1024 * 1024 * 1024)),
     /// )?;
     /// # graph.close().unwrap();
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -150,15 +157,17 @@ impl Graph {
             }
             drop(map);
         }
-        for ov in &options.index.per_index_overrides {
-            let map = vector_indexes.read();
-            let key = (ov.entity_type, ov.property.clone());
-            if let Some(arc) = map.get(&key) {
-                let mut guard = arc.write();
-                guard.set_memory_limit(ov.limit.memory_limit_bytes);
-                drop(guard);
+        for ov in &options.index.per_index {
+            if let Some(limit) = &ov.memory_limit {
+                let map = vector_indexes.read();
+                let key = (ov.entity_type, ov.property.clone());
+                if let Some(arc) = map.get(&key) {
+                    let mut guard = arc.write();
+                    guard.set_memory_limit(limit.memory_limit_bytes);
+                    drop(guard);
+                }
+                drop(map);
             }
-            drop(map);
         }
 
         Ok(Self {
@@ -167,6 +176,7 @@ impl Graph {
             bulk_load_in_progress: AtomicBool::new(false),
             vector_indexes,
             index_options: options.index,
+            execution_options: options.execution,
         })
     }
 
@@ -201,15 +211,6 @@ impl Graph {
         Arc::clone(&self.schema)
     }
 
-    /// Return every edge label name currently registered in the schema.
-    ///
-    /// In [`SchemaMode::Strict`](crate::schema::SchemaMode::Strict) this is the
-    /// complete authoritative list.  In [`SchemaMode::Auto`](crate::schema::SchemaMode::Auto)
-    /// it reflects whatever labels have been auto-registered by writes so far.
-    pub fn edge_label_names(&self) -> Vec<SmolStr> {
-        self.schema.read().edge_labels.iter().map(|(_, n)| n.clone()).collect()
-    }
-
     /// Open a read-only snapshot session pinned to the current committed state.
     pub fn read(&self) -> ReadSession {
         ReadSession {
@@ -217,6 +218,7 @@ impl Graph {
                 self.store.snapshot(),
                 Arc::clone(&self.schema),
                 Arc::clone(&self.vector_indexes),
+                self.execution_options,
             ),
         }
     }
@@ -224,52 +226,107 @@ impl Graph {
     /// Open a read-write transaction session with OCC (Optimistic Concurrency Control).
     pub fn begin(&self) -> TxSession {
         TxSession {
-            ctx: LogicalGraph::new(self.store.begin(), Arc::clone(&self.schema), Arc::clone(&self.vector_indexes)),
+            ctx: LogicalGraph::new(
+                self.store.begin(),
+                Arc::clone(&self.schema),
+                Arc::clone(&self.vector_indexes),
+                self.execution_options,
+            ),
             committed: false,
         }
     }
 
-    /// Explicitly rebuild the in-memory vector index for `(entity_type, property)`.
+    /// Open an [`IndexManager`] handle for index maintenance operations (rebuild, save, future
+    /// export/import).
+    pub fn index_manager(&self) -> IndexManager {
+        IndexManager {
+            store: Arc::downgrade(&self.store),
+            schema: Arc::downgrade(&self.schema),
+            vector_indexes: Arc::downgrade(&self.vector_indexes),
+            execution_options: self.execution_options,
+        }
+    }
+
+    /// Close the database, persisting snapshots for all vector indexes and releasing RocksDB resources.
     ///
-    /// Scans all vertices in the graph, extracts the float vector for `property`,
-    /// builds a new in-memory HNSW index from scratch, and atomically swaps it in.
+    /// After calling this, no further sessions or queries can be created
+    /// from this `Graph` handle or any clone.  In tests, call this before
+    /// the temporary directory is dropped so RocksDB can flush and close
+    /// its files cleanly.
+    pub fn close(self) -> Result<(), StoreError> {
+        let save_result = self.index_manager().save_all();
+        // Only GC WAL entries if all snapshots saved successfully; if save
+        // failed, WAL entries are still needed for crash recovery on next open.
+        // GC itself is best-effort — its failure never blocks the close.
+        if save_result.is_ok() {
+            let schema = self.schema.read();
+            let _ = gc_vector_wal(&self.store, &self.vector_indexes, &schema);
+        }
+        // self drops here regardless, decrementing Arc<RocksStorage>.
+        // RocksDB closes when the last reference drops.
+        save_result
+    }
+}
+
+// ── IndexManager ─────────────────────────────────────────────────────────────
+
+/// Handle for index maintenance operations obtained from [`Graph::index_manager`].
+///
+/// Unlike [`SchemaSession`] (which accumulates DDL changes and commits them
+/// atomically), `IndexManager` executes each operation immediately — there is
+/// nothing to commit.
+///
+/// # Future operations
+/// Export and import of individual indexes (for backup / migration) are planned
+/// for a future release.
+pub struct IndexManager {
+    store: Weak<RocksStorage>,
+    schema: Weak<RwLock<Schema>>,
+    vector_indexes: Weak<RwLock<VectorIndexMap>>,
+    execution_options: crate::engine::ExecutionOptions,
+}
+
+impl IndexManager {
+    #[allow(clippy::type_complexity)]
+    fn try_refs(&self) -> Result<(Arc<RocksStorage>, Arc<RwLock<Schema>>, Arc<RwLock<VectorIndexMap>>), StoreError> {
+        let store = self.store.upgrade().ok_or_else(|| StoreError::UnsupportedOperation("graph is closed".into()))?;
+        let schema = self.schema.upgrade().ok_or_else(|| StoreError::UnsupportedOperation("graph is closed".into()))?;
+        let vector_indexes =
+            self.vector_indexes.upgrade().ok_or_else(|| StoreError::UnsupportedOperation("graph is closed".into()))?;
+        Ok((store, schema, vector_indexes))
+    }
+
+    /// Rebuild the in-memory vector index for `(entity_type, property)` from scratch.
     ///
-    /// # Concurrency
-    /// Rebuilding does not hold the graph lock or block transactions. Only read
-    /// queries that arrive during the rebuild block briefly on the index
-    /// write lock (not for the full scan duration).
-    ///
-    /// # Errors
-    /// Returns [`StoreError::VectorIndex`] if no index is declared for
-    /// `(entity_type, property)`, if property is missing from schema, or if
-    /// `entity_type == Edge` (edge indexes are deferred to v0.3).
-    pub fn rebuild_vector_index(&self, entity_type: VectorEntityType, property: &str) -> Result<(), StoreError> {
+    /// Scans all stored vectors for `property`, builds a fresh HNSW index, and
+    /// atomically swaps it into the live index map. The rebuilt index is immediately
+    /// persisted to disk as a snapshot to bound WAL replay time on the next open.
+    pub fn rebuild(&self, entity_type: VectorEntityType, property: &str) -> Result<(), StoreError> {
         use crate::vector::traits::VectorIndex;
 
         if entity_type == VectorEntityType::Edge {
             return Err(VectorError::Unsupported("edge vector index rebuild is not yet supported (v0.3)".into()).into());
         }
 
-        // 1. Read config from CF_SCHEMA — same format as load_vector_configs.
-        let config = read_vector_config(&self.store, entity_type, property)?;
+        let (store, schema, vector_indexes) = self.try_refs()?;
 
-        // 2. Resolve prop_key_id from schema.
+        let config = read_vector_config(&store, entity_type, property)?;
+
         let prop_key_id = {
-            let schema = self.schema.read();
+            let schema = schema.read();
             let Some(id) = schema.prop_key_id(property) else {
                 return Err(StoreError::VectorIndex(format!("property key '{property}' is not defined in schema")));
             };
             id
         };
 
-        // 3. Build fresh index.
         let mut index = UsearchHnswIndex::new(&config)?;
 
-        // 4. Scan vertices via LogicalSnapshot — reuses existing codec stack.
         let mut snap = LogicalSnapshot::new(
-            self.store.snapshot(),
-            Arc::clone(&self.schema),
-            Arc::new(RwLock::new(HashMap::new())), // not used during rebuild
+            store.snapshot(),
+            Arc::clone(&schema),
+            Arc::new(RwLock::new(HashMap::new())),
+            self.execution_options,
         );
         let mut start_from: Option<VertexKey> = None;
         loop {
@@ -289,34 +346,26 @@ impl Graph {
         let rebuild_ts = crate::vector::wal::next_timestamp();
         index.set_last_replayed_timestamp(rebuild_ts);
 
-        // Immediately persist the rebuilt snapshot to disk.
-        let snap_path = vector_snapshot_path(&self.store.path, entity_type, property);
+        let snap_path = vector_snapshot_path(&store.path, entity_type, property);
         if let Err(e) = index.save(&snap_path, rebuild_ts) {
             eprintln!("vector index warning: failed to save rebuilt snapshot for '{property}' ({e})");
         }
 
-        // 5. Swap into map (or insert if added after last open).
         let key = (entity_type, SmolStr::from(property));
-        {
-            let mut map_guard = self.vector_indexes.write();
-            // Overwrite existing entry or insert a new one — handles the case
-            // where add_vector_index was called after Graph::open() populated
-            // vector_indexes from CF_SCHEMA.
-            map_guard.insert(key, Arc::new(RwLock::new(Box::new(index))));
-        }
+        vector_indexes.write().insert(key, Arc::new(RwLock::new(Box::new(index))));
 
         Ok(())
     }
 
     /// Persist on-disk snapshots for all declared vector indexes.
     ///
-    /// Note: Snapshot persistence on close is an optimization to accelerate cold starts
-    /// and bound WAL replay time. Crash recovery via WAL replay guarantees consistency
-    /// even if no snapshot file is present.
-    pub fn save_vector_indexes(&self) -> Result<(), StoreError> {
-        let map = self.vector_indexes.read();
+    /// Called automatically by [`Graph::close`]. Can also be called explicitly to
+    /// checkpoint a long-running process without closing the database.
+    pub fn save_all(&self) -> Result<(), StoreError> {
+        let (store, _schema, vector_indexes) = self.try_refs()?;
+        let map = vector_indexes.read();
         for ((entity_type, prop_name), arc) in map.iter() {
-            let snap_path = vector_snapshot_path(&self.store.path, *entity_type, prop_name);
+            let snap_path = vector_snapshot_path(&store.path, *entity_type, prop_name);
             let guard = arc.read();
             let ts = guard.last_replayed_timestamp();
             guard.save(&snap_path, ts).map_err(|e| StoreError::VectorIndex(e.to_string()))?;
@@ -324,42 +373,20 @@ impl Graph {
         Ok(())
     }
 
-    /// Persist on-disk snapshot for a specific named vector index.
-    pub fn save_vector_index(&self, entity_type: VectorEntityType, property: &str) -> Result<(), StoreError> {
-        let map = self.vector_indexes.read();
+    /// Persist on-disk snapshot for a single named vector index.
+    ///
+    /// See [`save_all`](IndexManager::save_all) for caveats on allocation and latency.
+    pub fn save(&self, entity_type: VectorEntityType, property: &str) -> Result<(), StoreError> {
+        let (store, _schema, vector_indexes) = self.try_refs()?;
+        let map = vector_indexes.read();
         let key = (entity_type, SmolStr::from(property));
         if let Some(arc) = map.get(&key) {
-            let snap_path = vector_snapshot_path(&self.store.path, entity_type, property);
+            let snap_path = vector_snapshot_path(&store.path, entity_type, property);
             let guard = arc.read();
             let ts = guard.last_replayed_timestamp();
             guard.save(&snap_path, ts).map_err(|e| StoreError::VectorIndex(e.to_string()))?;
         }
         Ok(())
-    }
-
-    /// Close the database, persisting snapshots for all vector indexes and releasing RocksDB resources.
-    ///
-    /// After calling this, no further sessions or queries can be created
-    /// from this `Graph` handle or any clone.  In tests, call this before
-    /// the temporary directory is dropped so RocksDB can flush and close
-    /// its files cleanly.
-    pub fn close(self) -> Result<(), StoreError> {
-        self.save_vector_indexes()?;
-        // GC WAL entries that are already covered by the saved snapshots.
-        {
-            let schema = self.schema.read();
-            gc_vector_wal(&self.store, &self.vector_indexes, &schema)?;
-        }
-        // Dropping the Arc will close RocksDB if this is the last reference.
-        match Arc::try_unwrap(self.store) {
-            Ok(_store) => Ok(()),
-            Err(arc) => {
-                // Other references exist (e.g. open snapshots). The DB will
-                // close when the last reference drops — this is a best-effort.
-                drop(arc);
-                Ok(())
-            }
-        }
     }
 }
 
@@ -371,6 +398,7 @@ impl Clone for Graph {
             bulk_load_in_progress: AtomicBool::new(false),
             vector_indexes: Arc::clone(&self.vector_indexes),
             index_options: self.index_options.clone(),
+            execution_options: self.execution_options,
         }
     }
 }
@@ -408,6 +436,17 @@ pub struct ReadSession {
 }
 
 impl ReadSession {
+    /// Override runtime execution options for this read session (chainable).
+    pub fn with_execution_options(mut self, options: crate::engine::ExecutionOptions) -> Self {
+        self.ctx.set_execution_options(options);
+        self
+    }
+
+    /// Update runtime execution options for this read session.
+    pub fn set_execution_options(&mut self, options: crate::engine::ExecutionOptions) {
+        self.ctx.set_execution_options(options);
+    }
+
     /// Return a blank traversal bound to this snapshot.
     ///
     /// Call traversal step methods (`V`, `out`, `has`, …) on the returned
@@ -428,20 +467,15 @@ impl ReadSession {
         crate::bytecode::execute_read(&mut self.ctx, bytes, keys)
     }
 
-    // Clear per-traversal caches so they don't accumulate across g() calls.
-    // The underlying RocksDB snapshot is unaffected — all traversals on this
-    // session still see the same consistent point-in-time view.
-    pub fn clear_caches(&mut self) {
+    /// Explain a bytecode-encoded traversal, returning the execution plan tree.
+    pub fn explain(
+        &mut self,
+        bytes: &[u8],
+        prop_keys: Option<Vec<String>>,
+    ) -> Result<String, crate::types::StoreError> {
         self.ctx.clear_caches();
-    }
-
-    /// Configure the batch size for a given scan or query scenario.
-    pub fn set_batch_size(&mut self, scenario: BatchScenario, size: u32) {
-        match scenario {
-            BatchScenario::ScanVertices => self.ctx.scan_config.scan_vertices_batch_size = size,
-            BatchScenario::ScanEdges => self.ctx.scan_config.scan_edges_batch_size = size,
-            BatchScenario::GetAdjacentEdges => self.ctx.scan_config.get_adjacent_edges_batch_size = size,
-        }
+        let keys = prop_keys.map(|v| v.into_iter().map(smol_str::SmolStr::from).collect());
+        crate::bytecode::explain_read(&mut self.ctx, bytes, keys)
     }
 }
 
@@ -468,6 +502,17 @@ pub struct TxSession {
 }
 
 impl TxSession {
+    /// Override runtime execution options for this transaction session (chainable).
+    pub fn with_execution_options(mut self, options: crate::engine::ExecutionOptions) -> Self {
+        self.ctx.set_execution_options(options);
+        self
+    }
+
+    /// Update runtime execution options for this transaction session.
+    pub fn set_execution_options(&mut self, options: crate::engine::ExecutionOptions) {
+        self.ctx.set_execution_options(options);
+    }
+
     /// Return a blank traversal bound to this transaction.
     ///
     /// Call traversal step methods (`V`, `addV`, `out`, `has`, …) on the
@@ -486,6 +531,16 @@ impl TxSession {
         crate::bytecode::execute_write(&mut self.ctx, bytes, keys)
     }
 
+    /// Explain a bytecode-encoded traversal, returning the execution plan tree.
+    pub fn explain(
+        &mut self,
+        bytes: &[u8],
+        prop_keys: Option<Vec<String>>,
+    ) -> Result<String, crate::types::StoreError> {
+        let keys = prop_keys.map(|v| v.into_iter().map(smol_str::SmolStr::from).collect());
+        crate::bytecode::explain_write(&mut self.ctx, bytes, keys)
+    }
+
     /// Flush all mutations to RocksDB atomically and consume this session.
     ///
     /// Returns [`StoreError::Conflict`] if a concurrent transaction modified
@@ -499,15 +554,6 @@ impl TxSession {
     pub fn rollback(mut self) {
         self.committed = true;
         self.ctx.abort();
-    }
-
-    /// Configure the batch size for a given scan or query scenario.
-    pub fn set_batch_size(&mut self, scenario: BatchScenario, size: u32) {
-        match scenario {
-            BatchScenario::ScanVertices => self.ctx.scan_config.scan_vertices_batch_size = size,
-            BatchScenario::ScanEdges => self.ctx.scan_config.scan_edges_batch_size = size,
-            BatchScenario::GetAdjacentEdges => self.ctx.scan_config.get_adjacent_edges_batch_size = size,
-        }
     }
 }
 

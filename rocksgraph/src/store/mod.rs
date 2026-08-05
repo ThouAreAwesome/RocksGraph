@@ -6,6 +6,7 @@
 //! The storage layer abstracts over RocksDB via the `GraphStore` trait.
 //! Key/encoding layout is defined in `rocks/encoding.rs`. The `RocksGraph`
 //! implementation wraps an `OptimisticTransactionDB` with OCC-based transactions.
-pub mod rocks;
+pub(crate) mod rocks;
 
-pub use rocks::{RocksOptions, RocksStorage};
+pub use rocks::RocksOptions;
+pub(crate) use rocks::RocksStorage;

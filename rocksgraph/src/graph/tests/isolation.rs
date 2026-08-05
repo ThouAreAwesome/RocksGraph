@@ -1166,6 +1166,7 @@ fn test_snapshot_scan_isolation() {
         store.snapshot(),
         std::sync::Arc::new(parking_lot::RwLock::new(crate::schema::Schema::new())),
         crate::vector::empty_vector_index_map(),
+        Default::default(),
     );
 
     // Perform first paginated scan (limit 1)

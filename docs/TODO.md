@@ -61,6 +61,46 @@ These block entire classes of queries, not just convenience.
   breakdown per step) is not yet implemented.
 - **OLAP-style steps** (`pageRank`, `connectedComponent`, `program()`, `subgraph()`/`tree()`) —
   not yet implemented for the embedded OLTP engine.
+- **Batch size configuration via `open_with_options()`** — `set_batch_size()` was removed from
+  `ReadSession`/`TxSession` (v0.2). The hardcoded defaults (1024/1024/64) cover all current
+  workloads. Expose `scan_vertices_batch_size` / `scan_edges_batch_size` /
+  `get_adjacent_edges_batch_size` in a future `QueryOptions` or `RuntimeOptions` struct passed
+  to `Graph::open_with_options()`.  Also re-enable the single-element pagination test in
+  `gremlin/tests.rs` (search for the TODO comments).
+
+---
+
+## Code Quality & Refactoring Backlog
+
+### Medium — repeated lock acquisition in vector WAL helpers
+
+**Location**: `graph/logical.rs` — `maybe_record_wal_insert` / `maybe_record_wal_remove`
+
+Each call acquires `self.vector_indexes.read()` independently. When a write
+transaction modifies many properties in a loop (e.g. bulk `property()` calls),
+this results in N lock acquisitions for the same unchanged map.
+
+**Fix**: Pre-build a `HashSet<u16>` of vector-indexed property key IDs at
+transaction open time (e.g. in `LogicalGraph::new`), updated only when the
+schema changes. The helpers then do a plain set lookup with no locking.
+
+---
+
+### Low — `pending_repeat_mut` returns `&mut Option<T>` (internal API)
+
+**Location**: `gremlin/traversal/mod.rs` — `PlanAppender` trait, line ~111
+
+The trait method `fn pending_repeat_mut(&mut self) -> &mut Option<RepeatBuilder>`
+leaks interior mutability: callers can do arbitrary mutations to the `Option`
+(replace, take, mutate fields). Since this is `pub(crate)`, the blast radius is
+bounded, but it is an anti-pattern.
+
+**Fix**: Replace with dedicated methods:
+```rust
+fn take_pending_repeat(&mut self) -> Option<RepeatBuilder>;
+fn set_pending_repeat(&mut self, rb: RepeatBuilder);
+fn with_pending_repeat_mut<F: FnOnce(&mut RepeatBuilder)>(&mut self, f: F);
+```
 
 ---
 

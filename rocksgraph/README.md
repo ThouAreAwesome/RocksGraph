@@ -581,8 +581,8 @@ rustdoc](src/schema/management.rs) for the full guarantees, and `set_edge_mode` 
 
 ## Bulk Loading
 
-For large initial datasets (millions to billions of edges), use `SstBulkLoader` instead
-of the transactional write path.  It generates sorted RocksDB SST files offline and
+For large initial datasets (millions to billions of edges), use `Graph::open_bulk_loader()`
+instead of the transactional write path.  It generates sorted RocksDB SST files offline and
 ingests them atomically — bypassing WAL, memtable pressure, and OCC overhead entirely.
 
 **Measured:** 69 M edges, 4.85 M vertices → ~300K edges/s, ~1.2 GB peak RAM.
@@ -736,6 +736,46 @@ with existing on-disk data, and validate the upgrade against a copy first.
 
 Once the crate reaches 1.0, on-disk format compatibility will be covered by semver: breaking
 format changes will require a major version bump and a documented migration path.
+
+## API Stability
+
+RocksGraph follows [semver](https://semver.org/) for Rust API compatibility.
+
+### Stable surface (no breaking changes within `0.x`)
+
+The following types and methods are considered stable and will not change
+signature within a minor version series:
+
+| Item | Stability |
+|------|-----------|
+| `Graph::open`, `Graph::open_with_options`, `Graph::close` | Stable |
+| `Graph::read` → `ReadSession`, `Graph::begin` → `TxSession` | Stable |
+| `Graph::open_schema` → `SchemaSession` | Stable |
+| `Graph::open_bulk_loader` → `BulkLoader` | Stable |
+| All traversal step methods on `ReadTraversal` / `WriteTraversal` | Stable |
+| Terminal methods: `next()`, `to_list()`, `iter()`, `explain()` | Stable |
+| `Value`, `Vertex`, `Edge`, `Property`, `Map`, `Path`, `Primitive` | Stable |
+| `StoreError` variants (existing; new variants may be added) | Stable |
+| `GraphOptions`, `SchemaMode`, `EdgeMode`, `DataType` | Stable |
+| `BulkVertex`, `BulkEdge`, `BulkLoadStats`, `BulkSchema` | Stable |
+
+### Provisional surface (may change in a future `0.x`)
+
+| Item | Status |
+|------|--------|
+| `VectorIndexConfig`, `DistanceMetric`, `AnnAlgorithm` | Provisional — v0.3 may extend these |
+| `Graph::rebuild_vector_index`, `Graph::save_vector_indexes` | Provisional — signature stable, behavior may be extended |
+| `ExecutionOptions` fields | Provisional — new fields may be added with defaults |
+| `SmolStr` re-export | Provisional — may be replaced by a newtype if the dependency changes |
+
+### Pre-1.0 note
+
+RocksGraph is pre-1.0 (`0.x.y`). Per semver, a minor version bump (`0.x` → `0.(x+1)`) is
+permitted to make breaking API changes. In practice we aim to keep the stable surface above
+intact across minor bumps and to provide a migration note in the [CHANGELOG](CHANGELOG.md)
+for any breaking change.
+
+---
 
 ## Roadmap
 

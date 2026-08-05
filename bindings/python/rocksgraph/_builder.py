@@ -1,4 +1,6 @@
-from typing import Any, List, Optional
+from __future__ import annotations
+
+from typing import Any, List, Optional, Union
 from ._codec import *
 from enum import Enum
 
@@ -229,6 +231,12 @@ class Traversal:
 
     toSet = to_set  # Gremlin camelCase alias
 
+    def explain(self) -> str:
+        """Render the physical execution plan for this traversal."""
+        if self.session is None:
+            raise RuntimeError("Anonymous traversal cannot be explained")
+        return self.session._explain(encode(self.steps), self.prop_keys)
+
     def withProperties(self, *keys):
         """Include only the named properties when vertices/edges are materialized.
         An empty call withProperties() fetches all properties."""
@@ -336,7 +344,20 @@ class Traversal:
 
     def nearest(self, property, query, k):
         """Find the k most similar elements to the query vector."""
-        return self._add(OP_NEAREST, (property, query, k))
+        return self._add(OP_NEAREST, (property, query, k, None))
+
+    def with_ef_search(self, ef):
+        """Override the HNSW beam width for the immediately preceding nearest() step.
+
+        Higher values improve recall at the cost of latency. Must be called
+        directly after nearest().
+        """
+        if not self.steps or self.steps[-1][0] != OP_NEAREST:
+            raise ValueError("with_ef_search() must immediately follow nearest()")
+        prop, query, k, _ = self.steps[-1][1]
+        t = self._clone()
+        t.steps[-1] = (OP_NEAREST, (prop, query, k, ef))
+        return t
 
     def similarity(self, property, query):
         """Compute cosine similarity between each element's vector and the query."""
@@ -572,39 +593,210 @@ class P:
     @staticmethod
     def without(*values): return P(PRED_WITHOUT, values)
 
+class RocksOptions:
+    """RocksDB storage tuning options. Mirrors rocksgraph::RocksOptions."""
+    def __init__(self, *,
+                 block_cache_size: int = 1024 * 1024 * 1024,
+                 write_buffer_size: int = 64 * 1024 * 1024,
+                 max_write_buffer_number: int = 3,
+                 max_background_jobs: int = 2,
+                 vertex_block_size: int = 4096,
+                 edge_block_size: int = 4096,
+                 cache_index_and_filter_blocks: bool = True):
+        self.block_cache_size = block_cache_size
+        self.write_buffer_size = write_buffer_size
+        self.max_write_buffer_number = max_write_buffer_number
+        self.max_background_jobs = max_background_jobs
+        self.vertex_block_size = vertex_block_size
+        self.edge_block_size = edge_block_size
+        self.cache_index_and_filter_blocks = cache_index_and_filter_blocks
+
+
+class IndexOptions:
+    """Vector index runtime options. Mirrors rocksgraph::IndexOptions."""
+    def __init__(self, *,
+                 default_memory_limit: int = 0,
+                 per_index_overrides: list = None):
+        self.default_memory_limit = default_memory_limit
+        self.per_index_overrides = per_index_overrides or []
+
+
+class GraphOptions:
+    """Database open options. Mirrors rocksgraph::GraphOptions."""
+    def __init__(self, *,
+                 mode: str = "auto",
+                 edge_mode: str = "single",
+                 storage: RocksOptions = None,
+                 index: IndexOptions = None):
+        self.mode = mode
+        self.edge_mode = edge_mode
+        self.storage = storage or RocksOptions()
+        self.index = index or IndexOptions()
+
+
+class IndexManager:
+    """Handle for vector index maintenance operations (rebuild, save, future export/import)."""
+    def __init__(self, manager):
+        self._manager = manager
+
+    def rebuild(self, entity_type, property: str):
+        """Rebuild the in-memory vector index for (entity_type, property) from stored data."""
+        et = entity_type.value if isinstance(entity_type, Enum) else str(entity_type)
+        self._manager.rebuild(et, property)
+
+    def save(self, entity_type, property: str):
+        """Persist an on-disk snapshot for a specific named vector index."""
+        et = entity_type.value if isinstance(entity_type, Enum) else str(entity_type)
+        self._manager.save(et, property)
+
+    def save_all(self):
+        """Persist on-disk snapshots for all declared vector indexes."""
+        self._manager.save_all()
+
+
 class Graph:
-    def __init__(self, path: str):
+    def __init__(self, path: str, *, options: GraphOptions = None):
         from rocksgraph._rocksgraph import PyGraph
-        self._graph = PyGraph.open(path)
+        opts = options or GraphOptions()
+        index_dict = None
+        if opts.index.default_memory_limit or opts.index.per_index_overrides:
+            index_dict = {}
+            if opts.index.default_memory_limit:
+                index_dict["default_memory_limit"] = opts.index.default_memory_limit
+            if opts.index.per_index_overrides:
+                index_dict["per_index_overrides"] = opts.index.per_index_overrides
+        self._graph = PyGraph.open_with_options(
+            path,
+            mode=opts.mode.value if isinstance(opts.mode, Enum) else str(opts.mode),
+            edge_mode=opts.edge_mode.value if isinstance(opts.edge_mode, Enum) else str(opts.edge_mode),
+            storage={
+                "block_cache_size": opts.storage.block_cache_size,
+                "write_buffer_size": opts.storage.write_buffer_size,
+                "max_write_buffer_number": opts.storage.max_write_buffer_number,
+                "max_background_jobs": opts.storage.max_background_jobs,
+                "vertex_block_size": opts.storage.vertex_block_size,
+                "edge_block_size": opts.storage.edge_block_size,
+                "cache_index_and_filter_blocks": opts.storage.cache_index_and_filter_blocks,
+            },
+            index=index_dict,
+        )
+
+    @staticmethod
+    def open_with_options(path: str, *, options: GraphOptions = None):
+        """Open a database with custom options.
+
+        Args:
+            path: Path to the database directory.
+            options: GraphOptions instance (mode, edge_mode, storage, index).
+        """
+        return Graph(path, options=options)
 
     def read(self):
         return ReadSession(self._graph.read())
 
-    def tx(self):
-        return TxSession(self._graph.tx())
+    def begin(self):
+        return TxSession(self._graph.begin())
+
+    def open_schema(self):
+        """Open a SchemaSession for declaring labels, property types, and vector indexes."""
+        return SchemaSession(self._graph.open_schema())
+
+    def open_bulk_loader(self):
+        """Open a BulkLoader session for high-throughput batch SST ingestion."""
+        return BulkLoader(self._graph.open_bulk_loader())
+
+    def index_manager(self):
+        """Return an IndexManager handle for index maintenance (rebuild, save, future export/import)."""
+        return IndexManager(self._graph.index_manager())
 
     def close(self):
         self._graph.close()
 
-class ReadSession:
+
+class SchemaSession:
     def __init__(self, session):
         self._session = session
 
-    def traversal(self):
-        return GraphTraversal(self._session)
+    def add_vertex_label(self, name: str):
+        self._session.add_vertex_label(str(name))
+        return self
 
-class TxSession:
-    def __init__(self, session):
-        self._session = session
+    def add_edge_label(self, name: str):
+        self._session.add_edge_label(str(name))
+        return self
 
-    def traversal(self):
-        return GraphTraversal(self._session)
+    def add_property_key(self, name: str, data_type):
+        dt = int(data_type)
+        self._session.add_property_key(str(name), dt)
+        return self
+
+    def set_edge_mode(self, mode):
+        m = mode.value if isinstance(mode, Enum) else str(mode)
+        self._session.set_edge_mode(m)
+        return self
+
+    def set_schema_mode(self, mode):
+        m = mode.value if isinstance(mode, Enum) else str(mode)
+        self._session.set_schema_mode(m)
+        return self
+
+    def add_vector_index(
+        self,
+        config=None,
+        *,
+        entity_type="vertex",
+        property: str = None,
+        dimension: int = None,
+        metric="cosine",
+        algorithm="hnsw",
+        m: int = 16,
+        ef_construction: int = 200,
+        ef_search: int = 50,
+        quantization="f16",
+    ):
+        if config is not None:
+            et = config.entity_type
+            prop = config.property
+            dim = config.dimension
+            met = config.metric
+            alg = config.algorithm
+            m_val = config.m
+            ef_c = config.ef_construction
+            ef_s = config.ef_search
+            quant = config.quantization
+        else:
+            if property is None or dimension is None:
+                raise ValueError("property and dimension are required when config is not provided")
+            et = entity_type.value if isinstance(entity_type, Enum) else str(entity_type)
+            prop = str(property)
+            dim = int(dimension)
+            met = metric.value if isinstance(metric, Enum) else str(metric)
+            alg = algorithm.value if isinstance(algorithm, Enum) else str(algorithm)
+            m_val = int(m)
+            ef_c = int(ef_construction)
+            ef_s = int(ef_search)
+            quant = quantization.value if isinstance(quantization, Enum) else str(quantization)
+
+        self._session.add_vector_index(
+            et,
+            prop,
+            dim,
+            metric=met,
+            algorithm=alg,
+            m=m_val,
+            ef_construction=ef_c,
+            ef_search=ef_s,
+            quantization=quant,
+        )
+        return self
+
+    def drop_vector_index(self, entity_type, property: str):
+        et = entity_type.value if isinstance(entity_type, Enum) else str(entity_type)
+        self._session.drop_vector_index(et, str(property))
+        return self
 
     def commit(self):
         self._session.commit()
-
-    def rollback(self):
-        self._session.rollback()
 
     def __enter__(self):
         return self
@@ -612,6 +804,105 @@ class TxSession:
     def __exit__(self, exc_type, exc_val, exc_tb):
         if exc_type is None:
             self._session.commit()
+        return False
+
+
+class BulkLoader:
+    def __init__(self, loader):
+        self._loader = loader
+
+    def with_work_dir(self, path: str):
+        self._loader.with_work_dir(str(path))
+        return self
+
+    def with_max_sst_size(self, bytes: int):
+        self._loader.with_max_sst_size(int(bytes))
+        return self
+
+    def with_max_memory(self, bytes: int):
+        self._loader.with_max_memory(int(bytes))
+        return self
+
+    def load_vertices(self, vertices):
+        self._loader.load_vertices(vertices)
+        return self
+
+    def load_edges(self, edges):
+        self._loader.load_edges(edges)
+        return self
+
+    def commit(self):
+        from rocksgraph._types import BulkLoadStats
+
+        stats = self._loader.commit()
+        return BulkLoadStats(
+            vertices_written=stats["vertices_written"],
+            edges_written=stats["edges_written"],
+            sst_files=stats["sst_files"],
+            duration_secs=stats["duration_secs"],
+        )
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is None:
+            self.commit()
+        return False
+
+
+class ReadSession:
+    def __init__(self, session):
+        self._session = session
+
+    def g(self):
+        if self._session is None:
+            raise RuntimeError("ReadSession is already closed")
+        return GraphTraversal(self._session)
+
+    def close(self):
+        """Release the snapshot, allowing the database to fully close."""
+        self._session = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
+
+
+class TxSession:
+    def __init__(self, session):
+        self._session = session
+
+    def g(self):
+        if self._session is None:
+            raise RuntimeError("TxSession is already closed")
+        return GraphTraversal(self._session)
+
+    def commit(self):
+        if self._session is None:
+            raise RuntimeError("TxSession is already closed")
+        self._session.commit()
+        self._session = None
+
+    def rollback(self):
+        if self._session is None:
+            raise RuntimeError("TxSession is already closed")
+        self._session.rollback()
+        self._session = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._session is None:
+            return False  # already committed or rolled back explicitly
+        if exc_type is None:
+            self._session.commit()
         else:
             self._session.rollback()
+        self._session = None
         return False
+

@@ -52,7 +52,7 @@ fn encode_vector_index_config(config: &VectorIndexConfig) -> Vec<u8> {
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let dir = tempfile::tempdir()?;
-/// let options = GraphOptions { mode: SchemaMode::Strict, ..Default::default() };
+/// let options = GraphOptions::default().with_mode(SchemaMode::Strict);
 /// let graph = Graph::open_with_options(dir.path(), options)?;
 ///
 /// // Declare the schema up front -- required before any write in `Strict` mode.

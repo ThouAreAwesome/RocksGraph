@@ -1,7 +1,22 @@
+// Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
-use rocksgraph::{Graph, ReadSession, TxSession, Value};
+use rocksgraph::{
+    bulk::{BulkEdge, BulkLoader, BulkVertex},
+    schema::{
+        AnnAlgorithm, DataType, DistanceMetric, EdgeMode, GraphOptions, HnswConfig, IndexOptions, PerIndexOptions,
+        Quantization, SchemaMode, SchemaSession, VectorEntityType, VectorIndexConfig, VectorIndexLimit,
+    },
+    ExecutionOptions, Graph, IndexManager, Primitive, ReadSession, RocksOptions, TxSession, Value,
+};
+use smol_str::SmolStr;
+use std::collections::HashMap;
 use std::path::PathBuf;
+
+mod errors;
+use errors::store_error_to_pyerr;
 
 /// Map a Rust gremlin::value::Value to a Python object.
 fn value_to_py(py: Python<'_>, value: Value) -> PyResult<PyObject> {
@@ -18,12 +33,9 @@ fn value_to_py(py: Python<'_>, value: Value) -> PyResult<PyObject> {
             let dict = PyDict::new_bound(py);
             dict.set_item("id", v.id)?;
             dict.set_item("label", v.label.to_string())?;
-
             let props = PyDict::new_bound(py);
-            for (k, vals) in v.properties {
-                if let Some(val) = vals.into_iter().next() {
-                    props.set_item(k.to_string(), value_to_py(py, val)?)?;
-                }
+            for (k, val) in v.properties {
+                props.set_item(k.to_string(), value_to_py(py, val)?)?;
             }
             dict.set_item("properties", props)?;
             Ok(dict.into())
@@ -118,6 +130,137 @@ fn values_to_py_list(py: Python<'_>, values: Vec<Value>) -> PyResult<PyObject> {
     Ok(lst.into())
 }
 
+/// Convert a Python value into a rocksgraph Primitive.
+fn py_to_primitive(val: &Bound<'_, PyAny>) -> PyResult<Primitive> {
+    if val.is_none() {
+        return Ok(Primitive::Null);
+    }
+    if let Ok(b) = val.downcast::<pyo3::types::PyBool>() {
+        return Ok(Primitive::Bool(b.is_true()));
+    }
+    let type_name = val.get_type().name()?.to_string();
+    if type_name == "Int32" {
+        let v: i32 = val.getattr("value")?.extract()?;
+        return Ok(Primitive::Int32(v));
+    }
+    if type_name == "Int64" {
+        let v: i64 = val.getattr("value")?.extract()?;
+        return Ok(Primitive::Int64(v));
+    }
+    if type_name == "UInt16" {
+        let v: u16 = val.getattr("value")?.extract()?;
+        return Ok(Primitive::UInt16(v));
+    }
+    if type_name == "Float32" {
+        let v: f32 = val.getattr("value")?.extract()?;
+        return Ok(Primitive::Float32(v));
+    }
+    if type_name == "Float64" {
+        let v: f64 = val.getattr("value")?.extract()?;
+        return Ok(Primitive::Float64(v));
+    }
+    if type_name == "Uuid" {
+        let v: String = val.getattr("value")?.extract()?;
+        let clean = v.replace('-', "");
+        let u = u128::from_str_radix(&clean, 16)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Invalid UUID string '{v}': {e}")))?;
+        return Ok(Primitive::Uuid(u));
+    }
+    if type_name == "Vector" {
+        let values: Vec<f32> = val.getattr("values")?.extract()?;
+        return Ok(Primitive::FloatVector(values));
+    }
+    if let Ok(i) = val.extract::<i64>() {
+        return Ok(Primitive::Int64(i));
+    }
+    if let Ok(f) = val.extract::<f64>() {
+        return Ok(Primitive::Float64(f));
+    }
+    if let Ok(s) = val.extract::<String>() {
+        return Ok(Primitive::String(SmolStr::from(s)));
+    }
+    if let Ok(b) = val.downcast::<pyo3::types::PyBytes>() {
+        return Ok(Primitive::Bytes(b.as_bytes().to_vec()));
+    }
+    if let Ok(list) = val.extract::<Vec<f32>>() {
+        return Ok(Primitive::FloatVector(list));
+    }
+    Err(pyo3::exceptions::PyTypeError::new_err(format!(
+        "Cannot convert Python value of type '{type_name}' to Primitive"
+    )))
+}
+
+fn py_props_to_hashmap(props_dict: &Bound<'_, PyDict>) -> PyResult<HashMap<String, Primitive>> {
+    let mut map = HashMap::with_capacity(props_dict.len());
+    for (k, v) in props_dict.iter() {
+        let key: String = k.extract()?;
+        let prim = py_to_primitive(&v)?;
+        map.insert(key, prim);
+    }
+    Ok(map)
+}
+
+fn py_to_bulk_vertex(item: &Bound<'_, PyAny>) -> PyResult<BulkVertex> {
+    let (id, label, props_map) = if let Ok(dict) = item.downcast::<PyDict>() {
+        let id: i64 = dict
+            .get_item("id")?
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Missing 'id' in vertex"))?
+            .extract()?;
+        let label: String = dict
+            .get_item("label")?
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Missing 'label' in vertex"))?
+            .extract()?;
+        let props_dict = match dict.get_item("props")?.or(dict.get_item("properties")?) {
+            Some(p) => p.downcast::<PyDict>()?.clone(),
+            None => PyDict::new_bound(dict.py()),
+        };
+        (id, label, py_props_to_hashmap(&props_dict)?)
+    } else {
+        let id: i64 = item.getattr("id")?.extract()?;
+        let label: String = item.getattr("label")?.extract()?;
+        let props_obj = item.getattr("props")?;
+        let props_dict = props_obj.downcast::<PyDict>()?;
+        (id, label, py_props_to_hashmap(props_dict)?)
+    };
+
+    Ok(BulkVertex { id, label, props: props_map })
+}
+
+fn py_to_bulk_edge(item: &Bound<'_, PyAny>) -> PyResult<BulkEdge> {
+    let (src, dst, label, rank, props_map) = if let Ok(dict) = item.downcast::<PyDict>() {
+        let src: i64 = dict
+            .get_item("src")?
+            .or(dict.get_item("out_v")?)
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Missing 'src' in edge"))?
+            .extract()?;
+        let dst: i64 = dict
+            .get_item("dst")?
+            .or(dict.get_item("in_v")?)
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Missing 'dst' in edge"))?
+            .extract()?;
+        let label: String = dict
+            .get_item("label")?
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Missing 'label' in edge"))?
+            .extract()?;
+        let rank: Option<u16> = dict.get_item("rank")?.map(|r| r.extract()).transpose()?;
+        let props_dict = match dict.get_item("props")?.or(dict.get_item("properties")?) {
+            Some(p) => p.downcast::<PyDict>()?.clone(),
+            None => PyDict::new_bound(dict.py()),
+        };
+        (src, dst, label, rank, py_props_to_hashmap(&props_dict)?)
+    } else {
+        let src: i64 = item.getattr("src")?.extract()?;
+        let dst: i64 = item.getattr("dst")?.extract()?;
+        let label: String = item.getattr("label")?.extract()?;
+        let rank: Option<u16> = item.getattr("rank").ok().and_then(|r| r.extract().ok());
+        let props_obj = item.getattr("props")?;
+        let props_dict = props_obj.downcast::<PyDict>()?;
+        (src, dst, label, rank, py_props_to_hashmap(props_dict)?)
+    };
+
+    Ok(BulkEdge { src, dst, label, props: props_map, rank })
+}
+
 #[pyclass(unsendable)]
 struct PyGraph {
     graph: Option<Graph>,
@@ -128,7 +271,84 @@ impl PyGraph {
     #[staticmethod]
     fn open(path: &str) -> PyResult<Self> {
         let path = PathBuf::from(path);
-        let graph = Graph::open(path).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
+        let graph = Graph::open(path).map_err(store_error_to_pyerr)?;
+        Ok(Self { graph: Some(graph) })
+    }
+
+    #[staticmethod]
+    #[pyo3(signature = (path, *, mode = "auto", edge_mode = "single", storage = None, index = None))]
+    fn open_with_options(
+        path: &str,
+        mode: &str,
+        edge_mode: &str,
+        storage: Option<&Bound<'_, PyDict>>,
+        index: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Self> {
+        let path = PathBuf::from(path);
+
+        let schema_mode = match mode {
+            "strict" => SchemaMode::Strict,
+            _ => SchemaMode::Auto,
+        };
+        let em = match edge_mode {
+            "multi" => EdgeMode::Multi,
+            _ => EdgeMode::Single,
+        };
+
+        let mut rocks = RocksOptions::default();
+        if let Some(d) = storage {
+            if let Some(v) = d.get_item("block_cache_size")? {
+                rocks.block_cache_size = v.extract()?;
+            }
+            if let Some(v) = d.get_item("write_buffer_size")? {
+                rocks.write_buffer_size = v.extract()?;
+            }
+            if let Some(v) = d.get_item("max_write_buffer_number")? {
+                rocks.max_write_buffer_number = v.extract()?;
+            }
+            if let Some(v) = d.get_item("max_background_jobs")? {
+                rocks.max_background_jobs = v.extract()?;
+            }
+            if let Some(v) = d.get_item("vertex_block_size")? {
+                rocks.vertex_block_size = v.extract()?;
+            }
+            if let Some(v) = d.get_item("edge_block_size")? {
+                rocks.edge_block_size = v.extract()?;
+            }
+            if let Some(v) = d.get_item("cache_index_and_filter_blocks")? {
+                rocks.cache_index_and_filter_blocks = v.extract()?;
+            }
+        }
+
+        let mut idx = IndexOptions::default();
+        if let Some(d) = index {
+            if let Some(v) = d.get_item("default_memory_limit")? {
+                idx.default_limit = Some(VectorIndexLimit::new(v.extract()?));
+            }
+            if let Some(overrides) = d.get_item("per_index")? {
+                let list = overrides.downcast::<PyList>()?;
+                let mut vec = Vec::with_capacity(list.len());
+                for o in list.iter() {
+                    let o = o.downcast::<PyDict>()?;
+                    let et_byte: u8 = o.get_item("entity_type")?.map(|v| v.extract()).transpose()?.unwrap_or(0);
+                    let prop: String = o.get_item("property")?.map(|v| v.extract()).transpose()?.unwrap_or_default();
+                    let et = match et_byte {
+                        0 => VectorEntityType::Vertex,
+                        _ => VectorEntityType::Edge,
+                    };
+                    let mut entry = PerIndexOptions::new(et, prop);
+                    if let Some(v) = o.get_item("memory_limit_bytes")? {
+                        entry = entry.with_memory_limit(VectorIndexLimit::new(v.extract()?));
+                    }
+                    vec.push(entry);
+                }
+                idx.per_index = vec;
+            }
+        }
+
+        let options =
+            GraphOptions::default().with_mode(schema_mode).with_edge_mode(em).with_storage(rocks).with_index(idx);
+        let graph = Graph::open_with_options(path, options).map_err(store_error_to_pyerr)?;
         Ok(Self { graph: Some(graph) })
     }
 
@@ -138,18 +358,270 @@ impl PyGraph {
         Ok(PyReadSession { session: g.read() })
     }
 
-    fn tx(&self) -> PyResult<PyTxSession> {
+    fn begin(&self) -> PyResult<PyTxSession> {
         let g =
             self.graph.as_ref().ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Graph is already closed"))?;
         Ok(PyTxSession { session: Some(g.begin()) })
     }
 
+    fn open_schema(&self) -> PyResult<PySchemaSession> {
+        let g =
+            self.graph.as_ref().ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Graph is already closed"))?;
+        Ok(PySchemaSession { session: Some(g.open_schema()) })
+    }
+
+    fn open_bulk_loader(slf: Py<Self>, py: Python<'_>) -> PyResult<PyBulkLoader> {
+        let borrow = slf.borrow(py);
+        let g = borrow
+            .graph
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Graph is already closed"))?;
+        let loader = g.open_bulk_loader().map_err(store_error_to_pyerr)?;
+        // Safety: PyBulkLoader keeps `slf` (Py<PyGraph>) alive, guaranteeing that `Graph` outlives `BulkLoader`.
+        let loader_static: BulkLoader<'static> = unsafe { std::mem::transmute(loader) };
+        drop(borrow);
+        Ok(PyBulkLoader { _graph: slf, loader: Some(loader_static) })
+    }
+
+    fn index_manager(&self) -> PyResult<PyIndexManager> {
+        let g =
+            self.graph.as_ref().ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Graph is already closed"))?;
+        Ok(PyIndexManager { manager: g.index_manager() })
+    }
+
     fn close(&mut self) -> PyResult<()> {
         if let Some(g) = self.graph.take() {
-            g.close().map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))
+            g.close().map_err(store_error_to_pyerr)
         } else {
             Ok(())
         }
+    }
+}
+
+#[pyclass(unsendable)]
+struct PySchemaSession {
+    session: Option<SchemaSession>,
+}
+
+#[pymethods]
+impl PySchemaSession {
+    fn add_vertex_label(&mut self, name: &str) -> PyResult<()> {
+        let s = self
+            .session
+            .as_mut()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("SchemaSession already closed"))?;
+        s.add_vertex_label(name);
+        Ok(())
+    }
+
+    fn add_edge_label(&mut self, name: &str) -> PyResult<()> {
+        let s = self
+            .session
+            .as_mut()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("SchemaSession already closed"))?;
+        s.add_edge_label(name);
+        Ok(())
+    }
+
+    fn add_property_key(&mut self, name: &str, data_type: u8) -> PyResult<()> {
+        let s = self
+            .session
+            .as_mut()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("SchemaSession already closed"))?;
+        let dt = DataType::from_u8(data_type)
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err(format!("Invalid DataType code {data_type}")))?;
+        s.add_property_key(name, dt);
+        Ok(())
+    }
+
+    fn set_edge_mode(&mut self, mode: &str) -> PyResult<()> {
+        let s = self
+            .session
+            .as_mut()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("SchemaSession already closed"))?;
+        let em = match mode {
+            "multi" => EdgeMode::Multi,
+            _ => EdgeMode::Single,
+        };
+        s.set_edge_mode(em);
+        Ok(())
+    }
+
+    fn set_schema_mode(&mut self, mode: &str) -> PyResult<()> {
+        let s = self
+            .session
+            .as_mut()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("SchemaSession already closed"))?;
+        let sm = match mode {
+            "strict" => SchemaMode::Strict,
+            _ => SchemaMode::Auto,
+        };
+        s.set_schema_mode(sm);
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (entity_type, property, dimension, *, metric = "cosine", algorithm = "hnsw", m = 16, ef_construction = 200, ef_search = 50, quantization = "f16"))]
+    fn add_vector_index(
+        &mut self,
+        entity_type: &str,
+        property: &str,
+        dimension: usize,
+        metric: &str,
+        algorithm: &str,
+        m: usize,
+        ef_construction: usize,
+        ef_search: usize,
+        quantization: &str,
+    ) -> PyResult<()> {
+        let s = self
+            .session
+            .as_mut()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("SchemaSession already closed"))?;
+        let et = match entity_type {
+            "edge" => VectorEntityType::Edge,
+            _ => VectorEntityType::Vertex,
+        };
+        let met = match metric {
+            "euclidean" | "l2" => DistanceMetric::Euclidean,
+            "dot_product" | "dot" => DistanceMetric::DotProduct,
+            _ => DistanceMetric::Cosine,
+        };
+        let alg = match algorithm {
+            "brute_force" | "exact" => AnnAlgorithm::BruteForce,
+            _ => AnnAlgorithm::Hnsw(
+                HnswConfig::default().with_m(m).with_ef_construction(ef_construction).with_ef_search(ef_search),
+            ),
+        };
+        let quant = match quantization {
+            "f32" => Quantization::F32,
+            _ => Quantization::F16,
+        };
+        let config = VectorIndexConfig::new(property, et, dimension, met, alg).with_quantization(quant);
+        s.add_vector_index(config);
+        Ok(())
+    }
+
+    fn drop_vector_index(&mut self, entity_type: &str, property: &str) -> PyResult<()> {
+        let s = self
+            .session
+            .as_mut()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("SchemaSession already closed"))?;
+        let et = match entity_type {
+            "edge" => VectorEntityType::Edge,
+            _ => VectorEntityType::Vertex,
+        };
+        s.drop_vector_index(et, property);
+        Ok(())
+    }
+
+    fn commit(&mut self) -> PyResult<()> {
+        let s = self
+            .session
+            .take()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("SchemaSession already closed"))?;
+        s.commit().map_err(store_error_to_pyerr)?;
+        Ok(())
+    }
+}
+
+#[pyclass(unsendable)]
+struct PyBulkLoader {
+    _graph: Py<PyGraph>,
+    loader: Option<BulkLoader<'static>>,
+}
+
+#[pymethods]
+impl PyBulkLoader {
+    fn with_work_dir(&mut self, path: &str) -> PyResult<()> {
+        let loader =
+            self.loader.take().ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("BulkLoader already closed"))?;
+        self.loader = Some(loader.with_work_dir(path));
+        Ok(())
+    }
+
+    fn with_max_sst_size(&mut self, bytes: usize) -> PyResult<()> {
+        let loader =
+            self.loader.take().ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("BulkLoader already closed"))?;
+        self.loader = Some(loader.with_max_sst_size(bytes));
+        Ok(())
+    }
+
+    fn with_max_memory(&mut self, bytes: usize) -> PyResult<()> {
+        let loader =
+            self.loader.take().ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("BulkLoader already closed"))?;
+        self.loader = Some(loader.with_max_memory(bytes));
+        Ok(())
+    }
+
+    fn load_vertices(&mut self, vertices: &Bound<'_, PyAny>) -> PyResult<()> {
+        let loader = self
+            .loader
+            .as_mut()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("BulkLoader already closed"))?;
+        let mut rust_vertices = Vec::new();
+        for item in vertices.iter()? {
+            let item = item?;
+            let bv = py_to_bulk_vertex(&item)?;
+            rust_vertices.push(bv);
+        }
+        loader.load_vertices(rust_vertices).map_err(store_error_to_pyerr)?;
+        Ok(())
+    }
+
+    fn load_edges(&mut self, edges: &Bound<'_, PyAny>) -> PyResult<()> {
+        let loader = self
+            .loader
+            .as_mut()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("BulkLoader already closed"))?;
+        let mut rust_edges = Vec::new();
+        for item in edges.iter()? {
+            let item = item?;
+            let be = py_to_bulk_edge(&item)?;
+            rust_edges.push(be);
+        }
+        loader.load_edges(rust_edges).map_err(store_error_to_pyerr)?;
+        Ok(())
+    }
+
+    fn commit(&mut self, py: Python<'_>) -> PyResult<PyObject> {
+        let loader =
+            self.loader.take().ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("BulkLoader already closed"))?;
+        let stats = loader.commit().map_err(store_error_to_pyerr)?;
+        let dict = PyDict::new_bound(py);
+        dict.set_item("vertices_written", stats.vertices_written)?;
+        dict.set_item("edges_written", stats.edges_written)?;
+        dict.set_item("sst_files", stats.sst_files)?;
+        dict.set_item("duration_secs", stats.duration_secs)?;
+        Ok(dict.into())
+    }
+}
+
+#[pyclass(unsendable)]
+struct PyIndexManager {
+    manager: IndexManager,
+}
+
+#[pymethods]
+impl PyIndexManager {
+    fn rebuild(&self, entity_type: &str, property: &str) -> PyResult<()> {
+        let et = match entity_type {
+            "edge" => VectorEntityType::Edge,
+            _ => VectorEntityType::Vertex,
+        };
+        self.manager.rebuild(et, property).map_err(store_error_to_pyerr)
+    }
+
+    fn save(&self, entity_type: &str, property: &str) -> PyResult<()> {
+        let et = match entity_type {
+            "edge" => VectorEntityType::Edge,
+            _ => VectorEntityType::Vertex,
+        };
+        self.manager.save(et, property).map_err(store_error_to_pyerr)
+    }
+
+    fn save_all(&self) -> PyResult<()> {
+        self.manager.save_all().map_err(store_error_to_pyerr)
     }
 }
 
@@ -161,11 +633,12 @@ struct PyReadSession {
 #[pymethods]
 impl PyReadSession {
     fn _execute(&mut self, py: Python<'_>, bytes: &[u8], prop_keys: Option<Vec<String>>) -> PyResult<PyObject> {
-        let results = self
-            .session
-            .execute(bytes, prop_keys)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
+        let results = self.session.execute(bytes, prop_keys).map_err(store_error_to_pyerr)?;
         values_to_py_list(py, results)
+    }
+
+    fn _explain(&mut self, bytes: &[u8], prop_keys: Option<Vec<String>>) -> PyResult<String> {
+        self.session.explain(bytes, prop_keys).map_err(store_error_to_pyerr)
     }
 }
 
@@ -179,16 +652,20 @@ impl PyTxSession {
     fn _execute(&mut self, py: Python<'_>, bytes: &[u8], prop_keys: Option<Vec<String>>) -> PyResult<PyObject> {
         let session =
             self.session.as_mut().ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Session already closed"))?;
-        let results = session
-            .execute(bytes, prop_keys)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
+        let results = session.execute(bytes, prop_keys).map_err(store_error_to_pyerr)?;
         values_to_py_list(py, results)
+    }
+
+    fn _explain(&mut self, bytes: &[u8], prop_keys: Option<Vec<String>>) -> PyResult<String> {
+        let session =
+            self.session.as_mut().ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Session already closed"))?;
+        session.explain(bytes, prop_keys).map_err(store_error_to_pyerr)
     }
 
     fn commit(mut slf: PyRefMut<'_, Self>) -> PyResult<()> {
         let session =
             slf.session.take().ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Session already closed"))?;
-        session.commit().map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{:?}", e)))?;
+        session.commit().map_err(store_error_to_pyerr)?;
         Ok(())
     }
 
@@ -203,7 +680,11 @@ impl PyTxSession {
 #[pymodule]
 fn _rocksgraph(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyGraph>()?;
+    m.add_class::<PyIndexManager>()?;
     m.add_class::<PyReadSession>()?;
     m.add_class::<PyTxSession>()?;
+    m.add_class::<PySchemaSession>()?;
+    m.add_class::<PyBulkLoader>()?;
+    errors::register(m)?;
     Ok(())
 }

@@ -772,7 +772,12 @@ impl PhysicalPlanBuilder {
             }
             LogicalStep::Nearest(s) => {
                 wire_required!(
-                    BufferedStep::new(steps::vector::NearestStep::new(s.prop_key.clone(), s.query_vec.clone(), s.k)),
+                    BufferedStep::new(steps::vector::NearestStep::new(
+                        s.prop_key.clone(),
+                        s.query_vec.clone(),
+                        s.k,
+                        s.ef_search
+                    )),
                     upstream,
                     "NearestStep"
                 )

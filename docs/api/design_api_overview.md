@@ -600,11 +600,11 @@ g = Graph.open_with_options("./mydb", GraphOptions(mode=SchemaMode.STRICT))
 
 # Read session — pure-Python builder, bytecode encoding is internal
 snap = g.read()
-names = snap.traversal().V(1).out("knows").values("name").to_list()
+names = snap.g().V(1).out("knows").values("name").to_list()
 
 # Transaction
 tx = g.tx()
-tx.traversal().addV("person").property("name", "Alice").next()
+tx.g().addV("person").property("name", "Alice").next()
 tx.commit()
 tx.rollback()
 
@@ -642,11 +642,11 @@ const g = Graph.open("./mydb");
 
 // Read session — pure-JS builder
 const snap = g.read();
-const names = snap.traversal().V(1).out("knows").values("name").toList();
+const names = snap.g().V(1).out("knows").values("name").toList();
 
 // Transaction
 const tx = g.tx();
-tx.traversal().addV("person").property("name", "Alice").next();
+tx.g().addV("person").property("name", "Alice").next();
 tx.commit();
 
 // Schema management
@@ -682,7 +682,7 @@ one place to check.
 | Concept | Rust | Python | TypeScript |
 | ------- | ---- | ------ | ---------- |
 | Begin a transaction | `.begin()` | `.tx()` | `.tx()` |
-| Get traversal source | `.g()` | `.traversal()` | `.traversal()` |
+| Get traversal source | `.g()` | `.g()` | `.g()` |
 | Schema session | `open_schema()` | `open_schema()` | `openSchema()` |
 | Open bulk load session | `graph.open_bulk_loader()` | `g.open_bulk_loader()` | `g.openBulkLoader()` |
 | Method names generally | `snake_case` | `snake_case` | `camelCase` |

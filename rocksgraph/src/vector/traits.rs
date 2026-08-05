@@ -32,6 +32,7 @@ pub enum DistanceMetric {
 // ── Algorithm configuration ──────────────────────────────────────────────────
 
 /// Configuration for the HNSW (Hierarchical Navigable Small World) algorithm.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HnswConfig {
     /// Max number of neighbours per node at layer 0 (2×M) and higher layers (M).
@@ -40,14 +41,34 @@ pub struct HnswConfig {
     /// Number of candidates to evaluate during index construction.
     /// Higher → better recall, slower build. Default: 200.
     pub ef_construction: usize,
-    /// Default number of candidates to evaluate per query.
-    /// Overridable per-query via `withEfSearch`. Default: 50.
+    /// Number of candidates to evaluate per query (search-time beam width).
+    /// Higher → better recall, slower search. Schema-level; set at index creation. Default: 50.
     pub ef_search: usize,
 }
 
 impl Default for HnswConfig {
     fn default() -> Self {
         Self { m: 16, ef_construction: 200, ef_search: 50 }
+    }
+}
+
+impl HnswConfig {
+    /// Set the max neighbours per node (M parameter).
+    pub fn with_m(mut self, m: usize) -> Self {
+        self.m = m;
+        self
+    }
+
+    /// Set the number of candidates evaluated during index construction.
+    pub fn with_ef_construction(mut self, ef: usize) -> Self {
+        self.ef_construction = ef;
+        self
+    }
+
+    /// Set the default number of candidates evaluated per search query.
+    pub fn with_ef_search(mut self, ef: usize) -> Self {
+        self.ef_search = ef;
+        self
     }
 }
 
@@ -84,6 +105,7 @@ pub enum Quantization {
 /// Persisted to CF_SCHEMA on `add_vector_index()` and reloaded automatically
 /// on every `Graph::open`. Contains dimension, metric, and algorithm — the
 /// parameters that cannot be inferred from data alone.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct VectorIndexConfig {
     /// The property name this index accelerates.
@@ -100,34 +122,112 @@ pub struct VectorIndexConfig {
     pub quantization: Quantization,
 }
 
+impl VectorIndexConfig {
+    /// Create a new vector index configuration with default quantization (F16).
+    pub fn new(
+        property: impl Into<SmolStr>,
+        entity_type: VectorEntityType,
+        dimension: usize,
+        metric: DistanceMetric,
+        algorithm: AnnAlgorithm,
+    ) -> Self {
+        Self {
+            property: property.into(),
+            entity_type,
+            dimension,
+            metric,
+            algorithm,
+            quantization: Quantization::default(),
+        }
+    }
+
+    /// Override the in-memory quantization precision.
+    pub fn with_quantization(mut self, quantization: Quantization) -> Self {
+        self.quantization = quantization;
+        self
+    }
+}
+
 // ── Environmental configuration (supplied per-open, never persisted) ─────────
 
 /// Per-index memory limit. Applied as a hard boundary before any durable write.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct VectorIndexLimit {
     pub memory_limit_bytes: usize,
 }
 
-/// Overrides the default memory limit for a specific index.
+impl VectorIndexLimit {
+    /// Create a memory limit of `bytes` bytes.
+    pub fn new(bytes: usize) -> Self {
+        Self { memory_limit_bytes: bytes }
+    }
+}
+
+/// Runtime configuration for a specific vector index, matched by `(entity_type, property)`.
+///
+/// All fields are optional — only the settings you specify override the graph-wide defaults.
+/// Use [`PerIndexOptions::new`] to create one, then chain builder methods for the options you need.
+///
+/// # Example
+/// ```
+/// use rocksgraph::schema::{PerIndexOptions, VectorEntityType, VectorIndexLimit};
+///
+/// let opts = PerIndexOptions::new(VectorEntityType::Vertex, "embedding")
+///     .with_memory_limit(VectorIndexLimit::new(512 * 1024 * 1024)); // 512 MiB
+/// ```
+#[non_exhaustive]
 #[derive(Debug, Clone)]
-pub struct IndexLimitOverride {
+pub struct PerIndexOptions {
+    /// Which index this entry targets.
     pub entity_type: VectorEntityType,
+    /// Which index this entry targets.
     pub property: SmolStr,
-    pub limit: VectorIndexLimit,
+    /// Per-index memory cap. Overrides `IndexOptions::default_limit` when set.
+    /// `None` = fall back to the graph-wide default.
+    pub memory_limit: Option<VectorIndexLimit>,
+}
+
+impl PerIndexOptions {
+    /// Create per-index options targeting `(entity_type, property)`.
+    pub fn new(entity_type: VectorEntityType, property: impl Into<SmolStr>) -> Self {
+        Self { entity_type, property: property.into(), memory_limit: None }
+    }
+
+    /// Set a memory cap for this specific index.
+    pub fn with_memory_limit(mut self, limit: VectorIndexLimit) -> Self {
+        self.memory_limit = Some(limit);
+        self
+    }
 }
 
 /// Runtime options for vector indexes, supplied at `Graph::open_with_options` time.
 ///
 /// These are **environmental** — never persisted to disk, so a database file
 /// created on a large server works correctly on a smaller machine.
+#[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct IndexOptions {
     /// Default memory limit applied to every vector index.
     /// `None` = unlimited (expert escape hatch — can OOM if not sized to RAM).
     pub default_limit: Option<VectorIndexLimit>,
-    /// Per-index overrides matched by (entity_type, property). Takes precedence
-    /// over `default_limit`.
-    pub per_index_overrides: Vec<IndexLimitOverride>,
+    /// Per-index settings matched by `(entity_type, property)`. Takes precedence
+    /// over `default_limit` for whichever fields are set.
+    pub per_index: Vec<PerIndexOptions>,
+}
+
+impl IndexOptions {
+    /// Apply a default memory limit to all indexes that have no per-index override.
+    pub fn with_default_limit(mut self, limit: VectorIndexLimit) -> Self {
+        self.default_limit = Some(limit);
+        self
+    }
+
+    /// Add per-index settings for a specific index (takes precedence over defaults).
+    pub fn with_per_index(mut self, opts: PerIndexOptions) -> Self {
+        self.per_index.push(opts);
+        self
+    }
 }
 
 // ── VectorIndex trait ────────────────────────────────────────────────────────
@@ -148,7 +248,13 @@ pub(crate) trait VectorIndex: Send + Sync {
     /// Search for the `k` nearest neighbours to `query`, returning
     /// `(entity_key, distance_or_similarity)` pairs. The returned ordering
     /// depends on the implementation (e.g. ascending distance for HNSW).
-    fn search(&self, query: &[f32], k: usize) -> Result<Vec<(EntityKey, f32)>, VectorError>;
+    ///
+    /// `ef_search` overrides the schema-level beam width for this call only.
+    /// `None` uses the value baked in at index creation. For HNSW, higher
+    /// values improve recall at the cost of latency; concurrent calls with
+    /// different overrides race for the shared setting (acceptable because
+    /// it affects recall quality only, not correctness).
+    fn search(&self, query: &[f32], k: usize, ef_search: Option<usize>) -> Result<Vec<(EntityKey, f32)>, VectorError>;
 
     /// Persist the index state to `path`, recording `last_replayed_timestamp`
     /// as the WAL timestamp boundary up to which this snapshot is authoritative.

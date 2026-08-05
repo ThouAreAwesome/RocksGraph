@@ -11,9 +11,10 @@ mod tests;
 // Public surface: only what callers need to configure a `Graph` (`GraphOptions` and friends) and
 // to declare schema via `SchemaSession`. `Schema` itself (the live registry) and
 // `PropKeyConfig` (one of its internal fields) are crate-internal — see `Graph::schema()`.
+pub use crate::engine::ExecutionOptions;
 pub use crate::vector::error::VectorEntityType;
 pub use crate::vector::traits::{
-    AnnAlgorithm, DistanceMetric, HnswConfig, IndexLimitOverride, IndexOptions, Quantization, VectorIndexConfig,
+    AnnAlgorithm, DistanceMetric, HnswConfig, IndexOptions, PerIndexOptions, Quantization, VectorIndexConfig,
     VectorIndexLimit,
 };
 pub use definition::{DataType, EdgeMode, GraphOptions, SchemaMode};

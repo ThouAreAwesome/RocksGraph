@@ -23,8 +23,11 @@
 //! [`PhysicalPlanBuilder`]: volcano::builder::PhysicalPlanBuilder
 
 pub(crate) mod context;
+pub mod options;
 pub(crate) mod traverser;
 pub(crate) mod volcano;
+
+pub use options::ExecutionOptions;
 
 // GraphCtx appears in GraphTraversal::build()'s impl-trait bound and must
 // remain nameable outside the crate, but it is not part of the user-facing API.

@@ -5,18 +5,6 @@ use crate::types::LabelId;
 use std::collections::HashSet;
 
 // ── LogicalGraph structs ───────────────────────────────────────────────────────
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct ScanConfig {
-    pub(crate) scan_vertices_batch_size: u32,
-    pub(crate) scan_edges_batch_size: u32,
-    pub(crate) get_adjacent_edges_batch_size: u32,
-}
-
-impl Default for ScanConfig {
-    fn default() -> Self {
-        Self { scan_vertices_batch_size: 1024, scan_edges_batch_size: 1024, get_adjacent_edges_batch_size: 64 }
-    }
-}
 
 #[derive(Debug, Default)]
 pub(crate) struct StagedSchema {

@@ -678,7 +678,7 @@ impl<'a> BulkLoader<'a> {
         };
         for (entity_type, prop_name) in vector_indexes_to_rebuild {
             if entity_type == crate::vector::VectorEntityType::Vertex {
-                self.graph.rebuild_vector_index(entity_type, &prop_name)?;
+                self.graph.index_manager().rebuild(entity_type, &prop_name)?;
             }
         }
 

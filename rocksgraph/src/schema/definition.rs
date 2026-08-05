@@ -118,19 +118,26 @@ pub struct PropKeyConfig {
     pub data_type: DataType,
 }
 
+use crate::engine::ExecutionOptions;
 use crate::store::RocksOptions;
 use crate::vector::traits::IndexOptions;
 
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct GraphOptions {
-    /// Schema mode (Auto vs Strict). Persisted on create.
+    // ── Persisted on first open (written to CF_SCHEMA; ignored on re-open) ────
+    /// Schema mode (Auto vs Strict).
     pub mode: SchemaMode,
-    /// Edge mode (Single vs Multi). Persisted on create.
+    /// Edge mode (Single vs Multi).
     pub edge_mode: EdgeMode,
-    /// Storage engine runtime options (block cache, write buffer, etc.).
+
+    // ── Runtime only (never written to disk; safe to change between opens) ────
+    /// Storage engine options (block cache, write buffer, compaction threads).
     pub storage: RocksOptions,
-    /// Vector index runtime options (memory limits, overrides).
+    /// Vector index options (memory limits per index).
     pub index: IndexOptions,
+    /// Query engine options (scan and traversal batch sizes).
+    pub execution: ExecutionOptions,
 }
 
 impl Default for GraphOptions {
@@ -140,7 +147,40 @@ impl Default for GraphOptions {
             edge_mode: EdgeMode::Single,
             storage: RocksOptions::default(),
             index: IndexOptions::default(),
+            execution: ExecutionOptions::default(),
         }
+    }
+}
+
+impl GraphOptions {
+    /// Set the schema mode.
+    pub fn with_mode(mut self, mode: SchemaMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    /// Set the edge mode.
+    pub fn with_edge_mode(mut self, edge_mode: EdgeMode) -> Self {
+        self.edge_mode = edge_mode;
+        self
+    }
+
+    /// Set the storage (RocksDB) options.
+    pub fn with_storage(mut self, storage: RocksOptions) -> Self {
+        self.storage = storage;
+        self
+    }
+
+    /// Set the vector index runtime options.
+    pub fn with_index(mut self, index: IndexOptions) -> Self {
+        self.index = index;
+        self
+    }
+
+    /// Set the Gremlin engine execution options.
+    pub fn with_execution(mut self, execution: ExecutionOptions) -> Self {
+        self.execution = execution;
+        self
     }
 }
 

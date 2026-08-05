@@ -97,3 +97,24 @@ These tasks are required for long-running production server deployments to bound
   - Combining vector search with Gremlin graph predicate filters before graph traversal expansion.
 - [ ] **Score Modulator Steps**
   - `withScore()` / `by(desc)` sorting integration in Gremlin traversal pipes.
+
+---
+
+## Snapshot Persistence Performance Risk
+
+`save_vector_indexes()` / `save_vector_index()` are **synchronous — they run on the calling
+thread and block vector insertions** on the index being saved (`.nearest()` queries are not
+blocked).  For large indexes this can cause latency spikes:
+
+- Serialises the entire usearch HNSW graph to a ~60 GB buffer for 10M×1536-dim indexes.
+- Writes via tmp file + `fsync` + atomic rename.
+- Holds a read lock on the index — vector insertions queue behind it.
+
+**Mitigations (future):**
+- [ ] Background / async snapshot writer (clone index under read lock, write in background thread).
+- [ ] Incremental snapshot (only serialize nodes modified since last save).
+- [ ] Periodic checkpoint policy in `GraphOptions` (e.g., every N minutes or every M inserts).
+
+**Current guidance (v0.2):** Call `save_vector_indexes()` only during maintenance windows or at
+shutdown (`Graph::close()`).  The WAL is the canonical durability mechanism; snapshots are a
+cold-start optimization.

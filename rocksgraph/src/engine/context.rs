@@ -300,9 +300,9 @@ impl GraphCtx for LogicalGraph {
     }
     fn batch_size(&self, scenario: BatchScenario) -> u32 {
         match scenario {
-            BatchScenario::ScanVertices => self.scan_config.scan_vertices_batch_size,
-            BatchScenario::ScanEdges => self.scan_config.scan_edges_batch_size,
-            BatchScenario::GetAdjacentEdges => self.scan_config.get_adjacent_edges_batch_size,
+            BatchScenario::ScanVertices => self.execution_options.scan_vertices_batch_size,
+            BatchScenario::ScanEdges => self.execution_options.scan_edges_batch_size,
+            BatchScenario::GetAdjacentEdges => self.execution_options.get_adjacent_edges_batch_size,
         }
     }
     fn get_degree(&mut self, key: VertexKey, _direction: DegreeDirection) -> Result<u64, StoreError> {
@@ -391,9 +391,9 @@ impl GraphCtx for LogicalSnapshot {
     }
     fn batch_size(&self, scenario: BatchScenario) -> u32 {
         match scenario {
-            BatchScenario::ScanVertices => self.scan_config.scan_vertices_batch_size,
-            BatchScenario::ScanEdges => self.scan_config.scan_edges_batch_size,
-            BatchScenario::GetAdjacentEdges => self.scan_config.get_adjacent_edges_batch_size,
+            BatchScenario::ScanVertices => self.execution_options.scan_vertices_batch_size,
+            BatchScenario::ScanEdges => self.execution_options.scan_edges_batch_size,
+            BatchScenario::GetAdjacentEdges => self.execution_options.get_adjacent_edges_batch_size,
         }
     }
     fn get_degree(&mut self, key: VertexKey, direction: DegreeDirection) -> Result<u64, StoreError> {

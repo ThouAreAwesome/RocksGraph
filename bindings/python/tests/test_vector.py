@@ -3,29 +3,29 @@ from rocksgraph import Graph, Vector
 
 class TestVectorSearch:
     def test_store_and_retrieve_vector_values(self, graph):
-        tx = graph.tx()
-        tx.traversal().addV("doc").property("id", 1) \
+        tx = graph.begin()
+        tx.g().addV("doc").property("id", 1) \
             .property("emb", Vector([0.1, 0.2, 0.3])).next()
-        tx.traversal().addV("doc").property("id", 2) \
+        tx.g().addV("doc").property("id", 2) \
             .property("emb", Vector([0.7, 0.7, 0.0])).next()
         tx.commit()
 
         snap = graph.read()
-        v1 = snap.traversal().V(1).values("emb").next()
+        v1 = snap.g().V(1).values("emb").next()
         assert v1 is not None, "Should retrieve stored vector value"
         assert isinstance(v1, list), f"Values response must be list, got {type(v1)}"
         assert len(v1) == 3
         assert abs(v1[0] - 0.1) < 1e-6
 
     def test_nearest_exact_knn(self, graph):
-        tx = graph.tx()
+        tx = graph.begin()
         for i in range(10):
-            tx.traversal().addV("doc").property("id", i) \
+            tx.g().addV("doc").property("id", i) \
                 .property("emb", Vector([float(i) / 10.0, float(9 - i) / 10.0])).next()
         tx.commit()
 
         snap = graph.read()
-        results = snap.traversal().V().hasLabel("doc") \
+        results = snap.g().V().hasLabel("doc") \
             .nearest("emb", Vector([0.9, 0.0]), 3).to_list()
         assert len(results) == 3, f"Expected 3 results, got {len(results)}"
         ids = [v["id"] for v in results]
@@ -33,23 +33,23 @@ class TestVectorSearch:
 
     def test_nearest_empty_graph(self, graph):
         snap = graph.read()
-        results = snap.traversal().V().hasLabel("doc") \
+        results = snap.g().V().hasLabel("doc") \
             .nearest("emb", Vector([1.0, 2.0]), 5).to_list()
         assert results == []
 
     def test_cosine_similarity(self, graph):
-        tx = graph.tx()
-        tx.traversal().addV("doc").property("id", 1) \
+        tx = graph.begin()
+        tx.g().addV("doc").property("id", 1) \
             .property("emb", Vector([1.0, 0.0])).next()
         tx.commit()
 
         snap = graph.read()
-        scores = snap.traversal().V(1) \
+        scores = snap.g().V(1) \
             .similarity("emb", Vector([1.0, 0.0])).to_list()
         assert len(scores) == 1
         assert abs(scores[0] - 1.0) < 1e-6
 
-        scores2 = snap.traversal().V(1) \
+        scores2 = snap.g().V(1) \
             .similarity("emb", Vector([0.0, 1.0])).to_list()
         assert len(scores2) == 1
         assert abs(scores2[0] - 0.0) < 1e-6
@@ -78,16 +78,16 @@ class TestVectorSearch:
 
     def test_floatvector_hash_dedup(self, graph):
         """Two vertices with identical vector properties are equal."""
-        tx = graph.tx()
-        tx.traversal().addV("doc").property("id", 1) \
+        tx = graph.begin()
+        tx.g().addV("doc").property("id", 1) \
             .property("emb", Vector([0.1, 0.2, 0.3])).next()
-        tx.traversal().addV("doc").property("id", 2) \
+        tx.g().addV("doc").property("id", 2) \
             .property("emb", Vector([0.1, 0.2, 0.3])).next()
         tx.commit()
 
         snap = graph.read()
-        v1 = snap.traversal().V(1).values("emb").next()
-        v2 = snap.traversal().V(2).values("emb").next()
+        v1 = snap.g().V(1).values("emb").next()
+        v2 = snap.g().V(2).values("emb").next()
         assert v1 == v2, "Identical FloatVectors should be equal"
 
     def test_vector_type_coercion(self):
@@ -95,7 +95,7 @@ class TestVectorSearch:
         from rocksgraph._codec import _encode_step, OP_NEAREST
         buf = bytearray()
         # Passing a plain list should not crash — it's auto-converted to Vector
-        _encode_step(OP_NEAREST, ("emb", [1.0, 2.0, 3.0], 5), buf)
+        _encode_step(OP_NEAREST, ("emb", [1.0, 2.0, 3.0], 5, None), buf)
         assert len(buf) > 0, "Encoding should succeed with auto-coerced list"
 
     def test_anonymous_traversal_vector_steps(self):
@@ -115,22 +115,22 @@ class TestVectorSearch:
         snap = graph.read()
         # An integer is not iterable → Vector() raises TypeError
         with pytest.raises(TypeError):
-            snap.traversal().V().nearest("emb", 42, 3).to_list()
+            snap.g().V().nearest("emb", 42, 3).to_list()
 
     def test_nearest_top_k_ordering(self, graph):
         """nearest returns correct top-k in descending similarity order."""
-        tx = graph.tx()
+        tx = graph.begin()
         # Non-collinear 2D vectors so cosine similarity differs meaningfully
         vectors = [(0.0, 1.0), (0.7, 0.7), (1.0, 0.0), (0.3, 0.95), (0.9, 0.4)]
         for i, (x, y) in enumerate(vectors):
-            tx.traversal().addV("doc").property("id", i) \
+            tx.g().addV("doc").property("id", i) \
                 .property("emb", Vector([x, y])).next()
         tx.commit()
 
         snap = graph.read()
         # Query with [1.0, 0.0] — id=2 [1.0, 0.0] is exact, id=4 [0.9, 0.4] next
         results = (
-            snap.traversal().V().hasLabel("doc")
+            snap.g().V().hasLabel("doc")
             .nearest("emb", Vector([1.0, 0.0]), 2)
             .to_list()
         )

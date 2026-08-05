@@ -57,13 +57,13 @@ use crate::{
         apply_rules,
         logical_step::{
             AddEStep, AddVStep, AndStep, AsStep, BothEStep, BothStep, ChooseStep, CoalesceStep, ConstantStep,
-            CountStep, CyclicPathStep, DedupStep, DropStep, EStep, EmitSpec, FoldStep, FromStep, GroupCountStep,
-            GroupStep, HasIdStep, HasLabelStep, HasRankStep, IdStep, IdentityStep, InEStep, InStep, InVStep, LabelStep,
-            LimitStep, LocalStep, LogicalPlan, LogicalStep, MaxStep, MeanStep, MinStep, NearestLogicalStep, NotStep,
-            OrStep, Order, OrderKey, OrderKeySpec, OrderStep, OtherVStep, OutEStep, OutStep, OutVStep, PathStep,
-            PropertiesStep, PropertyStep, RangeStep, RankStep, RepeatStep, ScalarFilterStep, SelectStep,
-            SimilarityLogicalStep, SimplePathStep, SkipStep, SumStep, TailStep, ToStep, UnfoldStep, UnionStep,
-            ValuesStep, WhereStep,
+            CountStep, CyclicPathStep, DedupStep, DegreeStep, DropStep, EStep, EmitSpec, FoldStep, FromStep,
+            GroupCountStep, GroupStep, HasIdStep, HasLabelStep, HasRankStep, IdStep, IdentityStep, InEStep, InStep,
+            InVStep, LabelStep, LimitStep, LocalStep, LogicalPlan, LogicalStep, MaxStep, MeanStep, MinStep,
+            NearestLogicalStep, NotStep, OrStep, Order, OrderKey, OrderKeySpec, OrderStep, OtherVStep, OutEStep,
+            OutStep, OutVStep, PathStep, PropertiesStep, PropertyStep, RangeStep, RankStep, RepeatStep,
+            ScalarFilterStep, SelectStep, SimilarityLogicalStep, SimplePathStep, SkipStep, SumStep, TailStep, ToStep,
+            UnfoldStep, UnionStep, ValuesStep, WhereStep,
         },
     },
     types::{prop_key::LABEL, StoreError},
@@ -486,6 +486,19 @@ pub trait TraversalBuilder: PlanAppender {
         self
     }
 
+    /// Compute the total degree (edge count) of each upstream vertex.
+    ///
+    /// `direction` controls which edges are counted:
+    /// - `DegreeDirection::Out` — only outgoing edges
+    /// - `DegreeDirection::In` — only incoming edges
+    /// - `DegreeDirection::Both` — all incident edges
+    ///
+    /// Produced by the `degree_pushdown` optimizer for O(1) lookup per vertex.
+    fn degree(mut self, direction: crate::types::DegreeDirection) -> Self {
+        self.push_step(LogicalStep::Degree(DegreeStep { direction }));
+        self
+    }
+
     /// Search for the *k* vertices whose `FloatVector` property is closest to
     /// the given query vector (cosine distance).
     ///
@@ -498,18 +511,17 @@ pub trait TraversalBuilder: PlanAppender {
     /// // Declare the index once (SchemaMode::Auto registers the property key implicitly).
     /// let mut mgmt = graph.open_schema();
     /// use rocksgraph::schema::{VectorIndexConfig, VectorEntityType, DistanceMetric, AnnAlgorithm};
-    /// mgmt.add_vector_index(VectorIndexConfig {
-    ///     property: "embedding".into(),
-    ///     entity_type: VectorEntityType::Vertex,
-    ///     dimension: 3,
-    ///     metric: DistanceMetric::Cosine,
-    ///     algorithm: AnnAlgorithm::Hnsw(Default::default()),
-    ///     quantization: Default::default(),
-    /// });
+    /// mgmt.add_vector_index(VectorIndexConfig::new(
+    ///     "embedding",
+    ///     VectorEntityType::Vertex,
+    ///     3,
+    ///     DistanceMetric::Cosine,
+    ///     AnnAlgorithm::Hnsw(Default::default()),
+    /// ));
     /// mgmt.commit().unwrap();
     ///
     /// // Rebuild to pick up any existing embedding data.
-    /// graph.rebuild_vector_index(VectorEntityType::Vertex, "embedding").unwrap();
+    /// graph.index_manager().rebuild(VectorEntityType::Vertex, "embedding").unwrap();
     ///
     /// // Query.
     /// let mut snap = graph.read();
@@ -526,7 +538,22 @@ pub trait TraversalBuilder: PlanAppender {
             prop_key: prop_key.to_string(),
             query_vec: query,
             k,
+            ef_search: None,
         }));
+        self
+    }
+
+    /// Override the HNSW `ef_search` beam width for the immediately preceding
+    /// `nearest()` step. Must be called directly after `nearest()`.
+    ///
+    /// Higher values improve recall at the cost of latency. Concurrent queries
+    /// with different overrides race for the shared per-index setting, which
+    /// affects recall quality only — not correctness.
+    fn with_ef_search(mut self, ef: usize) -> Self {
+        match self.plan_mut().steps.last_mut() {
+            Some(LogicalStep::Nearest(s)) => s.ef_search = Some(ef),
+            _ => panic!("with_ef_search() must immediately follow nearest()"),
+        }
         self
     }
 

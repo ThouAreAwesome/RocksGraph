@@ -103,13 +103,13 @@ labelled `# sugar`.
 
 ```python
 # core
-rs.traversal().V() \
+rs.g().V() \
     .order().by(__.similarity("embedding", query_vec), desc) \
     .limit(k) \
     .to_list()
 
 # sugar
-rs.traversal().V().nearest("embedding", query_vec, k).to_list()
+rs.g().V().nearest("embedding", query_vec, k).to_list()
 ```
 
 `similarity("embedding", query_vec)` extracts the `"embedding"` property from
@@ -129,13 +129,13 @@ to an ANN index scan. Returns approximate top-k.
 
 ```python
 # core
-rs.traversal().V().hasLabel("doc") \
+rs.g().V().hasLabel("doc") \
     .order().by(__.similarity("embedding", query_vec), desc) \
     .limit(k) \
     .to_list()
 
 # sugar
-rs.traversal().V().hasLabel("doc") \
+rs.g().V().hasLabel("doc") \
     .nearest("embedding", query_vec, k) \
     .to_list()
 ```
@@ -155,7 +155,7 @@ fail the label check.
 
 ```python
 # core
-rs.traversal().V().hasLabel("doc") \
+rs.g().V().hasLabel("doc") \
     .has("status", "published") \
     .has("category", "ML") \
     .order().by(__.similarity("embedding", query_vec), desc) \
@@ -163,7 +163,7 @@ rs.traversal().V().hasLabel("doc") \
     .to_list()
 
 # sugar
-rs.traversal().V().hasLabel("doc") \
+rs.g().V().hasLabel("doc") \
     .has("status", "published") \
     .has("category", "ML") \
     .nearest("embedding", query_vec, k) \
@@ -182,13 +182,13 @@ uses ANN with pre-filter.
 
 ```python
 # core
-rs.traversal().V(author_id).out("wrote") \
+rs.g().V(author_id).out("wrote") \
     .order().by(__.similarity("embedding", query_vec), desc) \
     .limit(k) \
     .to_list()
 
 # sugar
-rs.traversal().V(author_id).out("wrote") \
+rs.g().V(author_id).out("wrote") \
     .nearest("embedding", query_vec, k) \
     .to_list()
 ```
@@ -206,7 +206,7 @@ selects the best.
 
 ```python
 # core
-rs.traversal().V() \
+rs.g().V() \
     .order().by(__.similarity("embedding", query_vec), desc) \
     .limit(k) \
     .out("cites").values("title") \
@@ -214,7 +214,7 @@ rs.traversal().V() \
 # → ["Paper A", "Paper B", ...]
 
 # sugar
-rs.traversal().V().nearest("embedding", query_vec, k) \
+rs.g().V().nearest("embedding", query_vec, k) \
     .out("cites").values("title") \
     .to_list()
 ```
@@ -231,7 +231,7 @@ starting point of a normal graph traversal.
 
 ```python
 # core
-rs.traversal().V() \
+rs.g().V() \
     .order().by(__.similarity("embedding", query_vec), desc) \
     .limit(k) \
     .project("vertex", "similarity") \
@@ -241,7 +241,7 @@ rs.traversal().V() \
 # → [{"vertex": Vertex(...), "similarity": 0.97}, ...]
 
 # sugar — nearest for retrieval; project() annotation has no sugar form
-rs.traversal().V() \
+rs.g().V() \
     .nearest("embedding", query_vec, k) \
     .project("vertex", "similarity") \
       .by(identity()) \
@@ -264,19 +264,19 @@ again inside `project().by()`. See open challenge C4.
 
 ```python
 # core — threshold only: all vertices within distance t (exact, full scan)
-rs.traversal().V() \
+rs.g().V() \
     .where(__.similarity("embedding", query_vec).is_(gt(t))) \
     .to_list()
 
 # core — top-k then threshold: nearest k, keep those within distance t
-rs.traversal().V() \
+rs.g().V() \
     .order().by(__.similarity("embedding", query_vec), desc) \
     .limit(k) \
     .where(__.similarity("embedding", query_vec).is_(gt(t))) \
     .to_list()
 
 # sugar — nearest for top-k retrieval; where() threshold has no sugar form
-rs.traversal().V() \
+rs.g().V() \
     .nearest("embedding", query_vec, k) \
     .where(__.similarity("embedding", query_vec).is_(gt(t))) \
     .to_list()
@@ -295,20 +295,20 @@ barrier.
 
 ```python
 # core
-rs.traversal().E() \
+rs.g().E() \
     .order().by(__.similarity("embedding", query_vec), desc) \
     .limit(k) \
     .to_list()
 
 # sugar
-rs.traversal().E().nearest("embedding", query_vec, k).to_list()
+rs.g().E().nearest("embedding", query_vec, k).to_list()
 ```
 
 Scored variant — annotate results with distance (mirrors P6):
 
 ```python
 # core
-rs.traversal().E() \
+rs.g().E() \
     .order().by(__.similarity("embedding", query_vec), desc) \
     .limit(k) \
     .project("edge", "similarity") \
@@ -317,7 +317,7 @@ rs.traversal().E() \
     .to_list()
 
 # sugar — nearest for retrieval; project() annotation has no sugar form
-rs.traversal().E() \
+rs.g().E() \
     .nearest("embedding", query_vec, k) \
     .project("edge", "similarity") \
       .by(identity()) \
@@ -338,7 +338,7 @@ optimizer use: edge traversers → edge index.
 
 ```python
 # core
-rs.traversal().V() \
+rs.g().V() \
     .order().by(__.similarity("title_embedding", title_q), desc) \
     .limit(50) \
     .order().by(__.similarity("content_embedding", content_q), desc) \
@@ -346,7 +346,7 @@ rs.traversal().V() \
     .to_list()
 
 # sugar — chained nearest; each call is one barrier on the previous output
-rs.traversal().V() \
+rs.g().V() \
     .nearest("title_embedding", title_q, 50) \
     .nearest("content_embedding", content_q, 10) \
     .to_list()
@@ -364,13 +364,13 @@ new step types needed.
 
 ```python
 # core
-rs.traversal().union(
+rs.g().union(
     __.V().order().by(__.similarity("title_emb", query_vec), desc).limit(k),
     __.V().order().by(__.similarity("body_emb", query_vec), desc).limit(k)
 ).dedup().to_list()
 
 # sugar — nearest inside each union branch; union() itself has no sugar form
-rs.traversal().union(
+rs.g().union(
     __.V().nearest("title_emb", query_vec, k),
     __.V().nearest("body_emb", query_vec, k)
 ).dedup().to_list()
@@ -383,7 +383,7 @@ different index. `.dedup()` removes vertices that ranked in both.
 
 ```python
 # core
-rs.traversal().union(
+rs.g().union(
     __.V().order().by(__.similarity("title_emb", query_vec), desc).limit(k)
         .project("v", "sim").by(identity()).by(__.similarity("title_emb", query_vec)),
     __.V().order().by(__.similarity("body_emb", query_vec), desc).limit(k)
@@ -391,7 +391,7 @@ rs.traversal().union(
 ).to_list()
 
 # sugar — nearest for retrieval; project() annotation has no sugar form
-rs.traversal().union(
+rs.g().union(
     __.V().nearest("title_emb", query_vec, k)
         .project("v", "sim").by(identity()).by(__.similarity("title_emb", query_vec)),
     __.V().nearest("body_emb", query_vec, k)
@@ -411,13 +411,13 @@ embedding.*
 # core — no sugar equivalent
 
 # Single source vertex — neighbors used directly (no local() needed)
-rs.traversal().V(xx) \
+rs.g().V(xx) \
     .neighbors("embedding", "embedding", k, VectorEntityType.VERTEX) \
     .to_list()
 
 # Multiple source vertices — local() makes per-traverser scoping explicit:
 # each vertex runs its own ANN search independently
-rs.traversal().V().has("age", between(20, 30)) \
+rs.g().V().has("age", between(20, 30)) \
     .local(__.neighbors("embedding", "embedding", k, VectorEntityType.VERTEX)) \
     .to_list()
 
@@ -425,7 +425,7 @@ rs.traversal().V().has("age", between(20, 30)) \
 # Source: q_embedding (read from question traverser).
 # Target: a_embedding index (searched by neighbors).
 # Precondition: both embeddings share the same dimension and model.
-rs.traversal().V().hasLabel("question") \
+rs.g().V().hasLabel("question") \
     .local(__.neighbors("q_embedding", "a_embedding", k, VectorEntityType.VERTEX)) \
     .to_list()
 ```
@@ -446,13 +446,13 @@ for sub-traversal steps.
 
 ```python
 # core — page 2 (results 11–20)
-rs.traversal().V() \
+rs.g().V() \
     .order().by(__.similarity("embedding", query_vec), desc) \
     .range(10, 20) \
     .to_list()
 
 # sugar — nearest followed by skip
-rs.traversal().V().nearest("embedding", query_vec, 10).skip(10).to_list()
+rs.g().V().nearest("embedding", query_vec, 10).skip(10).to_list()
 ```
 
 **Planner overfetch rule**: the optimizer detects `skip(n)` or `range(s, e)` immediately
@@ -582,14 +582,14 @@ Use cases:
 
 **Same-index similarity** (P11 — find vertices similar to a single source):
 ```python
-rs.traversal().V(xx) \
+rs.g().V(xx) \
     .neighbors("embedding", "embedding", k, VectorEntityType.VERTEX) \
     .to_list()
 ```
 
 **Same-index similarity, multiple sources** — `local()` makes per-traverser scoping explicit:
 ```python
-rs.traversal().V().has("age", between(20, 30)) \
+rs.g().V().has("age", between(20, 30)) \
     .local(__.neighbors("embedding", "embedding", k, VectorEntityType.VERTEX)) \
     .to_list()
 ```
@@ -597,7 +597,7 @@ rs.traversal().V().has("age", between(20, 30)) \
 **Cross-index similarity** (P11 variant — query vector on one property, search a
 different index; both must share the same dimension and embedding model):
 ```python
-rs.traversal().V().hasLabel("question") \
+rs.g().V().hasLabel("question") \
     .local(__.neighbors("q_embedding", "a_embedding", k, VectorEntityType.VERTEX)) \
     .to_list()
 ```
@@ -611,10 +611,10 @@ case and as the explicit surface for ANN execution hints.
 
 ```python
 # Sugar form
-rs.traversal().V().nearest("embedding", query_vec, k)
+rs.g().V().nearest("embedding", query_vec, k)
 
 # Expands logically to:
-rs.traversal().V() \
+rs.g().V() \
     .order().by(__.similarity("embedding", query_vec), desc) \
     .limit(k)
 ```
@@ -1071,7 +1071,7 @@ index update automatically.
 
 ```python
 tx = g.tx()
-tx.traversal().addV("doc") \
+tx.g().addV("doc") \
     .property("id", 1) \
     .property("title", "Hello World") \
     .property("embedding", Vector(model.encode("Hello World"))) \
@@ -1088,7 +1088,7 @@ tx.commit()
 
 ```python
 tx = g.tx()
-tx.traversal().V(1).property("embedding", Vector(new_embedding)).next()
+tx.g().V(1).property("embedding", Vector(new_embedding)).next()
 tx.commit()
 ```
 
@@ -1102,7 +1102,7 @@ Issues a WAL Delete for the old vector and WAL Insert for the new in one
 
 ```python
 tx = g.tx()
-tx.traversal().V(1).properties("embedding").drop().iterate()
+tx.g().V(1).properties("embedding").drop().iterate()
 tx.commit()
 ```
 
@@ -1117,7 +1117,7 @@ property it carried.
 
 ```python
 tx = g.tx()
-tx.traversal().V(1).drop().iterate()
+tx.g().V(1).drop().iterate()
 tx.commit()
 ```
 
@@ -1130,7 +1130,7 @@ tx.commit()
 ```python
 tx = g.tx()
 for doc_id, text in corpus[:1000]:
-    tx.traversal().addV("doc") \
+    tx.g().addV("doc") \
         .property("id", doc_id) \
         .property("embedding", Vector(model.encode(text))) \
         .next()
@@ -1159,13 +1159,13 @@ The behaviour under query steps:
   `VectorError::NoVectorIndex`. Requires a declared index to search.
 
 ```python
-tx.traversal().addV("doc").property("raw_vec", Vector(v)).next()
+tx.g().addV("doc").property("raw_vec", Vector(v)).next()
 tx.commit()
 
-rs.traversal().V(1).values("raw_vec").next()                            # ✅ read value
-rs.traversal().V()                                                      # ✅ brute-force
+rs.g().V(1).values("raw_vec").next()                            # ✅ read value
+rs.g().V()                                                      # ✅ brute-force
     .order().by(__.similarity("raw_vec", q), desc).limit(10)
-rs.traversal().V().nearest("raw_vec", q, k=5).to_list()             # ❌ NoVectorIndex
+rs.g().V().nearest("raw_vec", q, k=5).to_list()             # ❌ NoVectorIndex
 ```
 
 **Ships in**: v0.1.
@@ -1240,7 +1240,7 @@ with g.open_schema() as mgmt:
 # Step 2: write new embeddings via normal transactions
 for vid, text in all_docs():
     tx = g.tx()
-    tx.traversal().V(vid).property("embedding_v2", Vector(new_model.encode(text))).next()
+    tx.g().V(vid).property("embedding_v2", Vector(new_model.encode(text))).next()
     tx.commit()
 
 # Step 3: drop old index

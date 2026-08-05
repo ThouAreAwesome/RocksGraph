@@ -781,6 +781,8 @@ pub struct NearestLogicalStep {
     pub prop_key: String,
     pub query_vec: Vec<f32>,
     pub k: usize,
+    /// Per-query HNSW beam-width override. `None` uses the schema-level default.
+    pub ef_search: Option<usize>,
 }
 
 /// Logical step: compute similarity between each traverser's vector and query.

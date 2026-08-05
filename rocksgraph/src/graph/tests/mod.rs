@@ -29,7 +29,12 @@ fn open() -> (RocksStorage, tempfile::TempDir) {
     {
         let loaded = store.load_schema(crate::schema::SchemaMode::Auto, crate::schema::EdgeMode::Single).unwrap();
         let schema = std::sync::Arc::new(parking_lot::RwLock::new(loaded));
-        let mut c = LogicalGraph::new(store.begin(), schema.clone(), crate::vector::empty_vector_index_map());
+        let mut c = LogicalGraph::new(
+            store.begin(),
+            schema.clone(),
+            crate::vector::empty_vector_index_map(),
+            Default::default(),
+        );
         {
             let mut s = schema.write();
             s.resolve_prop_key("age", crate::schema::DataType::Int32).unwrap();
@@ -62,7 +67,7 @@ fn open() -> (RocksStorage, tempfile::TempDir) {
 fn ctx(store: &RocksStorage) -> LogicalGraph {
     let loaded = store.load_schema(crate::schema::SchemaMode::Auto, crate::schema::EdgeMode::Single).unwrap();
     let schema = std::sync::Arc::new(parking_lot::RwLock::new(loaded));
-    LogicalGraph::new(store.begin(), schema, crate::vector::empty_vector_index_map())
+    LogicalGraph::new(store.begin(), schema, crate::vector::empty_vector_index_map(), Default::default())
 }
 
 fn cek(src: i64, label: LabelId, dst: i64) -> CanonicalEdgeKey {

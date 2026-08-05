@@ -159,10 +159,7 @@ fn materialize_vertex(
             None => Err(StoreError::NotFound),
             Some((label_id, props)) => {
                 let label = cache.vertex_label(label_id).clone();
-                let mut properties: HashMap<SmolStr, Vec<Value>> = HashMap::new();
-                for (key, prim) in props {
-                    properties.entry(key).or_default().push(primitive_to_value(prim));
-                }
+                let properties = props.into_iter().map(|(k, v)| (k, primitive_to_value(v))).collect();
                 Ok(Value::Vertex(UserVertex { id: vk, label, properties }))
             }
         },
@@ -173,14 +170,14 @@ fn materialize_vertex(
             None => Err(StoreError::NotFound),
             Some(Primitive::Int32(label_id)) => {
                 let label = cache.vertex_label(label_id).clone();
-                let mut properties: HashMap<SmolStr, Vec<Value>> = HashMap::new();
+                let mut properties = HashMap::new();
                 for key in keys {
                     let Some(prop_key_id) = cache.prop_key_id(key) else { continue };
                     if matches!(prop_key_id, ID_KEY_ID | LABEL_KEY_ID | RANK_KEY_ID) {
                         continue;
                     }
                     if let Some(val) = ctx.get_value(&CanonicalKey::Vertex(vk), prop_key_id)? {
-                        properties.entry(key.clone()).or_default().push(primitive_to_value(val));
+                        properties.insert(key.clone(), primitive_to_value(val));
                     }
                 }
                 Ok(Value::Vertex(UserVertex { id: vk, label, properties }))

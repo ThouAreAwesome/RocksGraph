@@ -19,7 +19,8 @@ use parking_lot::RwLock;
 use std::collections::{hash_map::Entry, HashMap};
 use std::sync::Arc;
 
-use super::{ScanConfig, TxSchemaCache};
+use super::TxSchemaCache;
+use crate::engine::ExecutionOptions;
 
 // ── LogicalSnapshot ───────────────────────────────────────────────────────────
 
@@ -39,7 +40,7 @@ pub(crate) struct LogicalSnapshot {
     /// across `clear_caches()` calls since the underlying snapshot is frozen —
     /// the data cannot change for the lifetime of this `LogicalSnapshot`.
     vertex_degree: HashMap<VertexKey, (u32, u32, LabelId)>,
-    pub(crate) scan_config: ScanConfig,
+    pub(crate) execution_options: ExecutionOptions,
     pub(crate) schema: Arc<RwLock<crate::schema::Schema>>,
     pub(crate) schema_cache: TxSchemaCache,
     pub(crate) vector_indexes: Arc<RwLock<VectorIndexMap>>,
@@ -50,6 +51,7 @@ impl LogicalSnapshot {
         snapshot: Snapshot,
         schema: Arc<RwLock<crate::schema::Schema>>,
         vector_indexes: Arc<RwLock<VectorIndexMap>>,
+        execution_options: ExecutionOptions,
     ) -> Self {
         let schema_cache = TxSchemaCache::from_schema(&schema.read());
         Self {
@@ -57,11 +59,16 @@ impl LogicalSnapshot {
             vertices: HashMap::new(),
             edges: HashMap::new(),
             vertex_degree: HashMap::new(),
-            scan_config: ScanConfig::default(),
+            execution_options,
             schema,
             schema_cache,
             vector_indexes,
         }
+    }
+
+    /// Set runtime execution options for this snapshot.
+    pub fn set_execution_options(&mut self, options: ExecutionOptions) {
+        self.execution_options = options;
     }
 
     /// Reset the in-memory vertex and edge caches.

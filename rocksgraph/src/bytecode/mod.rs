@@ -1,6 +1,10 @@
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+// encode_response/decode_response are called from the Python binding crate (a separate
+// compilation unit), so rustc's dead_code lint incorrectly flags them as unused here.
+#![allow(dead_code)]
+
 use crate::engine::GraphCtx;
 use crate::gremlin::value::Value;
 use crate::planner::logical_step::*;
@@ -88,7 +92,6 @@ fn encode_plan(plan: &LogicalPlan, buf: &mut Vec<u8>) {
     }
 }
 
-#[allow(unused_variables)]
 fn encode_step(step: &LogicalStep, buf: &mut Vec<u8>) {
     match step {
         LogicalStep::Both(s) => {
@@ -129,7 +132,7 @@ fn encode_step(step: &LogicalStep, buf: &mut Vec<u8>) {
                 buf.push(0);
             }
         }
-        LogicalStep::Count(s) => {
+        LogicalStep::Count(_) => {
             buf.push(OP_COUNT);
         }
         LogicalStep::Degree(s) => {
@@ -225,13 +228,13 @@ fn encode_step(step: &LogicalStep, buf: &mut Vec<u8>) {
                 buf.push(0);
             }
         }
-        LogicalStep::InV(s) => {
+        LogicalStep::InV(_) => {
             buf.push(OP_INV);
         }
-        LogicalStep::OtherV(s) => {
+        LogicalStep::OtherV(_) => {
             buf.push(OP_OTHERV);
         }
-        LogicalStep::OutV(s) => {
+        LogicalStep::OutV(_) => {
             buf.push(OP_OUTV);
         }
         LogicalStep::ScalarFilter(s) => {
@@ -368,16 +371,16 @@ fn encode_step(step: &LogicalStep, buf: &mut Vec<u8>) {
                 encode_primitive_predicate(v, buf);
             }
         }
-        LogicalStep::Drop(s) => {
+        LogicalStep::Drop(_) => {
             buf.push(OP_DROP);
         }
-        LogicalStep::Path(s) => {
+        LogicalStep::Path(_) => {
             buf.push(OP_PATH);
         }
-        LogicalStep::Dedup(s) => {
+        LogicalStep::Dedup(_) => {
             buf.push(OP_DEDUP);
         }
-        LogicalStep::Fold(s) => {
+        LogicalStep::Fold(_) => {
             buf.push(OP_FOLD);
         }
         LogicalStep::Repeat(s) => {
@@ -415,19 +418,19 @@ fn encode_step(step: &LogicalStep, buf: &mut Vec<u8>) {
                 encode_plan(item, buf);
             }
         }
-        LogicalStep::Sum(s) => {
+        LogicalStep::Sum(_) => {
             buf.push(OP_SUM);
         }
-        LogicalStep::Mean(s) => {
+        LogicalStep::Mean(_) => {
             buf.push(OP_MEAN);
         }
-        LogicalStep::Max(s) => {
+        LogicalStep::Max(_) => {
             buf.push(OP_MAX);
         }
-        LogicalStep::Min(s) => {
+        LogicalStep::Min(_) => {
             buf.push(OP_MIN);
         }
-        LogicalStep::Unfold(s) => {
+        LogicalStep::Unfold(_) => {
             buf.push(OP_UNFOLD);
         }
         LogicalStep::As(s) => {
@@ -474,10 +477,10 @@ fn encode_step(step: &LogicalStep, buf: &mut Vec<u8>) {
                 }
             }
         }
-        LogicalStep::SimplePath(s) => {
+        LogicalStep::SimplePath(_) => {
             buf.push(OP_SIMPLEPATH);
         }
-        LogicalStep::CyclicPath(s) => {
+        LogicalStep::CyclicPath(_) => {
             buf.push(OP_CYCLICPATH);
         }
         LogicalStep::Choose(s) => {
@@ -509,13 +512,13 @@ fn encode_step(step: &LogicalStep, buf: &mut Vec<u8>) {
                 buf.push(0);
             }
         }
-        LogicalStep::Id(s) => {
+        LogicalStep::Id(_) => {
             buf.push(OP_ID);
         }
-        LogicalStep::Label(s) => {
+        LogicalStep::Label(_) => {
             buf.push(OP_LABEL);
         }
-        LogicalStep::Rank(s) => {
+        LogicalStep::Rank(_) => {
             buf.push(OP_RANK);
         }
         LogicalStep::HasRank(s) => {
@@ -526,7 +529,7 @@ fn encode_step(step: &LogicalStep, buf: &mut Vec<u8>) {
             buf.push(OP_CONSTANT);
             encode_primitive(&s.value, buf);
         }
-        LogicalStep::Identity(s) => {
+        LogicalStep::Identity(_) => {
             buf.push(OP_IDENTITY);
         }
         LogicalStep::Local(s) => {
@@ -537,6 +540,7 @@ fn encode_step(step: &LogicalStep, buf: &mut Vec<u8>) {
             buf.push(OP_NEAREST);
             encode_smolstr(&s.prop_key, buf);
             buf.extend_from_slice(&(s.k as u32).to_be_bytes());
+            buf.extend_from_slice(&(s.ef_search.unwrap_or(0) as u32).to_be_bytes());
             buf.extend_from_slice(&(s.query_vec.len() as u32).to_be_bytes());
             for f in &s.query_vec {
                 buf.extend_from_slice(&f.to_le_bytes());
@@ -570,7 +574,6 @@ fn decode_plan(bytes: &[u8], offset: &mut usize) -> Result<LogicalPlan, StoreErr
     Ok(LogicalPlan { steps })
 }
 
-#[allow(unused_variables)]
 fn decode_step(bytes: &[u8], offset: &mut usize) -> Result<LogicalStep, StoreError> {
     let op = read_u8(bytes, offset)?;
     match op {
@@ -914,6 +917,8 @@ fn decode_step(bytes: &[u8], offset: &mut usize) -> Result<LogicalStep, StoreErr
         OP_NEAREST => {
             let prop_key = read_smolstr(bytes, offset)?;
             let k = read_u32(bytes, offset)? as usize;
+            let ef_raw = read_u32(bytes, offset)? as usize;
+            let ef_search = if ef_raw == 0 { None } else { Some(ef_raw) };
             let dim = read_u32(bytes, offset)? as usize;
             let mut q = Vec::with_capacity(dim);
             for _ in 0..dim {
@@ -925,7 +930,7 @@ fn decode_step(bytes: &[u8], offset: &mut usize) -> Result<LogicalStep, StoreErr
                 ]));
                 *offset += 4;
             }
-            Ok(LogicalStep::Nearest(NearestLogicalStep { prop_key: prop_key.to_string(), query_vec: q, k }))
+            Ok(LogicalStep::Nearest(NearestLogicalStep { prop_key: prop_key.to_string(), query_vec: q, k, ef_search }))
         }
         OP_SIMILARITY => {
             let prop_key = read_smolstr(bytes, offset)?;
@@ -1233,6 +1238,24 @@ pub(crate) fn execute_write(
     let traversal = crate::gremlin::traversal::WriteTraversal::from_plan(plan, graph, prop_keys);
     traversal.to_list()
 }
+pub(crate) fn explain_read(
+    graph: &mut dyn GraphCtx,
+    bytes: &[u8],
+    prop_keys: Option<Vec<SmolStr>>,
+) -> Result<String, StoreError> {
+    let plan = decode(bytes)?;
+    let traversal = crate::gremlin::traversal::ReadTraversal::from_plan(plan, graph, prop_keys);
+    traversal.explain()
+}
+pub(crate) fn explain_write(
+    graph: &mut dyn GraphCtx,
+    bytes: &[u8],
+    prop_keys: Option<Vec<SmolStr>>,
+) -> Result<String, StoreError> {
+    let plan = decode(bytes)?;
+    let traversal = crate::gremlin::traversal::WriteTraversal::from_plan(plan, graph, prop_keys);
+    traversal.explain()
+}
 
 pub const TAG_NULL: u8 = 0;
 pub const TAG_BOOL: u8 = 1;
@@ -1297,12 +1320,9 @@ fn encode_value(v: &Value, buf: &mut Vec<u8>) {
             buf.extend_from_slice(&v.id.to_be_bytes());
             encode_smolstr(&v.label, buf);
             buf.extend_from_slice(&(v.properties.len() as u16).to_be_bytes());
-            for (k, vals) in &v.properties {
+            for (k, val) in &v.properties {
                 encode_smolstr(k, buf);
-                buf.extend_from_slice(&(vals.len() as u16).to_be_bytes());
-                for val in vals {
-                    encode_value(val, buf);
-                }
+                encode_value(val, buf);
             }
         }
         Value::Edge(e) => {
@@ -1423,12 +1443,8 @@ fn decode_value(bytes: &[u8], offset: &mut usize) -> Result<Value, StoreError> {
             let mut properties = std::collections::HashMap::new();
             for _ in 0..prop_len {
                 let k = read_smolstr(bytes, offset)?;
-                let vals_len = read_u16(bytes, offset)? as usize;
-                let mut vals = Vec::with_capacity(vals_len);
-                for _ in 0..vals_len {
-                    vals.push(decode_value(bytes, offset)?);
-                }
-                properties.insert(k, vals);
+                let val = decode_value(bytes, offset)?;
+                properties.insert(k, val);
             }
             Ok(Value::Vertex(crate::gremlin::value::Vertex { id, label, properties }))
         }
