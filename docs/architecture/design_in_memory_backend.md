@@ -99,7 +99,7 @@ impl Graph<InMemoryStore> {
 
 impl<S: GraphStore> Graph<S> {
     pub fn read(&self) -> ReadSession<S> { ... }
-    pub fn begin(&self) -> TxSession<S> { ... }
+    pub fn begin(&self) -> TxnSession<S> { ... }
 }
 ```
 
@@ -120,7 +120,7 @@ No breaking change to `Graph::open(path)` callers.  New users write
 ### Phase 1: Foundation
 1. Add `StoreError::BackendBusy`
 2. Make `GraphStore::begin()` / `snapshot()` fallible
-3. Make `Graph<S>`, `ReadSession<S>`, `TxSession<S>` generic with `S = RocksStorage` default
+3. Make `Graph<S>`, `ReadSession<S>`, `TxnSession<S>` generic with `S = RocksStorage` default
 
 ### Phase 2: In-Memory Store
 4. Add `InMemoryStore`, `InMemoryTxn`, `InMemorySnapshot` (new `store/in_memory/` module)

@@ -62,7 +62,7 @@ These block entire classes of queries, not just convenience.
 - **OLAP-style steps** (`pageRank`, `connectedComponent`, `program()`, `subgraph()`/`tree()`) —
   not yet implemented for the embedded OLTP engine.
 - **Batch size configuration via `open_with_options()`** — `set_batch_size()` was removed from
-  `ReadSession`/`TxSession` (v0.2). The hardcoded defaults (1024/1024/64) cover all current
+  `ReadSession`/`TxnSession` (v0.2). The hardcoded defaults (1024/1024/64) cover all current
   workloads. Expose `scan_vertices_batch_size` / `scan_edges_batch_size` /
   `get_adjacent_edges_batch_size` in a future `QueryOptions` or `RuntimeOptions` struct passed
   to `Graph::open_with_options()`.  Also re-enable the single-element pagination test in

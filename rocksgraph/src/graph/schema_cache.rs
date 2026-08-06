@@ -17,7 +17,7 @@ use crate::{
 /// directly — it happens once per traversal build, not per-property, so it
 /// isn't worth duplicating here.
 #[derive(Clone, Debug)]
-pub(crate) struct TxSchemaCache {
+pub(crate) struct TxnSchemaCache {
     pub edge_mode: EdgeMode,
     pub persisted_vertex_labels: HashSet<LabelId>,
     pub persisted_edge_labels: HashSet<LabelId>,
@@ -27,7 +27,7 @@ pub(crate) struct TxSchemaCache {
     prop_key_types: HashMap<u16, PropKeyConfig>,
 }
 
-impl TxSchemaCache {
+impl TxnSchemaCache {
     /// Build an eager snapshot cache from a Schema instance (under read lock or owned).
     pub fn from_schema(schema: &Schema) -> Self {
         let mut prop_key_to_id = HashMap::with_capacity(schema.prop_keys.len());

@@ -833,7 +833,7 @@ pub enum FusionStrategy { Rrf, Max, Mean }   // v0.5+
 
 Python call:
 ```python
-tx.g().addV("doc").property("embedding", Vector([0.1, 0.2, 0.3])).next()
+txn.g().addV("doc").property("embedding", Vector([0.1, 0.2, 0.3])).next()
 ```
 
 Encoded bytes (VERSION byte + 2 steps):

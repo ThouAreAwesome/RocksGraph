@@ -7,7 +7,7 @@
 //! Graph::open("./db")
 //!   ├── .read()           → ReadSession      (snapshot, read-only)
 //!   │                         └── .g() → ReadTraversal
-//!   ├── .begin()          → TxSession        (OCC transaction, read-write)
+//!   ├── .begin()          → TxnSession        (OCC transaction, read-write)
 //!   │                         ├── .g() → WriteTraversal
 //!   │                         ├── .commit()
 //!   │                         └── .rollback()
@@ -224,8 +224,8 @@ impl Graph {
     }
 
     /// Open a read-write transaction session with OCC (Optimistic Concurrency Control).
-    pub fn begin(&self) -> TxSession {
-        TxSession {
+    pub fn begin(&self) -> TxnSession {
+        TxnSession {
             ctx: LogicalGraph::new(
                 self.store.begin(),
                 Arc::clone(&self.schema),
@@ -479,7 +479,7 @@ impl ReadSession {
     }
 }
 
-// ── TxSession ─────────────────────────────────────────────────────────────────
+// ── TxnSession ─────────────────────────────────────────────────────────────────
 
 /// A read-write session backed by an OCC transaction.
 ///
@@ -490,18 +490,18 @@ impl ReadSession {
 /// # use rocksgraph::{Graph, TraversalBuilder};
 /// # let dir = tempfile::tempdir().unwrap();
 /// # let graph = Graph::open(dir.path()).unwrap();
-/// let mut tx = graph.begin();
-/// tx.g().addV("person").property("id", 1i64).property("name", "Alice").next().unwrap();
-/// let names = tx.g().V([1]).out(["knows"]).values(["name"]).to_list().unwrap();
-/// tx.commit().unwrap();
+/// let mut txn = graph.begin();
+/// txn.g().addV("person").property("id", 1i64).property("name", "Alice").next().unwrap();
+/// let names = txn.g().V([1]).out(["knows"]).values(["name"]).to_list().unwrap();
+/// txn.commit().unwrap();
 /// # graph.close().unwrap();
 /// ```
-pub struct TxSession {
+pub struct TxnSession {
     ctx: LogicalGraph,
     committed: bool,
 }
 
-impl TxSession {
+impl TxnSession {
     /// Override runtime execution options for this transaction session (chainable).
     pub fn with_execution_options(mut self, options: crate::engine::ExecutionOptions) -> Self {
         self.ctx.set_execution_options(options);
@@ -544,7 +544,7 @@ impl TxSession {
     /// Flush all mutations to RocksDB atomically and consume this session.
     ///
     /// Returns [`StoreError::Conflict`] if a concurrent transaction modified
-    /// an overlapping key; retry from scratch with a new `TxSession`.
+    /// an overlapping key; retry from scratch with a new `TxnSession`.
     pub fn commit(mut self) -> Result<(), StoreError> {
         self.committed = true;
         self.ctx.commit()
@@ -557,7 +557,7 @@ impl TxSession {
     }
 }
 
-impl Drop for TxSession {
+impl Drop for TxnSession {
     fn drop(&mut self) {
         if !self.committed {
             self.ctx.abort();

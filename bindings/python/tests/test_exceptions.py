@@ -25,25 +25,25 @@ def test_hierarchy_shape():
 
 
 def test_duplicate_vertex_raises_integrity_error(graph):
-    tx = graph.begin()
-    tx.g().addV("person").property("id", 1).next()
+    txn = graph.begin()
+    txn.g().addV("person").property("id", 1).next()
     with pytest.raises(IntegrityError):
-        tx.g().addV("person").property("id", 1).next()
-    tx.rollback()
+        txn.g().addV("person").property("id", 1).next()
+    txn.rollback()
 
 
 def test_missing_vertex_id_raises_query_error(graph):
-    tx = graph.begin()
+    txn = graph.begin()
     with pytest.raises(QueryError):
-        tx.g().addV("person").next()
-    tx.rollback()
+        txn.g().addV("person").next()
+    txn.rollback()
 
 
 def test_store_error_catches_any_subclass(graph):
     """A caller that only wants to know "did a store operation fail" can
     catch the base class without enumerating every subclass."""
-    tx = graph.begin()
-    tx.g().addV("person").property("id", 1).next()
+    txn = graph.begin()
+    txn.g().addV("person").property("id", 1).next()
     with pytest.raises(StoreError):
-        tx.g().addV("person").property("id", 1).next()
-    tx.rollback()
+        txn.g().addV("person").property("id", 1).next()
+    txn.rollback()

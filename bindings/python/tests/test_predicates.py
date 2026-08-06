@@ -4,10 +4,10 @@ from rocksgraph import P, Int64
 
 def insert_ages(graph):
     """Insert vertices with ages [10, 20, 30, 40, 50], commit, return read session."""
-    tx = graph.begin()
+    txn = graph.begin()
     for age in [10, 20, 30, 40, 50]:
-        addv(tx, "person", age=Int64(age))
-    tx.commit()
+        addv(txn, "person", age=Int64(age))
+    txn.commit()
     return graph.read()
 
 

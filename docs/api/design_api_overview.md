@@ -10,7 +10,7 @@ Status: proposal — living document. Update as the API surface evolves.
 - [2. Session model](#2-session-model)
   - [2a. Graph — the entry point](#2a-graph--the-entry-point)
   - [2b. ReadSession — point-in-time snapshot](#2b-readsession--point-in-time-snapshot)
-  - [2c. TxSession — transactional writes](#2c-txsession--transactional-writes)
+  - [2c. TxnSession — transactional writes](#2c-txsession--transactional-writes)
   - [2d. SchemaSession — DDL](#2d-schemamanagement--ddl)
   - [2e. BulkLoader — initial graph bootstrap](#2e-bulkloader--initial-graph-bootstrap)
 - [3. Operation taxonomy](#3-operation-taxonomy)
@@ -60,7 +60,7 @@ RocksGraph exposes five distinct entry points, each with a clear responsibility.
 Graph::open(path)
   │
   ├── .read()                      → ReadSession       (snapshot, read-only)
-  ├── .begin()                     → TxSession         (OCC transaction, read-write)
+  ├── .begin()                     → TxnSession         (OCC transaction, read-write)
   ├── .open_schema()               → SchemaSession  (DDL, atomic CAS commit)
   ├── .open_bulk_loader()          → BulkLoader        (SST bulk load, overwrites existing data)
   │
@@ -101,17 +101,17 @@ let names = snap.g().V([1]).out(["knows"]).values(["name"]).to_list()?;
 
 `ReadSession` is dropped silently with no side effects.
 
-### 2c. TxSession — transactional writes
+### 2c. TxnSession — transactional writes
 
-`TxSession` is an optimistic concurrency control (OCC) transaction. Reads
+`TxnSession` is an optimistic concurrency control (OCC) transaction. Reads
 inside the transaction see a consistent snapshot; writes are buffered and
 applied atomically on `commit()`. On conflict, `commit()` returns
 `StoreError::Conflict` and the session must be retried or rolled back.
 
 ```rust
-let mut tx = g.begin();
-tx.g().addV("person").property("name", "Alice").next()?;
-tx.commit()?;
+let mut txn = g.begin();
+txn.g().addV("person").property("name", "Alice").next()?;
+txn.commit()?;
 ```
 
 When a transaction commits a `FloatVector` property, the write path
@@ -227,7 +227,7 @@ concern is a correctness problem — it is a documentation and ergonomics choice
 ### 4a. Transactional write path
 
 ```
-TxSession::begin()
+TxnSession::begin()
   │
   ▼
 WriteTraversal (Gremlin builder — strings)
@@ -253,7 +253,7 @@ LogicalGraph (GraphCtx)
         (in-memory, under RwLock write lock — see design_vector_concurrency.md)
   │
   ▼
-TxSession::commit()  → RocksDB WAL flush + CF writes atomic
+TxnSession::commit()  → RocksDB WAL flush + CF writes atomic
                         vector WAL entry written to CF_VECTOR_WAL
 ```
 
@@ -303,7 +303,7 @@ phase on restart. See `docs/api/design_bulk_loader.md` §7 for full recovery tab
 ### 4c. Read / traversal path
 
 ```
-ReadSession / TxSession
+ReadSession / TxnSession
   │
   ▼
 ReadTraversal / WriteTraversal (Gremlin builder)
@@ -320,7 +320,7 @@ Volcano steps
   └── Vector steps (nearest, similarity, neighbors)
         → VectorIndex::search() (under RwLock read lock)
         → merge results with traverser pipeline
-        → RYOW: pending_vector_ops merged in for uncommitted TxSession
+        → RYOW: pending_vector_ops merged in for uncommitted TxnSession
                 (see design_vector_concurrency.md §5d)
 ```
 
@@ -386,7 +386,7 @@ full state machine and crash recovery behaviour.
 > loads, prefer the BulkLoader strict-mode workflow (§5c) which also builds in
 > a single blocking phase but avoids double-touching the data.
 >
-> **Write consistency during the build**: concurrent `TxSession` writes that
+> **Write consistency during the build**: concurrent `TxnSession` writes that
 > arrive while the bulk scan is running are captured in `CF_VECTOR_WAL` and
 > replayed into the new index under a brief write lock immediately before the
 > schema CAS. Writes are never blocked for the full build duration. See
@@ -571,7 +571,7 @@ Graph::open_with_options(path, GraphOptions, RocksOptions)
 
 // Sessions
 graph.read()             → ReadSession  { .g() → ReadTraversal }
-graph.begin()            → TxSession    { .g() → WriteTraversal, .commit(), .rollback() }
+graph.begin()            → TxnSession    { .g() → WriteTraversal, .commit(), .rollback() }
 graph.open_schema()  → SchemaSession { builder methods, .commit() }
 
 // Operational (on Graph)
@@ -603,10 +603,10 @@ snap = g.read()
 names = snap.g().V(1).out("knows").values("name").to_list()
 
 # Transaction
-tx = g.tx()
-tx.g().addV("person").property("name", "Alice").next()
-tx.commit()
-tx.rollback()
+txn = g.txn()
+txn.g().addV("person").property("name", "Alice").next()
+txn.commit()
+txn.rollback()
 
 # Schema management
 mgmt = g.open_schema()
@@ -645,9 +645,9 @@ const snap = g.read();
 const names = snap.g().V(1).out("knows").values("name").toList();
 
 // Transaction
-const tx = g.tx();
-tx.g().addV("person").property("name", "Alice").next();
-tx.commit();
+const txn = g.txn();
+txn.g().addV("person").property("name", "Alice").next();
+txn.commit();
 
 // Schema management
 const mgmt = g.openSchema();
@@ -681,13 +681,13 @@ one place to check.
 
 | Concept | Rust | Python | TypeScript |
 | ------- | ---- | ------ | ---------- |
-| Begin a transaction | `.begin()` | `.tx()` | `.tx()` |
+| Begin a transaction | `.begin()` | `.txn()` | `.txn()` |
 | Get traversal source | `.g()` | `.g()` | `.g()` |
 | Schema session | `open_schema()` | `open_schema()` | `openSchema()` |
 | Open bulk load session | `graph.open_bulk_loader()` | `g.open_bulk_loader()` | `g.openBulkLoader()` |
 | Method names generally | `snake_case` | `snake_case` | `camelCase` |
 
-Python keeps `tx()` and `traversal()` for ergonomics — both read more naturally
+Python keeps `txn()` and `traversal()` for ergonomics — both read more naturally
 than `begin()` / `g()` in Python call sites. TypeScript follows the same choice
 and adds camelCase per JS convention.
 

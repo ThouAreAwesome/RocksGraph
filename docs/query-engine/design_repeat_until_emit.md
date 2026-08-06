@@ -199,7 +199,7 @@ struct RepeatBuilder {
   via `.until(...)`; `.emit()`/`.emit_if(...)` intermediate output; `repeat(...).path()` capturing
   every hop; a cycle in the fixture graph + `.times(n)` terminating instead of hanging (the core
   motivating safety property); a `debug_print` wiring test mirroring `test_print_union_and_coalesce`.
-- **DSL / error paths** (`gremlin/tests.rs`, full `Graph`/`TxSession` round trip): `repeat()`
+- **DSL / error paths** (`gremlin/tests.rs`, full `Graph`/`TxnSession` round trip): `repeat()`
   alone with no bound → `Err`; `times(0)` → `Err`; `until`/`emit`/`emit_if` without a preceding
   `repeat()` → `Err`; back-to-back `repeat(a).repeat(b)`; an end-to-end N-hop query through the
   public fluent API.

@@ -28,11 +28,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let graph = Graph::open(temp_dir.path())?;
 
     // Seed some data.
-    let mut tx = graph.begin();
-    tx.g().addV("person").property("id", 1i64).property("name", "alice").property("age", 30i32).next()?;
-    tx.g().addV("person").property("id", 2i64).property("name", "bob").property("age", 25i32).next()?;
-    tx.g().addE("knows").from(1).to(2).property("weight", 0.5f64).next()?;
-    tx.commit()?;
+    let mut txn = graph.begin();
+    txn.g().addV("person").property("id", 1i64).property("name", "alice").property("age", 30i32).next()?;
+    txn.g().addV("person").property("id", 2i64).property("name", "bob").property("age", 25i32).next()?;
+    txn.g().addE("knows").from(1).to(2).property("weight", 0.5f64).next()?;
+    txn.commit()?;
 
     let mut snap = graph.read();
 

@@ -35,21 +35,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let graph = Graph::open(db_path)?;
 
     // 2. Perform a Write Transaction
-    // Write queries must borrow a TxSession from graph.begin().
+    // Write queries must borrow a TxnSession from graph.begin().
     println!("\n--- Phase 1: Writing Initial Graph Data ---");
-    let mut tx = graph.begin();
+    let mut txn = graph.begin();
 
     // Add a vertex for Marko
-    tx.g().addV("person").property("id", 1i64).property("name", "marko").property("age", 29i32).next()?;
+    txn.g().addV("person").property("id", 1i64).property("name", "marko").property("age", 29i32).next()?;
 
     // Add a vertex for Vadas
-    tx.g().addV("person").property("id", 2i64).property("name", "vadas").property("age", 27i32).next()?;
+    txn.g().addV("person").property("id", 2i64).property("name", "vadas").property("age", 27i32).next()?;
 
     // Add a "knows" edge from Marko to Vadas
-    tx.g().addE("knows").from(1).to(2).property("weight", 0.5f64).next()?;
+    txn.g().addE("knows").from(1).to(2).property("weight", 0.5f64).next()?;
 
     // Commit the transaction to flush changes atomically to RocksDB.
-    tx.commit()?;
+    txn.commit()?;
     println!("Graph data successfully committed!");
 
     // 3. Build a Read-Only Traversal Session
@@ -72,10 +72,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n--- Phase 3: Writing with OCC Conflict Retry Loop ---");
     let mut retries = 0;
     loop {
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
         // Increment Marko's age by 1
-        let current_age = tx
+        let current_age = txn
             .g()
             .V([1])
             .values(["age"])
@@ -86,10 +86,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             })
             .unwrap_or(29);
 
-        tx.g().V([1]).property("age", current_age + 1).next()?;
+        txn.g().V([1]).property("age", current_age + 1).next()?;
 
         // Attempt to commit
-        match tx.commit() {
+        match txn.commit() {
             Ok(_) => {
                 println!("Successfully updated Marko's age to {} after {} retries.", current_age + 1, retries);
                 break;

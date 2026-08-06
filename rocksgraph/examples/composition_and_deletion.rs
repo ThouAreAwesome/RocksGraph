@@ -30,13 +30,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = tempfile::tempdir()?;
     let graph = Graph::open(temp_dir.path())?;
 
-    let mut tx = graph.begin();
-    tx.g().addV("person").property("id", 1i64).property("name", "marko").next()?;
-    tx.g().addV("person").property("id", 2i64).property("name", "vadas").next()?;
-    tx.g().addV("software").property("id", 3i64).property("name", "lop").next()?;
-    tx.g().addE("knows").from(1).to(2).property("weight", 0.5f64).property("note", "old friends").next()?;
-    tx.g().addE("created").from(1).to(3).property("weight", 0.4f64).next()?;
-    tx.commit()?;
+    let mut txn = graph.begin();
+    txn.g().addV("person").property("id", 1i64).property("name", "marko").next()?;
+    txn.g().addV("person").property("id", 2i64).property("name", "vadas").next()?;
+    txn.g().addV("software").property("id", 3i64).property("name", "lop").next()?;
+    txn.g().addE("knows").from(1).to(2).property("weight", 0.5f64).property("note", "old friends").next()?;
+    txn.g().addE("created").from(1).to(3).property("weight", 0.4f64).next()?;
+    txn.commit()?;
 
     // --- union(): merge the result streams of multiple sub-traversals ---
     println!("=== union() ===");
@@ -50,14 +50,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- coalesce(): idempotent upserts ---
     println!("\n=== coalesce() (idempotent upsert) ===");
     for attempt in 1..=2 {
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
         // Upsert vertex: emit the existing name if id 42 already exists, otherwise create it.
         // `coalesce()` only evaluates its branches once per *incoming* traverser, so it needs a
         // seed step ahead of it. `.V([42])` alone won't do — it filters out missing ids, so on
         // the first run (42 doesn't exist yet) it would emit zero traversers and coalesce would
         // never fire either branch. `.count()` always emits exactly one traverser (a count of 0
         // or 1) regardless of whether 42 exists yet, which is what reliably drives coalesce here.
-        let vertex_result = tx
+        let vertex_result = txn
             .g()
             .V([42])
             .count()
@@ -67,7 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ])
             .next()?;
         // Upsert edge: emit it if marko already knows 42, otherwise create the edge.
-        let edge_result = tx
+        let edge_result = txn
             .g()
             .V([1])
             .coalesce([
@@ -75,17 +75,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 __().addE("knows").from(1).to(42).property("weight", 0.9f64),
             ])
             .next()?;
-        tx.commit()?;
+        txn.commit()?;
         println!("attempt {}: vertex branch -> {:?}, edge branch -> {:?}", attempt, vertex_result, edge_result);
     }
 
     // --- drop(): deleting a single property ---
     println!("\n=== drop() on a property ===");
-    let mut tx = graph.begin();
+    let mut txn = graph.begin();
     // `properties([key, ...])` carries the property element itself, not the owning vertex/edge,
     // so `drop()` here removes only "note" — "weight" on the same edge is untouched.
-    tx.g().V([1]).outE(["knows"]).properties(["note"]).drop().next()?;
-    tx.commit()?;
+    txn.g().V([1]).outE(["knows"]).properties(["note"]).drop().next()?;
+    txn.commit()?;
     let mut snap = graph.read();
     let note_after = snap.g().V([1]).outE(["knows"]).values(["note"]).next()?;
     let weight_after = snap.g().V([1]).outE(["knows"]).values(["weight"]).next()?;
@@ -93,29 +93,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("knows-edge weight after drop (untouched): {:?}", weight_after);
 
     // Dropping a property key that was never set is a no-op, not an error.
-    let mut tx = graph.begin();
-    tx.g().V([1]).properties(["never_set"]).drop().next()?;
-    tx.commit()?;
+    let mut txn = graph.begin();
+    txn.g().V([1]).properties(["never_set"]).drop().next()?;
+    txn.commit()?;
 
     // --- drop(): deleting edges and vertices ---
     println!("\n=== drop() on edges and vertices ===");
-    let mut tx = graph.begin();
+    let mut txn = graph.begin();
 
     // A vertex with incident edges cannot be dropped directly.
-    let blocked = tx.g().V([3]).drop().next();
+    let blocked = txn.g().V([3]).drop().next();
     match blocked {
         Err(StoreError::IncidentEdges) => {
             println!("dropping lop (id 3) while it has incident edges: blocked, as expected")
         }
         other => panic!("expected StoreError::IncidentEdges, got {:?}", other),
     }
-    tx.rollback();
+    txn.rollback();
 
     // Drop the incident edge first, then the vertex succeeds.
-    let mut tx = graph.begin();
-    tx.g().V([1]).outE(["created"]).drop().next()?;
-    tx.g().V([3]).drop().next()?;
-    tx.commit()?;
+    let mut txn = graph.begin();
+    txn.g().V([1]).outE(["created"]).drop().next()?;
+    txn.g().V([3]).drop().next()?;
+    txn.commit()?;
     println!("dropped the created-edge, then vertex lop (id 3): succeeded");
 
     let mut snap = graph.read();

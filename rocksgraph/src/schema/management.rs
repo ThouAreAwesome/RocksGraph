@@ -62,13 +62,13 @@ fn encode_vector_index_config(config: &VectorIndexConfig) -> Vec<u8> {
 /// mgmt.commit()?;
 ///
 /// // A declared label commits normally.
-/// let mut tx = graph.begin();
-/// tx.g().addV("person").property("id", 1i64).property("name", "Alice").next()?;
-/// tx.commit()?;
+/// let mut txn = graph.begin();
+/// txn.g().addV("person").property("id", 1i64).property("name", "Alice").next()?;
+/// txn.commit()?;
 ///
 /// // An undeclared label is rejected outright, rather than silently auto-registered.
-/// let mut tx = graph.begin();
-/// let err = tx.g().addV("ghost").property("id", 2i64).next().unwrap_err();
+/// let mut txn = graph.begin();
+/// let err = txn.g().addV("ghost").property("id", 2i64).next().unwrap_err();
 /// assert!(matches!(err, StoreError::SchemaViolation(_)));
 /// # Ok(())
 /// # }

@@ -1049,14 +1049,14 @@ resetting a shared field is safe in this context.
 | `VectorError::BackendError(msg)`                             | `insert`, `remove`, `search` when usearch returns an error             | Propagated; index state unchanged                                                                    |
 | `VectorError::SnapshotCorrupt(msg)`                          | `load_vector_index` on magic mismatch, bad CRC, or field inconsistency | Fall back to cold-start rebuild                                                                      |
 | Snapshot config mismatch (dim, metric, or algorithm differs) | `load_vector_index`                                                    | Log warning; discard snapshot; cold-start rebuild                                                    |
-| Step-4 in-memory update fails after RocksDB commit           | `TxSession::commit` step 4                                             | **See note below.**                                                                                  |
+| Step-4 in-memory update fails after RocksDB commit           | `TxnSession::commit` step 4                                             | **See note below.**                                                                                  |
 | `vector_edge_labels` CF missing edge label on `remove`       | `remove` (edge index) when CF entry absent                             | No-op (idempotent WAL replay); logs debug. Only possible if CF entry was never written — indicates prior crash between WAL write and CF write, healed by replay |
 | `vector_edge_labels` CF missing edge label on `search`       | `search` returns a label with no CF reverse entry                      | Panics — indicates index corruption (CF and usearch disagree). Cannot produce a correct result silently |
 | usearch capacity exceeded                                    | `insert` after `reserve` is exhausted                                  | usearch auto-grows; not an error in practice                                                         |
 | WAL entry for undeclared index                               | `wal_replay`                                                           | Silently skipped                                                                                     |
 
 **Step-4 failure after RocksDB commit**: if `index.insert` or `index.remove` in
-`TxSession::commit` step 4 returns an error (e.g. OOM in usearch), the commit
+`TxnSession::commit` step 4 returns an error (e.g. OOM in usearch), the commit
 function propagates the error to the caller. However, the RocksDB `WriteBatch`
 and the corresponding vector WAL entry are already durably written and cannot be
 rolled back. The caller's `Err` result means the transaction data is committed
@@ -1147,7 +1147,7 @@ vector  = ["dep:usearch"]
 
 - [ ] Add `vector_indexes: HashMap<(VectorEntityType, SmolStr), Arc<RwLock<Box<dyn VectorIndex>>>>` to `Graph`
 - [ ] Call `init_wal_clock(db)` on `Graph::open`; persist `WAL_CLOCK` to `vector_wal_clock_hwm` on snapshot flush
-- [ ] Wire `TxSession::commit` with pending vector ops (see `design_vector_wal.md` §5)
+- [ ] Wire `TxnSession::commit` with pending vector ops (see `design_vector_wal.md` §5)
 - [ ] Wire `NearestStep` executor to merge HNSW results with `pending_vector_ops` (see `design_vector_concurrency.md` §5d)
 - [ ] Wire `OP_PROPERTY` handler to detect `GValue::FloatVector` and push pending op
 - [ ] Wire `OP_DROP` (vertex) to push `VectorOpKind::Delete` for all indexed properties

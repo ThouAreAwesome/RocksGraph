@@ -1070,13 +1070,13 @@ index update automatically.
 ### 7a. Insert entity with vector property
 
 ```python
-tx = g.tx()
-tx.g().addV("doc") \
+txn = g.txn()
+txn.g().addV("doc") \
     .property("id", 1) \
     .property("title", "Hello World") \
     .property("embedding", Vector(model.encode("Hello World"))) \
     .next()
-tx.commit()
+txn.commit()
 ```
 
 `Vector` accepts `list[float]`, `np.ndarray`, or `bytes`. Elements cast to `f32`.  
@@ -1087,9 +1087,9 @@ tx.commit()
 ### 7b. Update a vector property
 
 ```python
-tx = g.tx()
-tx.g().V(1).property("embedding", Vector(new_embedding)).next()
-tx.commit()
+txn = g.txn()
+txn.g().V(1).property("embedding", Vector(new_embedding)).next()
+txn.commit()
 ```
 
 Issues a WAL Delete for the old vector and WAL Insert for the new in one
@@ -1101,9 +1101,9 @@ Issues a WAL Delete for the old vector and WAL Insert for the new in one
 ### 7c. Remove vector property, keep entity
 
 ```python
-tx = g.tx()
-tx.g().V(1).properties("embedding").drop().iterate()
-tx.commit()
+txn = g.txn()
+txn.g().V(1).properties("embedding").drop().iterate()
+txn.commit()
 ```
 
 **Ships in**: v0.1.
@@ -1116,9 +1116,9 @@ Dropping a vertex or edge issues a WAL Delete for every indexed `FloatVector`
 property it carried.
 
 ```python
-tx = g.tx()
-tx.g().V(1).drop().iterate()
-tx.commit()
+txn = g.txn()
+txn.g().V(1).drop().iterate()
+txn.commit()
 ```
 
 **Ships in**: v0.1.
@@ -1128,13 +1128,13 @@ tx.commit()
 ### 7e. Batch mutations in one transaction
 
 ```python
-tx = g.tx()
+txn = g.txn()
 for doc_id, text in corpus[:1000]:
-    tx.g().addV("doc") \
+    txn.g().addV("doc") \
         .property("id", doc_id) \
         .property("embedding", Vector(model.encode(text))) \
         .next()
-tx.commit()
+txn.commit()
 # One WriteBatch, one fsync, one WAL counter block
 ```
 
@@ -1159,8 +1159,8 @@ The behaviour under query steps:
   `VectorError::NoVectorIndex`. Requires a declared index to search.
 
 ```python
-tx.g().addV("doc").property("raw_vec", Vector(v)).next()
-tx.commit()
+txn.g().addV("doc").property("raw_vec", Vector(v)).next()
+txn.commit()
 
 rs.g().V(1).values("raw_vec").next()                            # ✅ read value
 rs.g().V()                                                      # ✅ brute-force
@@ -1239,9 +1239,9 @@ with g.open_schema() as mgmt:
 
 # Step 2: write new embeddings via normal transactions
 for vid, text in all_docs():
-    tx = g.tx()
-    tx.g().V(vid).property("embedding_v2", Vector(new_model.encode(text))).next()
-    tx.commit()
+    txn = g.txn()
+    txn.g().V(vid).property("embedding_v2", Vector(new_model.encode(text))).next()
+    txn.commit()
 
 # Step 3: drop old index
 with g.open_schema() as mgmt:

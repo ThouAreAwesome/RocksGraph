@@ -8,9 +8,9 @@ class TestPersistence:
     def test_data_survives_reopen(self, tmpdir):
         # Open, write, close
         g1 = Graph(tmpdir)
-        tx = g1.begin()
-        addv(tx, "person", name="Alice", age=Int64(30))
-        tx.commit()
+        txn = g1.begin()
+        addv(txn, "person", name="Alice", age=Int64(30))
+        txn.commit()
         del g1  # close
 
         # Reopen
@@ -21,9 +21,9 @@ class TestPersistence:
 
     def test_all_types_survive_reopen(self, tmpdir):
         g1 = Graph(tmpdir)
-        tx = g1.begin()
-        addv(tx, "test", i=42, f=Float64(3.14), s="hi", b=True)
-        tx.commit()
+        txn = g1.begin()
+        addv(txn, "test", i=42, f=Float64(3.14), s="hi", b=True)
+        txn.commit()
         del g1
 
         g2 = Graph(tmpdir)
@@ -35,9 +35,9 @@ class TestPersistence:
 
     def test_ids_stable_across_reopen(self, tmpdir):
         g1 = Graph(tmpdir)
-        tx = g1.begin()
-        v = addv(tx, "person", name="Alice")
-        tx.commit()
+        txn = g1.begin()
+        v = addv(txn, "person", name="Alice")
+        txn.commit()
         vid = v["id"]
         del g1
 
@@ -50,11 +50,11 @@ class TestPersistence:
     def test_edge_survives_reopen(self, tmpdir):
         from rocksgraph import Graph, GraphOptions, RocksOptions, IndexOptions, Int64
         g1 = Graph(tmpdir)
-        tx = g1.begin()
-        v1 = addv(tx, "person", name="Alice")
-        v2 = addv(tx, "person", name="Bob")
-        tx.g().addE("knows").from_(v1).to(v2).property("since", Int64(2020)).next()
-        tx.commit()
+        txn = g1.begin()
+        v1 = addv(txn, "person", name="Alice")
+        v2 = addv(txn, "person", name="Bob")
+        txn.g().addE("knows").from_(v1).to(v2).property("since", Int64(2020)).next()
+        txn.commit()
         del g1
 
         g2 = Graph(tmpdir)

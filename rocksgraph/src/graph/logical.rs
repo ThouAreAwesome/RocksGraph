@@ -24,7 +24,7 @@ use std::{
 };
 
 use super::helpers::edge_matches;
-use super::{Existence, StagedSchema, TxSchemaCache};
+use super::{Existence, StagedSchema, TxnSchemaCache};
 use crate::engine::ExecutionOptions;
 
 // ── LogicalGraph ──────────────────────────────────────────────────────────────
@@ -40,7 +40,7 @@ pub(crate) struct LogicalGraph {
     pub(crate) dirty: HashMap<CanonicalKey, Existence>,
     pub(crate) execution_options: ExecutionOptions,
     pub(crate) schema: Arc<RwLock<Schema>>,
-    pub(crate) schema_cache: TxSchemaCache,
+    pub(crate) schema_cache: TxnSchemaCache,
     pub(crate) staged_schema: StagedSchema,
     pub(crate) vector_indexes: Arc<RwLock<VectorIndexMap>>,
     pub(crate) vector_pending_ops: Vec<crate::vector::PendingVectorOp>,
@@ -56,7 +56,7 @@ impl LogicalGraph {
     ) -> Self {
         // Creates a new `LogicalGraph` instance, initializing its in-memory caches
         // and associating it with a store transaction.
-        let schema_cache = TxSchemaCache::from_schema(&schema.read());
+        let schema_cache = TxnSchemaCache::from_schema(&schema.read());
         Self {
             store,
             vertices: HashMap::new(),
@@ -1224,6 +1224,6 @@ impl LogicalGraph {
         self.vertex_degree.clear();
         self.staged_schema.clear();
         self.vector_pending_ops.clear();
-        self.schema_cache = TxSchemaCache::from_schema(&self.schema.read());
+        self.schema_cache = TxnSchemaCache::from_schema(&self.schema.read());
     }
 }

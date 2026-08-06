@@ -108,7 +108,7 @@ difference to I/O cost — it's the same read against the same cache.
 
 - The write path uses the same convention: default → no properties; `withProperties([])` → all.
 - Read-your-writes still works — addV flushes to LogicalGraph overlay; subsequent steps
-  in the same tx see properties regardless of hint.
+  in the same txn see properties regardless of hint.
 
 ## Implementation plan
 

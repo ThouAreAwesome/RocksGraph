@@ -100,16 +100,16 @@ class TestReadSessionMisuse:
         g.close()
 
 
-# ── TxSession: lock release ───────────────────────────────────────────────────
+# ── TxnSession: lock release ───────────────────────────────────────────────────
 
-class TestTxSessionLifecycle:
+class TestTxnSessionLifecycle:
     def test_commit_releases_lock(self, tmp_path):
-        """tx.commit() takes the inner Transaction by value, releasing the Arc."""
+        """txn.commit() takes the inner Transaction by value, releasing the Arc."""
         db_path = str(tmp_path / "db")
         g = Graph(db_path)
 
-        tx = g.begin()
-        tx.commit()
+        txn = g.begin()
+        txn.commit()
         # Transaction Arc released — g.close() and immediate reopen both succeed.
 
         g.close()
@@ -118,12 +118,12 @@ class TestTxSessionLifecycle:
         g2.close()
 
     def test_rollback_releases_lock(self, tmp_path):
-        """tx.rollback() also releases the Arc immediately."""
+        """txn.rollback() also releases the Arc immediately."""
         db_path = str(tmp_path / "db")
         g = Graph(db_path)
 
-        tx = g.begin()
-        tx.rollback()
+        txn = g.begin()
+        txn.rollback()
 
         g.close()
 
@@ -131,12 +131,12 @@ class TestTxSessionLifecycle:
         g2.close()
 
     def test_context_manager_commits_and_releases_lock(self, tmp_path):
-        """with g.begin() as tx: commits on __exit__ (no exception)."""
+        """with g.begin() as txn: commits on __exit__ (no exception)."""
         db_path = str(tmp_path / "db")
         g = Graph(db_path)
 
-        with g.begin() as tx:
-            tx.g().addV("node", 1).next()
+        with g.begin() as txn:
+            txn.g().addV("node", 1).next()
 
         g.close()
 
@@ -146,13 +146,13 @@ class TestTxSessionLifecycle:
         g2.close()
 
     def test_context_manager_rolls_back_on_exception(self, tmp_path):
-        """with g.begin() as tx: rolls back on exception, still releasing Arc."""
+        """with g.begin() as txn: rolls back on exception, still releasing Arc."""
         db_path = str(tmp_path / "db")
         g = Graph(db_path)
 
         with pytest.raises(RuntimeError):
-            with g.begin() as tx:
-                tx.g().addV("node", 1).next()
+            with g.begin() as txn:
+                txn.g().addV("node", 1).next()
                 raise RuntimeError("abort")
 
         g.close()
@@ -164,39 +164,39 @@ class TestTxSessionLifecycle:
         g2.close()
 
 
-# ── TxSession: misuse diagnostics ────────────────────────────────────────────
+# ── TxnSession: misuse diagnostics ────────────────────────────────────────────
 
-class TestTxSessionMisuse:
+class TestTxnSessionMisuse:
     def test_g_after_commit_raises_at_call_site(self, tmp_path):
-        """tx.g() after tx.commit() raises immediately, not at the terminal.
+        """txn.g() after txn.commit() raises immediately, not at the terminal.
 
         Previously: 'Session already closed' appeared at .next() — pointing
-        to the wrong line. Now it fires at tx.g() before a traversal is built.
+        to the wrong line. Now it fires at txn.g() before a traversal is built.
         """
         db_path = str(tmp_path / "db")
         g = Graph(db_path)
-        tx = g.begin()
-        tx.commit()
+        txn = g.begin()
+        txn.commit()
 
-        with pytest.raises(RuntimeError, match="TxSession is already closed"):
-            tx.g()
+        with pytest.raises(RuntimeError, match="TxnSession is already closed"):
+            txn.g()
 
         g.close()
 
     def test_g_after_rollback_raises_at_call_site(self, tmp_path):
-        """tx.g() after tx.rollback() behaves the same as after commit."""
+        """txn.g() after txn.rollback() behaves the same as after commit."""
         db_path = str(tmp_path / "db")
         g = Graph(db_path)
-        tx = g.begin()
-        tx.rollback()
+        txn = g.begin()
+        txn.rollback()
 
-        with pytest.raises(RuntimeError, match="TxSession is already closed"):
-            tx.g()
+        with pytest.raises(RuntimeError, match="TxnSession is already closed"):
+            txn.g()
 
         g.close()
 
     def test_manual_commit_inside_with_block_is_safe(self, tmp_path):
-        """tx.commit() inside with block: __exit__ detects it and is a no-op.
+        """txn.commit() inside with block: __exit__ detects it and is a no-op.
 
         Previously: __exit__ attempted a second commit and raised
         'Session already closed' — an error attributed to the with-statement
@@ -206,9 +206,9 @@ class TestTxSessionMisuse:
         db_path = str(tmp_path / "db")
         g = Graph(db_path)
 
-        with g.begin() as tx:
-            tx.g().addV("node", 1).next()
-            tx.commit()  # explicit commit — __exit__ must not double-commit
+        with g.begin() as txn:
+            txn.g().addV("node", 1).next()
+            txn.commit()  # explicit commit — __exit__ must not double-commit
 
         # Data was committed; reopen confirms it.
         g.close()
@@ -217,13 +217,13 @@ class TestTxSessionMisuse:
         g2.close()
 
     def test_double_commit_raises_at_second_call(self, tmp_path):
-        """Calling tx.commit() twice raises on the second call, not inside Rust."""
+        """Calling txn.commit() twice raises on the second call, not inside Rust."""
         db_path = str(tmp_path / "db")
         g = Graph(db_path)
-        tx = g.begin()
-        tx.commit()
+        txn = g.begin()
+        txn.commit()
 
-        with pytest.raises(RuntimeError, match="TxSession is already closed"):
-            tx.commit()
+        with pytest.raises(RuntimeError, match="TxnSession is already closed"):
+            txn.commit()
 
         g.close()

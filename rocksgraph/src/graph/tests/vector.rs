@@ -55,26 +55,26 @@ fn rebuild_vector_index_roundtrip() {
     // 2. Insert 3 vertices with FloatVector embeddings via public insert path.
     {
         let g = Graph::open(path).unwrap();
-        let mut tx = g.begin();
-        tx.g()
+        let mut txn = g.begin();
+        txn.g()
             .addV("test")
             .property("id", 1i64)
             .property("emb", crate::Value::FloatVector(vec![1.0, 0.0, 0.0, 0.0]))
             .next()
             .unwrap();
-        tx.g()
+        txn.g()
             .addV("test")
             .property("id", 2i64)
             .property("emb", crate::Value::FloatVector(vec![0.0, 1.0, 0.0, 0.0]))
             .next()
             .unwrap();
-        tx.g()
+        txn.g()
             .addV("test")
             .property("id", 3i64)
             .property("emb", crate::Value::FloatVector(vec![0.0, 0.0, 1.0, 0.0]))
             .next()
             .unwrap();
-        tx.commit().unwrap();
+        txn.commit().unwrap();
         g.close().unwrap();
     }
 
@@ -207,9 +207,9 @@ fn test_nearest_upstream_filter_and_missing_props() {
     // 2. Insert mixed vertices (some match filter, some don't, some lack embedding)
     {
         let g = Graph::open(path).unwrap();
-        let mut tx = g.begin();
+        let mut txn = g.begin();
         // v1: tech, emb [1, 0, 0, 0] (exact match to query)
-        tx.g()
+        txn.g()
             .addV("node")
             .property("id", 1i64)
             .property("category", "tech")
@@ -217,7 +217,7 @@ fn test_nearest_upstream_filter_and_missing_props() {
             .next()
             .unwrap();
         // v2: finance, emb [0.99, 0.01, 0.0, 0.0] (high similarity, but different category)
-        tx.g()
+        txn.g()
             .addV("node")
             .property("id", 2i64)
             .property("category", "finance")
@@ -225,7 +225,7 @@ fn test_nearest_upstream_filter_and_missing_props() {
             .next()
             .unwrap();
         // v3: tech, emb [0.0, 1.0, 0.0, 0.0] (orthogonal)
-        tx.g()
+        txn.g()
             .addV("node")
             .property("id", 3i64)
             .property("category", "tech")
@@ -233,8 +233,8 @@ fn test_nearest_upstream_filter_and_missing_props() {
             .next()
             .unwrap();
         // v4: tech, no embedding property at all
-        tx.g().addV("node").property("id", 4i64).property("category", "tech").next().unwrap();
-        tx.commit().unwrap();
+        txn.g().addV("node").property("id", 4i64).property("category", "tech").next().unwrap();
+        txn.commit().unwrap();
 
         g.index_manager().rebuild(VectorEntityType::Vertex, "emb").unwrap();
 
@@ -300,8 +300,8 @@ fn test_vector_index_in_memory_commit_ryow_and_wal_replay() {
         sess.commit().unwrap();
 
         // Transaction 1: Add vertex 1, verify RYOW, add vertex 2, commit.
-        let mut tx = g.begin();
-        tx.g()
+        let mut txn = g.begin();
+        txn.g()
             .addV("doc")
             .property("id", 1i64)
             .property("emb", Value::FloatVector(vec![1.0f32, 0.0, 0.0, 0.0]))
@@ -309,7 +309,7 @@ fn test_vector_index_in_memory_commit_ryow_and_wal_replay() {
             .unwrap();
 
         // Uncommitted RYOW: nearest() should find vertex 1
-        let ryow_1: Vec<i64> = tx
+        let ryow_1: Vec<i64> = txn
             .g()
             .V([])
             .nearest("emb", vec![1.0, 0.0, 0.0, 0.0], 5)
@@ -324,14 +324,14 @@ fn test_vector_index_in_memory_commit_ryow_and_wal_replay() {
             .collect();
         assert_eq!(ryow_1, vec![1], "RYOW should see uncommitted vertex 1");
 
-        tx.g()
+        txn.g()
             .addV("doc")
             .property("id", 2i64)
             .property("emb", Value::FloatVector(vec![0.0f32, 1.0, 0.0, 0.0]))
             .next()
             .unwrap();
 
-        let ryow_2: Vec<i64> = tx
+        let ryow_2: Vec<i64> = txn
             .g()
             .V([])
             .nearest("emb", vec![1.0, 0.0, 0.0, 0.0], 5)
@@ -346,7 +346,7 @@ fn test_vector_index_in_memory_commit_ryow_and_wal_replay() {
             .collect();
         assert_eq!(ryow_2, vec![1, 2], "RYOW should see uncommitted vertices 1 and 2 in score order");
 
-        tx.commit().unwrap();
+        txn.commit().unwrap();
 
         // Query immediately on existing open graph instance — in-memory index was updated on commit!
         let mut snap = g.read();
@@ -448,20 +448,20 @@ fn test_vector_index_snapshot_save_on_close_and_incremental_wal_seek_replay() {
         });
         sess.commit().unwrap();
 
-        let mut tx = g.begin();
-        tx.g()
+        let mut txn = g.begin();
+        txn.g()
             .addV("doc")
             .property("id", 1i64)
             .property("emb", Value::FloatVector(vec![1.0f32, 0.0, 0.0, 0.0]))
             .next()
             .unwrap();
-        tx.g()
+        txn.g()
             .addV("doc")
             .property("id", 2i64)
             .property("emb", Value::FloatVector(vec![0.0f32, 1.0, 0.0, 0.0]))
             .next()
             .unwrap();
-        tx.commit().unwrap();
+        txn.commit().unwrap();
 
         // Clean close — saves snapshot (WAL entries for 1 and 2 are GC'd afterwards).
         g.close().unwrap();
@@ -491,14 +491,14 @@ fn test_vector_index_snapshot_save_on_close_and_incremental_wal_seek_replay() {
             .collect();
         assert_eq!(results, vec![1, 2]);
 
-        let mut tx = g.begin();
-        tx.g()
+        let mut txn = g.begin();
+        txn.g()
             .addV("doc")
             .property("id", 3i64)
             .property("emb", Value::FloatVector(vec![0.9f32, 0.1, 0.0, 0.0]))
             .next()
             .unwrap();
-        tx.commit().unwrap();
+        txn.commit().unwrap();
 
         // Drop g without close() — leaves Phase 1 snapshot on disk and WAL entry for
         // vector 3 un-GC'd.
@@ -554,14 +554,14 @@ fn test_vector_index_drop_property_wal_remove_and_replay() {
         });
         sess.commit().unwrap();
 
-        let mut tx = g.begin();
-        tx.g()
+        let mut txn = g.begin();
+        txn.g()
             .addV("doc")
             .property("id", 1i64)
             .property("emb", Value::FloatVector(vec![1.0f32, 0.0, 0.0, 0.0]))
             .next()
             .unwrap();
-        tx.commit().unwrap();
+        txn.commit().unwrap();
 
         // Verify in-memory index has vertex 1
         let mut snap = g.read();

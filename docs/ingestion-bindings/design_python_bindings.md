@@ -361,7 +361,7 @@ Three `#[pyclass]` types, three FFI functions.
 
 ```rust
 use pyo3::prelude::*;
-use rocksgraph::{bytecode, Graph as CoreGraph, ReadSession, TxSession, Value};
+use rocksgraph::{bytecode, Graph as CoreGraph, ReadSession, TxnSession, Value};
 
 /// Python-facing graph handle.  Graph is Clone (Arc internally) — cheap to share.
 #[pyclass]
@@ -405,21 +405,21 @@ impl PyReadSession {
 
 /// Read-write transaction session backed by a RocksDB OCC transaction.
 ///
-/// Like `ReadSession`, `TxSession` is a self-contained type — it holds its own
+/// Like `ReadSession`, `TxnSession` is a self-contained type — it holds its own
 /// transaction handle (internally Arc-cloned from the DB).  No lifetime
 /// dependency on `PyGraph`.  Auto-rolls back on `__del__` if `commit()` was
 /// not called.
 #[pyclass]
-struct PyTxSession {
-    inner: Option<TxSession>,  // Option: take ownership on commit/rollback/drop
+struct PyTxnSession {
+    inner: Option<TxnSession>,  // Option: take ownership on commit/rollback/drop
 }
 
 #[pymethods]
-impl PyTxSession {
+impl PyTxnSession {
     fn _execute(&mut self, bytes: &[u8]) -> PyResult<Vec<PyObject>> {
-        let tx = self.inner.as_mut()
+        let txn = self.inner.as_mut()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("transaction closed"))?;
-        let results = bytecode::execute_write(tx, bytes)
+        let results = bytecode::execute_write(txn, bytes)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         Python::with_gil(|py| {
             results.into_iter().map(|v| value_to_py(py, v)).collect()
@@ -427,9 +427,9 @@ impl PyTxSession {
     }
 
     fn commit(mut slf: PyRefMut<'_, Self>) -> PyResult<()> {
-        let tx = slf.inner.take()
+        let txn = slf.inner.take()
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("already closed"))?;
-        tx.commit()
+        txn.commit()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         Ok(())
     }
@@ -446,9 +446,9 @@ impl PyTxSession {
 |-----------|--------------|:---:|:---:|
 | `CoreGraph` | `Arc<RocksStorage>` + `Arc<RwLock<Schema>>` | ✅ | ✅ |
 | `ReadSession` | `LogicalSnapshot<RocksStorage>` — owns Snapshot + caches + `Arc<Schema>` | ✅ (self-contained) | ✅ |
-| `TxSession` | `LogicalGraph<RocksStorage>` — owns Txn + caches + `Arc<Schema>` | ✅ (self-contained) | ✅ |
+| `TxnSession` | `LogicalGraph<RocksStorage>` — owns Txn + caches + `Arc<Schema>` | ✅ (self-contained) | ✅ |
 
-`ReadSession` and `TxSession` do **not** borrow from `Graph`.  They hold
+`ReadSession` and `TxnSession` do **not** borrow from `Graph`.  They hold
 `Arc`-cloned references to the RocksDB handle internally, so they are fully
 `'static` and safe to store directly in `#[pyclass]` structs.
 
@@ -747,15 +747,15 @@ for v in snap.g().V([]).iter():
 print(snap.g().V([1]).out(["knows"]).count().explain())
 
 # Write transaction
-tx = graph.begin()
-tx.g().addV("person").property("id", 1).property("name", "alice").next()
-tx.g().addV("person").property("id", 2).property("name", "bob").next()
-tx.g().addE("knows").from_(1).to(2).next()
-tx.commit()
+txn = graph.begin()
+txn.g().addV("person").property("id", 1).property("name", "alice").next()
+txn.g().addV("person").property("id", 2).property("name", "bob").next()
+txn.g().addE("knows").from_(1).to(2).next()
+txn.commit()
 
 # Error handling
 try:
-    tx.g().addV("undeclared_label").next()
+    txn.g().addV("undeclared_label").next()
 except rocksgraph.StoreError as e:
     print(f"Schema error: {e}")
 ```
@@ -801,7 +801,7 @@ functions.  This is the first MR that requires the workspace from MR 2.
 
 8. Create `bindings/python/` with `Cargo.toml`, `pyproject.toml`, `src/lib.rs`.
 9. Add `"bindings/python"` to workspace members.
-10. Implement `PyGraph` (open), `PyReadSession` (_execute), `PyTxSession`
+10. Implement `PyGraph` (open), `PyReadSession` (_execute), `PyTxnSession`
     (_execute + commit + rollback).
 11. **Launch a Windows CI job at this stage** (not MR 5) to surface RocksDB
     compilation issues early.  RocksDB (`librocksdb-sys`) on Windows requires

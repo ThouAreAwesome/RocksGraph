@@ -32,7 +32,7 @@ atomically via RocksDB's `IngestExternalFile`. Existing keys in the database
 are overwritten by the ingest; the typical and recommended use is on a fresh
 empty database.
 
-It is not a replacement for `TxSession` (incremental writes to a live graph) or
+It is not a replacement for `TxnSession` (incremental writes to a live graph) or
 `open_schema()` (schema DDL). It is the `COPY` / `pg_dump --restore`
 analogue for RocksGraph.
 
@@ -67,7 +67,7 @@ enabling clean streaming error propagation without buffering intermediate record
 | ---------- | ------ |
 | **Overwrites existing data** | `open_bulk_loader()` does not check for pre-existing graph data. Any keys produced by the SST build will overwrite colliding entries on `IngestExternalFile`. The caller is responsible for the overwrite semantics. Typical use is on an empty database; re-running on a live graph replaces all overlapping keys. |
 | **Schema mode governs schema handling** | *Strict mode*: validates all labels and property keys against `graph.schema` during `load_vertices()`/`load_edges()` — undeclared names abort the current phase before its SSTs are written. Schema is never modified. *Auto mode*: collects new labels and property keys into a staging schema during load; synced to `graph.schema` and `CF_SCHEMA` atomically at `commit()`. |
-| **No concurrent queries during loading** | `open_bulk_loader()` borrows `&mut self`, enforcing compile-time exclusion. For shared `Arc<Graph>` (Python/Node.js bindings, concurrent Rust), an internal `AtomicBool` rejects `g.read()`/`g.tx()` with `StoreError::BulkLoadInProgress`. |
+| **No concurrent queries during loading** | `open_bulk_loader()` borrows `&mut self`, enforcing compile-time exclusion. For shared `Arc<Graph>` (Python/Node.js bindings, concurrent Rust), an internal `AtomicBool` rejects `g.read()`/`g.txn()` with `StoreError::BulkLoadInProgress`. |
 | **Not transactional** | Data becomes visible all-at-once via `IngestExternalFile`. If the process is killed mid-pipeline, partial state may be left behind — see §7. |
 | **No WAL** | SST files bypass the WAL entirely. After ingestion, the graph behaves as if it was written with WAL for all future incremental writes. |
 
@@ -397,7 +397,7 @@ recovery action needed.
 
 ## 8. Comparison with other sessions
 
-| | `open_schema()` | `BulkLoader` | `TxSession` |
+| | `open_schema()` | `BulkLoader` | `TxnSession` |
 | --- | --- | --- | --- |
 | **Purpose** | Schema DDL | Initial bulk data load | Incremental data writes |
 | **Opened via** | `graph.open_schema()` | `graph.open_bulk_loader()` | `graph.begin()` |
@@ -423,5 +423,5 @@ recovery action needed.
 
 ## See also
 
-- `design_api_overview.md` — session type overview and how `BulkLoader` fits alongside `SchemaSession` and `TxSession`
+- `design_api_overview.md` — session type overview and how `BulkLoader` fits alongside `SchemaSession` and `TxnSession`
 - `design_session_workflows.md` — end-to-end call sequences for Scenario 3 (auto mode bulk load + index) and Scenario 4 (strict mode bulk load with auto-built index), including crash recovery in Scenario 7 Case B

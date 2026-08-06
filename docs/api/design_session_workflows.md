@@ -26,7 +26,7 @@ All examples use Python. Rust equivalents use the same method names in `snake_ca
 | Session | Opened via | Persists to | Purpose |
 |---------|-----------|-------------|---------|
 | `SchemaSession` | `g.open_schema()` | CF_SCHEMA | Declare labels, property keys, vector indexes. CAS-protected. |
-| `TxSession` | `g.tx()` | CF_VERTICES, CF_EDGES, CF_VECTOR_WAL | OCC read-write transaction. |
+| `TxnSession` | `g.txn()` | CF_VERTICES, CF_EDGES, CF_VECTOR_WAL | OCC read-write transaction. |
 | `ReadSession` | `g.read()` | Nothing | Point-in-time snapshot query. |
 | `BulkLoader` | `g.open_bulk_loader(work_dir)` | CF_VERTICES, CF_EDGES (SST ingestion) | Large initial data load, bypasses WAL and OCC. |
 
@@ -65,14 +65,14 @@ Only vector indexes require an explicit declaration before the first vector writ
      ──▶ CF_SCHEMA: vector index entry persisted (state=Ready)
          HNSW index: empty, loaded into memory
 
-[3]  tx = g.tx()
-     tx.g()
+[3]  txn = g.txn()
+     txn.g()
          .addV("doc")                              # label "doc" auto-registered in CF_SCHEMA
          .property("id", n)
          .property("title", "...")                 # key "title" auto-registered in CF_SCHEMA
          .property("embedding", Vector(v))         # CF_VECTOR_WAL entry written; HNSW updated
          .next()
-     tx.commit()
+     txn.commit()
      ──▶ CF_VERTICES: vertex written
          CF_VECTOR_WAL: WAL entry for "embedding"
          HNSW: vector inserted in-memory
@@ -127,14 +127,14 @@ Labels, property keys, and vector indexes are all declared in the same `SchemaSe
      ──▶ CF_SCHEMA: labels + keys + vector index persisted
          HNSW index: empty, loaded into memory
 
-[3]  tx = g.tx()
-     tx.g()
+[3]  txn = g.txn()
+     txn.g()
          .addV("doc")                              # ✓ "doc" declared
          .property("id", n)
          .property("title", "...")                 # ✓ "title" declared
          .property("embedding", Vector(v))         # ✓ "embedding" declared; HNSW updated
          .next()
-     tx.commit()
+     txn.commit()
      ──▶ CF_VERTICES + CF_VECTOR_WAL written; HNSW updated
          addV("unknown") or .property("new_key", ...) → StoreError::SchemaViolation
 
@@ -190,7 +190,7 @@ after ingestion completes.
      # commit() triggers a two-phase build:
      #   Phase 1 (fast CAS): CF_SCHEMA updated → state=Building
      #   Phase 2 (slow): CF_VERTICES scan → batch HNSW insert
-     #                   WAL catch-up: any TxSession writes during scan included
+     #                   WAL catch-up: any TxnSession writes during scan included
      #                   CF_SCHEMA updated → state=Ready
      ──▶ CF_SCHEMA: vector index persisted (state=Ready)
          HNSW: all pre-existing FloatVector values indexed
@@ -213,7 +213,7 @@ g = Graph(path)
 > `commit()` on sessions that only add labels or property keys (those complete in milliseconds).
 > Use `add_vector_index_async` (v0.3) to avoid blocking the caller.
 >
-> **Concurrent writes during the build:** TxSession writes using **already-registered**
+> **Concurrent writes during the build:** TxnSession writes using **already-registered**
 > labels and property keys are not blocked — WAL catch-up handles them. However, the first
 > write that would trigger **auto-registration of a new label or property key** during the
 > build will encounter a schema CAS conflict (`StoreError::Conflict`) and must be retried
@@ -272,7 +272,7 @@ no separate schema step after load.
 g = Graph(path, options=GraphOptions(mode=SchemaMode.STRICT))
     ├── CF_SCHEMA loaded → mode=Strict + labels/keys + vector index config
     ├── HNSW snapshot loaded (written during bulk load commit — recent)
-    ├── CF_VECTOR_WAL replayed (only TxSession writes since bulk load; fast on first reopen)
+    ├── CF_VECTOR_WAL replayed (only TxnSession writes since bulk load; fast on first reopen)
     └── Index ready
 ```
 
@@ -307,12 +307,12 @@ values already exist in CF_VERTICES. You want to enable ANN search retroactively
      # commit() two-phase build:
      #   Phase 1 (fast, ~ms): CF_SCHEMA → state=Building
      #   Phase 2 (slow, minutes): CF_VERTICES full scan → batch HNSW insert
-     #                            WAL catch-up: TxSession writes during scan included
+     #                            WAL catch-up: TxnSession writes during scan included
      #                            CF_SCHEMA → state=Ready
      ──▶ CF_SCHEMA: index entry persisted (state=Ready)
          HNSW: all pre-existing + concurrent writes indexed
 
-     TxSession writes continue unblocked during Phase 2:
+     TxnSession writes continue unblocked during Phase 2:
        ├── Each commit appends to CF_VECTOR_WAL
        └── After scan: WAL catch-up replays those entries into the new HNSW
            No writes lost. No writes blocked.
@@ -331,7 +331,7 @@ g = Graph(existing_path)
 
 > **Warning — blocking commit:** Same as Scenario 3: `commit()` with `add_vector_index`
 > on a populated graph blocks the caller for the full CF_VERTICES scan duration (minutes
-> to tens of minutes). In strict mode, concurrent TxSession writes to declared labels/keys
+> to tens of minutes). In strict mode, concurrent TxnSession writes to declared labels/keys
 > are never blocked — WAL catch-up handles them. Use `add_vector_index_async` (v0.3) to
 > avoid blocking.
 >
@@ -364,11 +364,11 @@ canary-test the new model before discarding the old one.
          Both "embedding" (v1) and "embedding_v2" (v2) indexes live in memory
 
 [2]  for vid, text in all_docs():
-         tx = g.tx()
-         tx.g().V(vid) \
+         txn = g.txn()
+         txn.g().V(vid) \
              .property("embedding_v2", Vector(new_model.encode(text))) \
              .next()
-         tx.commit()
+         txn.commit()
      ──▶ CF_VERTICES: "embedding_v2" values written per vertex
          CF_VECTOR_WAL: WAL entry per write
          HNSW v2: vector inserted incrementally
@@ -411,7 +411,7 @@ g = Graph(path)
 ## Scenario 7: Crash recovery — SIGKILL between commits
 
 **When**: the process was killed (SIGKILL, OOM, power loss) at any point. Every
-committed `TxSession` is durable — the WAL entry is in `CF_VECTOR_WAL`. Only the
+committed `TxnSession` is durable — the WAL entry is in `CF_VECTOR_WAL`. Only the
 in-memory HNSW state may be stale or absent.
 
 Three distinct crash paths, each with different recovery behavior.
@@ -429,7 +429,7 @@ Three distinct crash paths, each with different recovery behavior.
 
      ─── SIGKILL ────────────────────────────────────────────────
      In-memory HNSW state lost. CF_VECTOR_WAL is intact —
-     every TxSession::commit() wrote its WAL entry durably before
+     every TxnSession::commit() wrote its WAL entry durably before
      updating the in-memory index.
 
 [1]  g = Graph(path)
@@ -458,7 +458,7 @@ Three distinct crash paths, each with different recovery behavior.
          slower than WAL replay but unaffected by WAL depth or memory
 ```
 
-**Key invariant**: every `TxSession.commit()` that returned `Ok` wrote its
+**Key invariant**: every `TxnSession.commit()` that returned `Ok` wrote its
 `CF_VECTOR_WAL` entry in the same `WriteBatch` as the graph mutation — one
 `fsync` covers both. No committed vector is permanently lost; only the in-memory
 HNSW state needs to be reconstructed. See `design_vector_wal.md` for the full

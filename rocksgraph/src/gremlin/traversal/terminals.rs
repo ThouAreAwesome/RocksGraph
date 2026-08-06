@@ -89,7 +89,7 @@ impl PlanAppender for ReadTraversal<'_> {
 
 // ── WriteTraversal ────────────────────────────────────────────────────────
 
-/// A read-write traversal bound to a [`TxSession`](crate::api::TxSession) context.
+/// A read-write traversal bound to a [`TxnSession`](crate::api::TxnSession) context.
 pub struct WriteTraversal<'s> {
     plan: LogicalPlan,
     ctx: &'s mut dyn GraphCtx,

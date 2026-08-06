@@ -15,7 +15,7 @@ from ._builder import (
     SchemaSession,
     T,
     Traversal,
-    TxSession,
+    TxnSession,
     Vertex,
     __,
 )
@@ -57,7 +57,7 @@ __all__ = [
     "Traversal",
     "GraphTraversal",
     "ReadSession",
-    "TxSession",
+    "TxnSession",
     "SchemaSession",
     "BulkLoader",
     "BulkVertex",

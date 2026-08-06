@@ -218,14 +218,14 @@ mod tests {
             mgmt.add_vertex_label(VERTEX_LABEL).add_edge_label(EDGE_LABEL);
             mgmt.commit().unwrap();
         }
-        let mut tx = graph.begin();
-        tx.g().addV(VERTEX_LABEL).property("id", 1i64).next().unwrap();
-        tx.g().addV(VERTEX_LABEL).property("id", 2i64).next().unwrap();
-        tx.g().addV(VERTEX_LABEL).property("id", 3i64).next().unwrap();
-        tx.g().addE(EDGE_LABEL).from(1).to(2).next().unwrap();
-        tx.g().addE(EDGE_LABEL).from(2).to(3).next().unwrap();
-        tx.g().addE(EDGE_LABEL).from(3).to(1).next().unwrap();
-        tx.commit().unwrap();
+        let mut txn = graph.begin();
+        txn.g().addV(VERTEX_LABEL).property("id", 1i64).next().unwrap();
+        txn.g().addV(VERTEX_LABEL).property("id", 2i64).next().unwrap();
+        txn.g().addV(VERTEX_LABEL).property("id", 3i64).next().unwrap();
+        txn.g().addE(EDGE_LABEL).from(1).to(2).next().unwrap();
+        txn.g().addE(EDGE_LABEL).from(2).to(3).next().unwrap();
+        txn.g().addE(EDGE_LABEL).from(3).to(1).next().unwrap();
+        txn.commit().unwrap();
         assert!(verify_degree_integrity(&graph).is_ok());
     }
 
@@ -239,12 +239,12 @@ mod tests {
             mgmt.add_vertex_label(VERTEX_LABEL).add_edge_label(EDGE_LABEL);
             mgmt.commit().unwrap();
         }
-        let mut tx = graph.begin();
-        tx.g().addV(VERTEX_LABEL).property("id", 1i64).next().unwrap();
-        tx.g().addV(VERTEX_LABEL).property("id", 2i64).next().unwrap();
-        tx.g().addE(EDGE_LABEL).from(1).to(1).next().unwrap(); // self-loop
-        tx.g().addE(EDGE_LABEL).from(1).to(2).next().unwrap();
-        tx.commit().unwrap();
+        let mut txn = graph.begin();
+        txn.g().addV(VERTEX_LABEL).property("id", 1i64).next().unwrap();
+        txn.g().addV(VERTEX_LABEL).property("id", 2i64).next().unwrap();
+        txn.g().addE(EDGE_LABEL).from(1).to(1).next().unwrap(); // self-loop
+        txn.g().addE(EDGE_LABEL).from(1).to(2).next().unwrap();
+        txn.commit().unwrap();
         assert!(verify_degree_integrity(&graph).is_ok());
     }
 }

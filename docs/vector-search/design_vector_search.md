@@ -158,7 +158,7 @@ Pattern B gives the best fit for RocksGraph:
                   └──────────────────────┬───────────────────┘
                                          │
                ┌─────────────────────────┴──────────────────────────────┐
-               │  TxSession::commit                                     │
+               │  TxnSession::commit                                     │
                │                                                        │
                │  ① WriteBatch: graph mutations + WAL  (one fsync)      │
                │  ② index.insert / index.remove  (in-memory, after ①)  │
@@ -239,7 +239,7 @@ Rationale:
 from rocksgraph import Graph, Vector
 
 embedding = model.encode("hello world")   # numpy array or list[float]
-tx.g().addV("doc") \
+txn.g().addV("doc") \
     .property("id", 1) \
     .property("title", "hello world") \
     .property("embedding", Vector(embedding)) \
@@ -254,7 +254,7 @@ It raises `TypeError` if elements cannot be cast to `f32`.
 ```typescript
 import { Graph, Vector } from "rocksgraph";
 
-tx.g().addV("doc")
+txn.g().addV("doc")
     .property("id", 1)
     .property("embedding", new Vector(Float32Array.from(embedding)))
     .next();
@@ -429,7 +429,7 @@ usearch crate (HNSW, O(log N) search, WAL + snapshot persistence). RaBitQ compre
 
 **Write-lock latency note (v0.1)**: `BruteForceIndex::search` holds the `RwLock`
 read lock for the full linear scan — up to ~50ms at 100K × 1536 dims. A
-concurrent `TxSession::commit` blocks on the write lock for this duration after
+concurrent `TxnSession::commit` blocks on the write lock for this duration after
 its RocksDB fsync completes, causing a visible commit stall. Acceptable at
 prototyping scale; eliminated in v0.2 where HNSW search completes in <5ms.
 

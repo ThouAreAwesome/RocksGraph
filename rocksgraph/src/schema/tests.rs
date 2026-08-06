@@ -90,9 +90,9 @@ fn test_schema_mode_auto_implicit_writes_and_types() {
 
     // 1. Implicit write registers label and key on-the-fly
     {
-        let mut tx = graph.begin();
-        tx.g().addV("person").property("id", 1i64).property("name", "Alice").next().unwrap();
-        tx.commit().unwrap();
+        let mut txn = graph.begin();
+        txn.g().addV("person").property("id", 1i64).property("name", "Alice").next().unwrap();
+        txn.commit().unwrap();
     }
 
     {
@@ -105,18 +105,18 @@ fn test_schema_mode_auto_implicit_writes_and_types() {
 
     // 2. Mismatching property type is rejected at write time
     {
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
         // "name" was registered as String, so Int32 should fail
-        let err = tx.g().addV("person").property("id", 2i64).property("name", 123i32).next().unwrap_err();
+        let err = txn.g().addV("person").property("id", 2i64).property("name", 123i32).next().unwrap_err();
         assert!(matches!(err, StoreError::SchemaViolation(_)));
     }
 
-    // 3. Rollback recovery (aborted tx does not pollute the persisted schema)
+    // 3. Rollback recovery (aborted txn does not pollute the persisted schema)
     {
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
         // Resolve a new vertex label "animal" and prop key "species" inside the transaction
-        tx.g().addV("animal").property("id", 3i64).property("species", "cat").next().unwrap();
-        tx.rollback(); // Rollback!
+        txn.g().addV("animal").property("id", 3i64).property("species", "cat").next().unwrap();
+        txn.rollback(); // Rollback!
     }
 
     // Re-open graph from disk to verify database schema CF is clean
@@ -201,11 +201,11 @@ fn test_auto_mode_version_bumps_once_per_new_label() {
     let graph = Graph::open(dir.path()).unwrap();
     assert_eq!(graph.schema().read().version, 0);
     {
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
         // "id" is a reserved, pre-registered key, so this introduces exactly one new
         // thing: the vertex label "person".
-        tx.g().addV("person").property("id", 1i64).next().unwrap();
-        tx.commit().unwrap();
+        txn.g().addV("person").property("id", 1i64).next().unwrap();
+        txn.commit().unwrap();
     }
     assert_eq!(graph.schema().read().version, 1);
 }
@@ -221,8 +221,8 @@ fn test_schema_mode_strict_rejections() {
 
     // 1. Write with undeclared vertex label is rejected at compile time
     {
-        let mut tx = graph.begin();
-        let err = tx.g().addV("person").property("id", 1i64).next().unwrap_err();
+        let mut txn = graph.begin();
+        let err = txn.g().addV("person").property("id", 1i64).next().unwrap_err();
         assert!(matches!(err, StoreError::SchemaViolation(_)));
     }
 
@@ -235,32 +235,32 @@ fn test_schema_mode_strict_rejections() {
 
     // 2. Now writing declared vertex label and property works
     {
-        let mut tx = graph.begin();
-        tx.g().addV("person").property("id", 1i64).property("name", "Alice").next().unwrap();
-        tx.commit().unwrap();
+        let mut txn = graph.begin();
+        txn.g().addV("person").property("id", 1i64).property("name", "Alice").next().unwrap();
+        txn.commit().unwrap();
     }
 
     // 3. Write with undeclared property key is rejected
     {
-        let mut tx = graph.begin();
-        let err = tx.g().addV("person").property("id", 1i64).property("age", 30i32).next().unwrap_err();
+        let mut txn = graph.begin();
+        let err = txn.g().addV("person").property("id", 1i64).property("age", 30i32).next().unwrap_err();
         assert!(matches!(err, StoreError::SchemaViolation(_)));
     }
 
     // 4. Read query referencing unregistered label/key is rejected at compile time
     {
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
         // "animal" label not registered
-        let err = tx.g().V([]).hasLabel(["animal"]).next().unwrap_err();
+        let err = txn.g().V([]).hasLabel(["animal"]).next().unwrap_err();
         assert!(matches!(err, StoreError::SchemaViolation(_)));
 
         // "age" property key not registered
-        let err = tx.g().V([]).has("age", 30i32).next().unwrap_err();
+        let err = txn.g().V([]).has("age", 30i32).next().unwrap_err();
         assert!(matches!(err, StoreError::SchemaViolation(_)));
 
         // "purchased" edge label not registered -- the traversal-step (not just
         // hasLabel/has) read paths are gated the same way.
-        let err = tx.g().V([]).out(["purchased"]).next().unwrap_err();
+        let err = txn.g().V([]).out(["purchased"]).next().unwrap_err();
         assert!(matches!(err, StoreError::SchemaViolation(_)));
     }
 }
@@ -308,9 +308,9 @@ fn test_auto_mode_write_invalidates_concurrent_schema_management_session() {
     // A regular Auto-mode write races ahead and registers a brand-new label, bumping
     // `version` to 1.
     {
-        let mut tx = graph.begin();
-        tx.g().addV("person").property("id", 1i64).next().unwrap();
-        tx.commit().unwrap();
+        let mut txn = graph.begin();
+        txn.g().addV("person").property("id", 1i64).next().unwrap();
+        txn.commit().unwrap();
     }
     assert_eq!(graph.schema().read().version, 1);
 
@@ -327,18 +327,18 @@ fn test_auto_mode_unresolved_read_filters_yield_zero_results() {
     let dir = tempdir().unwrap();
     let graph = Graph::open(dir.path()).unwrap();
     {
-        let mut tx = graph.begin();
-        tx.g().addV("person").property("id", 1i64).next().unwrap();
-        tx.commit().unwrap();
+        let mut txn = graph.begin();
+        txn.g().addV("person").property("id", 1i64).next().unwrap();
+        txn.commit().unwrap();
     }
 
-    let mut tx = graph.begin();
+    let mut txn = graph.begin();
     // Never-registered edge label on a traversal step.
-    assert!(tx.g().V([1]).out(["never_registered"]).to_list().unwrap().is_empty());
+    assert!(txn.g().V([1]).out(["never_registered"]).to_list().unwrap().is_empty());
     // Never-registered vertex label on hasLabel.
-    assert!(tx.g().V([1]).hasLabel(["never_registered"]).to_list().unwrap().is_empty());
+    assert!(txn.g().V([1]).hasLabel(["never_registered"]).to_list().unwrap().is_empty());
     // Never-registered property key on has().
-    assert!(tx.g().V([1]).has("never_registered", 1i32).to_list().unwrap().is_empty());
+    assert!(txn.g().V([1]).has("never_registered", 1i32).to_list().unwrap().is_empty());
 }
 
 /// `LogicalGraph::set_property`'s type check (design doc §5a Challenge B) applies to edge
@@ -347,13 +347,13 @@ fn test_auto_mode_unresolved_read_filters_yield_zero_results() {
 fn test_edge_property_type_mismatch_rejected() {
     let dir = tempdir().unwrap();
     let graph = Graph::open(dir.path()).unwrap();
-    let mut tx = graph.begin();
-    tx.g().addV("person").property("id", 1i64).next().unwrap();
-    tx.g().addV("person").property("id", 2i64).next().unwrap();
-    tx.g().addE("knows").from(1).to(2).property("since", 2020i32).next().unwrap();
+    let mut txn = graph.begin();
+    txn.g().addV("person").property("id", 1i64).next().unwrap();
+    txn.g().addV("person").property("id", 2i64).next().unwrap();
+    txn.g().addE("knows").from(1).to(2).property("since", 2020i32).next().unwrap();
 
     // "since" was registered as Int32 on the edge above; a String now must be rejected.
-    let err = tx.g().addE("knows").from(1).to(2).property("since", "a long time").next().unwrap_err();
+    let err = txn.g().addE("knows").from(1).to(2).property("since", "a long time").next().unwrap_err();
     assert!(matches!(err, StoreError::SchemaViolation(_)));
 }
 
@@ -372,14 +372,14 @@ fn test_edge_property_type_mismatch_rejected() {
 /// whole suite.
 #[test]
 fn test_concurrent_auto_mode_writes_do_not_starve_schema_lock() {
-    use crate::{api::TxSession, gremlin::traversal::__};
+    use crate::{api::TxnSession, gremlin::traversal::__};
 
     // Mirrors `bench_write`'s upsert pattern: a `.coalesce([check, addV/addE])` so build_step
     // resolves names for *both* branches every call, plus an `outE().where(otherV().hasId(..))`
     // edge check, which together touch the schema lock several times per transaction (a mix
     // of read-side lookups and write-side `resolve_*` calls).
-    fn upsert_vertex(tx: &mut TxSession, vertex_id: i64) {
-        tx.g()
+    fn upsert_vertex(txn: &mut TxnSession, vertex_id: i64) {
+        txn.g()
             .V([vertex_id])
             .count()
             .coalesce([
@@ -389,8 +389,8 @@ fn test_concurrent_auto_mode_writes_do_not_starve_schema_lock() {
             .next()
             .unwrap();
     }
-    fn upsert_edge(tx: &mut TxSession, src: i64, dst: i64) {
-        tx.g()
+    fn upsert_edge(txn: &mut TxnSession, src: i64, dst: i64) {
+        txn.g()
             .V([src])
             .coalesce([
                 __().outE(["knows"]).r#where(__().otherV().hasId([dst])).label(),
@@ -421,11 +421,11 @@ fn test_concurrent_auto_mode_writes_do_not_starve_schema_lock() {
                         // `test_management_explicit_declaration_and_cas`) exactly like
                         // `bench_write`'s retry loop does.
                         for attempt in 0..5 {
-                            let mut tx = graph.begin();
-                            upsert_vertex(&mut tx, src);
-                            upsert_vertex(&mut tx, dst);
-                            upsert_edge(&mut tx, src, dst);
-                            if tx.commit().is_ok() || attempt == 4 {
+                            let mut txn = graph.begin();
+                            upsert_vertex(&mut txn, src);
+                            upsert_vertex(&mut txn, dst);
+                            upsert_edge(&mut txn, src, dst);
+                            if txn.commit().is_ok() || attempt == 4 {
                                 break;
                             }
                         }
@@ -476,10 +476,10 @@ fn test_concurrent_auto_mode_complex_distinct_schemas() {
                         // outer 60-second timeout to bound total runtime.
                         let mut attempt: u64 = 0;
                         loop {
-                            let mut tx = graph.begin();
+                            let mut txn = graph.begin();
 
                             // 1. Add vertices with unique labels and properties
-                            tx.g()
+                            txn.g()
                                 .addV(&vertex_label)
                                 .property("id", src_id)
                                 .property(&prop_name, format!("name_{}", src_id))
@@ -487,7 +487,7 @@ fn test_concurrent_auto_mode_complex_distinct_schemas() {
                                 .next()
                                 .unwrap();
 
-                            tx.g()
+                            txn.g()
                                 .addV(&vertex_label)
                                 .property("id", dst_id)
                                 .property(&prop_name, format!("name_{}", dst_id))
@@ -496,9 +496,15 @@ fn test_concurrent_auto_mode_complex_distinct_schemas() {
                                 .unwrap();
 
                             // 2. Connect with unique edge label
-                            tx.g().addE(&edge_label).from(src_id).to(dst_id).property("weight", 1.5f64).next().unwrap();
+                            txn.g()
+                                .addE(&edge_label)
+                                .from(src_id)
+                                .to(dst_id)
+                                .property("weight", 1.5f64)
+                                .next()
+                                .unwrap();
 
-                            if tx.commit().is_ok() {
+                            if txn.commit().is_ok() {
                                 break;
                             }
                             // Randomised exponential backoff: 1–10 ms per attempt, capped
@@ -563,9 +569,9 @@ fn test_schema_persistence_across_restart() {
             .add_property_key("age", DataType::Int32);
         mgmt.commit().unwrap();
 
-        let mut tx = graph.begin();
-        tx.g().addV("person").property("id", 1i64).property("name", "alice").property("age", 30i32).next().unwrap();
-        tx.commit().unwrap();
+        let mut txn = graph.begin();
+        txn.g().addV("person").property("id", 1i64).property("name", "alice").property("age", 30i32).next().unwrap();
+        txn.commit().unwrap();
         graph.close().unwrap();
     }
 
@@ -584,8 +590,8 @@ fn test_schema_persistence_across_restart() {
         }
 
         // Verify Strict mode is still enforced (persisted).
-        let mut tx = graph.begin();
-        let result = tx.g().addV("undeclared").property("id", 99i64).next();
+        let mut txn = graph.begin();
+        let result = txn.g().addV("undeclared").property("id", 99i64).next();
         assert!(result.is_err(), "undeclared label in (persisted) Strict mode should error");
 
         // Verify persisted_* sets are populated after restart.
@@ -686,8 +692,8 @@ fn test_set_schema_mode_both_directions() {
 
     // Now in Strict: undeclared label must be rejected.
     {
-        let mut tx = graph.begin();
-        let result = tx.g().addV("ghost").property("id", 1i64).next();
+        let mut txn = graph.begin();
+        let result = txn.g().addV("ghost").property("id", 1i64).next();
         assert!(
             matches!(result, Err(StoreError::SchemaViolation(_))),
             "Expected SchemaViolation in Strict mode, got: {:?}",
@@ -704,9 +710,9 @@ fn test_set_schema_mode_both_directions() {
 
     // Now in Auto: undeclared label auto-registers.
     {
-        let mut tx = graph.begin();
-        tx.g().addV("ghost").property("id", 1i64).next().unwrap();
-        tx.commit().unwrap();
+        let mut txn = graph.begin();
+        txn.g().addV("ghost").property("id", 1i64).next().unwrap();
+        txn.commit().unwrap();
     }
 
     // Verify "ghost" was auto-registered.
@@ -726,9 +732,9 @@ fn test_graph_close_with_clones() {
 
     // Populate some data.
     {
-        let mut tx = graph.begin();
-        tx.g().addV("person").property("id", 1i64).next().unwrap();
-        tx.commit().unwrap();
+        let mut txn = graph.begin();
+        txn.g().addV("person").property("id", 1i64).next().unwrap();
+        txn.commit().unwrap();
     }
 
     // Clone the graph, close original. Clone must still work.

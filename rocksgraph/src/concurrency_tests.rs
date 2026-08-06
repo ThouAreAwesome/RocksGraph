@@ -23,9 +23,9 @@ fn test_hotspot_contention_preserves_all_updates() {
         mgmt.add_vertex_label("System").add_property_key("counter", DataType::Int64);
         mgmt.commit().unwrap();
 
-        let mut tx = graph.begin();
-        tx.g().addV("System").property("id", 0i64).property("counter", 0i64).next().unwrap();
-        tx.commit().unwrap();
+        let mut txn = graph.begin();
+        txn.g().addV("System").property("id", 0i64).property("counter", 0i64).next().unwrap();
+        txn.commit().unwrap();
     }
 
     let graph_clone = graph.clone();
@@ -47,16 +47,16 @@ fn test_hotspot_contention_preserves_all_updates() {
                     for i in 0..ITERATIONS {
                         let mut success = false;
                         for _attempt in 0..60 {
-                            let mut tx = graph.begin();
-                            let val = tx.g().V([0i64]).values(["counter"]).next().unwrap();
+                            let mut txn = graph.begin();
+                            let val = txn.g().V([0i64]).values(["counter"]).next().unwrap();
                             let current = match val {
                                 Some(Value::Int64(c)) => c,
                                 _ => panic!("expected int64 counter"),
                             };
 
-                            tx.g().V([0i64]).property("counter", current + 1).next().unwrap();
+                            txn.g().V([0i64]).property("counter", current + 1).next().unwrap();
 
-                            match tx.commit() {
+                            match txn.commit() {
                                 Ok(_) => {
                                     local_successes += 1;
                                     success = true;
@@ -94,8 +94,8 @@ fn test_hotspot_contention_preserves_all_updates() {
         .expect("hotspot contention test timed out (deadlock or starvation)");
 
     // Verification
-    let mut tx = graph.begin();
-    let final_val = tx.g().V([0i64]).values(["counter"]).next().unwrap();
+    let mut txn = graph.begin();
+    let final_val = txn.g().V([0i64]).values(["counter"]).next().unwrap();
     let final_counter = match final_val {
         Some(Value::Int64(c)) => c,
         _ => panic!("expected int64 final counter"),
@@ -131,19 +131,19 @@ fn test_disjoint_writes_never_conflict() {
                     let src_id = (t * 10000 + i) as i64;
                     let dst_id = (t * 10000 + 5000 + i) as i64;
 
-                    let mut tx = graph.begin();
+                    let mut txn = graph.begin();
 
-                    tx.g().addV("User").property("id", src_id).next().unwrap();
+                    txn.g().addV("User").property("id", src_id).next().unwrap();
 
-                    tx.g().addV("User").property("id", dst_id).next().unwrap();
+                    txn.g().addV("User").property("id", dst_id).next().unwrap();
 
-                    tx.g().addE("Connects").from(src_id).to(dst_id).property("weight", 0.5f64).next().unwrap();
+                    txn.g().addE("Connects").from(src_id).to(dst_id).property("weight", 0.5f64).next().unwrap();
 
                     // Disjoint writes should commit successfully on the first attempt with zero
                     // conflicts. Match explicitly rather than a generic `.expect()` so a failure
                     // for any *other* reason doesn't get mislabeled as the conflict this test is
                     // specifically checking for.
-                    match tx.commit() {
+                    match txn.commit() {
                         Ok(_) => {}
                         Err(StoreError::Conflict) => {
                             panic!(

@@ -4,9 +4,9 @@ from rocksgraph import Graph, Int32, Int64, UInt16, Float32, Float64, Uuid
 
 def assert_roundtrip(graph, key, value, checker=None):
     """Write a vertex with property(key, value), commit, read it back."""
-    tx = graph.begin()
-    addv(tx, "test", **{key: value})
-    tx.commit()
+    txn = graph.begin()
+    addv(txn, "test", **{key: value})
+    txn.commit()
 
     rs = graph.read()
     results = rs.g().V().hasLabel("test").values(key).to_list()
@@ -86,20 +86,20 @@ class TestHasExistence:
     """§5: has("key") — property existence check."""
 
     def test_has_key_matches_vertex_with_property(self, graph):
-        tx = graph.begin()
-        addv(tx, "user", email="a@b.com")
-        addv(tx, "user")  # no email
-        tx.commit()
+        txn = graph.begin()
+        addv(txn, "user", email="a@b.com")
+        addv(txn, "user")  # no email
+        txn.commit()
 
         rs = graph.read()
         with_email = rs.g().V().has("email").count().to_list()
         assert with_email == [1]
 
     def test_has_key_does_not_match_vertex_without_property(self, graph):
-        tx = graph.begin()
-        addv(tx, "user", email="a@b.com")
-        addv(tx, "user")
-        tx.commit()
+        txn = graph.begin()
+        addv(txn, "user", email="a@b.com")
+        addv(txn, "user")
+        txn.commit()
 
         rs = graph.read()
         total = rs.g().V().count().to_list()

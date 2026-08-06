@@ -222,7 +222,7 @@ fn labelonly_corrupt_data_on_missing_vertex() {
     assert!(matches!(err, Err(StoreError::CorruptData(_))));
 }
 
-// 5. Edge loaded (not created) in this tx, then mutated, commits with
+// 5. Edge loaded (not created) in this txn, then mutated, commits with
 //    correct labels on *both* physical rows.
 
 #[test]
@@ -306,13 +306,13 @@ fn labelonly_multihop_label_correct() {
     base.add_edge(&ek2.out_key()).unwrap();
     base.commit().unwrap();
 
-    let mut tx = ctx(&store);
-    let hop1 = get_adjacent_edges_test(&mut tx, a, Direction::OUT, Some(4), None, None);
+    let mut txn = ctx(&store);
+    let hop1 = get_adjacent_edges_test(&mut txn, a, Direction::OUT, Some(4), None, None);
     assert_eq!(hop1.len(), 1);
-    let hop2 = get_adjacent_edges_test(&mut tx, b, Direction::OUT, Some(4), None, None);
+    let hop2 = get_adjacent_edges_test(&mut txn, b, Direction::OUT, Some(4), None, None);
     assert_eq!(hop2.len(), 1);
 
-    let lbl = tx.get_value(&CanonicalKey::Vertex(c), LABEL_KEY_ID).unwrap();
+    let lbl = txn.get_value(&CanonicalKey::Vertex(c), LABEL_KEY_ID).unwrap();
     assert_eq!(lbl, Some(Primitive::Int32(3)));
 }
 
