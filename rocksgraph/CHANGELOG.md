@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-08
+
+### Added
+- **HNSW vector index** (via usearch): `add_vector_index()` schema declaration, `.nearest()` / `.similarity()` accelerated with approximate KNN search
+- **Vector WAL**: crash-consistent durability for vector index mutations; auto-replay on open; GC on close
+- **RYOW (Read-Your-Own-Writes)**: pending vector operations merged into `.nearest()` results within a transaction
+- **IndexManager session**: `graph.index_manager()` for `rebuild()`, `save()`, `save_all()` operations — index maintenance decoupled from Graph
+- **ExecutionOptions**: batch size configuration (`scan_vertices_batch_size`, `scan_edges_batch_size`, `get_adjacent_edges_batch_size`) via `GraphOptions.execution` or per-session `with_execution_options()`
+- **Python API parity**: `.g()` replaces `.traversal()`, `.begin()` replaces `.tx()`, `Graph.open_with_options()` with `GraphOptions`/`RocksOptions`/`IndexOptions`, `SchemaSession`, `BulkLoader`, `IndexManager` fully bound
+- **VectorIndexConfig** and **IndexOptions**: per-index and global memory limit enforcement with `PerIndexOptions` overrides
+- Python type stubs (`__init__.pyi`) for IDE autocompletion
+
+### Changed
+- `edge_label_names()` removed; use `.E([]).label().dedup().to_list()` instead
+- `set_batch_size()` removed from `ReadSession`/`TxSession`; use `ExecutionOptions` via `with_execution_options()`
+- `VectorEntityType::Edge` returns explicit `Unsupported` error for unsupported edge rebuild
+
+### Fixed
+- `SstBulkLoader` removed from public API; use `Graph::open_bulk_loader()` instead
+
 ## [0.1.0] — 2026-07
 
 ### Added
@@ -40,5 +60,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `parking_lot` dependencies, which were unused dead weight left over from a
   never-implemented `SharedStoreCache`
 
-[Unreleased]: https://github.com/ThouAreAwesome/RocksGraph/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ThouAreAwesome/RocksGraph/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/ThouAreAwesome/RocksGraph/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ThouAreAwesome/RocksGraph/releases/tag/v0.1.0

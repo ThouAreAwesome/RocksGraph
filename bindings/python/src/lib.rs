@@ -9,7 +9,7 @@ use rocksgraph::{
         AnnAlgorithm, DataType, DistanceMetric, EdgeMode, GraphOptions, HnswConfig, IndexOptions, PerIndexOptions,
         Quantization, SchemaMode, SchemaSession, VectorEntityType, VectorIndexConfig, VectorIndexLimit,
     },
-    ExecutionOptions, Graph, IndexManager, Primitive, ReadSession, RocksOptions, TxnSession, Value,
+    Graph, IndexManager, Primitive, ReadSession, RocksOptions, TxnSession, Value,
 };
 use smol_str::SmolStr;
 use std::collections::HashMap;
