@@ -8,7 +8,7 @@
 /// Controls batch sizes for iterator scans and query execution bounds.
 /// Can be configured globally on [`GraphOptions`](crate::GraphOptions) or overridden per session
 /// via [`ReadSession::with_execution_options`](crate::ReadSession::with_execution_options)
-/// and [`TxSession::with_execution_options`](crate::TxSession::with_execution_options).
+/// and [`TxnSession::with_execution_options`](crate::TxnSession::with_execution_options).
 ///
 /// # Example
 /// ```

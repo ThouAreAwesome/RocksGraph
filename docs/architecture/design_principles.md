@@ -79,7 +79,7 @@ work-stealing queues, no intra-query parallelism.
 
 **Across queries, concurrency is at the session boundary.** A `Graph` handle is cheaply
 cloneable (`Arc` internally) and safe to share across threads. Each thread creates its
-own `ReadSession` (pinned to a RocksDB snapshot) or `TxSession` (an OCC transaction) and
+own `ReadSession` (pinned to a RocksDB snapshot) or `TxnSession` (an OCC transaction) and
 drives it independently. Multiple sessions can read or write concurrently against the
 same `RocksStorage`; RocksDB handles the I/O concurrency internally.
 
@@ -104,7 +104,7 @@ encodes it in the type system rather than leaving it as a runtime convention.
 ┌─── Thread pool (N workers) ──────────────────────────────────────────┐
 │                                                                      │
 │  ┌─ Thread A ──────────────┐  ┌─ Thread B ──────────────┐           │
-│  │ ReadSession              │  │ TxSession                │           │
+│  │ ReadSession              │  │ TxnSession                │           │
 │  │  Rc<PhysicalPlan>        │  │  Rc<PhysicalPlan>        │           │
 │  │  Rc<Traverser> tree      │  │  Rc<Traverser> tree      │           │
 │  │  RefCell<BufferedStep>   │  │  RefCell<BufferedStep>   │           │

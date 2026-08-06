@@ -5,7 +5,7 @@
 mod integration_test {
 
     use crate::{
-        api::{Graph, TxSession},
+        api::{Graph, TxnSession},
         gremlin::{
             traversal::{TraversalBuilder, __},
             value::{eq, ne, Value},
@@ -16,20 +16,20 @@ mod integration_test {
 
     /// Populate the TinkerPop Modern Graph into an open transaction.
     /// Caller is responsible for committing.
-    pub fn create_tinkerpop_modern_graph(tx: &mut TxSession) -> Result<(), StoreError> {
-        tx.g().addV("person").property("id", 1i64).property("name", "marko").property("age", 29i32).next()?;
-        tx.g().addV("person").property("id", 2i64).property("name", "vadas").property("age", 27i32).next()?;
-        tx.g().addV("software").property("id", 3i64).property("name", "lop").property("lang", "java").next()?;
-        tx.g().addV("person").property("id", 4i64).property("name", "josh").property("age", 32i32).next()?;
-        tx.g().addV("software").property("id", 5i64).property("name", "ripple").property("lang", "java").next()?;
-        tx.g().addV("person").property("id", 6i64).property("name", "peter").property("age", 35i32).next()?;
+    pub fn create_tinkerpop_modern_graph(txn: &mut TxnSession) -> Result<(), StoreError> {
+        txn.g().addV("person").property("id", 1i64).property("name", "marko").property("age", 29i32).next()?;
+        txn.g().addV("person").property("id", 2i64).property("name", "vadas").property("age", 27i32).next()?;
+        txn.g().addV("software").property("id", 3i64).property("name", "lop").property("lang", "java").next()?;
+        txn.g().addV("person").property("id", 4i64).property("name", "josh").property("age", 32i32).next()?;
+        txn.g().addV("software").property("id", 5i64).property("name", "ripple").property("lang", "java").next()?;
+        txn.g().addV("person").property("id", 6i64).property("name", "peter").property("age", 35i32).next()?;
 
-        tx.g().addE("knows").from(1).to(2).property("weight", 0.5f64).next()?;
-        tx.g().addE("knows").from(1).to(4).property("weight", 1.0f64).next()?;
-        tx.g().addE("created").from(1).to(3).property("weight", 0.4f64).next()?;
-        tx.g().addE("created").from(4).to(5).property("weight", 1.0f64).next()?;
-        tx.g().addE("created").from(4).to(3).property("weight", 0.4f64).next()?;
-        tx.g().addE("created").from(6).to(3).property("weight", 0.2f64).next()?;
+        txn.g().addE("knows").from(1).to(2).property("weight", 0.5f64).next()?;
+        txn.g().addE("knows").from(1).to(4).property("weight", 1.0f64).next()?;
+        txn.g().addE("created").from(1).to(3).property("weight", 0.4f64).next()?;
+        txn.g().addE("created").from(4).to(5).property("weight", 1.0f64).next()?;
+        txn.g().addE("created").from(4).to(3).property("weight", 0.4f64).next()?;
+        txn.g().addE("created").from(6).to(3).property("weight", 0.2f64).next()?;
         Ok(())
     }
 
@@ -49,9 +49,9 @@ mod integration_test {
             schema.register_edge_label("created").unwrap(); // 4
             schema.register_edge_label("friends").unwrap(); // 5
         }
-        let mut tx = graph.begin();
-        create_tinkerpop_modern_graph(&mut tx).unwrap();
-        tx.commit().unwrap();
+        let mut txn = graph.begin();
+        create_tinkerpop_modern_graph(&mut txn).unwrap();
+        txn.commit().unwrap();
         // Leak the tempdir so the DB path remains valid for the test.
         // In practice, `Graph` outlives `dir` here because `dir` is returned
         // first from the tempdir but we need the path to stay valid.
@@ -63,21 +63,21 @@ mod integration_test {
     #[test]
     fn test_tinkerpop_modern_vertex_edge_count() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
-        let count = tx.g().V([1, 2, 3, 4, 5, 6]).count().next().unwrap().unwrap();
+        let count = txn.g().V([1, 2, 3, 4, 5, 6]).count().next().unwrap().unwrap();
         assert_eq!(count, Value::Int64(6));
 
-        let ct = tx.g().V([1, 2, 3, 4, 5, 6]).outE(["knows", "created", "friends"]).count().next().unwrap().unwrap();
+        let ct = txn.g().V([1, 2, 3, 4, 5, 6]).outE(["knows", "created", "friends"]).count().next().unwrap().unwrap();
         assert_eq!(ct, Value::Int64(6));
 
-        let ct = tx.g().V([1, 2, 3, 4, 5, 6]).inE(["knows", "created", "friends"]).count().next().unwrap().unwrap();
+        let ct = txn.g().V([1, 2, 3, 4, 5, 6]).inE(["knows", "created", "friends"]).count().next().unwrap().unwrap();
         assert_eq!(ct, Value::Int64(6));
 
-        let ct = tx.g().V([1, 2, 3, 4, 5, 6]).both(["knows", "created", "friends"]).count().next().unwrap().unwrap();
+        let ct = txn.g().V([1, 2, 3, 4, 5, 6]).both(["knows", "created", "friends"]).count().next().unwrap().unwrap();
         assert_eq!(ct, Value::Int64(12));
 
-        let ct = tx
+        let ct = txn
             .g()
             .V([])
             .hasId([1, 2, 3, 4, 5, 6])
@@ -90,7 +90,7 @@ mod integration_test {
             .unwrap();
         assert_eq!(ct, Value::Int64(4));
 
-        let ct = tx
+        let ct = txn
             .g()
             .V([])
             .hasId([1, 2, 3, 4, 5, 6])
@@ -104,7 +104,7 @@ mod integration_test {
             .unwrap();
         assert_eq!(ct, Value::Int64(4));
 
-        let ct = tx
+        let ct = txn
             .g()
             .V([])
             .hasId([1, 2, 3, 4, 5, 6])
@@ -119,7 +119,7 @@ mod integration_test {
             .unwrap();
         assert_eq!(ct, Value::Int64(3));
 
-        let ct = tx
+        let ct = txn
             .g()
             .V([])
             .hasId([1, 2, 3, 4, 5, 6])
@@ -133,7 +133,7 @@ mod integration_test {
             .unwrap();
         assert_eq!(ct, Value::Int64(2));
 
-        let ct = tx
+        let ct = txn
             .g()
             .V([])
             .hasId([1, 2, 3, 4, 5, 6])
@@ -150,25 +150,25 @@ mod integration_test {
     #[test]
     fn test_tinkerpop_modern_vertex_properties() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
         let ct =
-            tx.g().V([]).hasId([1, 2, 3, 4, 5, 6]).values(["age", "name", "lang"]).count().next().unwrap().unwrap();
+            txn.g().V([]).hasId([1, 2, 3, 4, 5, 6]).values(["age", "name", "lang"]).count().next().unwrap().unwrap();
         assert_eq!(ct, Value::Int64(12));
     }
 
     #[test]
     fn test_tinkerpop_modern_has_label() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
-        let ct = tx.g().V([]).hasId([1, 2, 3, 4, 5, 6]).hasLabel(["person"]).count().next().unwrap().unwrap();
+        let ct = txn.g().V([]).hasId([1, 2, 3, 4, 5, 6]).hasLabel(["person"]).count().next().unwrap().unwrap();
         assert_eq!(ct, Value::Int64(4));
 
-        let ct = tx.g().V([]).hasId([1, 2, 3, 4, 5, 6]).hasLabel(["software"]).count().next().unwrap().unwrap();
+        let ct = txn.g().V([]).hasId([1, 2, 3, 4, 5, 6]).hasLabel(["software"]).count().next().unwrap().unwrap();
         assert_eq!(ct, Value::Int64(2));
 
-        let ct = tx
+        let ct = txn
             .g()
             .V([])
             .hasId([1, 2, 3, 4, 5, 6])
@@ -185,9 +185,9 @@ mod integration_test {
     #[test]
     fn test_tinkerpop_modern_dedup() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
-        let ct = tx
+        let ct = txn
             .g()
             .V([])
             .hasId([1, 2, 3, 4, 5, 6])
@@ -199,7 +199,7 @@ mod integration_test {
             .unwrap();
         assert_eq!(ct, Value::Int64(4));
 
-        let ct = tx
+        let ct = txn
             .g()
             .V([])
             .hasId([1, 2, 3, 4, 5, 6])
@@ -212,7 +212,7 @@ mod integration_test {
             .unwrap();
         assert_eq!(ct, Value::Int64(2));
 
-        let ct = tx
+        let ct = txn
             .g()
             .V([])
             .hasId([1, 2, 3, 4, 5, 6])
@@ -230,9 +230,9 @@ mod integration_test {
     #[test]
     fn test_tinkerpop_modern_union() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
-        let ct = tx
+        let ct = txn
             .g()
             .V([])
             .hasId([1, 2, 3, 4, 5, 6])
@@ -248,9 +248,9 @@ mod integration_test {
     #[test]
     fn test_tinkerpop_modern_path_step() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
-        let results = tx.g().V([1]).bothE(["knows", "created", "friends"]).otherV().path().to_list().unwrap();
+        let results = txn.g().V([1]).bothE(["knows", "created", "friends"]).otherV().path().to_list().unwrap();
 
         assert_eq!(results.len(), 3);
         for res in results.iter() {
@@ -270,9 +270,9 @@ mod integration_test {
     #[test]
     fn test_tinkerpop_modern_to_list_step() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
-        let name_list = tx.g().V([1]).out(["knows", "created", "friends"]).values(["name"]).to_list().unwrap();
+        let name_list = txn.g().V([1]).out(["knows", "created", "friends"]).values(["name"]).to_list().unwrap();
 
         let mut names = Vec::new();
         for v in name_list.iter() {
@@ -289,28 +289,28 @@ mod integration_test {
     #[test]
     fn test_values_id_label_property_distinction() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
         // id() / label() — dedicated extraction steps
-        let id_val = tx.g().V([1]).id().next().unwrap().unwrap();
+        let id_val = txn.g().V([1]).id().next().unwrap().unwrap();
         assert_eq!(id_val, Value::Int64(1));
 
-        let label_val = tx.g().V([1]).label().next().unwrap().unwrap();
+        let label_val = txn.g().V([1]).label().next().unwrap().unwrap();
         assert_eq!(label_val, Value::String("person".to_string()));
 
         // plain property key → returns the stored scalar
-        let name_val = tx.g().V([1]).values(["name"]).next().unwrap().unwrap();
+        let name_val = txn.g().V([1]).values(["name"]).next().unwrap().unwrap();
         assert_eq!(name_val, Value::String("marko".to_string()));
 
         // "id"/"label" are reserved — values()/properties() reject them, must use
         // id()/label() instead.
-        assert!(tx.g().V([1]).values(["id"]).next().is_err());
-        assert!(tx.g().V([1]).values(["label"]).next().is_err());
-        assert!(tx.g().V([1]).properties(["id"]).next().is_err());
-        assert!(tx.g().V([1]).properties(["label"]).next().is_err());
+        assert!(txn.g().V([1]).values(["id"]).next().is_err());
+        assert!(txn.g().V([1]).values(["label"]).next().is_err());
+        assert!(txn.g().V([1]).properties(["id"]).next().is_err());
+        assert!(txn.g().V([1]).properties(["label"]).next().is_err());
 
         // .properties() returns Property elements for user-defined keys only
-        let prop_val = tx.g().V([1]).properties(["name"]).next().unwrap().unwrap();
+        let prop_val = txn.g().V([1]).properties(["name"]).next().unwrap().unwrap();
         if let Value::Property(p) = prop_val {
             assert_eq!(p.key, "name");
             assert_eq!(*p.value, Value::String("marko".to_string()));
@@ -319,43 +319,43 @@ mod integration_test {
         }
 
         // .hasId(n) filters by vertex id (routes through HasIdStep)
-        let ct = tx.g().V([]).hasId([1, 2, 3]).hasId([1i64]).count().next().unwrap().unwrap();
+        let ct = txn.g().V([]).hasId([1, 2, 3]).hasId([1i64]).count().next().unwrap().unwrap();
         assert_eq!(ct, Value::Int64(1));
 
         // .has("age", n) filters by property value
-        let ct = tx.g().V([]).hasId([1, 2, 3, 4, 5, 6]).has("age", 29i32).count().next().unwrap().unwrap();
+        let ct = txn.g().V([]).hasId([1, 2, 3, 4, 5, 6]).has("age", 29i32).count().next().unwrap().unwrap();
         assert_eq!(ct, Value::Int64(1));
 
         // "id"/"label" are NOT yielded by .properties() — only user props are
-        let ct = tx.g().V([1]).properties(["name", "age"]).count().next().unwrap().unwrap();
+        let ct = txn.g().V([1]).properties(["name", "age"]).count().next().unwrap().unwrap();
         assert_eq!(ct, Value::Int64(2));
     }
 
     #[test]
     fn test_label_decode_consistency_across_steps() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
         // .hasLabel(["person"]) routes through HasLabelStep (string-based label resolution).
-        let ct = tx.g().V([]).hasId([1, 2, 3, 4, 5, 6]).hasLabel(["person"]).count().next().unwrap().unwrap();
+        let ct = txn.g().V([]).hasId([1, 2, 3, 4, 5, 6]).hasLabel(["person"]).count().next().unwrap().unwrap();
         assert_eq!(ct, Value::Int64(4));
 
         // .has("label", "person") (bare string, unfolded) is now rejected — "label" is
         // reserved, must use hasLabel() instead.
-        let err = tx.g().V([]).hasId([1, 2, 3, 4, 5, 6]).has("label", "person").count().next();
+        let err = txn.g().V([]).hasId([1, 2, 3, 4, 5, 6]).has("label", "person").count().next();
         assert!(err.is_err(), "has(\"label\", ..) should be rejected — use hasLabel() instead");
 
         // .properties(["label"]) is rejected the same way — use .label() instead.
-        assert!(tx.g().V([1]).properties(["label"]).next().is_err());
+        assert!(txn.g().V([1]).properties(["label"]).next().is_err());
     }
 
     #[test]
     fn test_tinkerpop_modern_coalesce_step() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
         let ct =
-            tx.g().V([1]).coalesce([__().outE(["created"]), __().outE(["knows"])]).count().next().unwrap().unwrap();
+            txn.g().V([1]).coalesce([__().outE(["created"]), __().outE(["knows"])]).count().next().unwrap().unwrap();
         assert_eq!(ct, Value::Int64(1));
     }
 
@@ -365,8 +365,8 @@ mod integration_test {
 
         // Vertex 1 already exists → coalesce takes the values([...]) branch → 2 values
         {
-            let mut tx = graph.begin();
-            let Value::Int64(ct) = tx
+            let mut txn = graph.begin();
+            let Value::Int64(ct) = txn
                 .g()
                 .V([1])
                 .coalesce([
@@ -381,14 +381,14 @@ mod integration_test {
                 panic!("unexpected result type")
             };
             assert_eq!(ct, 2);
-            tx.commit().unwrap();
+            txn.commit().unwrap();
         }
 
         // Same check via the dedicated id()/label() steps (combined with union(), since
         // id()/label() are reserved and no longer expressible via a single values() call).
         {
-            let mut tx = graph.begin();
-            let Value::Int64(ct) = tx
+            let mut txn = graph.begin();
+            let Value::Int64(ct) = txn
                 .g()
                 .V([1])
                 .coalesce([
@@ -403,13 +403,13 @@ mod integration_test {
                 panic!("unexpected result type")
             };
             assert_eq!(ct, 2);
-            tx.commit().unwrap();
+            txn.commit().unwrap();
         }
 
         // Vertex 10 does not exist → coalesce takes the addV branch → 1 new vertex
         {
-            let mut tx = graph.begin();
-            let Value::Int64(ct) = tx
+            let mut txn = graph.begin();
+            let Value::Int64(ct) = txn
                 .g()
                 .V([10])
                 .count()
@@ -425,13 +425,13 @@ mod integration_test {
                 panic!("unexpected result type")
             };
             assert_eq!(ct, 1);
-            tx.commit().unwrap();
+            txn.commit().unwrap();
         }
 
         // Vertex 10 now exists → coalesce takes the values([...]) branch → 2 values
         {
-            let mut tx = graph.begin();
-            let Value::Int64(ct) = tx
+            let mut txn = graph.begin();
+            let Value::Int64(ct) = txn
                 .g()
                 .V([10])
                 .count()
@@ -447,21 +447,21 @@ mod integration_test {
                 panic!("unexpected result type")
             };
             assert_eq!(ct, 2);
-            tx.commit().unwrap();
+            txn.commit().unwrap();
         }
     }
 
     #[test]
     fn test_tinkerpop_modern_scan_v_and_scan_e() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
         // g.V() scan (V with empty IDs)
-        let v_count = tx.g().V([]).count().next().unwrap().unwrap();
+        let v_count = txn.g().V([]).count().next().unwrap().unwrap();
         assert_eq!(v_count, Value::Int64(6));
 
         // g.E([]) scan (E with empty keys)
-        let e_count = tx.g().E([]).count().next().unwrap().unwrap();
+        let e_count = txn.g().E([]).count().next().unwrap().unwrap();
         assert_eq!(e_count, Value::Int64(6));
     }
 
@@ -499,24 +499,24 @@ mod integration_test {
             assert!(names.contains(&Value::String("josh".into())));
         }
 
-        // Test with TxSession using tiny batch sizes
+        // Test with TxnSession using tiny batch sizes
         {
-            let mut tx = graph.begin().with_execution_options(tiny_batch_opts);
+            let mut txn = graph.begin().with_execution_options(tiny_batch_opts);
 
             // Vertices scan
-            let v_count = tx.g().V([]).count().next().unwrap().unwrap();
+            let v_count = txn.g().V([]).count().next().unwrap().unwrap();
             assert_eq!(v_count, Value::Int64(6));
 
             // Edges scan
-            let e_count = tx.g().E([]).count().next().unwrap().unwrap();
+            let e_count = txn.g().E([]).count().next().unwrap().unwrap();
             assert_eq!(e_count, Value::Int64(6));
 
             // Adjacent edge expansions (e.g., marko -> knows)
-            let knows_count = tx.g().V([1]).outE(["knows"]).count().next().unwrap().unwrap();
+            let knows_count = txn.g().V([1]).outE(["knows"]).count().next().unwrap().unwrap();
             assert_eq!(knows_count, Value::Int64(2));
 
             // Walk to other vertices
-            let names = tx.g().V([1]).out(["knows"]).values(["name"]).to_list().unwrap();
+            let names = txn.g().V([1]).out(["knows"]).values(["name"]).to_list().unwrap();
             assert_eq!(names.len(), 2);
             assert!(names.contains(&Value::String("vadas".into())));
             assert!(names.contains(&Value::String("josh".into())));
@@ -538,20 +538,20 @@ mod integration_test {
             schema.register_edge_label("knows").unwrap(); // 3
         }
 
-        let mut tx = graph.begin();
-        tx.g().addV("person").property("id", 1i64).next().unwrap();
-        tx.g().addV("person").property("id", 2i64).next().unwrap();
+        let mut txn = graph.begin();
+        txn.g().addV("person").property("id", 1i64).next().unwrap();
+        txn.g().addV("person").property("id", 2i64).next().unwrap();
 
         // Single-edge mode is active by default (multi_edge = false)
         // 1. Add first edge (default rank 0)
-        tx.g().addE("knows").from(1).to(2).property("weight", 0.5f64).next().unwrap();
+        txn.g().addE("knows").from(1).to(2).property("weight", 0.5f64).next().unwrap();
 
         // 2. Adding duplicate edge should fail with DuplicateEdge
-        let res2 = tx.g().addE("knows").from(1).to(2).property("weight", 0.8f64).next();
+        let res2 = txn.g().addE("knows").from(1).to(2).property("weight", 0.8f64).next();
         assert!(matches!(res2, Err(StoreError::DuplicateEdge(_))));
 
         // 3. Adding edge with non-zero rank should fail with UnsupportedOperation
-        let res3 = tx.g().addE("knows").from(1).to(2).property("rank", 5i32).next();
+        let res3 = txn.g().addE("knows").from(1).to(2).property("rank", 5i32).next();
         assert!(matches!(res3, Err(StoreError::UnsupportedOperation(_))));
     }
 
@@ -583,18 +583,18 @@ mod integration_test {
     fn test_silent_step_failures_rejection() {
         let dir = tempfile::tempdir().unwrap();
         let graph = Graph::open(dir.path()).unwrap();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
         // 1. Manually writing property("label", ...) is a schema violation
-        let res1 = tx.g().addV("person").property("label", "illegal").next();
+        let res1 = txn.g().addV("person").property("label", "illegal").next();
         assert!(matches!(res1, Err(StoreError::SchemaViolation(_))));
 
         // 2. Writing non-scalar property value is a datatype error
-        let res2 = tx.g().addV("person").property("complex", Value::List(vec![])).next();
+        let res2 = txn.g().addV("person").property("complex", Value::List(vec![])).next();
         assert!(matches!(res2, Err(StoreError::UnexpectedDataType(_))));
 
         // 3. is() with range predicate is now fully supported on scalar filter
-        let res3 = tx.g().V([]).values(["age"]).is(crate::gremlin::value::gt(30i32)).next();
+        let res3 = txn.g().V([]).values(["age"]).is(crate::gremlin::value::gt(30i32)).next();
         assert!(res3.is_ok());
         assert_eq!(res3.unwrap(), None);
     }
@@ -603,22 +603,22 @@ mod integration_test {
     fn test_reserved_key_write_validation() {
         let dir = tempfile::tempdir().unwrap();
         let graph = Graph::open(dir.path()).unwrap();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
         // Misplaced "id" will not be folded, and compiling the physical plan must fail with SchemaViolation
-        let res_id = tx.g().V([1]).property("id", 999i64).next();
+        let res_id = txn.g().V([1]).property("id", 999i64).next();
         assert!(
             matches!(res_id, Err(StoreError::SchemaViolation(msg)) if msg.contains("Unfolded or misplaced reserved property key"))
         );
 
         // Misplaced "rank" will not be folded, and compiling the physical plan must fail with SchemaViolation
-        let res_rank = tx.g().V([1]).property("rank", 1i64).next();
+        let res_rank = txn.g().V([1]).property("rank", 1i64).next();
         assert!(
             matches!(res_rank, Err(StoreError::SchemaViolation(msg)) if msg.contains("Unfolded or misplaced reserved property key"))
         );
 
         // Explicitly setting "label" must fail with SchemaViolation early
-        let res_label = tx.g().V([1]).property("label", "new_label").next();
+        let res_label = txn.g().V([1]).property("label", "new_label").next();
         assert!(
             matches!(res_label, Err(StoreError::SchemaViolation(msg)) if msg.contains("Cannot manually set or update the reserved property 'label'"))
         );
@@ -647,8 +647,8 @@ mod integration_test {
             mgmt.commit().unwrap();
         }
 
-        let mut tx = graph.begin();
-        tx.g()
+        let mut txn = graph.begin();
+        txn.g()
             .addV("AllTypesV")
             .property("id", 1i64)
             .property("p_bool", true)
@@ -662,9 +662,9 @@ mod integration_test {
             .next()
             .unwrap();
 
-        tx.g().addV("AllTypesV").property("id", 2i64).next().unwrap();
+        txn.g().addV("AllTypesV").property("id", 2i64).next().unwrap();
 
-        tx.g()
+        txn.g()
             .addE("AllTypesE")
             .from(1)
             .to(2)
@@ -679,7 +679,7 @@ mod integration_test {
             .next()
             .unwrap();
 
-        tx.commit().unwrap();
+        txn.commit().unwrap();
 
         // Read and verify Vertex properties (withProperties requests all)
         let mut read = graph.read();
@@ -716,46 +716,46 @@ mod integration_test {
     #[test]
     fn test_supported_steps_combinations() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
         // 1. V + out + values
-        let name_list = tx.g().V([1]).out(["knows"]).values(["name"]).to_list().unwrap();
+        let name_list = txn.g().V([1]).out(["knows"]).values(["name"]).to_list().unwrap();
         assert_eq!(name_list.len(), 2);
 
         // 2. V + r#in + count
-        let in_count = tx.g().V([3]).r#in(["created"]).count().next().unwrap().unwrap();
+        let in_count = txn.g().V([3]).r#in(["created"]).count().next().unwrap().unwrap();
         assert_eq!(in_count, Value::Int64(3));
 
         // 3. V + both + dedup
-        let both_dedup = tx.g().V([4]).both(["knows", "created"]).dedup().count().next().unwrap().unwrap();
+        let both_dedup = txn.g().V([4]).both(["knows", "created"]).dedup().count().next().unwrap().unwrap();
         assert_eq!(both_dedup, Value::Int64(3));
 
         // 4. V + outE + inV
-        let in_v_count = tx.g().V([1]).outE(["knows"]).inV().count().next().unwrap().unwrap();
+        let in_v_count = txn.g().V([1]).outE(["knows"]).inV().count().next().unwrap().unwrap();
         assert_eq!(in_v_count, Value::Int64(2));
 
         // 5. V + inE + outV
-        let out_v_count = tx.g().V([3]).inE(["created"]).outV().count().next().unwrap().unwrap();
+        let out_v_count = txn.g().V([3]).inE(["created"]).outV().count().next().unwrap().unwrap();
         assert_eq!(out_v_count, Value::Int64(3));
 
         // 6. V + bothE + otherV + path
-        let path_res = tx.g().V([1]).bothE(["knows"]).otherV().path().to_list().unwrap();
+        let path_res = txn.g().V([1]).bothE(["knows"]).otherV().path().to_list().unwrap();
         assert_eq!(path_res.len(), 2);
 
         // 7. E + inV
-        let e_in_v = tx.g().E([]).inV().count().next().unwrap().unwrap();
+        let e_in_v = txn.g().E([]).inV().count().next().unwrap().unwrap();
         assert_eq!(e_in_v, Value::Int64(6));
 
         // 8. E + outV
-        let e_out_v = tx.g().E([]).outV().count().next().unwrap().unwrap();
+        let e_out_v = txn.g().E([]).outV().count().next().unwrap().unwrap();
         assert_eq!(e_out_v, Value::Int64(6));
 
         // 9. V + hasLabel + hasId + limit
-        let res_limit = tx.g().V([]).hasLabel(["person"]).hasId([1, 2, 3, 4]).limit(2).to_list().unwrap();
+        let res_limit = txn.g().V([]).hasLabel(["person"]).hasId([1, 2, 3, 4]).limit(2).to_list().unwrap();
         assert_eq!(res_limit.len(), 2);
 
         // 10. V + values + is + fold
-        let is_fold = tx.g().V([]).values(["age"]).is(29i32).fold().next().unwrap().unwrap();
+        let is_fold = txn.g().V([]).values(["age"]).is(29i32).fold().next().unwrap().unwrap();
         if let Value::List(l) = is_fold {
             assert_eq!(l.len(), 1); // marko (29)
         } else {
@@ -763,7 +763,7 @@ mod integration_test {
         }
 
         // 11. V + coalesce + union
-        let cu_res = tx
+        let cu_res = txn
             .g()
             .V([1])
             .coalesce([__().out(["knows"]), __().out(["created"])])
@@ -773,7 +773,7 @@ mod integration_test {
         assert_eq!(cu_res.len(), 4);
 
         // 12. V + out + r#where + path
-        let where_path = tx.g().V([1]).out(["knows"]).r#where(__().has("age", 32i32)).path().to_list().unwrap();
+        let where_path = txn.g().V([1]).out(["knows"]).r#where(__().has("age", 32i32)).path().to_list().unwrap();
         assert_eq!(where_path.len(), 1); // only josh (32)
 
         // 13. addV + property + drop
@@ -795,7 +795,7 @@ mod integration_test {
         tx_w.commit().unwrap();
 
         // 15. V + properties + count — the dedicated Property-element step, distinct from values()
-        let prop_count = tx.g().V([1]).properties(["name", "age"]).count().next().unwrap().unwrap();
+        let prop_count = txn.g().V([1]).properties(["name", "age"]).count().next().unwrap().unwrap();
         assert_eq!(prop_count, Value::Int64(2));
     }
 
@@ -808,33 +808,40 @@ mod integration_test {
         let dir = tempfile::tempdir().unwrap();
         let graph = Graph::open(dir.path()).unwrap();
 
-        let mut tx = graph.begin();
-        tx.g().addV("person").property("id", 1i64).property("name", "marko").property("age", 29i32).next().unwrap();
-        tx.g().addV("person").property("id", 2i64).property("name", "vadas").next().unwrap();
-        tx.g().addE("knows").from(1).to(2).property("weight", 0.5f64).property("note", "first meeting").next().unwrap();
-        tx.commit().unwrap();
+        let mut txn = graph.begin();
+        txn.g().addV("person").property("id", 1i64).property("name", "marko").property("age", 29i32).next().unwrap();
+        txn.g().addV("person").property("id", 2i64).property("name", "vadas").next().unwrap();
+        txn.g()
+            .addE("knows")
+            .from(1)
+            .to(2)
+            .property("weight", 0.5f64)
+            .property("note", "first meeting")
+            .next()
+            .unwrap();
+        txn.commit().unwrap();
 
         // Drop a single vertex property; other properties on the same vertex are untouched.
-        let mut tx = graph.begin();
-        tx.g().V([1]).properties(["age"]).drop().next().unwrap();
-        tx.commit().unwrap();
-        let mut tx = graph.begin();
-        assert_eq!(tx.g().V([1]).values(["age"]).next().unwrap(), None);
-        assert_eq!(tx.g().V([1]).values(["name"]).next().unwrap(), Some(Value::String("marko".to_string())));
+        let mut txn = graph.begin();
+        txn.g().V([1]).properties(["age"]).drop().next().unwrap();
+        txn.commit().unwrap();
+        let mut txn = graph.begin();
+        assert_eq!(txn.g().V([1]).values(["age"]).next().unwrap(), None);
+        assert_eq!(txn.g().V([1]).values(["name"]).next().unwrap(), Some(Value::String("marko".to_string())));
 
         // Drop a single edge property reached via a multi-step traversal; other properties on
         // the same edge are untouched.
-        tx.g().V([1]).outE(["knows"]).r#where(__().otherV().hasId([2])).properties(["note"]).drop().next().unwrap();
-        tx.commit().unwrap();
-        let mut tx = graph.begin();
-        let note_after = tx.g().V([1]).outE(["knows"]).values(["note"]).next().unwrap();
-        let weight_after = tx.g().V([1]).outE(["knows"]).values(["weight"]).next().unwrap();
+        txn.g().V([1]).outE(["knows"]).r#where(__().otherV().hasId([2])).properties(["note"]).drop().next().unwrap();
+        txn.commit().unwrap();
+        let mut txn = graph.begin();
+        let note_after = txn.g().V([1]).outE(["knows"]).values(["note"]).next().unwrap();
+        let weight_after = txn.g().V([1]).outE(["knows"]).values(["weight"]).next().unwrap();
         assert_eq!(note_after, None);
         assert_eq!(weight_after, Some(Value::Float64(0.5)));
 
         // Dropping a property key that was never set is a no-op, not an error.
-        tx.g().V([1]).properties(["never_set"]).drop().next().unwrap();
-        tx.commit().unwrap();
+        txn.g().V([1]).properties(["never_set"]).drop().next().unwrap();
+        txn.commit().unwrap();
     }
 
     #[test]
@@ -857,45 +864,45 @@ mod integration_test {
             mgmt.commit().unwrap();
         }
 
-        let mut tx = graph.begin();
-        tx.g().addV("person").property("id", 1i64).next().unwrap();
+        let mut txn = graph.begin();
+        txn.g().addV("person").property("id", 1i64).next().unwrap();
 
         // 1. Assigning i64 (which is distinct from Int32 key) -> SchemaViolation
-        let res_1 = tx.g().V([1]).property("p_i32", 1234567890123i64).next();
+        let res_1 = txn.g().V([1]).property("p_i32", 1234567890123i64).next();
         assert!(matches!(res_1, Err(StoreError::SchemaViolation(_))));
 
         // 1b. Assigning i32 to an explicitly Int64-declared key -> SchemaViolation. Int64 was
         // the one DataType variant never exercised as the *protected* declared type anywhere
         // in this file or schema/tests.rs (only ever appearing as the *violating* value).
-        let res_1b = tx.g().V([1]).property("p_i64", 42i32).next();
+        let res_1b = txn.g().V([1]).property("p_i64", 42i32).next();
         assert!(matches!(res_1b, Err(StoreError::SchemaViolation(_))));
 
         // 2. Assigning f64 to Float32 key -> SchemaViolation
-        let res_2 = tx.g().V([1]).property("p_f32", 12345.6789f64).next();
+        let res_2 = txn.g().V([1]).property("p_f32", 12345.6789f64).next();
         assert!(matches!(res_2, Err(StoreError::SchemaViolation(_))));
 
         // 3. Assigning String to Bool key -> SchemaViolation
-        let res_3 = tx.g().V([1]).property("p_bool", "true").next();
+        let res_3 = txn.g().V([1]).property("p_bool", "true").next();
         assert!(matches!(res_3, Err(StoreError::SchemaViolation(_))));
 
         // 4. Assigning String to Uuid key -> SchemaViolation
-        let res_4 = tx.g().V([1]).property("p_uuid", "uuid-string").next();
+        let res_4 = txn.g().V([1]).property("p_uuid", "uuid-string").next();
         assert!(matches!(res_4, Err(StoreError::SchemaViolation(_))));
 
         // 4b. Assigning Int32 to an explicitly String-declared key -> SchemaViolation
-        let res_4b = tx.g().V([1]).property("p_string", 5i32).next();
+        let res_4b = txn.g().V([1]).property("p_string", 5i32).next();
         assert!(matches!(res_4b, Err(StoreError::SchemaViolation(_))));
 
         // 5. Invalid rank values on addE
-        tx.g().addV("person").property("id", 2i64).next().unwrap();
+        txn.g().addV("person").property("id", 2i64).next().unwrap();
         // Negative rank value (represented as negative integer) -> UnexpectedDataType
-        let res_rank_neg = tx.g().addE("knows").from(1).to(2).property("rank", -1i32).next();
+        let res_rank_neg = txn.g().addE("knows").from(1).to(2).property("rank", -1i32).next();
         assert!(
             matches!(res_rank_neg, Err(StoreError::UnexpectedDataType(msg)) if msg.contains("rank must be between 0 and 65535"))
         );
 
         // Large rank value (exceeds u16::MAX) -> UnexpectedDataType
-        let res_rank_large = tx.g().addE("knows").from(1).to(2).property("rank", 70000i64).next();
+        let res_rank_large = txn.g().addE("knows").from(1).to(2).property("rank", 70000i64).next();
         assert!(
             matches!(res_rank_large, Err(StoreError::UnexpectedDataType(msg)) if msg.contains("rank must be between 0 and 65535"))
         );
@@ -923,8 +930,8 @@ mod integration_test {
             mgmt.commit().unwrap();
         }
 
-        let mut tx = graph.begin();
-        tx.g()
+        let mut txn = graph.begin();
+        txn.g()
             .addV("Item")
             .property("id", 1i64)
             .property("p_bool", true)
@@ -938,7 +945,7 @@ mod integration_test {
             .next()
             .unwrap();
 
-        tx.g()
+        txn.g()
             .addV("Item")
             .property("id", 2i64)
             .property("p_bool", false)
@@ -952,7 +959,7 @@ mod integration_test {
             .next()
             .unwrap();
 
-        tx.commit().unwrap();
+        txn.commit().unwrap();
 
         let mut read = graph.read();
 
@@ -1032,26 +1039,26 @@ mod integration_test {
                 schema.register_edge_label("knows").unwrap();
             }
 
-            let mut tx = graph.begin();
-            tx.g().addV("person").property("id", 1i64).next().unwrap();
-            tx.g().addV("person").property("id", 2i64).next().unwrap();
+            let mut txn = graph.begin();
+            txn.g().addV("person").property("id", 1i64).next().unwrap();
+            txn.g().addV("person").property("id", 2i64).next().unwrap();
 
             // 1. Add edge
-            tx.g().addE("knows").from(1).to(2).next().unwrap();
+            txn.g().addE("knows").from(1).to(2).next().unwrap();
 
             // 2. Duplicate edge should fail
-            let res_dup = tx.g().addE("knows").from(1).to(2).next();
+            let res_dup = txn.g().addE("knows").from(1).to(2).next();
             assert!(matches!(res_dup, Err(StoreError::DuplicateEdge(_))));
 
             // 3. Setting non-zero rank on single-edge mode should fail
-            let res_rank = tx.g().addE("knows").from(1).to(2).property("rank", 5u16).next();
+            let res_rank = txn.g().addE("knows").from(1).to(2).property("rank", 5u16).next();
             assert!(matches!(res_rank, Err(StoreError::UnsupportedOperation(_))));
 
             // 4. A different edge LABEL between the same (src, dst) pair is NOT a duplicate —
             // single-edge mode restricts at most one edge per (src, label, dst), not per
             // (src, dst) overall.
-            tx.g().addE("likes").from(1).to(2).next().unwrap();
-            let both_edges = tx.g().V([1]).outE(["knows", "likes"]).count().next().unwrap().unwrap();
+            txn.g().addE("likes").from(1).to(2).next().unwrap();
+            let both_edges = txn.g().V([1]).outE(["knows", "likes"]).count().next().unwrap().unwrap();
             assert_eq!(both_edges, Value::Int64(2));
         }
 
@@ -1065,21 +1072,21 @@ mod integration_test {
             };
             let graph = Graph::open_with_options(dir.path(), options).unwrap();
 
-            let mut tx = graph.begin();
-            tx.g().addV("person").property("id", 1i64).next().unwrap();
-            tx.g().addV("person").property("id", 2i64).next().unwrap();
+            let mut txn = graph.begin();
+            txn.g().addV("person").property("id", 1i64).next().unwrap();
+            txn.g().addV("person").property("id", 2i64).next().unwrap();
 
             // 1. Add edge rank 0
-            tx.g().addE("knows").from(1).to(2).property("rank", 0i32).next().unwrap();
+            txn.g().addE("knows").from(1).to(2).property("rank", 0i32).next().unwrap();
 
             // 2. Duplicate rank 0 edge should fail
-            let res_dup = tx.g().addE("knows").from(1).to(2).property("rank", 0i32).next();
+            let res_dup = txn.g().addE("knows").from(1).to(2).property("rank", 0i32).next();
             assert!(matches!(res_dup, Err(StoreError::DuplicateEdge(_))));
 
             // 3. Add edge rank 5 (which should succeed)
-            tx.g().addE("knows").from(1).to(2).property("rank", 5i32).next().unwrap();
+            txn.g().addE("knows").from(1).to(2).property("rank", 5i32).next().unwrap();
 
-            tx.commit().unwrap();
+            txn.commit().unwrap();
 
             // 4. Query both ranks
             let mut read = graph.read();
@@ -1119,9 +1126,9 @@ mod integration_test {
 
         // 1. String vs Int32
         {
-            let mut tx = graph.begin();
-            tx.g().addV("person").property("id", 1i64).property("p_conflict_1", "string_val").next().unwrap();
-            tx.commit().unwrap();
+            let mut txn = graph.begin();
+            txn.g().addV("person").property("id", 1i64).property("p_conflict_1", "string_val").next().unwrap();
+            txn.commit().unwrap();
 
             let mut tx2 = graph.begin();
             let res = tx2.g().addV("person").property("id", 2i64).property("p_conflict_1", 123i32).next();
@@ -1132,9 +1139,9 @@ mod integration_test {
 
         // 2. Bool vs Float64
         {
-            let mut tx = graph.begin();
-            tx.g().addV("person").property("id", 3i64).property("p_conflict_2", true).next().unwrap();
-            tx.commit().unwrap();
+            let mut txn = graph.begin();
+            txn.g().addV("person").property("id", 3i64).property("p_conflict_2", true).next().unwrap();
+            txn.commit().unwrap();
 
             let mut tx2 = graph.begin();
             let res = tx2.g().addV("person").property("id", 4i64).property("p_conflict_2", 12.34f64).next();
@@ -1145,9 +1152,9 @@ mod integration_test {
 
         // 3. Uuid vs String
         {
-            let mut tx = graph.begin();
-            tx.g().addV("person").property("id", 5i64).property("p_conflict_3", 1234567890u128).next().unwrap();
-            tx.commit().unwrap();
+            let mut txn = graph.begin();
+            txn.g().addV("person").property("id", 5i64).property("p_conflict_3", 1234567890u128).next().unwrap();
+            txn.commit().unwrap();
 
             let mut tx2 = graph.begin();
             let res = tx2.g().addV("person").property("id", 6i64).property("p_conflict_3", "illegal").next();
@@ -1158,9 +1165,9 @@ mod integration_test {
 
         // 4. UInt16 vs Int32
         {
-            let mut tx = graph.begin();
-            tx.g().addV("person").property("id", 7i64).property("p_conflict_4", 5u16).next().unwrap();
-            tx.commit().unwrap();
+            let mut txn = graph.begin();
+            txn.g().addV("person").property("id", 7i64).property("p_conflict_4", 5u16).next().unwrap();
+            txn.commit().unwrap();
 
             let mut tx2 = graph.begin();
             let res = tx2.g().addV("person").property("id", 8i64).property("p_conflict_4", 10i32).next();
@@ -1171,9 +1178,9 @@ mod integration_test {
 
         // 5. Float32 vs Float64
         {
-            let mut tx = graph.begin();
-            tx.g().addV("person").property("id", 9i64).property("p_conflict_5", 1.0f32).next().unwrap();
-            tx.commit().unwrap();
+            let mut txn = graph.begin();
+            txn.g().addV("person").property("id", 9i64).property("p_conflict_5", 1.0f32).next().unwrap();
+            txn.commit().unwrap();
 
             let mut tx2 = graph.begin();
             let res = tx2.g().addV("person").property("id", 10i64).property("p_conflict_5", 2.0f64).next();
@@ -1185,9 +1192,9 @@ mod integration_test {
         // 6. Int64 vs Bool — the one DataType variant never exercised as the auto-inferred
         // protected type anywhere above (only ever appearing as the conflicting/violating value).
         {
-            let mut tx = graph.begin();
-            tx.g().addV("person").property("id", 11i64).property("p_conflict_6", 1_000_000i64).next().unwrap();
-            tx.commit().unwrap();
+            let mut txn = graph.begin();
+            txn.g().addV("person").property("id", 11i64).property("p_conflict_6", 1_000_000i64).next().unwrap();
+            txn.commit().unwrap();
 
             let mut tx2 = graph.begin();
             let res = tx2.g().addV("person").property("id", 12i64).property("p_conflict_6", false).next();
@@ -1200,10 +1207,10 @@ mod integration_test {
         // by vertices and edges (not partitioned by element kind), so a key first inferred as
         // Int32 on a VERTEX must also reject a conflicting type written on an EDGE.
         {
-            let mut tx = graph.begin();
-            tx.g().addV("person").property("id", 13i64).property("p_conflict_cross", 1i32).next().unwrap();
-            tx.g().addV("person").property("id", 14i64).next().unwrap();
-            tx.commit().unwrap();
+            let mut txn = graph.begin();
+            txn.g().addV("person").property("id", 13i64).property("p_conflict_cross", 1i32).next().unwrap();
+            txn.g().addV("person").property("id", 14i64).next().unwrap();
+            txn.commit().unwrap();
 
             let mut tx2 = graph.begin();
             let res = tx2.g().addE("knows_cross").from(13).to(14).property("p_conflict_cross", "edge_value").next();
@@ -1216,11 +1223,11 @@ mod integration_test {
         // `Schema::vertex_labels`/`edge_labels`), so reusing the same name for both must NOT
         // be reported as a conflict — confirms the conflict detection above doesn't false-positive.
         {
-            let mut tx = graph.begin();
-            tx.g().addV("dup_name").property("id", 15i64).next().unwrap();
-            tx.g().addV("dup_name").property("id", 16i64).next().unwrap();
-            tx.g().addE("dup_name").from(15).to(16).next().unwrap();
-            tx.commit().unwrap();
+            let mut txn = graph.begin();
+            txn.g().addV("dup_name").property("id", 15i64).next().unwrap();
+            txn.g().addV("dup_name").property("id", 16i64).next().unwrap();
+            txn.g().addE("dup_name").from(15).to(16).next().unwrap();
+            txn.commit().unwrap();
 
             let mut read = graph.read();
             let v_count = read.g().V([]).hasLabel(["dup_name"]).count().next().unwrap().unwrap();
@@ -1237,13 +1244,13 @@ mod integration_test {
         let dir = tempfile::tempdir().unwrap();
         let graph = Graph::open(dir.path()).unwrap();
 
-        let mut tx = graph.begin();
-        tx.g().addV("person").property("id", 1i64).property("age", 20i32).property("name", "Alice").next().unwrap();
-        tx.g().addV("person").property("id", 2i64).property("age", 30i32).property("name", "Bob").next().unwrap();
-        tx.g().addV("person").property("id", 3i64).property("age", 40i32).property("name", "Charlie").next().unwrap();
-        tx.g().addV("animal").property("id", 4i64).property("age", 5i32).property("name", "Dog").next().unwrap();
-        tx.g().addV("software").property("id", 5i64).property("age", 3i32).property("name", "App").next().unwrap();
-        tx.commit().unwrap();
+        let mut txn = graph.begin();
+        txn.g().addV("person").property("id", 1i64).property("age", 20i32).property("name", "Alice").next().unwrap();
+        txn.g().addV("person").property("id", 2i64).property("age", 30i32).property("name", "Bob").next().unwrap();
+        txn.g().addV("person").property("id", 3i64).property("age", 40i32).property("name", "Charlie").next().unwrap();
+        txn.g().addV("animal").property("id", 4i64).property("age", 5i32).property("name", "Dog").next().unwrap();
+        txn.g().addV("software").property("id", 5i64).property("age", 3i32).property("name", "App").next().unwrap();
+        txn.commit().unwrap();
 
         let mut read = graph.read();
 
@@ -1302,10 +1309,10 @@ mod integration_test {
     #[test]
     fn test_repeat_without_bound_is_error() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
         // repeat() without .times() or .until() must error at build time
-        let res = tx.g().V([1]).repeat(__().out(["knows", "created"])).next();
+        let res = txn.g().V([1]).repeat(__().out(["knows", "created"])).next();
         assert!(
             matches!(res, Err(StoreError::TraversalError(msg)) if msg.contains("repeat() requires at least one stop condition"))
         );
@@ -1314,23 +1321,23 @@ mod integration_test {
     #[test]
     fn test_repeat_times_zero_is_error() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
-        let res = tx.g().V([1]).repeat(__().out(["knows", "created"])).times(0).next();
+        let res = txn.g().V([1]).repeat(__().out(["knows", "created"])).times(0).next();
         assert!(matches!(res, Err(StoreError::TraversalError(msg)) if msg.contains("times(0)")));
     }
 
     #[test]
     fn test_repeat_both_times_and_until_is_error() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
-        let res1 = tx.g().V([1]).repeat(__().out(["knows"])).times(2).until(__().hasLabel(["software"])).next();
+        let res1 = txn.g().V([1]).repeat(__().out(["knows"])).times(2).until(__().hasLabel(["software"])).next();
         assert!(
             matches!(res1, Err(StoreError::TraversalError(msg)) if msg.contains("cannot specify both times() and until()"))
         );
 
-        let res2 = tx.g().V([1]).repeat(__().out(["knows"])).until(__().hasLabel(["software"])).times(2).next();
+        let res2 = txn.g().V([1]).repeat(__().out(["knows"])).until(__().hasLabel(["software"])).times(2).next();
         assert!(
             matches!(res2, Err(StoreError::TraversalError(msg)) if msg.contains("cannot specify both times() and until()"))
         );
@@ -1339,9 +1346,9 @@ mod integration_test {
     #[test]
     fn test_until_without_repeat_is_error() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
-        let res = tx.g().V([1]).until(__().hasLabel(["software"])).next();
+        let res = txn.g().V([1]).until(__().hasLabel(["software"])).next();
         assert!(
             matches!(res, Err(StoreError::TraversalError(msg)) if msg.contains("until() must immediately follow repeat()"))
         );
@@ -1350,9 +1357,9 @@ mod integration_test {
     #[test]
     fn test_emit_without_repeat_is_error() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
-        let res = tx.g().V([1]).emit().next();
+        let res = txn.g().V([1]).emit().next();
         assert!(
             matches!(res, Err(StoreError::TraversalError(msg)) if msg.contains("emit() must immediately follow repeat()"))
         );
@@ -1361,9 +1368,9 @@ mod integration_test {
     #[test]
     fn test_emit_if_without_repeat_is_error() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
-        let res = tx.g().V([1]).emit_if(__().hasLabel(["person"])).next();
+        let res = txn.g().V([1]).emit_if(__().hasLabel(["person"])).next();
         assert!(
             matches!(res, Err(StoreError::TraversalError(msg)) if msg.contains("emit_if() must immediately follow repeat()"))
         );
@@ -1372,11 +1379,11 @@ mod integration_test {
     #[test]
     fn test_back_to_back_repeat() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
         // Two back-to-back repeat() calls: the first one is flushed when the second starts.
         // V(1).repeat(out(["knows","created"])).times(1).repeat(out(["knows","created"])).times(1)
-        let res = tx
+        let res = txn
             .g()
             .V([1])
             .repeat(__().out(["knows", "created"]))
@@ -1395,10 +1402,10 @@ mod integration_test {
     #[test]
     fn test_e2e_n_hop_query() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
         // V(1).repeat(out()).times(2).values("name") — find 2-hop neighbor names
-        let names = tx.g().V([1]).repeat(__().out(["knows", "created"])).times(2).values(["name"]).to_list().unwrap();
+        let names = txn.g().V([1]).repeat(__().out(["knows", "created"])).times(2).values(["name"]).to_list().unwrap();
         assert_eq!(names.len(), 2);
         let mut name_strs: Vec<String> = names
             .iter()
@@ -1412,7 +1419,7 @@ mod integration_test {
     #[test]
     fn test_e2e_repeat_until_emit() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
         // V(1).repeat(out("knows")).until(hasLabel("software")).emit().values("name")
         // Emit all intermediate people and stop at software.
@@ -1424,7 +1431,7 @@ mod integration_test {
         // Actually josh.out("knows") = [] (josh has no outgoing "knows" edges).
         // So vadas(person, emit), josh(person, emit). Then vadas.out("knows")=[], josh.out("knows")=[].
         // Total: vadas(2), josh(4) = 2.
-        let results = tx
+        let results = txn
             .g()
             .V([1])
             .repeat(__().out(["knows"]))
@@ -1556,11 +1563,11 @@ mod integration_test {
     #[test]
     fn test_not_filter() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
         // V([]).not(__().hasLabel("person")).values("name") → software vertices only
         let names =
-            tx.g().V([]).hasId([1, 2, 3, 4, 5, 6]).not(__().hasLabel(["person"])).values(["name"]).to_list().unwrap();
+            txn.g().V([]).hasId([1, 2, 3, 4, 5, 6]).not(__().hasLabel(["person"])).values(["name"]).to_list().unwrap();
         let mut s: Vec<String> =
             names.iter().map(|v| if let Value::String(s) = v { s.clone() } else { panic!() }).collect();
         s.sort();
@@ -1570,10 +1577,10 @@ mod integration_test {
     #[test]
     fn test_and_filter() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
         // V([]).and([__.hasLabel("person"), __.has("age", gt(30))]).values("name") → josh, peter
-        let names = tx
+        let names = txn
             .g()
             .V([])
             .hasId([1, 2, 3, 4, 5, 6])
@@ -1590,10 +1597,10 @@ mod integration_test {
     #[test]
     fn test_or_filter() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
         // V([]).or([__.has("name", "marko"), __.has("name", "lop")]).values("name")
-        let names = tx
+        let names = txn
             .g()
             .V([])
             .hasId([1, 2, 3, 4, 5, 6])
@@ -1610,32 +1617,32 @@ mod integration_test {
     #[test]
     fn test_sum_mean_max_min() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
         // Sum of ages: marko(29) + vadas(27) + josh(32) + peter(35) = 123
-        let sum_val = tx.g().V([]).hasLabel(["person"]).values(["age"]).sum().next().unwrap().unwrap();
+        let sum_val = txn.g().V([]).hasLabel(["person"]).values(["age"]).sum().next().unwrap().unwrap();
         assert_eq!(sum_val, Value::Int64(123));
 
         // Mean: 123 / 4 = 30.75
-        let mean_val = tx.g().V([]).hasLabel(["person"]).values(["age"]).mean().next().unwrap().unwrap();
+        let mean_val = txn.g().V([]).hasLabel(["person"]).values(["age"]).mean().next().unwrap().unwrap();
         assert_eq!(mean_val, Value::Float64(30.75));
 
         // Max: 35
-        let max_val = tx.g().V([]).hasLabel(["person"]).values(["age"]).max().next().unwrap().unwrap();
+        let max_val = txn.g().V([]).hasLabel(["person"]).values(["age"]).max().next().unwrap().unwrap();
         assert_eq!(max_val, Value::Int64(35));
 
         // Min: 27
-        let min_val = tx.g().V([]).hasLabel(["person"]).values(["age"]).min().next().unwrap().unwrap();
+        let min_val = txn.g().V([]).hasLabel(["person"]).values(["age"]).min().next().unwrap().unwrap();
         assert_eq!(min_val, Value::Int64(27));
     }
 
     #[test]
     fn test_unfold() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
         // fold then unfold: round-trip
-        let names = tx.g().V([1]).values(["name", "age"]).fold().unfold().to_list().unwrap();
+        let names = txn.g().V([1]).values(["name", "age"]).fold().unfold().to_list().unwrap();
         assert_eq!(names.len(), 2);
         let s: Vec<String> = names.iter().map(|v| format!("{:?}", v)).collect();
         // Check both expected values are present (order is preserved from the list)
@@ -1649,11 +1656,19 @@ mod integration_test {
     #[test]
     fn test_as_select_round_trip() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
         // V(1).as_("start").out("knows").as_("friend").select("start").values("name") → marko (the start vertex)
-        let names =
-            tx.g().V([1]).as_("start").out(["knows"]).as_("friend").select("start").values(["name"]).to_list().unwrap();
+        let names = txn
+            .g()
+            .V([1])
+            .as_("start")
+            .out(["knows"])
+            .as_("friend")
+            .select("start")
+            .values(["name"])
+            .to_list()
+            .unwrap();
 
         // select("start") returns the traverser labeled "start" = vertex 1 (marko), for each outgoing edge
         assert!(!names.is_empty());
@@ -1665,11 +1680,11 @@ mod integration_test {
     #[test]
     fn test_as_select_with_path() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
         // V(1).as_("a").out("knows").as_("b").select("b").values("name").path() → paths ending at the friend
         let results =
-            tx.g().V([1]).as_("a").out(["knows"]).as_("b").select("b").values(["name"]).path().to_list().unwrap();
+            txn.g().V([1]).as_("a").out(["knows"]).as_("b").select("b").values(["name"]).path().to_list().unwrap();
 
         // select("b") picks up the friend, then values("name") extracts their name
         assert!(!results.is_empty());
@@ -1684,17 +1699,17 @@ mod integration_test {
     #[test]
     fn test_select_without_matching_label_filters_out() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
         // V(1).out("knows").select("nonexistent") → nothing, since no label matches
-        let results = tx.g().V([1]).out(["knows"]).select("nonexistent").to_list().unwrap();
+        let results = txn.g().V([1]).out(["knows"]).select("nonexistent").to_list().unwrap();
         assert!(results.is_empty());
     }
 
     #[test]
     fn test_where_filter_does_not_disrupt_path_tracking_for_later_select() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
         // V(1).as_("start").where(has("age", 29)).out("knows").select("start").values("name")
         //
@@ -1705,7 +1720,7 @@ mod integration_test {
         // inherited from the top-level plan: if out() incorrectly read the where() sub-plan's
         // track_path instead of the outer plan's, it would build a parentless traverser and
         // select("start") would find nothing.
-        let names = tx
+        let names = txn
             .g()
             .V([1])
             .as_("start")
@@ -1725,7 +1740,7 @@ mod integration_test {
     #[test]
     fn test_repeat_body_inherits_path_tracking_from_outer_select() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
         // V(1).as_("start").repeat(out("knows")).times(1).select("start").values("name")
         //
@@ -1736,7 +1751,7 @@ mod integration_test {
         // computed once on the whole top-level plan and inherited into the repeat body, not
         // recomputed independently from the body's own (narrower) shape — otherwise the body
         // would build parentless traversers and select("start") would find nothing.
-        let names = tx
+        let names = txn
             .g()
             .V([1])
             .as_("start")
@@ -1758,8 +1773,8 @@ mod integration_test {
     #[test]
     fn test_range_skip_tail_e2e() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
-        let ages: Vec<i64> = tx
+        let mut txn = graph.begin();
+        let ages: Vec<i64> = txn
             .g()
             .V([])
             .hasLabel(["person"])
@@ -1776,15 +1791,15 @@ mod integration_test {
             })
             .collect();
         assert_eq!(ages.len(), 2);
-        let last = tx.g().V([]).hasLabel(["person"]).values(["name"]).order().tail(1).to_list().unwrap();
+        let last = txn.g().V([]).hasLabel(["person"]).values(["name"]).order().tail(1).to_list().unwrap();
         assert_eq!(last.len(), 1);
     }
 
     #[test]
     fn test_order_asc_e2e() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
-        let ages: Vec<i64> = tx
+        let mut txn = graph.begin();
+        let ages: Vec<i64> = txn
             .g()
             .V([])
             .hasLabel(["person"])
@@ -1807,8 +1822,8 @@ mod integration_test {
     #[test]
     fn test_group_e2e() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
-        let result = tx.g().V([]).hasLabel(["person"]).values(["age"]).group().next().unwrap().unwrap();
+        let mut txn = graph.begin();
+        let result = txn.g().V([]).hasLabel(["person"]).values(["age"]).group().next().unwrap().unwrap();
         // Result is a Map<age, List<age>> — e.g. {29: [29, 29], 27: [27], 32: [32], 35: [35]}
         // Marko (29), Vadas (27), Josh (32), Peter (35)
         if let Value::Map(m) = result {
@@ -1825,8 +1840,8 @@ mod integration_test {
     #[test]
     fn test_group_count_e2e() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
-        let result = tx.g().V([]).hasLabel(["person"]).values(["age"]).group_count().next().unwrap().unwrap();
+        let mut txn = graph.begin();
+        let result = txn.g().V([]).hasLabel(["person"]).values(["age"]).group_count().next().unwrap().unwrap();
         // Result is a Map<age, count> — one entry per distinct age.
         // Marko=29, Vadas=27, Josh=32, Peter=35 — each age appears once.
         if let Value::Map(m) = result {
@@ -1843,50 +1858,50 @@ mod integration_test {
     #[test]
     fn test_simple_path_e2e() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
         // V(1).out("knows").both("knows") produces 2 paths, both cycles back to V(1):
         //   1→2→1 (Vadas back to Marko via incoming knows edge)
         //   1→4→1 (Josh back to Marko via incoming knows edge)
         // simplePath() filters them all out — 0 results.
-        let results = tx.g().V([1]).out(["knows"]).both(["knows"]).simple_path().to_list().unwrap();
+        let results = txn.g().V([1]).out(["knows"]).both(["knows"]).simple_path().to_list().unwrap();
         assert_eq!(results.len(), 0, "simplePath should filter out the back-edges to V(1)");
     }
 
     #[test]
     fn test_cyclic_path_e2e() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
         // Same traversal — cyclicPath() keeps only the 2 cycles.
-        let results = tx.g().V([1]).out(["knows"]).both(["knows"]).cyclic_path().to_list().unwrap();
+        let results = txn.g().V([1]).out(["knows"]).both(["knows"]).cyclic_path().to_list().unwrap();
         assert_eq!(results.len(), 2, "cyclicPath should keep only the cyclic back-edges");
     }
 
     #[test]
     fn test_add_e_variable_source_constant_target() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
         // g.V([1]).out("knows").addE("friends").to(3)
         // Marko knows Vadas(2), Josh(4).  For each, create friends->Lop(3).
-        let edges: Vec<_> = tx.g().V([1]).out(["knows"]).addE("friends").to(3).to_list().unwrap();
+        let edges: Vec<_> = txn.g().V([1]).out(["knows"]).addE("friends").to(3).to_list().unwrap();
         assert_eq!(edges.len(), 2, "should create edges from each traverser");
 
         // Both new edges must be visible from BOTH sides (bidirectional indexing,
         // not just the out-side the producing step happened to emit).
-        let in_count = tx.g().V([3]).inE(["friends"]).count().next().unwrap().unwrap();
+        let in_count = txn.g().V([3]).inE(["friends"]).count().next().unwrap().unwrap();
         assert_eq!(in_count, Value::Int64(2), "in-side index should see both new edges");
-        let out_count_2 = tx.g().V([2]).outE(["friends"]).count().next().unwrap().unwrap();
+        let out_count_2 = txn.g().V([2]).outE(["friends"]).count().next().unwrap().unwrap();
         assert_eq!(out_count_2, Value::Int64(1));
-        let out_count_4 = tx.g().V([4]).outE(["friends"]).count().next().unwrap().unwrap();
+        let out_count_4 = txn.g().V([4]).outE(["friends"]).count().next().unwrap().unwrap();
         assert_eq!(out_count_4, Value::Int64(1));
     }
 
     #[test]
     fn test_add_e_variable_source_with_property() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
         // Same traversal with a property.
         let edges: Vec<_> =
-            tx.g().V([1]).out(["knows"]).addE("friends").to(3).property("weight", 0.5f64).to_list().unwrap();
+            txn.g().V([1]).out(["knows"]).addE("friends").to(3).property("weight", 0.5f64).to_list().unwrap();
         assert_eq!(edges.len(), 2);
 
         // Verify the property landed on each *real* created edge (vadas->3, josh->3),
@@ -1895,7 +1910,7 @@ mod integration_test {
         // also confirms the property isn't being tagged with a stale/static owner key.
         for src in [2i64, 4i64] {
             let weight =
-                tx.g().V([src]).outE(["friends"]).r#where(__().otherV().hasId([3])).values(["weight"]).next().unwrap();
+                txn.g().V([src]).outE(["friends"]).r#where(__().otherV().hasId([3])).values(["weight"]).next().unwrap();
             assert_eq!(weight, Some(Value::Float64(0.5)), "property missing/wrong on edge {src}->3");
         }
     }
@@ -1910,8 +1925,8 @@ mod integration_test {
     #[test]
     fn test_mean_e2e() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
-        let avg = tx.g().V([]).hasLabel(["person"]).values(["age"]).mean().next().unwrap().unwrap();
+        let mut txn = graph.begin();
+        let avg = txn.g().V([]).hasLabel(["person"]).values(["age"]).mean().next().unwrap().unwrap();
         if let Value::Float64(f) = avg {
             assert!((f - 30.75).abs() < 0.1);
         }
@@ -1920,8 +1935,8 @@ mod integration_test {
     #[test]
     fn test_label_vertex_e2e() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
-        let labels: Vec<_> = tx.g().V([]).hasLabel(["person"]).label().to_list().unwrap();
+        let mut txn = graph.begin();
+        let labels: Vec<_> = txn.g().V([]).hasLabel(["person"]).label().to_list().unwrap();
         for l in &labels {
             assert!(matches!(l, Value::String(s) if s.as_str() == "person"));
         }
@@ -1930,8 +1945,8 @@ mod integration_test {
     #[test]
     fn test_label_edge_e2e() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
-        let labels: Vec<_> = tx.g().V([1]).outE(["knows"]).label().to_list().unwrap();
+        let mut txn = graph.begin();
+        let labels: Vec<_> = txn.g().V([1]).outE(["knows"]).label().to_list().unwrap();
         for l in &labels {
             assert!(matches!(l, Value::String(s) if s.as_str() == "knows"));
         }
@@ -1940,8 +1955,8 @@ mod integration_test {
     #[test]
     fn test_label_on_edge_with_haslabel() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
-        let labels: Vec<_> = tx.g().V([1]).outE(["knows"]).hasLabel(["knows"]).label().to_list().unwrap();
+        let mut txn = graph.begin();
+        let labels: Vec<_> = txn.g().V([1]).outE(["knows"]).hasLabel(["knows"]).label().to_list().unwrap();
         for l in &labels {
             assert!(matches!(l, Value::String(s) if s.as_str() == "knows"));
         }
@@ -1950,22 +1965,22 @@ mod integration_test {
     #[test]
     fn test_add_e_variable_target_constant_source() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
-        let edges: Vec<_> = tx.g().V([2, 4]).addE("friends").from(1).to_list().unwrap();
+        let mut txn = graph.begin();
+        let edges: Vec<_> = txn.g().V([2, 4]).addE("friends").from(1).to_list().unwrap();
         assert_eq!(edges.len(), 2);
     }
 
     #[test]
     fn test_get_or_create_vertex_and_edge_in_one_query() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
         // Use fresh ids that don't collide with the modern graph (ids 1-6).
         let a: i64 = 100;
         let b: i64 = 200;
 
         // Upsert vertex A: if exists, read id; otherwise create.
-        tx.g()
+        txn.g()
             .V([a])
             .count()
             .coalesce([
@@ -1976,7 +1991,7 @@ mod integration_test {
             .unwrap();
 
         // Upsert vertex B.
-        tx.g()
+        txn.g()
             .V([b])
             .count()
             .coalesce([
@@ -1987,7 +2002,7 @@ mod integration_test {
             .unwrap();
 
         // Upsert edge A → B.
-        tx.g()
+        txn.g()
             .V([a])
             .coalesce([
                 __().outE(["knows"]).r#where(__().otherV().hasId([b])).label(),
@@ -1996,7 +2011,7 @@ mod integration_test {
             .next()
             .unwrap();
 
-        tx.commit().unwrap();
+        txn.commit().unwrap();
 
         // Verify: both vertices exist.
         let mut snap = graph.read();
@@ -2082,9 +2097,15 @@ mod integration_test {
     #[test]
     fn test_sum_on_float64_property() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
-        tx.g().addV("person").property("id", 99i64).property("name", "test").property("score", 95.5f64).next().unwrap();
-        tx.commit().unwrap();
+        let mut txn = graph.begin();
+        txn.g()
+            .addV("person")
+            .property("id", 99i64)
+            .property("name", "test")
+            .property("score", 95.5f64)
+            .next()
+            .unwrap();
+        txn.commit().unwrap();
         let mut snap = graph.read();
         let total = snap.g().V([99]).values(["score"]).sum().next().unwrap().unwrap();
         assert!(matches!(total, Value::Float64(f) if (f - 95.5).abs() < 0.01), "got {:?}", total);
@@ -2276,9 +2297,9 @@ mod integration_test {
     #[test]
     fn test_reject_label_as_property() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
         // property("label", ...) should always be rejected.
-        let res = tx.g().V([1]).property("label", "person").next();
+        let res = txn.g().V([1]).property("label", "person").next();
         assert!(res.is_err(), "property('label', ...) should be rejected");
     }
 
@@ -2487,8 +2508,8 @@ mod integration_test {
         //
         // Expected path shape: [V(1), V(2|4), Edge, V(3)] — 4 objects.
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
-        let results: Vec<_> = tx
+        let mut txn = graph.begin();
+        let results: Vec<_> = txn
             .g()
             .V([1])
             .out(["knows"])
@@ -2529,33 +2550,33 @@ mod integration_test {
     #[test]
     fn test_id_on_scalar_errors() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
         // id() after values() — scalar input — should error.
-        let res = tx.g().V([1]).values(["name"]).id().next();
+        let res = txn.g().V([1]).values(["name"]).id().next();
         assert!(res.is_err(), "id() on scalar should error");
     }
 
     #[test]
     fn test_label_on_scalar_errors() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
-        let res = tx.g().V([1]).values(["name"]).label().next();
+        let mut txn = graph.begin();
+        let res = txn.g().V([1]).values(["name"]).label().next();
         assert!(res.is_err(), "label() on scalar should error");
     }
 
     #[test]
     fn test_rank_on_scalar_errors() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
-        let res = tx.g().V([1]).values(["name"]).rank().next();
+        let mut txn = graph.begin();
+        let res = txn.g().V([1]).values(["name"]).rank().next();
         assert!(res.is_err(), "rank() on scalar should error");
     }
 
     #[test]
     fn test_rank_on_vertex_errors() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
-        let res = tx.g().V([1]).rank().next();
+        let mut txn = graph.begin();
+        let res = txn.g().V([1]).rank().next();
         assert!(res.is_err(), "rank() on vertex should error");
     }
 
@@ -2564,10 +2585,10 @@ mod integration_test {
         // Path tracking must survive through id(), label(), rank().
         // Each path should be [V(1), knows-edge, extracted-scalar].
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
+        let mut txn = graph.begin();
 
         // --- id() path: [V(1), Edge, Scalar] ---
-        let results = tx.g().V([1]).outE(["knows"]).limit(1).id().path().to_list().unwrap();
+        let results = txn.g().V([1]).outE(["knows"]).limit(1).id().path().to_list().unwrap();
         assert_eq!(results.len(), 1, "limit(1) — one result for id() path");
         if let Value::Path(p) = &results[0] {
             assert_eq!(p.len(), 3);
@@ -2582,7 +2603,7 @@ mod integration_test {
         }
 
         // --- label() path: [V(1), Edge, "knows"] ---
-        let results = tx.g().V([1]).outE(["knows"]).limit(1).label().path().to_list().unwrap();
+        let results = txn.g().V([1]).outE(["knows"]).limit(1).label().path().to_list().unwrap();
         assert_eq!(results.len(), 1);
         if let Value::Path(p) = &results[0] {
             assert_eq!(p.len(), 3);
@@ -2601,7 +2622,7 @@ mod integration_test {
         }
 
         // --- rank() path: [V(1), Edge, 0u16] ---
-        let results = tx.g().V([1]).outE(["knows"]).limit(1).rank().path().to_list().unwrap();
+        let results = txn.g().V([1]).outE(["knows"]).limit(1).rank().path().to_list().unwrap();
         assert_eq!(results.len(), 1);
         if let Value::Path(p) = &results[0] {
             assert_eq!(p.len(), 3);
@@ -2623,32 +2644,32 @@ mod integration_test {
     #[test]
     fn test_property_on_scalar_errors() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
-        let res = tx.g().V([1]).values(["name"]).property("x", 1).next();
+        let mut txn = graph.begin();
+        let res = txn.g().V([1]).values(["name"]).property("x", 1).next();
         assert!(res.is_err(), "property() on scalar should error");
     }
 
     #[test]
     fn test_values_on_scalar_errors() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
-        let res = tx.g().V([1]).values(["name"]).values(["x"]).next();
+        let mut txn = graph.begin();
+        let res = txn.g().V([1]).values(["name"]).values(["x"]).next();
         assert!(res.is_err(), "values() on scalar should error");
     }
 
     #[test]
     fn test_otherv_on_vertex_errors() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
-        let res = tx.g().V([1]).otherV().next();
+        let mut txn = graph.begin();
+        let res = txn.g().V([1]).otherV().next();
         assert!(res.is_err(), "otherV() on vertex should error");
     }
 
     #[test]
     fn test_inv_on_vertex_errors() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
-        let res = tx.g().V([1]).inV().next();
+        let mut txn = graph.begin();
+        let res = txn.g().V([1]).inV().next();
         assert!(res.is_err(), "inV() on vertex should error");
     }
 
@@ -2656,8 +2677,8 @@ mod integration_test {
     fn test_path_chain_through_order() {
         // order() must preserve parent chain for subsequent path().
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
-        let results = tx.g().V([1]).out(["knows"]).order().by("age").path().to_list().unwrap();
+        let mut txn = graph.begin();
+        let results = txn.g().V([1]).out(["knows"]).order().by("age").path().to_list().unwrap();
         assert!(!results.is_empty());
     }
 
@@ -2665,15 +2686,15 @@ mod integration_test {
     fn test_path_chain_through_constant() {
         // constant() in a sub-plan must preserve path.
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
-        let results = tx.g().V([1]).out(["knows"]).path().to_list().unwrap();
+        let mut txn = graph.begin();
+        let results = txn.g().V([1]).out(["knows"]).path().to_list().unwrap();
         assert!(!results.is_empty());
     }
     #[test]
     fn test_choose_e2e() {
         let graph = setup_modern_graph();
-        let mut tx = graph.begin();
-        let results = tx
+        let mut txn = graph.begin();
+        let results = txn
             .g()
             .V([])
             .hasLabel(["person"])
@@ -2698,9 +2719,9 @@ mod integration_test {
         let blob: Vec<u8> = vec![1u8, 2, 3];
 
         // Write a vertex with a Bytes property.
-        let mut tx = graph.begin();
-        tx.g().addV("item").property("id", 1i64).property("blob", blob.clone()).next().unwrap();
-        tx.commit().unwrap();
+        let mut txn = graph.begin();
+        txn.g().addV("item").property("id", 1i64).property("blob", blob.clone()).next().unwrap();
+        txn.commit().unwrap();
 
         // Read back via values().
         let mut snap = graph.read();
@@ -2728,10 +2749,10 @@ mod integration_test {
         let blob_a: Vec<u8> = vec![0x01, 0x02];
         let blob_b: Vec<u8> = vec![0x03, 0x04];
 
-        let mut tx = graph.begin();
-        tx.g().addV("item").property("id", 100i64).property("blob", blob_a.clone()).next().unwrap();
-        tx.g().addV("item").property("id", 200i64).property("blob", blob_b.clone()).next().unwrap();
-        tx.commit().unwrap();
+        let mut txn = graph.begin();
+        txn.g().addV("item").property("id", 100i64).property("blob", blob_a.clone()).next().unwrap();
+        txn.g().addV("item").property("id", 200i64).property("blob", blob_b.clone()).next().unwrap();
+        txn.commit().unwrap();
 
         let mut snap = graph.read();
 
@@ -2767,10 +2788,10 @@ mod integration_test {
         let blob_lo: Vec<u8> = vec![0x01];
         let blob_hi: Vec<u8> = vec![0x02];
 
-        let mut tx = graph.begin();
-        tx.g().addV("item").property("id", 300i64).property("blob", blob_lo.clone()).next().unwrap();
-        tx.g().addV("item").property("id", 400i64).property("blob", blob_hi.clone()).next().unwrap();
-        tx.commit().unwrap();
+        let mut txn = graph.begin();
+        txn.g().addV("item").property("id", 300i64).property("blob", blob_lo.clone()).next().unwrap();
+        txn.g().addV("item").property("id", 400i64).property("blob", blob_hi.clone()).next().unwrap();
+        txn.commit().unwrap();
 
         let mut snap = graph.read();
 
@@ -2800,30 +2821,30 @@ mod integration_test {
         mgmt.commit().unwrap();
 
         // Attempting to write a String value for "blob" in Strict mode must fail.
-        let mut tx = graph.begin();
-        let result = tx.g().addV("item").property("id", 1i64).property("blob", "not bytes").next();
+        let mut txn = graph.begin();
+        let result = txn.g().addV("item").property("id", 1i64).property("blob", "not bytes").next();
         assert!(matches!(result, Err(StoreError::SchemaViolation(_))), "Expected SchemaViolation, got: {:?}", result);
         std::mem::forget(dir);
     }
 
-    // ── P0: auto-rollback on TxSession drop ───────────────────────────
+    // ── P0: auto-rollback on TxnSession drop ───────────────────────────
 
     #[test]
     fn test_tx_session_auto_rollback_on_drop() {
         let dir = tempfile::tempdir().unwrap();
         let graph = Graph::open(dir.path()).unwrap();
 
-        // Write in a TxSession, then drop without committing.
+        // Write in a TxnSession, then drop without committing.
         {
-            let mut tx = graph.begin();
-            tx.g().addV("person").property("id", 1i64).property("name", "ghost").next().unwrap();
-            // tx dropped here → automatic rollback
+            let mut txn = graph.begin();
+            txn.g().addV("person").property("id", 1i64).property("name", "ghost").next().unwrap();
+            // txn dropped here → automatic rollback
         }
 
         // The vertex must NOT be visible from a new read session.
         let mut snap = graph.read();
         let result = snap.g().V([1]).next().unwrap();
-        assert!(result.is_none(), "vertex from uncommitted, dropped TxSession should not be visible");
+        assert!(result.is_none(), "vertex from uncommitted, dropped TxnSession should not be visible");
 
         graph.close().unwrap();
     }
@@ -2835,16 +2856,16 @@ mod integration_test {
         let dir = tempfile::tempdir().unwrap();
         let graph = Graph::open(dir.path()).unwrap();
 
-        let mut tx = graph.begin();
-        tx.g().addV("person").property("id", 1i64).property("name", "alice").next().unwrap();
+        let mut txn = graph.begin();
+        txn.g().addV("person").property("id", 1i64).property("name", "alice").next().unwrap();
 
         // Source exists but destination does not.
-        let result = tx.g().addE("knows").from(1).to(999).next();
+        let result = txn.g().addE("knows").from(1).to(999).next();
         assert!(result.is_err(), "addE to nonexistent to-vertex should error");
         assert!(matches!(result, Err(StoreError::NotFound)), "Expected NotFound, got: {:?}", result);
 
         // Neither endpoint exists.
-        let result2 = tx.g().addE("knows").from(888).to(999).next();
+        let result2 = txn.g().addE("knows").from(888).to(999).next();
         assert!(result2.is_err(), "addE with both endpoints missing should error");
         assert!(matches!(result2, Err(StoreError::NotFound)), "Expected NotFound, got: {:?}", result2);
 
@@ -2859,11 +2880,11 @@ mod integration_test {
         let graph = Graph::open(dir.path()).unwrap();
 
         {
-            let mut tx = graph.begin();
-            tx.g().addV("person").property("id", 1i64).property("name", "alice").next().unwrap();
-            tx.g().addV("person").property("id", 2i64).property("name", "bob").next().unwrap();
-            tx.g().addE("knows").from(1).to(2).property("weight", 0.5f64).property("since", "2024").next().unwrap();
-            tx.commit().unwrap();
+            let mut txn = graph.begin();
+            txn.g().addV("person").property("id", 1i64).property("name", "alice").next().unwrap();
+            txn.g().addV("person").property("id", 2i64).property("name", "bob").next().unwrap();
+            txn.g().addE("knows").from(1).to(2).property("weight", 0.5f64).property("since", "2024").next().unwrap();
+            txn.commit().unwrap();
         }
 
         // Read back with withProperties on edge — only "weight" should be present.
@@ -2891,9 +2912,9 @@ mod integration_test {
 
         // Populate data.
         {
-            let mut tx = graph.begin();
-            tx.g().addV("person").property("id", 1i64).next().unwrap();
-            tx.commit().unwrap();
+            let mut txn = graph.begin();
+            txn.g().addV("person").property("id", 1i64).next().unwrap();
+            txn.commit().unwrap();
         }
 
         // ReadSession does not have write methods on its traversal — this is
@@ -2930,10 +2951,10 @@ mod integration_test {
         let graph = Graph::open(dir.path()).unwrap();
 
         {
-            let mut tx = graph.begin();
-            tx.g().addV("person").property("id", 1i64).property("name", "alice").next().unwrap();
-            tx.g().addV("software").property("id", 2i64).property("name", "gremlin").next().unwrap();
-            tx.commit().unwrap();
+            let mut txn = graph.begin();
+            txn.g().addV("person").property("id", 1i64).property("name", "alice").next().unwrap();
+            txn.g().addV("software").property("id", 2i64).property("name", "gremlin").next().unwrap();
+            txn.commit().unwrap();
         }
 
         let mut snap = graph.read();
@@ -2983,11 +3004,11 @@ mod integration_test {
         let graph = Graph::open(dir.path()).unwrap();
 
         {
-            let mut tx = graph.begin();
-            tx.g().addV("person").property("id", 1i64).next().unwrap();
-            tx.g().addV("person").property("id", 2i64).next().unwrap();
-            tx.g().addV("person").property("id", 3i64).next().unwrap();
-            tx.commit().unwrap();
+            let mut txn = graph.begin();
+            txn.g().addV("person").property("id", 1i64).next().unwrap();
+            txn.g().addV("person").property("id", 2i64).next().unwrap();
+            txn.g().addV("person").property("id", 3i64).next().unwrap();
+            txn.commit().unwrap();
         }
 
         let g1 = graph.clone();
@@ -2998,10 +3019,10 @@ mod integration_test {
         let t1 = std::thread::spawn(move || {
             b1.wait();
             loop {
-                let mut tx = g1.begin();
-                let result = tx.g().V([3]).drop().next();
+                let mut txn = g1.begin();
+                let result = txn.g().V([3]).drop().next();
                 match result {
-                    Ok(_) => match tx.commit() {
+                    Ok(_) => match txn.commit() {
                         Ok(_) => return Ok::<_, StoreError>(()),
                         Err(StoreError::Conflict) => continue,
                         Err(e) => return Err(e),
@@ -3016,10 +3037,10 @@ mod integration_test {
         let t2 = std::thread::spawn(move || {
             b2.wait();
             loop {
-                let mut tx = g2.begin();
-                let result = tx.g().addE("knows").from(1).to(3).next();
+                let mut txn = g2.begin();
+                let result = txn.g().addE("knows").from(1).to(3).next();
                 match result {
-                    Ok(_) => match tx.commit() {
+                    Ok(_) => match txn.commit() {
                         Ok(_) => return Ok::<_, StoreError>(()),
                         Err(StoreError::Conflict) => continue,
                         Err(e) => return Err(e),

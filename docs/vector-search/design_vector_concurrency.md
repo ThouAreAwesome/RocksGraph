@@ -23,7 +23,7 @@ Status: proposal — extracted from `design_vector_search.md` §9.
 
 ---
 
-Graph data updates are inherently parallel — multiple `TxSession` objects can
+Graph data updates are inherently parallel — multiple `TxnSession` objects can
 be active and committing concurrently. The naive single-threaded design has two
 race conditions that must be fixed before any concurrent workload is safe.
 
@@ -71,7 +71,7 @@ Full design in `design_vector_wal.md` §4.
 **Decision: wrap each `VectorIndex` in `Arc<RwLock<Box<dyn VectorIndex>>>`.**
 
 Lock semantics:
-- **Write lock** — acquired in `TxSession::commit` after `db.write_opt()` returns,
+- **Write lock** — acquired in `TxnSession::commit` after `db.write_opt()` returns,
   to call `insert`/`remove` on the index
 - **Read lock** — acquired for the full duration of a `nearest` search
 
@@ -79,7 +79,7 @@ This allows concurrent searches to proceed without blocking each other, while
 serializing concurrent index mutations. A search never observes a
 partially-inserted vector.
 
-**Read-your-own-writes is preserved**: after `TxSession::commit` returns
+**Read-your-own-writes is preserved**: after `TxnSession::commit` returns
 successfully, the write lock has been released and the vector is visible to any
 subsequent `nearest` call in the same or any other session.
 
@@ -198,7 +198,7 @@ for multi-layer nodes and usearch's per-node bookkeeping.
 #### Commit path (step order matters)
 
 ```
-TxSession::commit()
+TxnSession::commit()
   │
   ├─ [PRE-CHECK] for each vector in the transaction:
   │     index.would_exceed_limit(vector)?  ← calls insert() logic, no-op on success
@@ -259,7 +259,7 @@ assertion), the outcome is:
 5. index.insert(...)  → ❌ Err(non-OOM)
 ```
 
-`TxSession::commit` propagates the error. The graph state is committed; the
+`TxnSession::commit` propagates the error. The graph state is committed; the
 index is transiently stale. WAL replay on the next `Graph::open` will retry
 the insert and succeed (assuming the underlying fault was transient). Log at
 `error` level with entity key and property; do **not** panic.
@@ -349,7 +349,7 @@ in the Python/JS `Graph` constructor docstring and any getting-started guide.
 ### 5c. Write lock held during brute-force search (v0.1)
 
 `BruteForceIndex::search` holds the `RwLock` read lock for the full linear
-scan — up to ~50ms at 100K × 1536 dims. A concurrent `TxSession::commit`
+scan — up to ~50ms at 100K × 1536 dims. A concurrent `TxnSession::commit`
 blocks at step 6 (write lock acquisition) for this duration after its
 RocksDB fsync at step 3 is already complete. This produces a visible commit
 stall at prototyping scale. Eliminated in v0.2 where HNSW search completes
@@ -363,9 +363,9 @@ uncommitted transaction, the newly inserted vertex is invisible — its vector i
 in `pending_vector_ops` but not yet applied to the index.
 
 ```python
-tx = graph.tx()
-tx.addV('doc').property('embedding', [0.1, 0.2, ...])
-tx.V().nearest([0.1, 0.2, ...], 5)   # ← does NOT find 'doc'
+txn = graph.txn()
+txn.addV('doc').property('embedding', [0.1, 0.2, ...])
+txn.V().nearest([0.1, 0.2, ...], 5)   # ← does NOT find 'doc'
 ```
 
 **Fix**: `NearestStep` merges HNSW results with a brute-force scan of the

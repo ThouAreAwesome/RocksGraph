@@ -20,9 +20,9 @@
 //! # use rocksgraph::{Graph, TraversalBuilder, Value};
 //! # let dir = tempfile::tempdir().unwrap();
 //! # let graph = Graph::open(dir.path()).unwrap();
-//! # let mut tx = graph.begin();
-//! # tx.g().addV("person").property("id", 42i64).next().unwrap();
-//! # tx.commit().unwrap();
+//! # let mut txn = graph.begin();
+//! # txn.g().addV("person").property("id", 42i64).next().unwrap();
+//! # txn.commit().unwrap();
 //! let mut snap = graph.read();
 //! // filter by id
 //! snap.g().V([]).hasId([42i64]).next().unwrap();

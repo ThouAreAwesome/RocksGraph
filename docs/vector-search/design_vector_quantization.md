@@ -163,7 +163,7 @@ The index stores bit-packed `Vec<u32>` and uses hardware `popcnt` for distance.
 
 **Critical: no blocking SVD.** SVD on a 100K × 1536 matrix is O(N·D²) —
 ~2.3 × 10¹¹ operations, 30+ seconds single-threaded. Blocking the 100,000th
-`TxSession::commit()` on linear algebra is unacceptable for OLTP.
+`TxnSession::commit()` on linear algebra is unacceptable for OLTP.
 
 Instead, training runs asynchronously:
 

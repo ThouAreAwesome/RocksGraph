@@ -12,11 +12,11 @@
 //! # let graph = Graph::open(dir.path()).unwrap();
 //!
 //! // Read-write transaction
-//! let mut tx = graph.begin();
-//! tx.g().addV("person").property("id", 1).property("name", "alice").next().unwrap();
-//! tx.g().addV("person").property("id", 2).property("name", "bob").next().unwrap();
-//! tx.g().addE("knows").from(1).to(2).property("weight", 0.9f64).next().unwrap();
-//! tx.commit().unwrap();
+//! let mut txn = graph.begin();
+//! txn.g().addV("person").property("id", 1).property("name", "alice").next().unwrap();
+//! txn.g().addV("person").property("id", 2).property("name", "bob").next().unwrap();
+//! txn.g().addE("knows").from(1).to(2).property("weight", 0.9f64).next().unwrap();
+//! txn.commit().unwrap();
 //!
 //! // Read-only snapshot query
 //! let mut snap = graph.read();
@@ -48,7 +48,7 @@
 //! ```
 //!
 //! All modules below `api` are `pub(crate)` — users only interact through
-//! [`Graph`], [`ReadSession`], [`TxSession`], and the traversal types re-exported
+//! [`Graph`], [`ReadSession`], [`TxnSession`], and the traversal types re-exported
 //! at the crate root.
 #![warn(clippy::undocumented_unsafe_blocks)]
 
@@ -67,7 +67,7 @@ pub(crate) mod types;
 pub(crate) mod vector;
 
 // ── User-facing re-exports ────────────────────────────────────────────────────
-pub use api::{Graph, IndexManager, ReadSession, TxSession};
+pub use api::{Graph, IndexManager, ReadSession, TxnSession};
 pub use bulk::{BulkEdge, BulkLoadStats, BulkLoader, BulkSchema, BulkVertex, IntoBulkEdge, IntoBulkVertex};
 pub use engine::ExecutionOptions;
 pub use schema::GraphOptions;

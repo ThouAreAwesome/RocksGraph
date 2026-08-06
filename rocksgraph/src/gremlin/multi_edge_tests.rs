@@ -34,24 +34,24 @@ mod multi_edge_integration_test {
         let dir = tempfile::tempdir().unwrap();
         let graph = setup_multi_edge_graph(dir.path());
 
-        let mut tx = graph.begin();
-        tx.g().addV("person").property("id", 10i64).next().unwrap();
-        tx.g().addV("person").property("id", 20i64).next().unwrap();
+        let mut txn = graph.begin();
+        txn.g().addV("person").property("id", 10i64).next().unwrap();
+        txn.g().addV("person").property("id", 20i64).next().unwrap();
 
         // 1. Add first edge with default rank 0
-        tx.g().addE("purchased").from(10).to(20).property("since", "morning").next().unwrap();
+        txn.g().addE("purchased").from(10).to(20).property("since", "morning").next().unwrap();
 
         // 2. Add second edge with custom rank 1
-        tx.g().addE("purchased").from(10).to(20).property("rank", 1i32).property("since", "evening").next().unwrap();
+        txn.g().addE("purchased").from(10).to(20).property("rank", 1i32).property("since", "evening").next().unwrap();
 
         // 3. Add third edge with custom rank 2
-        tx.g().addE("purchased").from(10).to(20).property("rank", 2i64).property("since", "night").next().unwrap();
+        txn.g().addE("purchased").from(10).to(20).property("rank", 2i64).property("since", "night").next().unwrap();
 
         // 4. Adding duplicate edge with rank 1 should fail
-        let dup_res = tx.g().addE("purchased").from(10).to(20).property("rank", 1i32).next();
+        let dup_res = txn.g().addE("purchased").from(10).to(20).property("rank", 1i32).next();
         assert!(matches!(dup_res, Err(StoreError::DuplicateEdge(_))));
 
-        tx.commit().unwrap();
+        txn.commit().unwrap();
 
         // Query snapshot
         let mut read = graph.read();
@@ -86,19 +86,19 @@ mod multi_edge_integration_test {
         let dir = tempfile::tempdir().unwrap();
         let graph = setup_multi_edge_graph(dir.path());
 
-        let mut tx = graph.begin();
-        tx.g().addV("person").property("id", 1i64).next().unwrap();
-        tx.g().addV("person").property("id", 2i64).next().unwrap();
+        let mut txn = graph.begin();
+        txn.g().addV("person").property("id", 1i64).next().unwrap();
+        txn.g().addV("person").property("id", 2i64).next().unwrap();
 
         // Add multiple ranks for "purchased"
-        tx.g().addE("purchased").from(1).to(2).property("rank", 0i32).property("item", "book").next().unwrap();
-        tx.g().addE("purchased").from(1).to(2).property("rank", 1i32).property("item", "pen").next().unwrap();
+        txn.g().addE("purchased").from(1).to(2).property("rank", 0i32).property("item", "book").next().unwrap();
+        txn.g().addE("purchased").from(1).to(2).property("rank", 1i32).property("item", "pen").next().unwrap();
 
         // Add multiple ranks for "reviewed"
-        tx.g().addE("reviewed").from(1).to(2).property("rank", 0i32).property("rating", 5i32).next().unwrap();
-        tx.g().addE("reviewed").from(1).to(2).property("rank", 1i32).property("rating", 4i32).next().unwrap();
+        txn.g().addE("reviewed").from(1).to(2).property("rank", 0i32).property("rating", 5i32).next().unwrap();
+        txn.g().addE("reviewed").from(1).to(2).property("rank", 1i32).property("rating", 4i32).next().unwrap();
 
-        tx.commit().unwrap();
+        txn.commit().unwrap();
 
         // Verify independent querying
         let mut read = graph.read();
@@ -116,18 +116,18 @@ mod multi_edge_integration_test {
         let dir = tempfile::tempdir().unwrap();
         let graph = setup_multi_edge_graph(dir.path());
 
-        let mut tx = graph.begin();
-        tx.g().addV("person").property("id", 1i64).next().unwrap();
-        tx.g().addV("person").property("id", 2i64).next().unwrap();
+        let mut txn = graph.begin();
+        txn.g().addV("person").property("id", 1i64).next().unwrap();
+        txn.g().addV("person").property("id", 2i64).next().unwrap();
 
         // Insert rank 0 and rank 1
-        tx.g().addE("knows").from(1).to(2).property("rank", 0i32).property("weight", 0.1f64).next().unwrap();
-        tx.g().addE("knows").from(1).to(2).property("rank", 1i32).property("weight", 0.2f64).next().unwrap();
+        txn.g().addE("knows").from(1).to(2).property("rank", 0i32).property("weight", 0.1f64).next().unwrap();
+        txn.g().addE("knows").from(1).to(2).property("rank", 1i32).property("weight", 0.2f64).next().unwrap();
 
         // Update rank 1 property specifically
-        tx.g().V([1]).outE(["knows"]).hasRank(1u16).property("weight", 0.9f64).next().unwrap();
+        txn.g().V([1]).outE(["knows"]).hasRank(1u16).property("weight", 0.9f64).next().unwrap();
 
-        tx.commit().unwrap();
+        txn.commit().unwrap();
 
         // Verify updates
         let mut read = graph.read();
@@ -143,12 +143,12 @@ mod multi_edge_integration_test {
         let dir = tempfile::tempdir().unwrap();
         let graph = setup_multi_edge_graph(dir.path());
 
-        let mut tx = graph.begin();
-        tx.g().addV("person").property("id", 1i64).next().unwrap();
-        tx.g().addV("person").property("id", 2i64).next().unwrap();
+        let mut txn = graph.begin();
+        txn.g().addV("person").property("id", 1i64).next().unwrap();
+        txn.g().addV("person").property("id", 2i64).next().unwrap();
 
-        tx.g().addE("knows").from(1).to(2).property("rank", 5i32).next().unwrap();
-        tx.commit().unwrap();
+        txn.g().addE("knows").from(1).to(2).property("rank", 5i32).next().unwrap();
+        txn.commit().unwrap();
 
         let mut read = graph.read();
         let paths = read.g().V([1]).outE(["knows"]).inV().path().to_list().unwrap();
@@ -174,16 +174,16 @@ mod multi_edge_integration_test {
         let dir = tempfile::tempdir().unwrap();
         let graph = setup_multi_edge_graph(dir.path());
 
-        let mut tx = graph.begin();
-        tx.g().addV("person").property("id", 1i64).next().unwrap();
-        tx.g().addV("person").property("id", 2i64).next().unwrap();
+        let mut txn = graph.begin();
+        txn.g().addV("person").property("id", 1i64).next().unwrap();
+        txn.g().addV("person").property("id", 2i64).next().unwrap();
 
         // 3 parallel edges: rank 0, 1, 2
-        tx.g().addE("knows").from(1).to(2).property("rank", 0i32).next().unwrap();
-        tx.g().addE("knows").from(1).to(2).property("rank", 1i32).next().unwrap();
-        tx.g().addE("knows").from(1).to(2).property("rank", 2i32).next().unwrap();
+        txn.g().addE("knows").from(1).to(2).property("rank", 0i32).next().unwrap();
+        txn.g().addE("knows").from(1).to(2).property("rank", 1i32).next().unwrap();
+        txn.g().addE("knows").from(1).to(2).property("rank", 2i32).next().unwrap();
 
-        tx.commit().unwrap();
+        txn.commit().unwrap();
 
         // Let's check initial degree (should be 3 out, 3 in)
         {

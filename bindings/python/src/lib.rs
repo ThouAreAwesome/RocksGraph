@@ -9,7 +9,7 @@ use rocksgraph::{
         AnnAlgorithm, DataType, DistanceMetric, EdgeMode, GraphOptions, HnswConfig, IndexOptions, PerIndexOptions,
         Quantization, SchemaMode, SchemaSession, VectorEntityType, VectorIndexConfig, VectorIndexLimit,
     },
-    ExecutionOptions, Graph, IndexManager, Primitive, ReadSession, RocksOptions, TxSession, Value,
+    ExecutionOptions, Graph, IndexManager, Primitive, ReadSession, RocksOptions, TxnSession, Value,
 };
 use smol_str::SmolStr;
 use std::collections::HashMap;
@@ -358,10 +358,10 @@ impl PyGraph {
         Ok(PyReadSession { session: g.read() })
     }
 
-    fn begin(&self) -> PyResult<PyTxSession> {
+    fn begin(&self) -> PyResult<PyTxnSession> {
         let g =
             self.graph.as_ref().ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Graph is already closed"))?;
-        Ok(PyTxSession { session: Some(g.begin()) })
+        Ok(PyTxnSession { session: Some(g.begin()) })
     }
 
     fn open_schema(&self) -> PyResult<PySchemaSession> {
@@ -643,12 +643,12 @@ impl PyReadSession {
 }
 
 #[pyclass(unsendable)]
-struct PyTxSession {
-    session: Option<TxSession>,
+struct PyTxnSession {
+    session: Option<TxnSession>,
 }
 
 #[pymethods]
-impl PyTxSession {
+impl PyTxnSession {
     fn _execute(&mut self, py: Python<'_>, bytes: &[u8], prop_keys: Option<Vec<String>>) -> PyResult<PyObject> {
         let session =
             self.session.as_mut().ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Session already closed"))?;
@@ -682,7 +682,7 @@ fn _rocksgraph(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyGraph>()?;
     m.add_class::<PyIndexManager>()?;
     m.add_class::<PyReadSession>()?;
-    m.add_class::<PyTxSession>()?;
+    m.add_class::<PyTxnSession>()?;
     m.add_class::<PySchemaSession>()?;
     m.add_class::<PyBulkLoader>()?;
     errors::register(m)?;

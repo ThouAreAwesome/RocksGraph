@@ -39,20 +39,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // marko -knows-> vadas (weight 0.5), marko -knows-> josh (weight 1.0)
     // marko -created-> lop (0.4), josh -created-> ripple (1.0), josh -created-> lop (0.4)
     // peter -created-> lop (0.2)
-    let mut tx = graph.begin();
-    tx.g().addV("person").property("id", 1i64).property("name", "marko").property("age", 29i32).next()?;
-    tx.g().addV("person").property("id", 2i64).property("name", "vadas").property("age", 27i32).next()?;
-    tx.g().addV("software").property("id", 3i64).property("name", "lop").property("lang", "java").next()?;
-    tx.g().addV("person").property("id", 4i64).property("name", "josh").property("age", 32i32).next()?;
-    tx.g().addV("software").property("id", 5i64).property("name", "ripple").property("lang", "java").next()?;
-    tx.g().addV("person").property("id", 6i64).property("name", "peter").property("age", 35i32).next()?;
-    tx.g().addE("knows").from(1).to(2).property("weight", 0.5f64).next()?;
-    tx.g().addE("knows").from(1).to(4).property("weight", 1.0f64).next()?;
-    tx.g().addE("created").from(1).to(3).property("weight", 0.4f64).next()?;
-    tx.g().addE("created").from(4).to(5).property("weight", 1.0f64).next()?;
-    tx.g().addE("created").from(4).to(3).property("weight", 0.4f64).next()?;
-    tx.g().addE("created").from(6).to(3).property("weight", 0.2f64).next()?;
-    tx.commit()?;
+    let mut txn = graph.begin();
+    txn.g().addV("person").property("id", 1i64).property("name", "marko").property("age", 29i32).next()?;
+    txn.g().addV("person").property("id", 2i64).property("name", "vadas").property("age", 27i32).next()?;
+    txn.g().addV("software").property("id", 3i64).property("name", "lop").property("lang", "java").next()?;
+    txn.g().addV("person").property("id", 4i64).property("name", "josh").property("age", 32i32).next()?;
+    txn.g().addV("software").property("id", 5i64).property("name", "ripple").property("lang", "java").next()?;
+    txn.g().addV("person").property("id", 6i64).property("name", "peter").property("age", 35i32).next()?;
+    txn.g().addE("knows").from(1).to(2).property("weight", 0.5f64).next()?;
+    txn.g().addE("knows").from(1).to(4).property("weight", 1.0f64).next()?;
+    txn.g().addE("created").from(1).to(3).property("weight", 0.4f64).next()?;
+    txn.g().addE("created").from(4).to(5).property("weight", 1.0f64).next()?;
+    txn.g().addE("created").from(4).to(3).property("weight", 0.4f64).next()?;
+    txn.g().addE("created").from(6).to(3).property("weight", 0.2f64).next()?;
+    txn.commit()?;
 
     let mut g = graph.read();
 

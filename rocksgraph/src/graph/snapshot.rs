@@ -19,7 +19,7 @@ use parking_lot::RwLock;
 use std::collections::{hash_map::Entry, HashMap};
 use std::sync::Arc;
 
-use super::TxSchemaCache;
+use super::TxnSchemaCache;
 use crate::engine::ExecutionOptions;
 
 // ── LogicalSnapshot ───────────────────────────────────────────────────────────
@@ -42,7 +42,7 @@ pub(crate) struct LogicalSnapshot {
     vertex_degree: HashMap<VertexKey, (u32, u32, LabelId)>,
     pub(crate) execution_options: ExecutionOptions,
     pub(crate) schema: Arc<RwLock<crate::schema::Schema>>,
-    pub(crate) schema_cache: TxSchemaCache,
+    pub(crate) schema_cache: TxnSchemaCache,
     pub(crate) vector_indexes: Arc<RwLock<VectorIndexMap>>,
 }
 
@@ -53,7 +53,7 @@ impl LogicalSnapshot {
         vector_indexes: Arc<RwLock<VectorIndexMap>>,
         execution_options: ExecutionOptions,
     ) -> Self {
-        let schema_cache = TxSchemaCache::from_schema(&schema.read());
+        let schema_cache = TxnSchemaCache::from_schema(&schema.read());
         Self {
             store: snapshot,
             vertices: HashMap::new(),

@@ -18,20 +18,214 @@ db = tempfile.mkdtemp()
 graph = Graph(db)
 
 # ── Write ──────────────────────────────────────────────
-with graph.tx() as tx:
-    alice = tx.traversal().addV("person").property("id", 1) \
+with graph.begin() as txn:
+    alice = txn.g().addV("person").property("id", 1) \
         .property("name", "Alice").property("age", Int64(30)).next()
-    bob = tx.traversal().addV("person").property("id", 2) \
+    bob = txn.g().addV("person").property("id", 2) \
         .property("name", "Bob").property("age", Int64(25)).next()
-    tx.traversal().addE("knows").from_(alice).to(bob).property("since", Int64(2020)).next()
+    txn.g().addE("knows").from_(alice).to(bob).property("since", Int64(2020)).next()
 
 # ── Read ───────────────────────────────────────────────
 snap = graph.read()
-snap.traversal().V().count().to_list()                            # [2]
-snap.traversal().V(1).out("knows").values("name").to_list()       # ["Bob"]
-snap.traversal().V().has("age", P.gt(Int64(28))).values("name").to_list()  # ["Alice"]
-snap.traversal().V().hasLabel("person").order().by("age", "asc").values("name").to_list()
+snap.g().V().count().to_list()                            # [2]
+snap.g().V(1).out("knows").values("name").to_list()       # ["Bob"]
+snap.g().V().has("age", P.gt(Int64(28))).values("name").to_list()  # ["Alice"]
+snap.g().V().hasLabel("person").order().by("age", "asc").values("name").to_list()
                                                                   # ["Bob", "Alice"]
+```
+
+## Session Model
+
+```
+Graph(path)
+  ├─ .begin()            → TxnSession      (OCC read-write transaction)
+  ├─ .read()             → ReadSession    (pinned snapshot, immutable)
+  ├─ .open_schema()      → SchemaSession  (DDL — declare labels, indexes)
+  ├─ .open_bulk_loader() → BulkLoader   (high-throughput batch ingest)
+  └─ .index_manager()    → IndexManager  (rebuild / save vector indexes)
+
+session.g() → GraphTraversal  (immutable step builder)
+  .next()     → single result or None
+  .to_list()  → list of all results
+  .to_set()   → set of all results (elements must be hashable)
+  .iterate()  → None — execute for side-effects, discard results
+```
+
+`Graph` is cheap to clone internally; create one `Graph` instance and share it.
+Sessions are single-threaded — create one per thread.
+
+`TxnSession` supports the context manager protocol — auto-commits on success,
+auto-rolls-back on any exception:
+
+```python
+with graph.begin() as txn:
+    txn.g().addV("person").property("id", 1).property("name", "Alice").next()
+# committed automatically
+
+with graph.begin() as txn:
+    txn.g().addV("person").property("id", 2).next()
+    raise ValueError("oops")   # rolled back automatically; exception still propagates
+```
+
+### Using Traversal `.g()`
+
+`.g()` returns a fresh `GraphTraversal` tied to the current session.
+Each method (`.V()`, `.out()`, `.has()`, …) returns a **new** traversal object —
+the original is never mutated. Nothing executes until you call `.next()`,
+`.to_list()`, `.to_set()`, or `.iterate()`.
+
+```python
+snap = graph.read()
+snap.g().V().count().to_list()       # query 1 → [2]
+snap.g().V(1).out("knows").to_list() # query 2, independent, same snapshot
+```
+
+## Usage
+
+Examples assume `from rocksgraph import Graph, P, __, Int64, T, Direction, Order` and `graph = Graph(path)`. See [Step Reference](#step-reference) for the full step catalogue.
+
+### Property filtering with predicates
+
+```python
+snap = graph.read()
+
+# Age > 30 → list of name strings
+snap.g().V().has("age", P.gt(Int64(30))).values("name").to_list()
+
+# Age between 20 and 40 (inclusive lo, exclusive hi)
+snap.g().V().has("age", P.between(Int64(20), Int64(40))).values("name").to_list()
+
+# Name is Alice → list of Vertex objects
+snap.g().V().has("name", "Alice").to_list()
+
+# Property existence → count as Int64
+snap.g().V().has("email").count().to_list()
+```
+
+### Edge creation
+
+```python
+with graph.begin() as txn:
+    # next() returns a Vertex object; from_() / to() extract its .id automatically
+    alice = txn.g().addV("person").property("id", 1).property("name", "Alice").next()
+    bob   = txn.g().addV("person").property("id", 2).property("name", "Bob").next()
+    txn.g().addE("knows").from_(alice).to(bob).property("since", Int64(2020)).next()
+```
+
+### Sub-traversal filtering
+
+```python
+# Vertices that have at least one "knows" edge pointing to vertex 2
+snap = graph.read()
+snap.g().V().where(__.out("knows").hasId(2)).values("name").to_list()
+```
+
+### Selective property loading
+
+`withProperties()` controls which properties are populated on the returned `Vertex`/`Edge`
+objects. Without it, `.properties` is always `{}` — use `.values()` / `.properties()` steps instead.
+
+```python
+snap = graph.read()
+
+# Default — .properties is empty; use .values() to read
+v = snap.g().V(1).next()
+v.properties  # {}
+snap.g().V(1).values("name").to_list()  # ["Alice"]
+
+# Load specific properties into the object
+v = snap.g().withProperties("name", "age").V(1).next()
+v.properties  # {"name": "Alice", "age": 30}
+
+# Load all properties
+v = snap.g().withProperties().V(1).next()
+```
+
+### Ordering with enums
+
+```python
+snap = graph.read()
+
+# Sort ascending / descending using Order enum
+snap.g().V().order().by("age", Order.asc).values("name").to_list()
+snap.g().V().order().by("age", Order.desc).values("name").to_list()
+
+# Multi-key sort
+snap.g().V().order().by("city", Order.asc).by("name", Order.asc).values("name").to_list()
+```
+
+### Side-effect traversals with `iterate()`
+
+```python
+# drop() discards the removed elements — use iterate() to avoid materialising them
+with graph.begin() as txn:
+    txn.g().V().hasLabel("temp").drop().iterate()
+```
+
+### Coalesce (upsert)
+
+```python
+with graph.begin() as txn:
+    txn.g().V().has("email", "a@b.com").fold().coalesce(
+        __.unfold(),
+        __.addV("user").property("id", 99).property("email", "a@b.com")
+    ).next()
+```
+
+### Repeat (loop)
+
+```python
+# 2-hop neighbours via "link" edges
+snap = graph.read()
+snap.g().V(1).repeat(__.out("link")).times(2).values("name").to_list()
+```
+
+### Transactions
+
+```python
+# Context manager — recommended
+with graph.begin() as txn:
+    txn.g().addV("person").property("id", 1).property("name", "Alice").next()
+# auto-committed
+
+# Manual commit / rollback
+txn = graph.begin()
+txn.g().addV("person").property("id", 2).property("name", "Bob").next()
+txn.rollback()  # discard
+
+graph.read().g().V().hasLabel("person").count().to_list()  # [1] — only Alice
+```
+
+### Vector search
+
+Declare a vector index via `SchemaSession`, insert embeddings, then query with `.nearest()`:
+
+```python
+from rocksgraph import Graph, DataType, VectorEntityType, DistanceMetric, Vector
+import tempfile
+
+graph = Graph(tempfile.mkdtemp())
+
+# 1. Declare the vector index (persisted with the database)
+with graph.open_schema() as s:
+    s.add_property_key("emb", DataType.FloatVector)
+    s.add_vector_index(
+        property="emb",
+        dimension=3,
+        entity_type=VectorEntityType.Vertex,
+        metric=DistanceMetric.Cosine,
+    )
+
+# 2. Insert vertices with embeddings
+with graph.begin() as txn:
+    txn.g().addV("doc", 1).property("emb", Vector([1.0, 0.0, 0.0])).next()
+    txn.g().addV("doc", 2).property("emb", Vector([0.0, 1.0, 0.0])).next()
+    txn.g().addV("doc", 3).property("emb", Vector([0.0, 0.0, 1.0])).next()
+
+# 3. Top-k nearest neighbours (ordered by similarity, descending)
+snap = graph.read()
+results = snap.g().V().nearest("emb", Vector([0.9, 0.1, 0.0]), 2).to_list()
+# → [Vertex(id=1, ...), Vertex(id=2, ...)]
 ```
 
 ## Data Model
@@ -59,7 +253,7 @@ Path:     {"objects": [Vertex|Edge|...], "labels": [[str]]}
 ### `Vertex`
 
 ```python
-v = snap.traversal().V(1).next()
+v = snap.g().V(1).next()
 v.id          # int
 v.label       # str
 v.properties  # dict — always {} unless withProperties() was used
@@ -74,7 +268,7 @@ Vertices are **hashable** by `id` — safe to use in `set()` or as dict keys.
 ### `Edge`
 
 ```python
-e = snap.traversal().V(1).outE("knows").next()
+e = snap.g().V(1).outE("knows").next()
 e.src    # int — source vertex id
 e.dst    # int — destination vertex id
 e.label  # str
@@ -89,55 +283,12 @@ Edges are **hashable** by `(src, dst, label, rank)`.
 ### `Property`
 
 ```python
-props = snap.traversal().V(1).properties("name").to_list()
+props = snap.g().V(1).properties("name").to_list()
 p = props[0]
 p.key    # str — "name"
 p.value  # Any — "Alice"
 
 p["key"]   # dict-style access
-```
-
-## Session Model
-
-```
-Graph(path)
-  ├─ .tx()     → TxSession   (read-write, commit/rollback)
-  └─ .read()   → ReadSession (pinned snapshot, immutable)
-
-Session.traversal() → GraphTraversal  (immutable step builder)
-  .next()             → single result or None
-  .to_list()          → list of all results
-  .to_set()           → set of all results (requires hashable elements)
-  .iterate()          → None — execute for side-effects, discard results
-```
-
-`Graph` is cheap to clone internally; create one `Graph` instance and share it.
-Sessions are single-threaded — create one per thread.
-
-`TxSession` supports the context manager protocol — auto-commits on success,
-auto-rolls-back on any exception:
-
-```python
-with graph.tx() as tx:
-    tx.traversal().addV("person").property("id", 1).property("name", "Alice").next()
-# committed automatically
-
-with graph.tx() as tx:
-    tx.traversal().addV("person").property("id", 2).next()
-    raise ValueError("oops")   # rolled back automatically; exception still propagates
-```
-
-### Using `.traversal()`
-
-`.traversal()` returns a fresh `GraphTraversal` tied to the current session.
-Each method (`.V()`, `.out()`, `.has()`, …) returns a **new** traversal object —
-the original is never mutated. Nothing executes until you call `.next()`,
-`.to_list()`, `.to_set()`, or `.iterate()`.
-
-```python
-snap = graph.read()
-snap.traversal().V().count().to_list()       # query 1 → [2]
-snap.traversal().V(1).out("knows").to_list() # query 2, independent, same snapshot
 ```
 
 ## Type System
@@ -202,132 +353,6 @@ P.without(*vs)    # x not in {vs}
 ```
 
 All predicates work on user properties (`has("age", P.gt(Int64(30)))`) and vertex IDs (`hasId(P.within(1, 2, 3))`).
-
-## Examples
-
-Examples assume `from rocksgraph import Graph, P, __, Int64, T, Direction, Order` and `graph = Graph(path)`.
-
-### Property filtering with predicates
-
-```python
-snap = graph.read()
-
-# Age > 30 → list of name strings
-snap.traversal().V().has("age", P.gt(Int64(30))).values("name").to_list()
-
-# Age between 20 and 40 (inclusive lo, exclusive hi)
-snap.traversal().V().has("age", P.between(Int64(20), Int64(40))).values("name").to_list()
-
-# Name is Alice → list of Vertex objects
-snap.traversal().V().has("name", "Alice").to_list()
-
-# Property existence → count as Int64
-snap.traversal().V().has("email").count().to_list()
-```
-
-### Edge creation
-
-```python
-with graph.tx() as tx:
-    # next() returns a Vertex object; from_() / to() extract its .id automatically
-    alice = tx.traversal().addV("person").property("id", 1).property("name", "Alice").next()
-    bob   = tx.traversal().addV("person").property("id", 2).property("name", "Bob").next()
-    tx.traversal().addE("knows").from_(alice).to(bob).property("since", Int64(2020)).next()
-```
-
-### Sub-traversal filtering
-
-```python
-# Vertices that have at least one "knows" edge pointing to vertex 2
-snap = graph.read()
-snap.traversal().V().where(__.out("knows").hasId(2)).values("name").to_list()
-```
-
-### Selective property loading
-
-`withProperties()` controls which properties are populated on the returned `Vertex`/`Edge`
-objects. Without it, `.properties` is always `{}` — use `.values()` / `.properties()` steps instead.
-
-```python
-snap = graph.read()
-
-# Default — .properties is empty; use .values() to read
-v = snap.traversal().V(1).next()
-v.properties  # {}
-snap.traversal().V(1).values("name").to_list()  # ["Alice"]
-
-# Load specific properties into the object
-v = snap.traversal().withProperties("name", "age").V(1).next()
-v.properties  # {"name": "Alice", "age": 30}
-
-# Load all properties
-v = snap.traversal().withProperties().V(1).next()
-```
-
-### Ordering with enums
-
-```python
-snap = graph.read()
-
-# Sort ascending / descending using Order enum
-snap.traversal().V().order().by("age", Order.asc).values("name").to_list()
-snap.traversal().V().order().by("age", Order.desc).values("name").to_list()
-
-# Multi-key sort
-snap.traversal().V().order().by("city", Order.asc).by("name", Order.asc).values("name").to_list()
-```
-
-### Degree with Direction enum
-
-```python
-snap = graph.read()
-snap.traversal().V(1).degree(Direction.OUT).to_list()   # [2] — out-edges only
-snap.traversal().V(1).degree(Direction.IN).to_list()    # [1] — in-edges only
-snap.traversal().V(1).degree(Direction.BOTH).to_list()  # [3] — all edges
-snap.traversal().V(1).degree().to_list()                # [3] — default is BOTH
-```
-
-### Side-effect traversals with `iterate()`
-
-```python
-# drop() discards the removed elements — use iterate() to avoid materialising them
-with graph.tx() as tx:
-    tx.traversal().V().hasLabel("temp").drop().iterate()
-```
-
-### Coalesce (upsert)
-
-```python
-with graph.tx() as tx:
-    tx.traversal().V().has("email", "a@b.com").fold().coalesce(
-        __.unfold(),
-        __.addV("user").property("id", 99).property("email", "a@b.com")
-    ).next()
-```
-
-### Repeat (loop)
-
-```python
-# 2-hop neighbours via "link" edges
-snap = graph.read()
-snap.traversal().V(1).repeat(__.out("link")).times(2).values("name").to_list()
-```
-
-### Transactions
-
-```python
-# Context manager — recommended
-with graph.tx() as tx:
-    tx.traversal().addV("person").property("id", 1).property("name", "Alice").next()
-# auto-committed
-
-# Manual commit / rollback
-tx = graph.tx()
-tx.traversal().addV("person").property("id", 2).property("name", "Bob").next()
-tx.rollback()  # discard
-
-graph.read().traversal().V().hasLabel("person").count().to_list()  # [1] — only Alice
-```
 
 ## Step Reference
 
@@ -456,15 +481,15 @@ import tempfile
 
 graph = Graph(tempfile.mkdtemp())
 
-with graph.tx() as tx:
-    tx.traversal().addV("doc").property("id", 1).property("emb", Vector([1.0, 0.0])).next()
-    tx.traversal().addV("doc").property("id", 2).property("emb", Vector([0.0, 1.0])).next()
+with graph.begin() as txn:
+    txn.g().addV("doc").property("id", 1).property("emb", Vector([1.0, 0.0])).next()
+    txn.g().addV("doc").property("id", 2).property("emb", Vector([0.0, 1.0])).next()
 
 snap = graph.read()
 # top-2 nearest to [1.0, 0.0]
-results = snap.traversal().V().hasLabel("doc").nearest("emb", Vector([1.0, 0.0]), 2).to_list()
+results = snap.g().V().hasLabel("doc").nearest("emb", Vector([1.0, 0.0]), 2).to_list()
 # cosine similarity of vertex 1's embedding
-score = snap.traversal().V(1).similarity("emb", Vector([1.0, 0.0])).next()  # 1.0
+score = snap.g().V(1).similarity("emb", Vector([1.0, 0.0])).next()  # 1.0
 ```
 
 ### Extraction

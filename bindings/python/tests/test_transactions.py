@@ -4,30 +4,30 @@ from tests.conftest import addv
 
 class TestTransactionCommit:
     def test_commit_persists_data(self, graph):
-        tx = graph.begin()
-        addv(tx, "person", name="Alice")
-        tx.commit()
+        txn = graph.begin()
+        addv(txn, "person", name="Alice")
+        txn.commit()
 
         rs = graph.read()
         results = rs.g().V().hasLabel("person").values("name").to_list()
         assert results == ["Alice"]
 
     def test_rollback_discards_writes(self, graph):
-        tx = graph.begin()
-        addv(tx, "person", name="Alice")
-        tx.rollback()
+        txn = graph.begin()
+        addv(txn, "person", name="Alice")
+        txn.rollback()
 
         rs = graph.read()
         results = rs.g().V().hasLabel("person").count().to_list()
         assert results == [0]
 
     def test_double_commit(self, graph):
-        tx = graph.begin()
-        addv(tx, "person")
-        tx.commit()
+        txn = graph.begin()
+        addv(txn, "person")
+        txn.commit()
         # Second commit should raise or be a no-op
         try:
-            tx.commit()
+            txn.commit()
             # If no-op, second commit does nothing. Acceptable.
         except Exception as e:
             # If raises, also acceptable. Just verify no crash.
@@ -35,16 +35,16 @@ class TestTransactionCommit:
 
     def test_snapshot_isolation(self, graph):
         """A read session opened before commit should not see committed data."""
-        tx = graph.begin()
-        addv(tx, "person", name="Alice")
-        tx.commit()
+        txn = graph.begin()
+        addv(txn, "person", name="Alice")
+        txn.commit()
 
         # Snapshot BEFORE commit
         rs_before = graph.read()
         before_count = rs_before.g().V().hasLabel("person").count().to_list()
         assert before_count == [1], "Should see already-committed data"
 
-        # New writes in a separate tx
+        # New writes in a separate txn
         tx2 = graph.begin()
         addv(tx2, "person", name="Bob")
         # rs_before should NOT see Bob (snapshot taken before tx2)

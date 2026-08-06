@@ -3,12 +3,12 @@ from rocksgraph import Graph, Vector
 
 class TestVectorSearch:
     def test_store_and_retrieve_vector_values(self, graph):
-        tx = graph.begin()
-        tx.g().addV("doc").property("id", 1) \
+        txn = graph.begin()
+        txn.g().addV("doc").property("id", 1) \
             .property("emb", Vector([0.1, 0.2, 0.3])).next()
-        tx.g().addV("doc").property("id", 2) \
+        txn.g().addV("doc").property("id", 2) \
             .property("emb", Vector([0.7, 0.7, 0.0])).next()
-        tx.commit()
+        txn.commit()
 
         snap = graph.read()
         v1 = snap.g().V(1).values("emb").next()
@@ -18,11 +18,11 @@ class TestVectorSearch:
         assert abs(v1[0] - 0.1) < 1e-6
 
     def test_nearest_exact_knn(self, graph):
-        tx = graph.begin()
+        txn = graph.begin()
         for i in range(10):
-            tx.g().addV("doc").property("id", i) \
+            txn.g().addV("doc").property("id", i) \
                 .property("emb", Vector([float(i) / 10.0, float(9 - i) / 10.0])).next()
-        tx.commit()
+        txn.commit()
 
         snap = graph.read()
         results = snap.g().V().hasLabel("doc") \
@@ -38,10 +38,10 @@ class TestVectorSearch:
         assert results == []
 
     def test_cosine_similarity(self, graph):
-        tx = graph.begin()
-        tx.g().addV("doc").property("id", 1) \
+        txn = graph.begin()
+        txn.g().addV("doc").property("id", 1) \
             .property("emb", Vector([1.0, 0.0])).next()
-        tx.commit()
+        txn.commit()
 
         snap = graph.read()
         scores = snap.g().V(1) \
@@ -78,12 +78,12 @@ class TestVectorSearch:
 
     def test_floatvector_hash_dedup(self, graph):
         """Two vertices with identical vector properties are equal."""
-        tx = graph.begin()
-        tx.g().addV("doc").property("id", 1) \
+        txn = graph.begin()
+        txn.g().addV("doc").property("id", 1) \
             .property("emb", Vector([0.1, 0.2, 0.3])).next()
-        tx.g().addV("doc").property("id", 2) \
+        txn.g().addV("doc").property("id", 2) \
             .property("emb", Vector([0.1, 0.2, 0.3])).next()
-        tx.commit()
+        txn.commit()
 
         snap = graph.read()
         v1 = snap.g().V(1).values("emb").next()
@@ -119,13 +119,13 @@ class TestVectorSearch:
 
     def test_nearest_top_k_ordering(self, graph):
         """nearest returns correct top-k in descending similarity order."""
-        tx = graph.begin()
+        txn = graph.begin()
         # Non-collinear 2D vectors so cosine similarity differs meaningfully
         vectors = [(0.0, 1.0), (0.7, 0.7), (1.0, 0.0), (0.3, 0.95), (0.9, 0.4)]
         for i, (x, y) in enumerate(vectors):
-            tx.g().addV("doc").property("id", i) \
+            txn.g().addV("doc").property("id", i) \
                 .property("emb", Vector([x, y])).next()
-        tx.commit()
+        txn.commit()
 
         snap = graph.read()
         # Query with [1.0, 0.0] — id=2 [1.0, 0.0] is exact, id=4 [0.9, 0.4] next

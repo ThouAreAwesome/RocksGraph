@@ -237,7 +237,7 @@ Only one edge per label between any two vertices is allowed (rank=0 default).
   verify after TestPyPI/PyPI release)
 - [x] `pyproject.toml` has `readme = "README.md"`
 - [x] `rocksgraph/__init__.pyi` type stubs exist — covers all public classes
-  (`Graph`, `ReadSession`, `TxSession`, `Traversal`, `__`, `P`, typed wrappers)
+  (`Graph`, `ReadSession`, `TxnSession`, `Traversal`, `__`, `P`, typed wrappers)
 - [x] Map `StoreError` variants to a `rocksgraph.StoreError` Python exception hierarchy
   (`StoreError` base + `StorageError`/`TransactionError`/`SchemaError`/`IntegrityError`/
   `VectorError`/`QueryError`, mirroring `StoreError::category()`)

@@ -388,7 +388,7 @@ At 5 M records/s: 69 M edge LiveJournal → ~15 s.  Transactional path at 90 K/s
 | Peak memory | ~200 MB | Chunk size (configurable) |
 | Complexity | Low | Medium |
 | Works on non-empty DB | Yes | No — empty DB required |
-| Incremental updates | Yes | No — use TxSession for incremental writes |
+| Incremental updates | Yes | No — use TxnSession for incremental writes |
 
 ---
 

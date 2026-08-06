@@ -75,7 +75,7 @@ Followed by a full compaction pass to move L0 SSTs into deeper levels.
 ### Write: Transactional OCC — incremental writes to an existing DB (1 M edges)
 
 `SstBulkLoader` only works on an empty database.  For **incremental writes** to a live
-database — appending new vertices and edges after the initial bulk load — use `TxSession`.
+database — appending new vertices and edges after the initial bulk load — use `TxnSession`.
 Each transaction upserts source vertex, destination vertex, and the connecting edge using
 Gremlin `coalesce` patterns (idempotent). OCC conflicts are retried with randomised
 back-off.

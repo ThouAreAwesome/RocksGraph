@@ -22,5 +22,5 @@ mod tests;
 pub(crate) use config::StagedSchema;
 pub(crate) use existence::Existence;
 pub(crate) use logical::LogicalGraph;
-pub(crate) use schema_cache::TxSchemaCache;
+pub(crate) use schema_cache::TxnSchemaCache;
 pub(crate) use snapshot::LogicalSnapshot;

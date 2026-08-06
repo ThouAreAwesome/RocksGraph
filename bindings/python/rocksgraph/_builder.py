@@ -695,7 +695,7 @@ class Graph:
         return ReadSession(self._graph.read())
 
     def begin(self):
-        return TxSession(self._graph.begin())
+        return TxnSession(self._graph.begin())
 
     def open_schema(self):
         """Open a SchemaSession for declaring labels, property types, and vector indexes."""
@@ -872,24 +872,24 @@ class ReadSession:
         return False
 
 
-class TxSession:
+class TxnSession:
     def __init__(self, session):
         self._session = session
 
     def g(self):
         if self._session is None:
-            raise RuntimeError("TxSession is already closed")
+            raise RuntimeError("TxnSession is already closed")
         return GraphTraversal(self._session)
 
     def commit(self):
         if self._session is None:
-            raise RuntimeError("TxSession is already closed")
+            raise RuntimeError("TxnSession is already closed")
         self._session.commit()
         self._session = None
 
     def rollback(self):
         if self._session is None:
-            raise RuntimeError("TxSession is already closed")
+            raise RuntimeError("TxnSession is already closed")
         self._session.rollback()
         self._session = None
 

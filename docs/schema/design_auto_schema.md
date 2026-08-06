@@ -396,7 +396,7 @@ Graph
   ├── .schema() -> Arc<RwLock<Schema>>                (already implemented, src/api.rs:89)
   ├── .open_management() -> SchemaManagement          (§4 — direct access, bypasses GraphCtx)
   ├── .read()  -> ReadSession   ─┐
-  └── .begin() -> TxSession     ─┴─ both pass Arc::clone(&self.schema) into
+  └── .begin() -> TxnSession     ─┴─ both pass Arc::clone(&self.schema) into
                                      LogicalSnapshot / LogicalGraph (already implemented)
 LogicalGraph<S> / LogicalSnapshot<S>
   schema: Arc<RwLock<Schema>>
@@ -519,7 +519,7 @@ instead of simply holding a lock for the session's whole lifetime:
      touching `Schema`*. This is the **same variant and the same retry contract** already
      documented for data transactions (`src/types/error.rs`: "the only variant that callers
      are expected to retry... retry the transaction from scratch") — a stale
-     `SchemaManagement` is conceptually no different from a stale `TxSession`.
+     `SchemaManagement` is conceptually no different from a stale `TxnSession`.
    - **Match** → apply every staged `declare_*`/`set_edge_mode`/`set_schema_mode` call,
      increment `version` by 1, and write the schema CF batch (declarations + the new
      `[version, edge_mode, schema_mode]` metadata entry) in one `WriteBatch`.

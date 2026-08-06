@@ -11,7 +11,7 @@ Updated: 2026-08-04
 With the rapid expansion of RocksGraph (streaming bulk loading, ACID transactions, Volcano query engine, and native HNSW vector search with durable WAL in v0.2), five distinct categories of technical debt and risk have accumulated:
 
 1. **Test Congestion (`graph/tests.rs` - 3,124 lines)**: The single largest file in the codebase, mixing CRUD, schema mode validation, transaction isolation, crash simulation, and vector WAL recovery.
-2. **Facade Bloat (`api.rs` - 794 lines)**: Combines user-facing API sessions (`Graph`, `ReadSession`, `TxSession`) with vector persistence I/O (`load_vector_configs`, `save_vector_indexes`, `vector_snapshot_path`), WAL seek replay, and GC routines.
+2. **Facade Bloat (`api.rs` - 794 lines)**: Combines user-facing API sessions (`Graph`, `ReadSession`, `TxnSession`) with vector persistence I/O (`load_vector_configs`, `save_vector_indexes`, `vector_snapshot_path`), WAL seek replay, and GC routines.
 3. **Bulk Loader Monolith (`bulk/loader.rs` - 2,053 lines)**: Bundles the streaming external sort-merge join pipeline, degree table construction, edge label annotation, and ~1,000 lines of tests.
 4. **Concurrency & Lock Contention**:
    - `std::sync::RwLock` panics on poisoning if any worker panics while holding a lock.
@@ -30,11 +30,11 @@ With the rapid expansion of RocksGraph (streaming bulk loading, ACID transaction
 - **Developer Productivity First**: Split `graph/tests.rs` immediately into modular test files to eliminate merge conflicts.
 - **Subsystem Decoupling**: Extract pure vector snapshot I/O to `vector::persistence` and WAL operations to `vector::wal`. Keep graph scanning in `api.rs` / `graph/`.
 - **Streamlined Bulk Loading**: Extract `edge_annotator.rs` and `degree.rs` from `bulk/loader.rs`, reducing `loader.rs` to a focused ~400-line pipeline orchestrator.
-- **Concurrency Hardening**: Switch shared locks to `parking_lot::RwLock` (poison-free) and introduce `TxSchemaCache` to avoid repeated schema lock acquisitions.
+- **Concurrency Hardening**: Switch shared locks to `parking_lot::RwLock` (poison-free) and introduce `TxnSchemaCache` to avoid repeated schema lock acquisitions.
 - **Zero Public API Breakage**: Public structs and method signatures remain 100% backward-compatible.
 
 ### Non-Goals
-- Introducing stateful intermediate wrapper objects (like a `VectorManager` struct or `TxVectorBuffer`) that add indirection without protecting invariants.
+- Introducing stateful intermediate wrapper objects (like a `VectorManager` struct or `TxnVectorBuffer`) that add indirection without protecting invariants.
 - Changing RocksDB on-disk storage layout, column family naming, or binary key/value formats.
 - Moving deprecated code (`SstBulkLoader`) to separate files where it will bit-rot (keep in `loader.rs` with `#[deprecated]`).
 
@@ -77,7 +77,7 @@ rocksgraph/src/graph/tests/
 #### 1.2 `parking_lot::RwLock` Migration
 Switch from `std::sync::RwLock` to `parking_lot::RwLock` across `api.rs`, `graph/logical.rs`, `graph/context.rs`, and `vector/mod.rs` to guarantee poison-free lock operations and reduce lock acquisition overhead.
 
-#### 1.3 `TxSchemaCache` in `graph/schema_cache.rs`
+#### 1.3 `TxnSchemaCache` in `graph/schema_cache.rs`
 Define an eager snapshot cache of label and property ID mappings captured at `Graph::begin()`:
 
 ```rust
@@ -89,13 +89,13 @@ use crate::types::{LabelId, error::StoreError};
 use crate::schema::{Schema, SchemaMode};
 
 #[derive(Clone, Debug, Default)]
-pub(crate) struct TxSchemaCache {
+pub(crate) struct TxnSchemaCache {
     vertex_label_ids: AHashMap<SmolStr, LabelId>,
     edge_label_ids: AHashMap<SmolStr, LabelId>,
     prop_key_ids: AHashMap<SmolStr, u16>,
 }
 
-impl TxSchemaCache {
+impl TxnSchemaCache {
     /// Eagerly populate cache from schema read guard at transaction start.
     pub fn from_schema(schema: &Schema) -> Self {
         Self {
@@ -145,7 +145,7 @@ Extract WAL encoding logic during `commit()` into a standalone function:
 // rocksgraph/src/vector/wal.rs
 
 pub(crate) fn flush_vector_wal(
-    tx: &mut Transaction<RocksStore>,
+    txn: &mut Transaction<RocksStore>,
     schema: &Schema,
     pending_ops: &[PendingVectorOp],
 ) -> Result<(), StoreError>;
@@ -154,7 +154,7 @@ pub(crate) fn flush_vector_wal(
 `LogicalGraph::commit()` coordinates:
 ```rust
 if !self.vector_pending_ops.is_empty() {
-    flush_vector_wal(&mut self.tx, &schema, &self.vector_pending_ops)?;
+    flush_vector_wal(&mut self.txn, &schema, &self.vector_pending_ops)?;
     apply_vector_mutations(&self.vector_indexes, &self.vector_pending_ops)?;
     self.vector_pending_ops.clear();
 }
@@ -248,7 +248,7 @@ Before moving files:
 
 ## 5. Invariants & Guardrails
 
-1. **No Public API Breakage**: Public structs and method signatures (`Graph`, `TxSession`, `ReadSession`, `BulkLoader`, `VectorIndexConfig`) remain 100% backward-compatible.
+1. **No Public API Breakage**: Public structs and method signatures (`Graph`, `TxnSession`, `ReadSession`, `BulkLoader`, `VectorIndexConfig`) remain 100% backward-compatible.
 2. **Zero Dead Code & Linter Warnings**: `cargo clippy --all-targets -- -D warnings` must report 0 warnings after each phase.
 3. **Documentation Accuracy**: `cargo doc --no-deps` must build cleanly without warnings or altered public docs.
 4. **Preserve Complete Test Coverage**: All 813+ unit, integration, and doc-tests must pass without regression across every milestone.

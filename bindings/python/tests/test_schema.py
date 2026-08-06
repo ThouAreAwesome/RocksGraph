@@ -36,19 +36,19 @@ def test_schema_session_basic_declaration(tmp_path):
 
     # Reopen in strict mode — declared labels should succeed
     g_strict = Graph.open_with_options(db_path, options=GraphOptions(mode=SchemaMode.Strict))
-    with g_strict.begin() as tx:
-        tx.g().addV("person", 1).property("name", "Alice").property("age", Int64(30)).next()
-        tx.g().addV("software", 2).property("name", "RocksGraph").next()
-        tx.g().addE("created").from_(1).to(2).next()
+    with g_strict.begin() as txn:
+        txn.g().addV("person", 1).property("name", "Alice").property("age", Int64(30)).next()
+        txn.g().addV("software", 2).property("name", "RocksGraph").next()
+        txn.g().addE("created").from_(1).to(2).next()
 
     snap = g_strict.read()
     assert snap.g().V(1).values("name").to_list() == ["Alice"]
     assert snap.g().V(1).out("created").values("name").to_list() == ["RocksGraph"]
 
     # Undeclared label in strict mode should fail
-    with g_strict.begin() as tx:
+    with g_strict.begin() as txn:
         with pytest.raises(SchemaError) as exc_info:
-            tx.g().addV("unknown_label", 3).next()
+            txn.g().addV("unknown_label", 3).next()
         assert "schema violation" in str(exc_info.value).lower() or "undeclared" in str(exc_info.value).lower()
 
     g_strict.close()
@@ -64,8 +64,8 @@ def test_schema_session_context_manager(tmp_path):
     g.close()
 
     g_strict = Graph.open_with_options(db_path, options=GraphOptions(mode="strict"))
-    with g_strict.begin() as tx:
-        tx.g().addV("device", 10).property("ip", "192.168.1.1").next()
+    with g_strict.begin() as txn:
+        txn.g().addV("device", 10).property("ip", "192.168.1.1").next()
 
     snap = g_strict.read()
     assert snap.g().V(10).values("ip").to_list() == ["192.168.1.1"]
@@ -92,9 +92,9 @@ def test_schema_vector_index_declaration(tmp_path):
         )
 
     # Insert vertices with vectors
-    with g.begin() as tx:
-        tx.g().addV("doc", 1).property("embedding", Vector([1.0, 0.0, 0.0, 0.0])).next()
-        tx.g().addV("doc", 2).property("embedding", Vector([0.0, 1.0, 0.0, 0.0])).next()
+    with g.begin() as txn:
+        txn.g().addV("doc", 1).property("embedding", Vector([1.0, 0.0, 0.0, 0.0])).next()
+        txn.g().addV("doc", 2).property("embedding", Vector([0.0, 1.0, 0.0, 0.0])).next()
 
     snap = g.read()
     results = snap.g().V().nearest("embedding", Vector([1.0, 0.1, 0.0, 0.0]), 1).to_list()
@@ -129,8 +129,8 @@ def test_schema_vector_index_config_object(tmp_path):
         s.add_property_key("vec", DataType.FloatVector)
         s.add_vector_index(cfg)
 
-    with g.begin() as tx:
-        tx.g().addV("item", 100).property("vec", Vector([1.0, 2.0, 3.0])).next()
+    with g.begin() as txn:
+        txn.g().addV("item", 100).property("vec", Vector([1.0, 2.0, 3.0])).next()
 
     snap = g.read()
     assert snap.g().V(100).count().to_list() == [1]

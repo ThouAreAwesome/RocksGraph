@@ -25,10 +25,10 @@ def test_vector_index_rebuild_and_save(tmp_path):
         )
 
     # 2. Insert data
-    with g.begin() as tx:
-        tx.g().addV("doc", 1).property("embedding", Vector([1.0, 0.0, 0.0])).next()
-        tx.g().addV("doc", 2).property("embedding", Vector([0.0, 1.0, 0.0])).next()
-        tx.g().addV("doc", 3).property("embedding", Vector([0.0, 0.0, 1.0])).next()
+    with g.begin() as txn:
+        txn.g().addV("doc", 1).property("embedding", Vector([1.0, 0.0, 0.0])).next()
+        txn.g().addV("doc", 2).property("embedding", Vector([0.0, 1.0, 0.0])).next()
+        txn.g().addV("doc", 3).property("embedding", Vector([0.0, 0.0, 1.0])).next()
 
     # 3. Explicitly rebuild the vector index via IndexManager
     mgr = g.index_manager()

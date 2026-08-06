@@ -53,16 +53,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Schema successfully declared and committed in Strict Mode.");
 
     // Write some valid data matching the declared schema
-    let mut tx = graph.begin();
-    tx.g().addV("person").property("id", 1i64).property("name", "Alice").property("age", 30i32).next()?;
+    let mut txn = graph.begin();
+    txn.g().addV("person").property("id", 1i64).property("name", "Alice").property("age", 30i32).next()?;
 
-    tx.g().addV("person").property("id", 2i64).property("name", "Bob").property("age", 25i32).next()?;
-    tx.commit()?;
+    txn.g().addV("person").property("id", 2i64).property("name", "Bob").property("age", 25i32).next()?;
+    txn.commit()?;
     println!("Valid data committed successfully.");
 
     // Try to write data using an undeclared label or property key
-    let mut tx = graph.begin();
-    let res = tx
+    let mut txn = graph.begin();
+    let res = txn
         .g()
         .addV("ghost") // Undeclared label, will violate Strict schema mode
         .property("id", 3i64)
@@ -74,7 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => panic!("Expected a SchemaViolation error for undeclared vertex label 'ghost'!"),
     }
-    tx.rollback();
+    txn.rollback();
 
     // --- Phase 2: Upgrading to Multi-Edge Mode ---
     println!("\n=== Part 2: Upgrading to Multi-Edge Mode ===");
@@ -89,15 +89,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("EdgeMode upgraded to Multi successfully.");
 
     // Add first edge with default rank (0)
-    let mut tx = graph.begin();
-    tx.g().addE("knows").from(1).to(2).property("weight", 0.8f64).next()?;
-    tx.commit()?;
+    let mut txn = graph.begin();
+    txn.g().addE("knows").from(1).to(2).property("weight", 0.8f64).next()?;
+    txn.commit()?;
     println!("First 'knows' edge (rank 0, default) added successfully.");
 
     // If we try to write a second edge without specifying a different rank,
     // the system will detect it as a duplicate edge.
-    let mut tx = graph.begin();
-    let res = tx.g().addE("knows").from(1).to(2).property("weight", 0.9f64).next();
+    let mut txn = graph.begin();
+    let res = txn.g().addE("knows").from(1).to(2).property("weight", 0.9f64).next();
 
     match res {
         Err(StoreError::DuplicateEdge(key)) => {
@@ -105,19 +105,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => panic!("Expected a DuplicateEdge error since rank defaults to 0!"),
     }
-    tx.rollback();
+    txn.rollback();
 
     // To add a second edge between the same vertices under EdgeMode::Multi,
     // we must supply an explicit and unique structural rank as a u16 property named "rank".
-    let mut tx = graph.begin();
-    tx.g()
+    let mut txn = graph.begin();
+    txn.g()
         .addE("knows")
         .from(1)
         .to(2)
         .property("rank", 1u16) // Specify rank 1 to distinguish it from rank 0
         .property("weight", 0.9f64)
         .next()?;
-    tx.commit()?;
+    txn.commit()?;
     println!("Second 'knows' edge with explicit rank 1 added successfully.");
 
     // Query and count both edges

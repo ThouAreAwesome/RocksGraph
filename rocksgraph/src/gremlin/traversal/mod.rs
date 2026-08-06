@@ -7,7 +7,7 @@
 //!
 //! A traversal is built in three phases:
 //!
-//! 1. **Source** — `snap.g()` → [`ReadTraversal`], `tx.g()` → [`WriteTraversal`].
+//! 1. **Source** — `snap.g()` → [`ReadTraversal`], `txn.g()` → [`WriteTraversal`].
 //! 2. **Steps** — chain pipeline steps: `.V([1])`, `.out([KNOWS])`, `.values(["name"])`, … Every step method takes
 //!    `self` by value and returns `Self`.
 //! 3. **Terminal** — execute and collect results:
@@ -566,9 +566,9 @@ pub trait TraversalBuilder: PlanAppender {
     /// # use rocksgraph::{Graph, TraversalBuilder, Value};
     /// # let dir = tempfile::tempdir().unwrap();
     /// # let graph = Graph::open(dir.path()).unwrap();
-    /// let mut tx = graph.begin();
-    /// tx.g().addV("person").property("id", 1).property("embedding", Value::FloatVector(vec![1.0, 0.0, 0.0])).next().unwrap();
-    /// tx.commit().unwrap();
+    /// let mut txn = graph.begin();
+    /// txn.g().addV("person").property("id", 1).property("embedding", Value::FloatVector(vec![1.0, 0.0, 0.0])).next().unwrap();
+    /// txn.commit().unwrap();
     ///
     /// let mut snap = graph.read();
     /// let scores = snap

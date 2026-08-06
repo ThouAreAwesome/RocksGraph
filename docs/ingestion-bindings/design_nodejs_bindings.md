@@ -41,7 +41,7 @@ impl Graph {
     pub fn read(&self) -> ReadSession { ... }
 
     #[napi]
-    pub fn tx(&self) -> TxSession { ... }
+    pub fn txn(&self) -> TxnSession { ... }
 
     #[napi]
     pub fn close(&mut self) -> napi::Result<()> { ... }
@@ -61,10 +61,10 @@ impl ReadSession {
 }
 
 #[napi]
-pub struct TxSession { inner: Option<rocksgraph::TxSession> }
+pub struct TxnSession { inner: Option<rocksgraph::TxnSession> }
 
 #[napi]
-impl TxSession {
+impl TxnSession {
     #[napi]
     pub fn execute(&mut self, bytes: Buffer, propKeys: Option<Vec<String>>) -> napi::Result<serde_json::Value> { ... }
     #[napi]
@@ -142,11 +142,11 @@ function postProcess(value: any): any {
 
 // --- Builder ---
 class Traversal {
-    private session: ReadSession | TxSession | null;
+    private session: ReadSession | TxnSession | null;
     private steps: Array<[number, any]>;
     private propKeys: string[] | undefined;
 
-    constructor(session: ReadSession | TxSession | null, steps = [], propKeys?: string[]) {
+    constructor(session: ReadSession | TxnSession | null, steps = [], propKeys?: string[]) {
         this.session = session;
         this.steps = steps;
         this.propKeys = propKeys;
@@ -187,10 +187,10 @@ import { Graph, P, __, Int64 } from "rocksgraph";
 const g = new Graph("./data");
 
 // Write
-const tx = g.tx();
-tx.V().addV("person").property("id", 1).property("name", "Alice").next();
-tx.V().addE("knows").from_(1).to(2).next();
-tx.commit();
+const txn = g.txn();
+txn.V().addV("person").property("id", 1).property("name", "Alice").next();
+txn.V().addE("knows").from_(1).to(2).next();
+txn.commit();
 
 // Read
 const snap = g.read();

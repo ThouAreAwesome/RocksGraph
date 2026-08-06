@@ -205,7 +205,7 @@ fn vector_wal_timestamp() -> u64 {
 
 **High watermark persistence**: on every snapshot flush, `WAL_CLOCK.load(Ordering::Acquire)` is written to `__meta` CF key `vector_wal_clock_hwm`. This is the only durable state the clock needs.
 
-**No global serialization**: two `TxSession` objects calling `vector_wal_timestamp()` concurrently each receive a distinct value from `fetch_add`. No mutex is held; no session waits for another. The only serialization remaining is the `RwLock` write lock on each index during in-memory index mutation (unchanged from the prior design).
+**No global serialization**: two `TxnSession` objects calling `vector_wal_timestamp()` concurrently each receive a distinct value from `fetch_add`. No mutex is held; no session waits for another. The only serialization remaining is the `RwLock` write lock on each index during in-memory index mutation (unchanged from the prior design).
 
 **Timestamp order vs commit order**: within a single session, timestamp order and commit order are the same. Across concurrent sessions, a session that calls `fetch_add` first but `db.write_opt` second (due to scheduling) will have a lower timestamp than a session that committed first. For same-entity concurrent writes, WAL replay may apply operations in timestamp order rather than commit order. This is an edge-case write conflict — the graph property value (in the main CFs) is resolved correctly by RocksDB's sequence numbers; the vector index may reflect a stale state for that entity until the next write to it. Documented in §5 known limitations.
 
@@ -214,7 +214,7 @@ fn vector_wal_timestamp() -> u64 {
 ## 5. Write path
 
 ```rust
-impl TxSession {
+impl TxnSession {
     pub fn commit(mut self) -> Result<()> {
         if self.pending_vector_ops.is_empty() {
             // fast path: no vectors touched, no WAL overhead
@@ -420,7 +420,7 @@ correctly.
 During the bulk scan + HNSW build:
 
 - The new index is not yet visible in the schema registry.
-- Concurrent `TxSession` commits write `FloatVector` values to `CF_VERTICES`
+- Concurrent `TxnSession` commits write `FloatVector` values to `CF_VERTICES`
   and `CF_VECTOR_WAL`. Because the index does not exist in the registry, those
   sessions do not call `VectorIndex::insert()` on the new index — they have no
   knowledge of it.
@@ -447,7 +447,7 @@ only the delta that accumulated during the bulk scan:
      Scan CF_VERTICES for FloatVector entries matching (entity_type, prop_key_id).
      RocksDB iterator sees a point-in-time snapshot of CF_VERTICES.
      Batch-insert all found vectors into the new HNSW index.
-     Concurrent TxSession commits proceed freely and append to CF_VECTOR_WAL.
+     Concurrent TxnSession commits proceed freely and append to CF_VECTOR_WAL.
 
 3. Acquire write lock on the new index.
 
@@ -475,7 +475,7 @@ interleaving a conflicting schema change.
 Two facts together guarantee safety:
 
 1. **All concurrent FloatVector writes go to CF_VECTOR_WAL**: the property key
-   is already schema-registered as `DataType::FloatVector`, so `TxSession::commit()`
+   is already schema-registered as `DataType::FloatVector`, so `TxnSession::commit()`
    always writes a WAL entry. This is true even before any vector index exists.
 
 2. **The bulk scan reads a consistent RocksDB snapshot**: the iterator opened
@@ -687,7 +687,7 @@ fn vector_wal_cf_options() -> Options {
 - [ ] Define `EntityKey`, `EdgeKey`, `VectorEntityType` types
 - [ ] Add `HashMap<(VectorEntityType, SmolStr), Arc<RwLock<Box<dyn VectorIndex>>>>` to `Graph` struct
 - [ ] Implement `encode_vector_op` / `decode_vector_op` with value carrying only `op_type` + `entity_key` + vector (no `entity_type` or `prop_key` — those are in the key)
-- [ ] Add `pending_vector_ops: Vec<VectorOp>` to `TxSession`
+- [ ] Add `pending_vector_ops: Vec<VectorOp>` to `TxnSession`
 - [ ] Hook `OP_PROPERTY` handler: push to `pending_vector_ops` when value is
       `GValue::FloatVector` and the property key is declared as `DataType::FloatVector`
       (regardless of whether a vector index exists — WAL entries are needed for
@@ -697,7 +697,7 @@ fn vector_wal_cf_options() -> Options {
       dropped vertex
 - [ ] Hook `OP_DROP` (edge drop, if applicable): push `VectorOpKind::Delete`
       with `EntityKey::Edge` for all indexed edge vector properties
-- [ ] Implement `TxSession::commit` write path using `vector_wal_timestamp()` + random suffix for each WAL key (§5)
+- [ ] Implement `TxnSession::commit` write path using `vector_wal_timestamp()` + random suffix for each WAL key (§5)
 - [ ] Persist `WAL_CLOCK.load(Acquire)` to `__meta` CF `vector_wal_clock_hwm` on every snapshot flush
 - [ ] Implement `recover_vector_indexes` with per-index prefix seek by `[prop_key_id][entity_type]` + timestamp cutoff (§6)
 - [ ] Implement snapshot save/load with `last_replayed_timestamp` field in header (§9)
