@@ -1,5 +1,9 @@
 # RocksGraph
 
+[![CI](https://github.com/ThouAreAwesome/RocksGraph/actions/workflows/ci.yml/badge.svg)](https://github.com/ThouAreAwesome/RocksGraph/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/rocksgraph.svg)](https://crates.io/crates/rocksgraph)
+[![docs.rs](https://docs.rs/rocksgraph/badge.svg)](https://docs.rs/rocksgraph)
+
 **An embeddable property graph database with Gremlin traversals and vector search.**
 Open a graph with one line of code, traverse it by relationship, and search it by
 vector similarity — no server, no cluster, no JVM.
@@ -9,15 +13,71 @@ local development, embedded applications, CI pipelines, desktop apps, and single
 production deployments. It uses RocksDB for persistent storage and offers a pragmatic Gremlin-style traversal API,
 with most core traversal primitives implemented and additional steps being added over time.
 
-> **Status:** Beta (v0.2.0). Under active development. Preparing for release on crates.io.
->
-> **Python bindings** are available via PyO3. See [`bindings/python/README.md`](../bindings/python/README.md) for the Python API, quickstart, and step reference.
+**Early stage, production-curious.** Beta (v0.2.0).
 
-## Overview
+**What's solid:**
+- Gremlin-style traversal engine with query optimizer
+- Property graph model (vertices, edges, typed properties, labels)
+- ACID transactions (OCC, rollback on drop)
+- HNSW vector search (810+ tests, WAL crash recovery, RYOW isolation)
 
-RocksGraph translates [Gremlin](https://tinkerpop.apache.org/gremlin.html)-style traversal queries into a logical IR, optimizes them, and executes them through a pull-based Volcano pipeline against RocksDB. The codebase is organized as a clean, layered stack separating the user-facing session API, query planning, optimization, and execution.
+**What's not:**
+- No distributed or cluster mode (and won't have one)
+- No SQL/GQL query language — use the Rust or Python traversal API
+- Not yet fuzzed or Jepsen-tested
+
+**Who should use it:**
+- Building a local-first Rust application that needs graph traversal + vector search
+- Running RAG on edge devices or embedded systems
+- Want ACID without running a database server
+
+**Who shouldn't:**
+- Need horizontal scaling → use Neo4j or Dgraph
+- Need a SQL or GQL query language → use PostgreSQL + pgvector or SurrealDB
+
+**Maintenance:** Actively maintained. Issues responded to within a week. Releases when there's something worth shipping. If I stop, I'll say so here.
+
+**Python bindings** are available via PyO3. See [`bindings/python/README.md`](../bindings/python/README.md) for the Python API, quickstart, and step reference.
+
+## Quickstart
+
+Add to `Cargo.toml`:
+
+```toml
+[dependencies]
+rocksgraph = "0.2"
+```
+
+```rust
+use rocksgraph::Graph;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let graph = Graph::open("./my_db")?;
+
+    // Write — ordinary properties + embedding in one pass
+    let mut txn = graph.begin();
+    txn.g().addV("person").property("id", 1i64).property("name", "Alice").property("emb", vec![1.0f32, 0.0, 0.0]).next()?;
+    txn.g().addV("person").property("id", 2i64).property("name", "Bob").property("emb", vec![0.0f32, 1.0, 0.0]).next()?;
+    txn.g().addE("knows").from(1).to(2).next()?;
+    txn.commit()?;
+
+    let mut snap = graph.read();
+
+    // Graph traversal
+    let name = snap.g().V([1]).out(["knows"]).values(["name"]).next()?.unwrap();
+    println!("{name}"); // Bob
+
+    // Vector search on the same vertices
+    let nearest = snap.g().V([]).nearest("emb", vec![0.9f32, 0.1, 0.0], 1).to_list()?;
+    println!("{nearest:?}"); // [Vertex { id: 1, label: "person", .. }]
+
+    Ok(())
+}
+```
 
 ## Architecture
+
+RocksGraph translates [Gremlin](https://tinkerpop.apache.org/gremlin.html)-style traversal queries into a logical IR, optimizes them, and executes them through a pull-based Volcano pipeline against RocksDB:
 
 ```
 User code
@@ -80,7 +140,7 @@ txn.g().V([1]).out(["knows"]).count().next()?; // read-your-writes within the sa
 txn.commit()?;
 ```
 
-`Graph` is cheap to clone (wraps an `Arc` internally), safe to share across threads. Sessions are single-threaded — create one per thread or per request.
+`Graph` is cheap to clone (wraps an `Arc` internally), safe to share across threads. Sessions are single-threaded — create one per thread or per request. Each `g()` call borrows the session for exactly one statement; call it again freely once the statement ends.
 
 ### OCC conflict handling
 
@@ -123,29 +183,16 @@ Predicate constructors are free functions: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`,
 
 ### Reserved keys: `id`, `label`, `rank`
 
-`"id"`, `"label"`, and `"rank"` are reserved — `.has()`, `.values()`, and `.properties()`
-all reject them. Access them exclusively through dedicated steps, both for filtering and
-for extraction:
+`"id"`, `"label"`, and `"rank"` are reserved — `.has()`, `.values()`, and `.properties()` reject them. Use dedicated steps:
 
 ```rust
-// id — HasIdStep / IdStep
-.hasId([1, 2, 3])          // filter: Eq (single) or Within (multiple)
-.hasId(gt(2i64))           // filter: any Predicate works (vertex ids are ordered i64)
-.id()                      // extract: Value::Int64 (vertex) / Value::String (edge)
-
-// label — HasLabelStep / LabelStep
-.hasLabel(["person"])      // filter: Eq/Within
-.hasLabel(ne("person"))    // filter: eq/ne/within/without (no gt/lt/between — label
-                            // names aren't meaningfully ordered)
-.label()                   // extract: Value::String, decoded from the schema registry
-
-// rank — HasRankStep / RankStep (edge-only; vertices have no rank)
-.hasRank([5u16, 10u16])   // filter: Eq (single), Within (multiple), or any Predicate
-.hasRank(ne(5u16))        // filter: eq/ne/within/without/gt/lt/between
-.rank()                    // extract: Value::UInt16
-
-// negation for hasId()/hasLabel() goes through not(), same as any other filter:
-.not(__().hasId([1, 2]))   // "every vertex except 1 and 2"
+.hasId([1, 2, 3])     // filter by id (Eq/Within, or any Predicate)
+.id()                 // extract: Value::Int64 (vertex) / Value::String (edge)
+.hasLabel(["person"]) // filter by label (eq/ne/within/without; no range predicates)
+.label()              // extract: Value::String
+.hasRank([5u16])      // filter by rank — edge-only; any Predicate
+.rank()               // extract: Value::UInt16
+.not(__().hasId([1, 2])) // negation goes through not(), same as any filter
 ```
 
 
@@ -167,7 +214,7 @@ let graph = Graph::open(tempfile::tempdir()?.path())?;
 ### Read queries
 
 ```rust
-use rocksgraph::{Graph, TraversalBuilder, Value, __};
+use rocksgraph::{Graph, Value, __};
 
 let graph = Graph::open("./path/to/db")?;
 let mut snap = graph.read();
@@ -199,40 +246,15 @@ for result in snap.g().V([]).out(["knows"]).iter()? {
 }
 ```
 
-### Inspecting query plans
-
-`explain()` builds the physical plan and returns a pretty-printed tree showing
-exactly which operators the engine will execute — including optimizer rule
-effects like index lookup folding and filter reordering:
-
-```rust
-let plan = snap.g().V([1]).out(["knows"]).hasLabel(["person"]).count().explain()?;
-println!("{}", plan);
-// PhysicalPlan
-//   └─ VStep(ids=[1])
-//   └─ InOutStep(direction=OUT, labels=[1])
-//   └─ HasLabelStep(vertex_pred=Eq(Int32(2)))
-//   └─ CountStep()
-
-// See how the optimizer folded hasId into a VStep index seek:
-let plan = snap.g().V([]).hasId([1]).outE(["knows"]).where(__().otherV().hasId([2])).explain()?;
-println!("{}", plan);
-// PhysicalPlan
-//   └─ VStep(ids=[1])
-//   └─ GetEStep(labels=[...], end_vertex_ids=[2], rank=Some(0))
-```
-
 ### Write transactions
 
 ```rust
-use rocksgraph::{Graph, TraversalBuilder, StoreError};
+use rocksgraph::{Graph, StoreError};
 
 let graph = Graph::open("./path/to/db")?;
 let mut txn = graph.begin();
 
 // Add vertices — "id" is the reserved property key for the vertex id.
-// "person" and "knows" register automatically on first use (SchemaMode::Auto,
-// the default) — see "Schema Modes" below for the alternative, explicit-declaration mode.
 txn.g().addV("person").property("id", 1i64).property("name", "alice").property("age", 30i32).next()?;
 txn.g().addV("person").property("id", 2i64).property("name", "bob").property("age", 25i32).next()?;
 
@@ -249,7 +271,7 @@ and `addE()` uses the upstream traverser's vertex instead, creating one edge per
 traverser — useful for "connect every result of a traversal to a fixed vertex" patterns:
 
 ```rust
-use rocksgraph::{Graph, TraversalBuilder, StoreError};
+use rocksgraph::{Graph, StoreError};
 
 let graph = Graph::open("./path/to/db")?;
 let mut txn = graph.begin();
@@ -270,13 +292,32 @@ txn.commit()?;
 `addE()` requires at least one of `.from()` / `.to()` — calling it with neither (and no
 upstream vertex producer) returns `StoreError::TraversalError`.
 
+### Schema management
+
+`graph.open_schema()` returns a `SchemaSession` for declaring vertex/edge labels, property
+keys, and vector indexes. In `SchemaMode::Auto` (the default) this is optional — labels
+register on first use. It is required for vector indexes and for `SchemaMode::Strict`.
+
+```rust
+use rocksgraph::schema::DataType;
+
+let mut mgmt = graph.open_schema();
+mgmt.add_vertex_label("person")
+    .add_edge_label("knows")
+    .add_property_key("name", DataType::String)
+    .add_property_key("age", DataType::Int32);
+mgmt.commit()?;
+```
+
+For vector indexes see [Vector search](#vector-search). For `SchemaMode::Strict` see [Schema Modes](#schema-modes).
+
 ### Deleting elements
 
 `drop()` deletes whatever the traverser carries — a vertex, an edge, or (after `.properties([..])`)
 a single property — and is a no-op if the traversal matched nothing:
 
 ```rust
-use rocksgraph::{Graph, StoreError, TraversalBuilder};
+use rocksgraph::{Graph, StoreError};
 
 let graph = Graph::open("./path/to/db")?;
 let mut txn = graph.begin();
@@ -311,7 +352,7 @@ txn.commit()?;
   ordering.
 
 ```rust
-use rocksgraph::{between, gt, TraversalBuilder};
+use rocksgraph::{between, gt};
 
 // Scalar filter after values() — a plain scalar is shorthand for Predicate::Eq
 let marko_age = snap.g().V([1]).values(["age"]).is(29i32).to_list()?;
@@ -328,26 +369,7 @@ let by_age_range = snap.g().V([]).has("age", between(20i32, 30i32)).to_list()?;
 let result = snap.g().V([]).hasId([1, 2, 3]).count().next()?.unwrap();
 ```
 
-#### Performance of `within` with large lists
-
-- **`V([]).hasId([...])`** — the optimizer folds `HasIdStep` with `Eq` or `Within`
-  into `VStep(ids=[...])`, which fetches all vertices in a single batch call
-  (`get_vertices`).  Over a read-only snapshot (`graph.read()`) this is a single
-  RocksDB `multi_get` round-trip; inside a transaction (`graph.transact()`) it
-  is still one batch call but resolves as one point lookup per id under the
-  hood, since RocksDB transactional reads have no multi-get equivalent here.
-
-- **`hasId([...])` separated from `V([])` by other filters** — `has()` /
-  `hasLabel()` / `where()` steps between `V([])` and `hasId()` get reordered
-  and folded automatically, so write order among filters doesn't matter. Only
-  a graph-navigation step in between (`out()`, `in()`, `otherV()`, etc.) blocks
-  the fold — in that case `hasId` falls back to evaluating the `Within`
-  predicate O(n) per traverser.
-
-- **`has("prop", within([...]))`** — property-based `Within` is evaluated
-  in-memory O(n) per traverser.  Large lists here incur per-element
-  comparison cost.  For ID-based filtering, prefer `hasId()` with an
-  explicit ID list over `has("id", within([...]))`.
+> **Note:** For ID-based membership filtering, prefer `.hasId([...])` over `.has("id", within([...]))` — the former is optimizer-folded into a single batch lookup.
 
 ### Idempotent upserts with coalesce
 
@@ -360,7 +382,7 @@ exactly one traverser (a count of `0` or `1`) regardless of whether `id` exists,
 reliably drives `coalesce()` in the "may or may not exist yet" case:
 
 ```rust
-use rocksgraph::{Graph, TraversalBuilder, StoreError, __};
+use rocksgraph::{Graph, StoreError, __};
 
 let graph = Graph::open("./path/to/db")?;
 let mut txn = graph.begin();
@@ -418,23 +440,7 @@ snap.g().V([1]).union([__().outE(["knows"]), __().outE(["created"])]).count().ne
 txn.g().V([id]).count().coalesce([__().V([id]).values(["name"]), __().addV("person").property("name", "x")]).next()?;
 
 // repeat: loop body
-snap.g().V([1]).repeat(__().out(["knows"])).times(3).explain()?;
-```
-
-### Multiple queries per session
-
-`g()` returns a temporary traversal that borrows the session for exactly one statement. Once the statement ends, the borrow is released and you can call `g()` again:
-
-```rust
-let mut txn = graph.begin();
-
-// Each call to g() is an independent query against the same transaction.
-txn.g().addV("person").property("id", 1i64).property("name", "alice").next()?;
-txn.g().addV("person").property("id", 2i64).property("name", "bob").next()?;
-// alice and bob are both visible here (read-your-writes)
-let count = txn.g().V([]).count().next()?.unwrap();
-
-txn.commit()?; // both writes flushed atomically
+snap.g().V([1]).repeat(__().out(["knows"])).times(3).to_list()?;
 ```
 
 ### Vector search
@@ -660,9 +666,11 @@ the traversal API. The `schema` module interns them to compact numeric IDs inter
 
 | Step | Method | Notes |
 |------|--------|-------|
-| `nearest(prop, query, k)` | `.nearest("emb", vec![0.1, 0.9], 5)` | Returns the `k` nearest vertices/edges by cosine similarity on property `prop`, ordered by descending similarity. |
-| `similarity(prop, query)` | `.similarity("emb", vec![0.1, 0.9])` | Emits the cosine similarity score (`Float32`) between each traverser's vector property and `query`. |
-| `neighbors(prop, k)` | `.neighbors("emb", 5)` | From the current vertex, traverses to its `k` nearest neighbors in vector space. |
+| `nearest(prop, query, k)` | `.nearest("emb", vec![0.1, 0.9], 5)` | From the upstream traverser stream, emits the `k` most similar to `query` (an explicit vector you supply), ordered by the index's configured `DistanceMetric`; falls back to cosine when no index is available. |
+| `similarity(prop, query, metric)` | `.similarity("emb", vec![0.1, 0.9], DistanceMetric::Cosine)` | Emits the similarity score (`Float32`) between each traverser's `prop` embedding and `query` using the given `metric` (Cosine ∈ [-1, 1], DotProduct = raw dot product, Euclidean = 1 − L2²). Does not require a vector index. |
+| `neighbors(source_prop, target_prop, k, entity_type)` | `.neighbors("q_emb", "a_emb", 5, VectorEntityType::Vertex)` | Flat-map: reads `source_prop` from each incoming traverser as the query vector and searches the `target_prop` HNSW index of `entity_type`, emitting up to `k` nearest results. `source_prop` and `target_prop` may differ for cross-index similarity (e.g. query on questions, search answer index). Requires a declared HNSW index. |
+| `with_metric(metric)` | `.nearest(…).with_metric(DistanceMetric::Euclidean)` | Overrides the distance metric for the immediately preceding `nearest()` step. Not applicable after `similarity()` (metric is a required parameter there) or `neighbors()` (index metric is fixed at build time). |
+| `with_ef_search(ef)` | `.nearest(…).with_ef_search(100)` | Overrides the HNSW beam width for the immediately preceding `nearest()` or `neighbors()` step. Higher values improve recall at the cost of latency. |
 
 ### Terminal Operations
 
@@ -675,33 +683,14 @@ the traversal API. The `schema` module interns them to compact numeric IDs inter
 
 ## Known Limitations
 
-- **Embedded only:** no server/client mode; queries are executed in-process.
+- **Embedded only:** no server/client mode; queries run in-process on a single machine. Distributed or server-client operation is not on the roadmap.
 - **Single-threaded per query:** each volcano pipeline runs single-threaded; multiple sessions can run concurrently against a shared `Graph`.
 - **Schema ID space limits:** up to `i32::MAX` (~2.1 billion) distinct vertex labels and edge labels (independent namespaces), and 32767 property keys per graph — registering past that fails with `StoreError::SchemaExhausted`. (Label IDs are stored as `i32`; property-key IDs remain `u16`.)
 - **Not a TinkerPop driver:** RocksGraph is an embedded library with a Gremlin-style traversal API; it does not implement the Gremlin Server protocol and is not a drop-in replacement for TinkerPop-based systems. See [docs/architecture/design_principles.md](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/architecture/design_principles.md).
-- **Embedded only (no distribution):** RocksGraph targets single-machine deployments. Distributed or server-client operation is not on the roadmap.
 
 ## Safety
 
-RocksGraph's own code contains 5 `unsafe` blocks, all confined to the RocksDB
-store layer (`src/store/rocks/`) and all performing the same operation:
-`std::mem::transmute` to erase RocksDB transaction and snapshot lifetimes to
-`'static`.  This is necessary because `rocksdb::Transaction` and
-`rocksdb::Snapshot` borrow the database handle, but our structs own both the
-transaction and the `Arc<OptimisticTransactionDB>` — and Rust's borrow checker
-can't see that they're heap-allocated together.
-
-The invariant upholding these transmutes is documented in the module-level
-comments of `transaction.rs` and `snapshot.rs`: the transaction / snapshot
-field is declared *before* the `Arc<DB>` field in every struct, so the DB
-handle is dropped first — guaranteeing the borrowed transaction/snapshot never
-outlives it.  Every callsite carries a `// SAFETY:` comment referencing this
-invariant, and `#![warn(clippy::undocumented_unsafe_blocks)]` (enforced as an
-error via `just full-check`'s `--deny warnings`) keeps it that way for any
-`unsafe` block added in the future.
-
-The RocksDB dependency (`rust-rocksdb`) wraps a C++ library via FFI and is
-widely audited.
+RocksGraph contains 5 `unsafe` blocks, all in the RocksDB store layer (`src/store/rocks/`), all performing `std::mem::transmute` to erase RocksDB transaction/snapshot lifetimes to `'static`. The invariant (struct field ordering guarantees the DB outlives the transaction) is documented in `transaction.rs` and `snapshot.rs`; each block carries a `// SAFETY:` comment enforced by `#![warn(clippy::undocumented_unsafe_blocks)]`. The `rust-rocksdb` dependency wraps a widely audited C++ library.
 
 ## Operations
 
@@ -719,15 +708,9 @@ This is a cold backup: no writes should be in flight while you copy the director
 backup without stopping writes, use RocksDB's `Checkpoint` API directly via the raw RocksDB
 handle — not yet wrapped by RocksGraph (see [Roadmap](#roadmap)).
 
-### Upgrade & Migration Policy
+### Upgrade & Migration
 
-RocksGraph is pre-1.0 (`0.x.y`). Per semver, **a minor version bump (`0.x` → `0.(x+1)`) may
-change the on-disk format** with no schema-version check or automated migration path between
-releases. Back up your data directory before upgrading the `rocksgraph` dependency on a project
-with existing on-disk data, and validate the upgrade against a copy first.
-
-Once the crate reaches 1.0, on-disk format compatibility will be covered by semver: breaking
-format changes will require a major version bump and a documented migration path.
+Back up your data directory before upgrading between minor versions — see the [Version contract](#version-contract) for on-disk format stability guarantees per release.
 
 ## API Stability
 
@@ -767,6 +750,15 @@ permitted to make breaking API changes. In practice we aim to keep the stable su
 intact across minor bumps and to provide a migration note in the [CHANGELOG](CHANGELOG.md)
 for any breaking change.
 
+### Version contract
+
+| Version | API | On-disk format |
+|---------|-----|----------------|
+| 0.1.x | Superseded — upgrade to 0.2.0, no migration needed | Stable for graph data |
+| 0.2.x | Core graph API stable. Vector search (`nearest`, `similarity`) stable. Vector config (`VectorIndexConfig`, `DistanceMetric`) and management (`IndexManager`) provisional — v0.3 may tune performance characteristics and extend the management API | Stable for graph data; vector WAL format may change |
+| 0.4.x | (planned) All APIs stable including vector config and management | Frozen |
+| 1.0.0 | (planned) Full semver guarantees — no breaking changes without a major bump | Frozen |
+
 ---
 
 ## Roadmap
@@ -775,7 +767,7 @@ for any breaking change.
 
 - [x] **v0.1** — `FloatVector` property type, brute-force exact KNN (`nearest`, `similarity`), Python bindings
 - [x] **v0.2** — HNSW index via `usearch`; `VectorIndex` trait; WAL + crash-consistent snapshots; per-index memory limits; RYOW isolation; `IndexManager` for index maintenance
-- [ ] **v0.3** — Edge vector indexes; `change_vector_index_algorithm`; auto-rebuild on schema change
+- [ ] **v0.3** — Background vector index checkpoint (periodic auto-save, configurable interval); WAL GC (truncate entries prior to last checkpoint); edge vector indexes; `change_vector_index_algorithm`; auto-rebuild on schema change
 
 ### Developer Experience
 

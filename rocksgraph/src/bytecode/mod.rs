@@ -11,6 +11,7 @@ use crate::planner::logical_step::*;
 use crate::types::gvalue::{Primitive, PrimitivePredicate};
 use crate::types::keys::DegreeDirection;
 use crate::types::StoreError;
+use crate::vector::VectorEntityType;
 use smol_str::SmolStr;
 
 pub const VERSION: u8 = 0x01;
@@ -77,6 +78,7 @@ pub const OP_IDENTITY: u8 = 59;
 pub const OP_LOCAL: u8 = 60;
 pub const OP_NEAREST: u8 = 61;
 pub const OP_SIMILARITY: u8 = 62;
+pub const OP_NEIGHBORS: u8 = 63;
 
 pub fn encode(plan: &LogicalPlan) -> Vec<u8> {
     let mut buf = Vec::new();
@@ -89,6 +91,58 @@ fn encode_plan(plan: &LogicalPlan, buf: &mut Vec<u8>) {
     buf.extend_from_slice(&(plan.steps.len() as u16).to_be_bytes());
     for step in &plan.steps {
         encode_step(step, buf);
+    }
+}
+
+/// Encode an optional metric override (0 = absent, 1/2/3 = Cosine/Euclidean/DotProduct).
+/// Used by `nearest()` where the metric is optional.
+fn metric_to_byte(m: Option<crate::vector::DistanceMetric>) -> u8 {
+    match m {
+        None => 0,
+        Some(crate::vector::DistanceMetric::Cosine) => 1,
+        Some(crate::vector::DistanceMetric::Euclidean) => 2,
+        Some(crate::vector::DistanceMetric::DotProduct) => 3,
+    }
+}
+
+fn byte_to_metric(b: u8) -> Option<crate::vector::DistanceMetric> {
+    match b {
+        1 => Some(crate::vector::DistanceMetric::Cosine),
+        2 => Some(crate::vector::DistanceMetric::Euclidean),
+        3 => Some(crate::vector::DistanceMetric::DotProduct),
+        _ => None,
+    }
+}
+
+/// Encode a required metric (1/2/3 = Cosine/Euclidean/DotProduct).
+/// Used by `similarity()` where the metric is mandatory.
+fn required_metric_to_byte(m: crate::vector::DistanceMetric) -> u8 {
+    match m {
+        crate::vector::DistanceMetric::Cosine => 1,
+        crate::vector::DistanceMetric::Euclidean => 2,
+        crate::vector::DistanceMetric::DotProduct => 3,
+    }
+}
+
+fn byte_to_required_metric(b: u8) -> crate::vector::DistanceMetric {
+    match b {
+        2 => crate::vector::DistanceMetric::Euclidean,
+        3 => crate::vector::DistanceMetric::DotProduct,
+        _ => crate::vector::DistanceMetric::Cosine,
+    }
+}
+
+fn entity_type_to_byte(et: VectorEntityType) -> u8 {
+    match et {
+        VectorEntityType::Vertex => 0,
+        VectorEntityType::Edge => 1,
+    }
+}
+
+fn byte_to_entity_type(b: u8) -> VectorEntityType {
+    match b {
+        1 => VectorEntityType::Edge,
+        _ => VectorEntityType::Vertex,
     }
 }
 
@@ -541,6 +595,7 @@ fn encode_step(step: &LogicalStep, buf: &mut Vec<u8>) {
             encode_smolstr(&s.prop_key, buf);
             buf.extend_from_slice(&(s.k as u32).to_be_bytes());
             buf.extend_from_slice(&(s.ef_search.unwrap_or(0) as u32).to_be_bytes());
+            buf.push(metric_to_byte(s.metric_override));
             buf.extend_from_slice(&(s.query_vec.len() as u32).to_be_bytes());
             for f in &s.query_vec {
                 buf.extend_from_slice(&f.to_le_bytes());
@@ -549,10 +604,19 @@ fn encode_step(step: &LogicalStep, buf: &mut Vec<u8>) {
         LogicalStep::Similarity(s) => {
             buf.push(OP_SIMILARITY);
             encode_smolstr(&s.prop_key, buf);
+            buf.push(required_metric_to_byte(s.metric));
             buf.extend_from_slice(&(s.query_vec.len() as u32).to_be_bytes());
             for f in &s.query_vec {
                 buf.extend_from_slice(&f.to_le_bytes());
             }
+        }
+        LogicalStep::Neighbors(s) => {
+            buf.push(OP_NEIGHBORS);
+            encode_smolstr(&s.source_prop, buf);
+            encode_smolstr(&s.target_prop, buf);
+            buf.extend_from_slice(&(s.k as u32).to_be_bytes());
+            buf.extend_from_slice(&(s.ef_search.unwrap_or(0) as u32).to_be_bytes());
+            buf.push(entity_type_to_byte(s.entity_type));
         }
     }
 }
@@ -919,6 +983,7 @@ fn decode_step(bytes: &[u8], offset: &mut usize) -> Result<LogicalStep, StoreErr
             let k = read_u32(bytes, offset)? as usize;
             let ef_raw = read_u32(bytes, offset)? as usize;
             let ef_search = if ef_raw == 0 { None } else { Some(ef_raw) };
+            let metric_override = byte_to_metric(read_u8(bytes, offset)?);
             let dim = read_u32(bytes, offset)? as usize;
             let mut q = Vec::with_capacity(dim);
             for _ in 0..dim {
@@ -930,10 +995,17 @@ fn decode_step(bytes: &[u8], offset: &mut usize) -> Result<LogicalStep, StoreErr
                 ]));
                 *offset += 4;
             }
-            Ok(LogicalStep::Nearest(NearestLogicalStep { prop_key: prop_key.to_string(), query_vec: q, k, ef_search }))
+            Ok(LogicalStep::Nearest(NearestLogicalStep {
+                prop_key: prop_key.to_string(),
+                query_vec: q,
+                k,
+                ef_search,
+                metric_override,
+            }))
         }
         OP_SIMILARITY => {
             let prop_key = read_smolstr(bytes, offset)?;
+            let metric = byte_to_required_metric(read_u8(bytes, offset)?);
             let dim = read_u32(bytes, offset)? as usize;
             let mut q = Vec::with_capacity(dim);
             for _ in 0..dim {
@@ -945,7 +1017,22 @@ fn decode_step(bytes: &[u8], offset: &mut usize) -> Result<LogicalStep, StoreErr
                 ]));
                 *offset += 4;
             }
-            Ok(LogicalStep::Similarity(SimilarityLogicalStep { prop_key: prop_key.to_string(), query_vec: q }))
+            Ok(LogicalStep::Similarity(SimilarityLogicalStep { prop_key: prop_key.to_string(), query_vec: q, metric }))
+        }
+        OP_NEIGHBORS => {
+            let source_prop = read_smolstr(bytes, offset)?;
+            let target_prop = read_smolstr(bytes, offset)?;
+            let k = read_u32(bytes, offset)? as usize;
+            let ef_raw = read_u32(bytes, offset)? as usize;
+            let ef_search = if ef_raw == 0 { None } else { Some(ef_raw) };
+            let entity_type = byte_to_entity_type(read_u8(bytes, offset)?);
+            Ok(LogicalStep::Neighbors(NeighborsLogicalStep {
+                source_prop: source_prop.to_string(),
+                target_prop: target_prop.to_string(),
+                k,
+                ef_search,
+                entity_type,
+            }))
         }
         _ => Err(StoreError::UnsupportedOperation(format!("Unknown opcode 0x{:02x}", op))),
     }

@@ -8,7 +8,7 @@ version = "0.2.0"
 readme = "README.md"
 repository = "https://github.com/ThouAreAwesome/RocksGraph"
 documentation = "https://docs.rs/rocksgraph"
-keywords = ["graph", "gremlin", "rocksdb", "database", "vector-search", "vector-database", "embedded"]
+keywords = ["graph", "gremlin", "embedded", "vector-search", "database"]
 categories = ["database-implementations"]
 rust-version = "1.80"
 

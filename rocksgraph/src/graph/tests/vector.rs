@@ -627,3 +627,75 @@ fn test_vector_index_drop_property_wal_remove_and_replay() {
         g.close().unwrap();
     }
 }
+
+#[test]
+fn test_neighbors_with_hnsw_index() {
+    use crate::{
+        schema::{AnnAlgorithm, DistanceMetric, HnswConfig, Quantization, VectorEntityType, VectorIndexConfig},
+        Graph, TraversalBuilder, Value,
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+
+    // 1. Declare HNSW vector index.
+    {
+        let g = Graph::open(path).unwrap();
+        let mut sess = g.open_schema();
+        sess.add_vector_index(VectorIndexConfig {
+            property: "emb".into(),
+            entity_type: VectorEntityType::Vertex,
+            dimension: 2,
+            metric: DistanceMetric::Cosine,
+            algorithm: AnnAlgorithm::Hnsw(HnswConfig::default()),
+            quantization: Quantization::F32,
+        });
+        sess.commit().unwrap();
+        g.close().unwrap();
+    }
+
+    // 2. Insert 3 vertices with known 2D embeddings.
+    {
+        let g = Graph::open(path).unwrap();
+        let mut txn = g.begin();
+        // v1: [1.0, 0.0] — along x-axis
+        txn.g().addV("doc").property("id", 1i64).property("emb", Value::FloatVector(vec![1.0, 0.0])).next().unwrap();
+        // v2: [0.9, 0.436] — ~25° from v1 (close in cosine)
+        txn.g().addV("doc").property("id", 2i64).property("emb", Value::FloatVector(vec![0.9, 0.436])).next().unwrap();
+        // v3: [0.0, 1.0] — orthogonal to v1 (far)
+        txn.g().addV("doc").property("id", 3i64).property("emb", Value::FloatVector(vec![0.0, 1.0])).next().unwrap();
+        txn.commit().unwrap();
+        g.index_manager().rebuild(VectorEntityType::Vertex, "emb").unwrap();
+        g.close().unwrap();
+    }
+
+    // 3. Query neighbors of v1 using its own embedding as the query vector.
+    {
+        let g = Graph::open(path).unwrap();
+        let mut snap = g.read();
+
+        let neighbor_ids: Vec<i64> = snap
+            .g()
+            .V([1i64])
+            .neighbors("emb", "emb", 2, VectorEntityType::Vertex)
+            .id()
+            .to_list()
+            .unwrap()
+            .into_iter()
+            .filter_map(|v| match v {
+                Value::Int64(id) => Some(id),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(neighbor_ids.len(), 2, "neighbors() must return k=2 results");
+        // v2 is the closest non-self neighbor; v3 is farther — both must appear in top-2.
+        assert!(
+            neighbor_ids.contains(&2),
+            "v2 (closest cosine neighbor of v1) must be in results, got {:?}",
+            neighbor_ids
+        );
+
+        g.close().unwrap();
+    }
+}

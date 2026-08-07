@@ -60,10 +60,10 @@ use crate::{
             CountStep, CyclicPathStep, DedupStep, DegreeStep, DropStep, EStep, EmitSpec, FoldStep, FromStep,
             GroupCountStep, GroupStep, HasIdStep, HasLabelStep, HasRankStep, IdStep, IdentityStep, InEStep, InStep,
             InVStep, LabelStep, LimitStep, LocalStep, LogicalPlan, LogicalStep, MaxStep, MeanStep, MinStep,
-            NearestLogicalStep, NotStep, OrStep, Order, OrderKey, OrderKeySpec, OrderStep, OtherVStep, OutEStep,
-            OutStep, OutVStep, PathStep, PropertiesStep, PropertyStep, RangeStep, RankStep, RepeatStep,
-            ScalarFilterStep, SelectStep, SimilarityLogicalStep, SimplePathStep, SkipStep, SumStep, TailStep, ToStep,
-            UnfoldStep, UnionStep, ValuesStep, WhereStep,
+            NearestLogicalStep, NeighborsLogicalStep, NotStep, OrStep, Order, OrderKey, OrderKeySpec, OrderStep,
+            OtherVStep, OutEStep, OutStep, OutVStep, PathStep, PropertiesStep, PropertyStep, RangeStep, RankStep,
+            RepeatStep, ScalarFilterStep, SelectStep, SimilarityLogicalStep, SimplePathStep, SkipStep, SumStep,
+            TailStep, ToStep, UnfoldStep, UnionStep, ValuesStep, WhereStep,
         },
     },
     types::{prop_key::LABEL, StoreError},
@@ -539,12 +539,13 @@ pub trait TraversalBuilder: PlanAppender {
             query_vec: query,
             k,
             ef_search: None,
+            metric_override: None,
         }));
         self
     }
 
     /// Override the HNSW `ef_search` beam width for the immediately preceding
-    /// `nearest()` step. Must be called directly after `nearest()`.
+    /// `nearest()` or `neighbors()` step.
     ///
     /// Higher values improve recall at the cost of latency. Concurrent queries
     /// with different overrides race for the shared per-index setting, which
@@ -552,18 +553,31 @@ pub trait TraversalBuilder: PlanAppender {
     fn with_ef_search(mut self, ef: usize) -> Self {
         match self.plan_mut().steps.last_mut() {
             Some(LogicalStep::Nearest(s)) => s.ef_search = Some(ef),
-            _ => panic!("with_ef_search() must immediately follow nearest()"),
+            Some(LogicalStep::Neighbors(s)) => s.ef_search = Some(ef),
+            _ => panic!("with_ef_search() must immediately follow nearest() or neighbors()"),
         }
         self
     }
 
-    /// Compute cosine similarity for each traversing element's vector property
-    /// against `query`, emitting the similarity score as a float value.
+    /// Override the distance metric for the immediately preceding `nearest()` step.
+    /// Not applicable after `similarity()` (metric is a required parameter there) or
+    /// `neighbors()` (index metric is fixed at build time).
+    fn with_metric(mut self, metric: crate::vector::DistanceMetric) -> Self {
+        match self.plan_mut().steps.last_mut() {
+            Some(LogicalStep::Nearest(s)) => s.metric_override = Some(metric),
+            _ => panic!("with_metric() must immediately follow nearest()"),
+        }
+        self
+    }
+
+    /// Compute similarity between each traverser's vector property and `query`
+    /// using the given distance `metric`, emitting the score as a float value.
     ///
     /// # Example
     ///
     /// ```
     /// # use rocksgraph::{Graph, TraversalBuilder, Value};
+    /// # use rocksgraph::schema::DistanceMetric;
     /// # let dir = tempfile::tempdir().unwrap();
     /// # let graph = Graph::open(dir.path()).unwrap();
     /// let mut txn = graph.begin();
@@ -574,16 +588,38 @@ pub trait TraversalBuilder: PlanAppender {
     /// let scores = snap
     ///     .g()
     ///     .V([1])
-    ///     .similarity("embedding", vec![1.0, 0.0, 0.0])
+    ///     .similarity("embedding", vec![1.0, 0.0, 0.0], DistanceMetric::Cosine)
     ///     .to_list()
     ///     .unwrap();
     /// assert_eq!(scores, vec![Value::Float32(1.0)]);
     /// # graph.close().unwrap();
     /// ```
-    fn similarity(mut self, prop_key: &str, query: Vec<f32>) -> Self {
+    fn similarity(mut self, prop_key: &str, query: Vec<f32>, metric: crate::vector::DistanceMetric) -> Self {
         self.push_step(LogicalStep::Similarity(SimilarityLogicalStep {
             prop_key: prop_key.to_string(),
             query_vec: query,
+            metric,
+        }));
+        self
+    }
+
+    /// Flat-map step: reads `source_prop` from each incoming traverser as the query vector
+    /// and searches the `target_prop` HNSW index of `entity_type`, emitting up to `k`
+    /// nearest results. `source_prop` and `target_prop` may differ for cross-index similarity
+    /// (e.g. query on `q_embedding`, search `a_embedding` index). Requires a declared index.
+    fn neighbors(
+        mut self,
+        source_prop: &str,
+        target_prop: &str,
+        k: usize,
+        entity_type: crate::vector::VectorEntityType,
+    ) -> Self {
+        self.push_step(LogicalStep::Neighbors(NeighborsLogicalStep {
+            source_prop: source_prop.to_string(),
+            target_prop: target_prop.to_string(),
+            k,
+            ef_search: None,
+            entity_type,
         }));
         self
     }

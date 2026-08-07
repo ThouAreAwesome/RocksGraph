@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 // SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! [`VectorError`] — error type for all vector index operations.
 
 use std::fmt;

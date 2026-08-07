@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 // SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! [`VectorIndex`] trait and configuration types for vector search.
 //!
 //! Defines the trait that all vector index implementations must satisfy,
@@ -19,9 +20,10 @@ use super::error::{VectorEntityType, VectorError};
 /// The choice of metric is baked into the embedding model's training objective —
 /// using the wrong metric silently degrades retrieval quality without raising
 /// an error.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DistanceMetric {
     /// Cosine similarity: `dot(a, b) / (|a| * |b|)`.
+    #[default]
     Cosine = 0,
     /// Euclidean (L2) distance: `sqrt(sum((a_i - b_i)^2))`.
     Euclidean = 1,
@@ -268,4 +270,7 @@ pub(crate) trait VectorIndex: Send + Sync {
 
     /// Apply memory limit from `IndexOptions`. No-op for BruteForce.
     fn set_memory_limit(&mut self, _limit_bytes: usize) {}
+
+    /// The distance metric this index was configured with.
+    fn metric(&self) -> DistanceMetric;
 }

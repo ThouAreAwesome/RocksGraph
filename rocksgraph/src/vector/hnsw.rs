@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 // SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! HNSW vector index backed by the usearch crate.
 //!
 //! `UsearchHnswIndex` implements [`VectorIndex`] using the usearch C++ library's
@@ -62,16 +63,6 @@ impl std::fmt::Debug for UsearchHnswIndex {
 }
 
 impl UsearchHnswIndex {
-    #[allow(dead_code)]
-    pub fn dimension(&self) -> usize {
-        self.config.dimension
-    }
-
-    #[allow(dead_code)]
-    pub fn metric(&self) -> DistanceMetric {
-        self.config.metric
-    }
-
     pub fn new(config: &VectorIndexConfig) -> Result<Self, VectorError> {
         let options = IndexOptions {
             dimensions: config.dimension,
@@ -96,6 +87,7 @@ impl UsearchHnswIndex {
         })
     }
 
+    #[inline]
     fn key_to_label(key: &EntityKey) -> Result<u64, VectorError> {
         match key {
             EntityKey::Vertex(id) => {
@@ -111,6 +103,7 @@ impl UsearchHnswIndex {
     }
 
     /// Reverse vertex label mapping: direct bit-cast u64 → i64.
+    #[inline]
     fn label_to_key(label: u64) -> EntityKey {
         EntityKey::Vertex(label as i64)
     }
@@ -241,6 +234,10 @@ impl VectorIndex for UsearchHnswIndex {
 
     fn set_memory_limit(&mut self, limit_bytes: usize) {
         self.memory_limit_bytes = Some(limit_bytes);
+    }
+
+    fn metric(&self) -> DistanceMetric {
+        self.config.metric
     }
 }
 
