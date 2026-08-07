@@ -6,6 +6,7 @@ mod isolation;
 mod persistence_wal;
 mod schema;
 mod vector;
+mod vector_fixtures;
 
 use smol_str::SmolStr;
 

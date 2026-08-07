@@ -7,14 +7,16 @@
 //! HNSW (Hierarchical Navigable Small World) graph. Vertex keys are directly
 //! bit-cast `i64 → u64`; edge indexes are not yet supported (v0.3).
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
 
 use super::brute_force::EntityKey;
-use super::error::VectorError;
+use super::error::{VectorEntityType, VectorError};
 use super::persistence::{load_snapshot_file, save_snapshot_file, SnapshotHeader};
 use super::traits::{DistanceMetric, Quantization, VectorIndex, VectorIndexConfig};
+use crate::types::keys::CanonicalEdgeKey;
 
 fn metric_to_usearch(m: DistanceMetric) -> MetricKind {
     match m {
@@ -36,18 +38,31 @@ fn scalar_kind(q: Quantization) -> ScalarKind {
 /// Initial capacity reserved at index construction — usearch requires
 /// `reserve` before any `add`.  Will be driven by `IndexOptions`
 /// once that is wired through to index construction.
-const DEFAULT_RESERVE_CAPACITY: usize = 1000;
+pub(crate) const DEFAULT_RESERVE_CAPACITY: usize = 1000;
 
 /// HNSW vector index backed by the usearch crate.
 ///
-/// Vertex keys map directly: `vertex_id as u64`. Edge keys are not yet
-/// supported — `EntityKey::Edge` returns `VectorError::Unsupported`.
+/// Vertex keys map directly: `vertex_id as u64`. Edge indexes use an internal
+/// bidirectional label table (`edge_to_label` / `label_to_edge`) since usearch
+/// only supports `u64` labels and `CanonicalEdgeKey` is 22 bytes. The maps are
+/// initialized in `new()` when `config.entity_type == Edge`; they remain `None`
+/// for Vertex-only indexes.
+///
+/// Edge support is gated by the schema layer (v0.3). When the gate is removed,
+/// the TODOs inside `key_to_label`, `label_to_key`, `remove`, `save`, and
+/// `load_vector_index` are the only remaining steps.
 pub struct UsearchHnswIndex {
     inner: Index,
     config: VectorIndexConfig,
     tombstone_count: u64,
     last_replayed_timestamp: u64,
     memory_limit_bytes: Option<usize>,
+    default_ef_search: usize,
+    // Edge label table — None for Vertex-only indexes.
+    #[allow(dead_code)] // TODO(v0.4): used when assigning labels for Edge keys
+    next_edge_label: u64,
+    label_to_edge: Option<HashMap<u64, CanonicalEdgeKey>>,
+    edge_to_label: Option<HashMap<CanonicalEdgeKey, u64>>,
 }
 
 impl std::fmt::Debug for UsearchHnswIndex {
@@ -58,6 +73,7 @@ impl std::fmt::Debug for UsearchHnswIndex {
             .field("capacity", &self.inner.capacity())
             .field("tombstones", &self.tombstone_count)
             .field("last_replayed_timestamp", &self.last_replayed_timestamp)
+            .field("edge_label_count", &self.label_to_edge.as_ref().map(|m| m.len()))
             .finish()
     }
 }
@@ -78,17 +94,31 @@ impl UsearchHnswIndex {
 
         inner.reserve(DEFAULT_RESERVE_CAPACITY).map_err(|e| VectorError::Internal(format!("usearch reserve: {e}")))?;
 
+        let is_edge = config.entity_type == VectorEntityType::Edge;
+
         Ok(Self {
             inner,
             config: config.clone(),
+            default_ef_search: config.algorithm_ef_search(),
             tombstone_count: 0,
             last_replayed_timestamp: 0,
             memory_limit_bytes: None,
+            next_edge_label: 0,
+            label_to_edge: if is_edge { Some(HashMap::new()) } else { None },
+            edge_to_label: if is_edge { Some(HashMap::new()) } else { None },
         })
     }
 
+    /// Maps an `EntityKey` to a usearch `u64` label.
+    ///
+    /// Vertex keys use a direct `vertex_id as u64` cast. Edge keys use an
+    /// internal incrementing label table (populated in `edge_to_label`).
+    ///
+    /// Returns `Internal` if an edge key is presented to a vertex-only index
+    /// (wrong entity type). Returns `Unsupported` for edge keys on an edge
+    /// index until edge support is fully implemented (TODO v0.4).
     #[inline]
-    fn key_to_label(key: &EntityKey) -> Result<u64, VectorError> {
+    fn key_to_label(&mut self, key: &EntityKey) -> Result<u64, VectorError> {
         match key {
             EntityKey::Vertex(id) => {
                 if *id < 0 {
@@ -96,15 +126,32 @@ impl UsearchHnswIndex {
                 }
                 Ok(*id as u64)
             }
-            EntityKey::Edge(_) => {
+            EntityKey::Edge(edge_key) => {
+                let map = self
+                    .edge_to_label
+                    .as_mut()
+                    .ok_or_else(|| VectorError::Internal("edge key used with vertex-only index".into()))?;
+                if let Some(&label) = map.get(edge_key) {
+                    return Ok(label);
+                }
+                // TODO(v0.4): assign label, store in edge_to_label and label_to_edge, return label.
+                let _ = map; // suppress unused-mut warning until TODO is implemented
                 Err(VectorError::Unsupported("edge vector indexes are not yet supported (v0.3)".into()))
             }
         }
     }
 
-    /// Reverse vertex label mapping: direct bit-cast u64 → i64.
+    /// Reverse label → `EntityKey` mapping.
+    ///
+    /// For Vertex indexes: direct `label as i64` cast.
+    /// For Edge indexes: lookup in `label_to_edge` table.
     #[inline]
-    fn label_to_key(label: u64) -> EntityKey {
+    fn label_to_key(&self, label: u64) -> EntityKey {
+        if let Some(map) = &self.label_to_edge {
+            if let Some(&edge_key) = map.get(&label) {
+                return EntityKey::Edge(edge_key);
+            }
+        }
         EntityKey::Vertex(label as i64)
     }
 
@@ -133,7 +180,7 @@ impl VectorIndex for UsearchHnswIndex {
             return Err(VectorError::DimensionMismatch { expected: self.config.dimension, actual: vector.len() });
         }
 
-        let label = Self::key_to_label(key)?;
+        let label = self.key_to_label(key)?;
 
         // Upsert: remove old entry first, then add.
         if self.inner.contains(label) {
@@ -148,26 +195,6 @@ impl VectorIndex for UsearchHnswIndex {
         if self.inner.size() >= cur_cap {
             let new_cap = (cur_cap * 2).max(DEFAULT_RESERVE_CAPACITY);
 
-            // Pre-flight: check projected memory before reserving so the limit is
-            // enforced before any allocation and the entry is never added to the WAL.
-            if let Some(limit) = self.memory_limit_bytes {
-                let projected_used = new_cap
-                    .checked_mul(self.config.dimension)
-                    .and_then(|x| x.checked_mul(4))
-                    .ok_or_else(|| VectorError::MemoryLimitExceeded {
-                        index: self.config.property.clone(),
-                        used: usize::MAX,
-                        limit,
-                    })?;
-                if projected_used >= limit {
-                    return Err(VectorError::MemoryLimitExceeded {
-                        index: self.config.property.clone(),
-                        used: projected_used,
-                        limit,
-                    });
-                }
-            }
-
             self.inner.reserve(new_cap).map_err(|e| VectorError::Internal(format!("usearch reserve: {e}")))?;
         }
 
@@ -177,11 +204,12 @@ impl VectorIndex for UsearchHnswIndex {
     }
 
     fn remove(&mut self, key: &EntityKey) -> Result<(), VectorError> {
-        let label = Self::key_to_label(key)?;
+        let label = self.key_to_label(key)?;
 
         if self.inner.contains(label) {
             self.inner.remove(label).map_err(|e| VectorError::Internal(format!("usearch remove: {e}")))?;
             self.tombstone_count += 1;
+            // TODO(v0.4): for Edge keys, remove from edge_to_label and label_to_edge maps here.
         }
         // Idempotent: no-op if key not found.
         Ok(())
@@ -196,19 +224,28 @@ impl VectorIndex for UsearchHnswIndex {
             return Ok(Vec::new());
         }
 
-        if let Some(ef) = ef_search {
+        let prev_ef = if let Some(ef) = ef_search {
             self.inner.change_expansion_search(ef);
-        }
+            Some(ef)
+        } else {
+            None
+        };
         let matches = self.inner.search(query, k).map_err(|e| VectorError::Internal(format!("usearch search: {e}")))?;
+        if prev_ef.is_some() {
+            self.inner.change_expansion_search(self.default_ef_search);
+        }
 
         let mut results = Vec::with_capacity(matches.keys.len());
         for (&label, &dist) in matches.keys.iter().zip(matches.distances.iter()) {
-            results.push((Self::label_to_key(label), dist));
+            results.push((self.label_to_key(label), dist));
         }
         Ok(results)
     }
 
     fn save(&self, path: &Path, last_replayed_timestamp: u64) -> Result<(), VectorError> {
+        // TODO(v0.4): serialize edge label maps (next_edge_label, label_to_edge) alongside the
+        // usearch buffer when edge index support is implemented.
+
         // Serialize usearch index to buffer.
         let buf_len = self.inner.serialized_length();
         let mut usearch_buf = vec![0u8; buf_len];
@@ -239,6 +276,29 @@ impl VectorIndex for UsearchHnswIndex {
     fn metric(&self) -> DistanceMetric {
         self.config.metric
     }
+
+    fn size(&self) -> usize {
+        self.inner.size()
+    }
+
+    fn capacity(&self) -> usize {
+        self.inner.capacity()
+    }
+
+    fn dimension(&self) -> usize {
+        self.config.dimension
+    }
+
+    fn memory_limit_bytes(&self) -> Option<usize> {
+        self.memory_limit_bytes
+    }
+
+    fn bytes_per_scalar(&self) -> usize {
+        match self.config.quantization {
+            crate::vector::Quantization::F16 => 2,
+            crate::vector::Quantization::F32 => 4,
+        }
+    }
 }
 
 // ── Snapshot loading ────────────────────────────────────────────────────────
@@ -263,12 +323,19 @@ pub fn load_vector_index(path: &Path, config: &VectorIndexConfig) -> Result<Usea
     let inner = Index::new(&options).map_err(|e| VectorError::Internal(format!("usearch create for load: {e}")))?;
     inner.load_from_buffer(&usearch_bytes).map_err(|e| VectorError::Internal(format!("usearch load: {e}")))?;
 
+    let is_edge = config.entity_type == VectorEntityType::Edge;
+
+    // TODO(v0.4): deserialize edge label maps from snapshot when edge index support is implemented.
     Ok(UsearchHnswIndex {
         inner,
         config: config.clone(),
         tombstone_count: header.tombstone_count,
         last_replayed_timestamp: header.last_replayed_timestamp,
         memory_limit_bytes: None,
+        default_ef_search: config.algorithm_ef_search(),
+        next_edge_label: 0,
+        label_to_edge: if is_edge { Some(HashMap::new()) } else { None },
+        edge_to_label: if is_edge { Some(HashMap::new()) } else { None },
     })
 }
 
@@ -369,12 +436,14 @@ mod tests {
     }
 
     #[test]
-    fn test_edge_unsupported() {
-        use crate::types::keys::CanonicalEdgeKey;
+    fn test_edge_key_rejected_on_vertex_index() {
         let mut idx = UsearchHnswIndex::new(&test_config()).unwrap();
         let ek = EntityKey::Edge(CanonicalEdgeKey { src_id: 1, label_id: 1, dst_id: 2, rank: 0 });
         let err = idx.insert(&ek, &[1.0, 0.0, 0.0, 0.0]).unwrap_err();
-        assert!(matches!(err, VectorError::Unsupported(_)));
+        assert!(matches!(err, VectorError::Internal(ref msg) if msg.contains("edge key used with vertex-only index")));
+        // remove() takes the same key_to_label path — verify parity
+        let err = idx.remove(&ek).unwrap_err();
+        assert!(matches!(err, VectorError::Internal(ref msg) if msg.contains("edge key used with vertex-only index")));
     }
 
     #[test]
@@ -498,5 +567,53 @@ mod tests {
         let res = idx.insert(&EntityKey::Vertex(-5), &[1.0, 0.0, 0.0, 0.0]);
         assert!(res.is_err());
         assert!(matches!(res.unwrap_err(), VectorError::Internal(msg) if msg.contains("invalid negative vertex id")));
+    }
+
+    #[test]
+    fn test_rebuild_changes_quantization() {
+        let dim = 32;
+        let mut cfg_f32 = test_config();
+        cfg_f32.dimension = dim;
+        cfg_f32.quantization = Quantization::F32;
+
+        let mut cfg_f16 = test_config();
+        cfg_f16.dimension = dim;
+        cfg_f16.quantization = Quantization::F16;
+
+        let mut idx_f32 = UsearchHnswIndex::new(&cfg_f32).unwrap();
+        let mut idx_f16 = UsearchHnswIndex::new(&cfg_f16).unwrap();
+
+        let num_entries = 100;
+        for i in 0..num_entries {
+            let vec: Vec<f32> = (0..dim).map(|d| ((i * 17 + d * 31) as f32).sin()).collect();
+            idx_f32.insert(&EntityKey::Vertex(i as i64), &vec).unwrap();
+            idx_f16.insert(&EntityKey::Vertex(i as i64), &vec).unwrap();
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let path_f32 = dir.path().join("f32.snapshot");
+        let path_f16 = dir.path().join("f16.snapshot");
+
+        idx_f32.save(&path_f32, 10).unwrap();
+        idx_f16.save(&path_f16, 10).unwrap();
+
+        let f32_size = std::fs::metadata(&path_f32).unwrap().len();
+        let f16_size = std::fs::metadata(&path_f16).unwrap().len();
+
+        // F16 quantization should produce a significantly smaller snapshot payload
+        assert!(f16_size < f32_size, "F16 snapshot ({f16_size} bytes) should be smaller than F32 ({f32_size} bytes)");
+
+        // Loaded indexes should both produce accurate search results
+        let loaded_f32 = load_vector_index(&path_f32, &cfg_f32).unwrap();
+        let loaded_f16 = load_vector_index(&path_f16, &cfg_f16).unwrap();
+
+        let query: Vec<f32> = (0..dim).map(|d| ((999 + d * 31) as f32).sin()).collect();
+        let res_f32 = loaded_f32.search(&query, 5, None).unwrap();
+        let res_f16 = loaded_f16.search(&query, 5, None).unwrap();
+
+        assert_eq!(res_f32.len(), 5);
+        assert_eq!(res_f16.len(), 5);
+        // Top match should agree
+        assert_eq!(res_f32[0].0, res_f16[0].0);
     }
 }
