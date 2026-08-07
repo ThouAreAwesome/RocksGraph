@@ -43,14 +43,15 @@ class TestVectorSearch:
             .property("emb", Vector([1.0, 0.0])).next()
         txn.commit()
 
+        from rocksgraph import DistanceMetric
         snap = graph.read()
         scores = snap.g().V(1) \
-            .similarity("emb", Vector([1.0, 0.0])).to_list()
+            .similarity("emb", Vector([1.0, 0.0]), DistanceMetric.Cosine).to_list()
         assert len(scores) == 1
         assert abs(scores[0] - 1.0) < 1e-6
 
         scores2 = snap.g().V(1) \
-            .similarity("emb", Vector([0.0, 1.0])).to_list()
+            .similarity("emb", Vector([0.0, 1.0]), DistanceMetric.Cosine).to_list()
         assert len(scores2) == 1
         assert abs(scores2[0] - 0.0) < 1e-6
 
@@ -94,8 +95,9 @@ class TestVectorSearch:
         """Plain lists are auto-wrapped to Vector in nearest/similarity."""
         from rocksgraph._codec import _encode_step, OP_NEAREST
         buf = bytearray()
-        # Passing a plain list should not crash — it's auto-converted to Vector
-        _encode_step(OP_NEAREST, ("emb", [1.0, 2.0, 3.0], 5, None), buf)
+        # Passing a plain list should not crash — it's auto-converted to Vector.
+        # Tuple format: (prop, query, k, ef_search, metric_override)
+        _encode_step(OP_NEAREST, ("emb", [1.0, 2.0, 3.0], 5, None, None), buf)
         assert len(buf) > 0, "Encoding should succeed with auto-coerced list"
 
     def test_anonymous_traversal_vector_steps(self):
@@ -106,7 +108,8 @@ class TestVectorSearch:
         assert len(t_near.steps) == 1
         assert t_near.steps[0][0] == OP_NEAREST
 
-        t_sim = __.similarity("emb", Vector([1.0, 2.0]))
+        from rocksgraph import DistanceMetric
+        t_sim = __.similarity("emb", Vector([1.0, 2.0]), DistanceMetric.Cosine)
         assert len(t_sim.steps) == 1
         assert t_sim.steps[0][0] == OP_SIMILARITY
 
@@ -138,3 +141,120 @@ class TestVectorSearch:
         top_ids = [v["id"] for v in results]
         assert top_ids[0] == 2, f"Best match should be id=2, got {top_ids}"
         assert top_ids[1] == 4, f"Second best should be id=4, got {top_ids}"
+
+
+class TestNeighbors:
+    def test_neighbors_requires_index(self, graph):
+        """neighbors() without a vector index must surface a clear error."""
+        txn = graph.begin()
+        txn.g().addV("doc", 1).property("emb", Vector([1.0, 0.0])).next()
+        txn.commit()
+
+        from rocksgraph import VectorEntityType
+        snap = graph.read()
+        with pytest.raises(Exception, match="neighbors"):
+            snap.g().V(1).neighbors("emb", "emb", 3, VectorEntityType.Vertex).to_list()
+
+    def test_neighbors_with_index(self, tmpdir):
+        """neighbors() returns k nearest vertices using the traverser's own embedding."""
+        from rocksgraph import Graph, DataType, VectorEntityType, DistanceMetric
+
+        g = Graph(tmpdir)
+        with g.open_schema() as s:
+            s.add_vertex_label("doc")
+            s.add_property_key("emb", DataType.FloatVector)
+            s.add_vector_index(
+                property="emb",
+                dimension=2,
+                entity_type=VectorEntityType.Vertex,
+                metric=DistanceMetric.Cosine,
+            )
+
+        txn = g.begin()
+        txn.g().addV("doc", 1).property("emb", Vector([1.0, 0.0])).next()
+        txn.g().addV("doc", 2).property("emb", Vector([0.9, 0.436])).next()  # ~25° from v1
+        txn.g().addV("doc", 3).property("emb", Vector([0.0, 1.0])).next()   # orthogonal to v1
+        txn.commit()
+
+        mgr = g.index_manager()
+        mgr.rebuild(VectorEntityType.Vertex, "emb")
+
+        snap = g.read()
+        # k=2 neighbors of vertex 1 ([1.0, 0.0]): v2 is closer than v3
+        result = snap.g().V(1).neighbors("emb", "emb", 2, VectorEntityType.Vertex).to_list()
+        assert len(result) == 2
+        neighbor_ids = {v.id for v in result}
+        assert 2 in neighbor_ids, f"Vertex 2 should be among neighbors of v1, got {neighbor_ids}"
+
+        g.close()
+
+    def test_neighbors_builder_opcode(self):
+        """neighbors() generates the OP_NEIGHBORS opcode."""
+        from rocksgraph import __, VectorEntityType
+        from rocksgraph._codec import OP_NEIGHBORS
+
+        t = __.neighbors("emb", "emb", 5, VectorEntityType.Vertex)
+        assert len(t.steps) == 1
+        assert t.steps[0][0] == OP_NEIGHBORS
+
+    def test_neighbors_skips_no_embedding(self, graph):
+        """Vertices with no embedding for the given property are silently skipped."""
+        txn = graph.begin()
+        txn.g().addV("doc", 1).next()  # no embedding property
+        txn.commit()
+
+        from rocksgraph import VectorEntityType
+        snap = graph.read()
+        # No embedding → skipped before the index check → empty output, not an error
+        results = snap.g().V(1).neighbors("emb", "emb", 3, VectorEntityType.Vertex).to_list()
+        assert results == []
+
+
+class TestWithMetric:
+    def test_similarity_dot_product_metric(self, graph):
+        """similarity(metric=DotProduct) produces raw dot product, not cosine similarity."""
+        from rocksgraph import DistanceMetric
+
+        txn = graph.begin()
+        # [1.0, 0.0] · [0.5, 0.5] = 0.5; cosine([1,0],[0.5,0.5]) = 1/sqrt(2) ≈ 0.707
+        txn.g().addV("doc").property("id", 1).property("emb", Vector([1.0, 0.0])).next()
+        txn.commit()
+
+        snap = graph.read()
+        score = snap.g().V(1) \
+            .similarity("emb", Vector([0.5, 0.5]), DistanceMetric.DotProduct).next()
+        assert score is not None
+        assert abs(score - 0.5) < 1e-4, f"dot product should be 0.5, got {score}"
+
+    def test_with_metric_builder_patches_nearest(self):
+        """with_metric() correctly patches the nearest() step in the builder."""
+        from rocksgraph import __, DistanceMetric
+        from rocksgraph._codec import OP_NEAREST
+
+        t = __.nearest("emb", Vector([1.0, 0.0]), 5).with_metric(DistanceMetric.Euclidean)
+        assert len(t.steps) == 1
+        assert t.steps[0][0] == OP_NEAREST
+        _, (_, _, _, _, metric) = t.steps[0]
+        assert metric == DistanceMetric.Euclidean
+
+    def test_similarity_metric_is_stored_in_step(self):
+        """similarity() stores metric directly in the step tuple."""
+        from rocksgraph import __, DistanceMetric
+        from rocksgraph._codec import OP_SIMILARITY
+
+        t = __.similarity("emb", Vector([1.0, 0.0]), DistanceMetric.DotProduct)
+        assert len(t.steps) == 1
+        assert t.steps[0][0] == OP_SIMILARITY
+        _, (_, _, metric) = t.steps[0]
+        assert metric == DistanceMetric.DotProduct
+
+    def test_with_metric_wrong_predecessor_raises(self):
+        """with_metric() raises ValueError when not preceded by nearest()."""
+        from rocksgraph import __, DistanceMetric
+        with pytest.raises(ValueError, match="with_metric"):
+            __.identity().with_metric(DistanceMetric.Cosine)
+        from rocksgraph import VectorEntityType
+        with pytest.raises(ValueError, match="with_metric"):
+            __.neighbors("emb", "emb", 3, VectorEntityType.Vertex).with_metric(DistanceMetric.Cosine)
+        with pytest.raises(ValueError, match="with_metric"):
+            __.similarity("emb", Vector([1.0, 0.0]), DistanceMetric.Cosine).with_metric(DistanceMetric.Euclidean)

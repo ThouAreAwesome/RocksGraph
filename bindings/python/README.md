@@ -1,37 +1,61 @@
 # RocksGraph
 
+[![CI](https://github.com/ThouAreAwesome/RocksGraph/actions/workflows/ci.yml/badge.svg)](https://github.com/ThouAreAwesome/RocksGraph/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/rocksgraph.svg)](https://pypi.org/project/rocksgraph/)
+
 **An embeddable property graph database with Gremlin traversals and vector search.**
 Open a graph with one line of code, traverse it by relationship, and search it by
-vector similarity — no server, no cluster, no JVM. Just `pip install rocksgraph`.
+vector similarity — no server, no cluster, no JVM.
 
 ```bash
 pip install rocksgraph
 ```
 
+**Early stage, production-curious.** Beta (v0.2.0).
+
+**What's solid:**
+- Gremlin-style traversal API with query optimizer
+- Property graph model (vertices, edges, typed properties, labels)
+- ACID transactions (OCC, auto-rollback on exception)
+- HNSW vector search (810+ tests, WAL crash recovery, RYOW isolation)
+
+**What's not:**
+- No distributed or cluster mode (and won't have one)
+- No SQL/GQL query language — use the traversal API
+- Not yet fuzzed or Jepsen-tested
+
+**Who should use it:**
+- Building a local-first Python application that needs graph traversal + vector similarity
+- Running RAG on edge devices or embedded systems
+- Want ACID without managing a database server
+
+**Who shouldn't:**
+- Need horizontal scaling → use Neo4j or Dgraph
+- Need a SQL or GQL query language → use PostgreSQL + pgvector or SurrealDB
+
+**Maintenance:** Actively maintained. Issues responded to within a week. Releases when there's something worth shipping. If I stop, I'll say so here.
+
 ## Quickstart
 
 ```python
-from rocksgraph import Graph, P, Int64
+from rocksgraph import Graph, Int64, Vector
 import tempfile
 
-db = tempfile.mkdtemp()
-graph = Graph(db)
+graph = Graph(tempfile.mkdtemp())
 
-# ── Write ──────────────────────────────────────────────
+# ── Write — ordinary properties + embedding in one pass ─
 with graph.begin() as txn:
-    alice = txn.g().addV("person").property("id", 1) \
-        .property("name", "Alice").property("age", Int64(30)).next()
-    bob = txn.g().addV("person").property("id", 2) \
-        .property("name", "Bob").property("age", Int64(25)).next()
-    txn.g().addE("knows").from_(alice).to(bob).property("since", Int64(2020)).next()
+    txn.g().addV("person").property("id", 1).property("name", "Alice").property("emb", Vector([1.0, 0.0, 0.0])).next()
+    txn.g().addV("person").property("id", 2).property("name", "Bob").property("emb", Vector([0.0, 1.0, 0.0])).next()
+    txn.g().addE("knows").from_(1).to(2).next()
 
-# ── Read ───────────────────────────────────────────────
 snap = graph.read()
-snap.g().V().count().to_list()                            # [2]
+
+# ── Graph traversal ────────────────────────────────────
 snap.g().V(1).out("knows").values("name").to_list()       # ["Bob"]
-snap.g().V().has("age", P.gt(Int64(28))).values("name").to_list()  # ["Alice"]
-snap.g().V().hasLabel("person").order().by("age", "asc").values("name").to_list()
-                                                                  # ["Bob", "Alice"]
+
+# ── Vector search on the same vertices ─────────────────
+snap.g().V().nearest("emb", Vector([0.9, 0.1, 0.0]), 1).to_list()  # [Vertex(id=1, label="person", ...)]
 ```
 
 ## Session Model
@@ -67,12 +91,7 @@ with graph.begin() as txn:
     raise ValueError("oops")   # rolled back automatically; exception still propagates
 ```
 
-### Using Traversal `.g()`
-
-`.g()` returns a fresh `GraphTraversal` tied to the current session.
-Each method (`.V()`, `.out()`, `.has()`, …) returns a **new** traversal object —
-the original is never mutated. Nothing executes until you call `.next()`,
-`.to_list()`, `.to_set()`, or `.iterate()`.
+`.g()` returns a fresh `GraphTraversal` per call — each method returns a **new** traversal object and nothing executes until `.next()`, `.to_list()`, `.to_set()`, or `.iterate()`:
 
 ```python
 snap = graph.read()
@@ -106,7 +125,7 @@ snap.g().V().has("email").count().to_list()
 
 ```python
 with graph.begin() as txn:
-    # next() returns a Vertex object; from_() / to() extract its .id automatically
+    # next() returns a Vertex object; from() / to() extract its .id automatically
     alice = txn.g().addV("person").property("id", 1).property("name", "Alice").next()
     bob   = txn.g().addV("person").property("id", 2).property("name", "Bob").next()
     txn.g().addE("knows").from_(alice).to(bob).property("since", Int64(2020)).next()
@@ -198,15 +217,13 @@ graph.read().g().V().hasLabel("person").count().to_list()  # [1] — only Alice
 
 ### Vector search
 
-Declare a vector index via `SchemaSession`, insert embeddings, then query with `.nearest()`:
-
 ```python
 from rocksgraph import Graph, DataType, VectorEntityType, DistanceMetric, Vector
 import tempfile
 
 graph = Graph(tempfile.mkdtemp())
 
-# 1. Declare the vector index (persisted with the database)
+# 1. Declare the vector index (only needed once; persisted with the database)
 with graph.open_schema() as s:
     s.add_property_key("emb", DataType.FloatVector)
     s.add_vector_index(
@@ -218,37 +235,21 @@ with graph.open_schema() as s:
 
 # 2. Insert vertices with embeddings
 with graph.begin() as txn:
-    txn.g().addV("doc", 1).property("emb", Vector([1.0, 0.0, 0.0])).next()
-    txn.g().addV("doc", 2).property("emb", Vector([0.0, 1.0, 0.0])).next()
-    txn.g().addV("doc", 3).property("emb", Vector([0.0, 0.0, 1.0])).next()
+    txn.g().addV("doc").property("id", 1).property("emb", Vector([1.0, 0.0, 0.0])).next()
+    txn.g().addV("doc").property("id", 2).property("emb", Vector([0.0, 1.0, 0.0])).next()
+    txn.g().addV("doc").property("id", 3).property("emb", Vector([0.0, 0.0, 1.0])).next()
 
-# 3. Top-k nearest neighbours (ordered by similarity, descending)
+# 3. Top-k nearest neighbours and point similarity score
 snap = graph.read()
 results = snap.g().V().nearest("emb", Vector([0.9, 0.1, 0.0]), 2).to_list()
 # → [Vertex(id=1, ...), Vertex(id=2, ...)]
+score = snap.g().V(1).similarity("emb", Vector([0.9, 0.1, 0.0]), DistanceMetric.Cosine).next()
+# → 0.994...
 ```
 
 ## Data Model
 
-```
-Vertex:   Vertex(id, label, properties={str: value})
-Edge:     Edge(src, dst, label, rank, properties={str: value})
-Property: Property(key, value)
-Path:     {"objects": [Vertex|Edge|...], "labels": [[str]]}
-```
-
-- Both vertex and edge properties are **single-valued**: one value per key.
-  `{"name": "Alice", "age": 30}`. Use `.values("key")` to read them,
-  `.properties("key")` to get `Property` objects.
-- Every vertex must have an explicit `property("id", n)` — no auto-increment.
-- Edge `rank` defaults to 0; non-zero ranks require multi-edge engine support (v0.2).
-- Traversal results (`next()`, `to_list()`) return `Vertex`/`Edge` objects with `.properties`
-  always `{}` unless `.withProperties()` was used. Call `.values()` / `.properties()` to
-  read property data via the traversal.
-
-## Result Types
-
-`next()` and `to_list()` return typed Python objects, not raw dicts.
+`next()` and `to_list()` return typed Python objects. Properties are **single-valued** — one value per key.
 
 ### `Vertex`
 
@@ -258,12 +259,11 @@ v.id          # int
 v.label       # str
 v.properties  # dict — always {} unless withProperties() was used
 
-# Dict-style access still works (backward compat)
-v["id"]       # same as v.id
+v["id"]       # dict-style access
 "id" in v     # True
 ```
 
-Vertices are **hashable** by `id` — safe to use in `set()` or as dict keys.
+Vertices are **hashable** by `id`.
 
 ### `Edge`
 
@@ -272,7 +272,7 @@ e = snap.g().V(1).outE("knows").next()
 e.src    # int — source vertex id
 e.dst    # int — destination vertex id
 e.label  # str
-e.rank   # int — 0 in v0.1
+e.rank   # int — default 0
 e.properties  # dict — always {} unless withProperties() was used
 
 e["src"]  # dict-style access
@@ -288,8 +288,12 @@ p = props[0]
 p.key    # str — "name"
 p.value  # Any — "Alice"
 
-p["key"]   # dict-style access
+p["key"]  # dict-style access
 ```
+
+### `Path`
+
+`path()` returns `{"objects": [Vertex|Edge|...], "labels": [[str]]}`.
 
 ## Type System
 
@@ -306,53 +310,27 @@ Python `int` and `float` auto-convert to `Int64` / `Float64`. Use typed wrappers
 | `Vector([1.0, 0.5, ...])` | `FloatVector(Vec<f32>)` | `list[float]` |
 | raw `int` / `float` | → `Int64` / `Float64` | auto |
 
-## Enums
+## Enums & Predicates
 
 ```python
-from rocksgraph import T, Direction, Order
+from rocksgraph import T, Direction, Order, P
 ```
 
-### `T` — element token keys
+| Enum | Values | Typical use |
+|------|--------|-------------|
+| `T` | `T.id`, `T.label`, `T.key`, `T.value` | `order().by(T.id)` |
+| `Direction` | `Direction.OUT`, `Direction.IN`, `Direction.BOTH` | `degree(Direction.OUT)` |
+| `Order` | `Order.asc`, `Order.desc` | `order().by("age", Order.asc)` |
 
-| Token | String equivalent | Typical use |
-|-------|------------------|-------------|
-| `T.id` | `"id"` | `order().by(T.id, "asc")` |
-| `T.label` | `"label"` | `order().by(T.label, Order.asc)` |
-| `T.key` | `"key"` | Property key reference |
-| `T.value` | `"value"` | Property value reference |
+**Predicates** — used in `.has(key, P.pred)`, `.hasId(P.pred)`, `.is_(P.pred)`:
 
-### `Direction` — traversal direction
-
-| Token | Use |
-|-------|-----|
-| `Direction.OUT` | `degree(Direction.OUT)` — out-degree only |
-| `Direction.IN` | `degree(Direction.IN)` — in-degree only |
-| `Direction.BOTH` | `degree(Direction.BOTH)` — default, both directions |
-
-### `Order` — sort order
-
-| Token | Use |
-|-------|-----|
-| `Order.asc` | `order().by("age", Order.asc)` |
-| `Order.desc` | `order().by("age", Order.desc)` |
-
-## Predicates
-
-```python
-from rocksgraph import P
-
-P.eq(v)           # equal
-P.neq(v)          # not equal
-P.gt(v)           # greater than
-P.gte(v)          # greater than or equal
-P.lt(v)           # less than
-P.lte(v)          # less than or equal
-P.between(lo, hi) # lo ≤ x < hi
-P.within(*vs)     # x in {vs}
-P.without(*vs)    # x not in {vs}
-```
-
-All predicates work on user properties (`has("age", P.gt(Int64(30)))`) and vertex IDs (`hasId(P.within(1, 2, 3))`).
+| Predicate | Meaning |
+|-----------|---------|
+| `P.eq(v)` / `P.neq(v)` | equal / not equal |
+| `P.gt(v)` / `P.gte(v)` | greater than / greater than or equal |
+| `P.lt(v)` / `P.lte(v)` | less than / less than or equal |
+| `P.between(lo, hi)` | `lo ≤ x < hi` |
+| `P.within(*vs)` / `P.without(*vs)` | membership / exclusion |
 
 ## Step Reference
 
@@ -469,28 +447,13 @@ Filters do not change the traverser type — they pass through whatever they rec
 
 | Step | Builder | Returns |
 |------|---------|---------|
-| `nearest(prop, query, k)` | `.nearest("emb", Vector([0.1, 0.9]), 5)` | Vertex/Edge — top-k by cosine similarity, descending |
-| `similarity(prop, query)` | `.similarity("emb", Vector([0.1, 0.9]))` | `float` — cosine similarity score |
-| `neighbors(prop, k)` | `.neighbors("emb", 5)` | Vertex — k nearest neighbors in vector space |
+| `nearest(prop, query, k)` | `.nearest("emb", Vector([0.1, 0.9]), 5)` | Vertex/Edge — from the upstream traverser stream, returns the k most similar to query (an explicit vector you supply), ordered by the index's configured `DistanceMetric`; falls back to cosine when no index is available |
+| `similarity(prop, query, metric)` | `.similarity("emb", Vector([0.1, 0.9]), DistanceMetric.Cosine)` | `float` — similarity score between the current traverser's prop embedding and query using the given `metric` (Cosine ∈ [-1, 1], DotProduct = raw dot product, Euclidean = 1 − L2²). Does not require a vector index. |
+| `neighbors(source_prop, target_prop, k, entity_type)` | `.neighbors("q_emb", "a_emb", 5, VectorEntityType.Vertex)` | Flat-map: reads `source_prop` from each traverser as the query vector and searches the `target_prop` HNSW index of `entity_type`, emitting up to `k` nearest results. `source_prop` and `target_prop` may differ for cross-index similarity. Requires a declared HNSW index. |
+| `with_metric(metric)` | `.nearest(…).with_metric(DistanceMetric.Euclidean)` | Overrides the distance metric for the immediately preceding `nearest()` step. Not applicable after `similarity()` (metric is a required parameter there) or `neighbors()` (index metric is fixed at build time). |
+| `with_ef_search(ef)` | `.nearest(…).with_ef_search(100)` | Overrides the HNSW beam width for the immediately preceding `nearest()` or `neighbors()` step. Higher values improve recall at the cost of latency. |
 
-`Vector([f32, ...])` is the query type. A plain `list[float]` is auto-coerced. Results from `nearest` are ordered by descending similarity.
-
-```python
-from rocksgraph import Graph, Vector
-import tempfile
-
-graph = Graph(tempfile.mkdtemp())
-
-with graph.begin() as txn:
-    txn.g().addV("doc").property("id", 1).property("emb", Vector([1.0, 0.0])).next()
-    txn.g().addV("doc").property("id", 2).property("emb", Vector([0.0, 1.0])).next()
-
-snap = graph.read()
-# top-2 nearest to [1.0, 0.0]
-results = snap.g().V().hasLabel("doc").nearest("emb", Vector([1.0, 0.0]), 2).to_list()
-# cosine similarity of vertex 1's embedding
-score = snap.g().V(1).similarity("emb", Vector([1.0, 0.0])).next()  # 1.0
-```
+`Vector([f32, ...])` is the query type. A plain `list[float]` is auto-coerced. For a complete setup example including index declaration, see [Vector search](#vector-search).
 
 ### Extraction
 
@@ -525,6 +488,37 @@ score = snap.g().V(1).similarity("emb", Vector([1.0, 0.0])).next()  # 1.0
   at most one edge per label between any two vertices is supported.
 - **`addV()` requires explicit `property("id", n)`** — no auto-increment vertex IDs.
 - **Embedded only** — no server/client mode. Queries run in-process.
+
+## API Stability
+
+RocksGraph follows [semver](https://semver.org/) for PyPI versioning.
+
+### Stable surface (no breaking changes within `0.x`)
+
+| Item | Stability |
+|------|-----------|
+| `Graph(path)`, `Graph.read()`, `Graph.begin()`, `Graph.open_schema()`, `Graph.open_bulk_loader()` | Stable |
+| All traversal step methods (`.V()`, `.out()`, `.has()`, `.nearest()`, etc.) | Stable |
+| Terminal methods: `.next()`, `.to_list()`, `.to_set()`, `.iterate()` | Stable |
+| `Vertex`, `Edge`, `Property`, `Vector` types | Stable |
+| `P`, `T`, `Direction`, `Order` enums | Stable |
+| `DataType`, `GraphOptions`, `SchemaMode`, `EdgeMode` | Stable |
+
+### Provisional surface (may change in a future `0.x`)
+
+| Item | Status |
+|------|--------|
+| `VectorIndexConfig`, `DistanceMetric` | Provisional — v0.3 may extend these |
+| `IndexManager` (`rebuild`, `save`, `save_all`) | Provisional — export/import planned for v0.3 |
+
+### Version contract
+
+| Version | API | On-disk format |
+|---------|-----|----------------|
+| 0.1.0 | Superseded — upgrade to 0.2.0, no migration needed | Stable for graph data |
+| 0.2.x | Core graph API stable. Vector search (`nearest`, `similarity`) stable. `VectorIndexConfig`, `DistanceMetric`, and `IndexManager` provisional — v0.3 may tune performance characteristics and extend the management API | Stable for graph data; vector WAL format may change |
+| 0.4.x | (planned) All APIs stable including vector config and management | Frozen |
+| 1.0.0 | (planned) Full semver guarantees — no breaking changes without a major bump | Frozen |
 
 ## Platform Support
 

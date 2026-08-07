@@ -65,6 +65,7 @@ OP_IDENTITY = 59
 OP_LOCAL = 60
 OP_NEAREST = 61
 OP_SIMILARITY = 62
+OP_NEIGHBORS = 63
 
 # Primitive types matching rocksgraph/src/types/gvalue.rs
 PRIM_NULL = 0
@@ -295,10 +296,11 @@ def _encode_step(opcode: int, args: Any, buf: bytearray):
             
     elif opcode == OP_NEAREST:
         from ._types import Vector
-        prop, query, k, ef_search = args
+        prop, query, k, ef_search, metric_override = args
         _encode_string(prop, buf)
         buf.extend(struct.pack(">I", k))
         buf.extend(struct.pack(">I", ef_search if ef_search is not None else 0))
+        buf.append(_metric_to_byte(metric_override))
         if isinstance(query, Vector):
             vec = query
         elif isinstance(query, list):
@@ -310,8 +312,9 @@ def _encode_step(opcode: int, args: Any, buf: bytearray):
             buf.extend(struct.pack("<f", f))
     elif opcode == OP_SIMILARITY:
         from ._types import Vector
-        prop, query = args
+        prop, query, metric = args
         _encode_string(prop, buf)
+        buf.append(_metric_to_byte(metric))
         if isinstance(query, Vector):
             vec = query
         elif isinstance(query, list):
@@ -321,12 +324,37 @@ def _encode_step(opcode: int, args: Any, buf: bytearray):
         buf.extend(struct.pack(">I", len(vec.values)))
         for f in vec.values:
             buf.extend(struct.pack("<f", f))
-    
+    elif opcode == OP_NEIGHBORS:
+        source_prop, target_prop, k, ef_search, entity_type = args
+        _encode_string(source_prop, buf)
+        _encode_string(target_prop, buf)
+        buf.extend(struct.pack(">I", k))
+        buf.extend(struct.pack(">I", ef_search if ef_search is not None else 0))
+        buf.append(_entity_type_to_byte(entity_type))
+
     elif opcode == OP_CONSTANT:
         _encode_primitive(args, buf)
         
     elif opcode == OP_LOCAL:
         _encode_plan(args, buf)
+
+def _entity_type_to_byte(et) -> int:
+    if et is None:
+        return 0
+    from ._types import VectorEntityType
+    return 1 if et == VectorEntityType.Edge else 0
+
+def _metric_to_byte(m):
+    if m is None:
+        return 0
+    from ._types import DistanceMetric
+    if m == DistanceMetric.Cosine:
+        return 1
+    if m == DistanceMetric.Euclidean:
+        return 2
+    if m == DistanceMetric.DotProduct:
+        return 3
+    return 0
 
 def _encode_string(s: str, buf: bytearray):
     b = s.encode('utf-8')

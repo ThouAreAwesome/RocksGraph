@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Brute-force exact KNN index. v0.1 reference implementation for the
+
+//! Brute-force exact KNN index. v0.2 reference implementation for the
 //! [`VectorIndex`](super::traits::VectorIndex) trait (v0.2).
 
 use std::path::Path;
@@ -39,6 +40,53 @@ pub fn cosine_sim(a: &[f32], b: &[f32]) -> f32 {
     }
 }
 
+/// Dot (inner) product of two equal-length f32 slices.
+pub(crate) fn dot_product(a: &[f32], b: &[f32]) -> f32 {
+    debug_assert_eq!(a.len(), b.len(), "vector dimension mismatch");
+    a.iter().zip(b.iter()).map(|(&x, &y)| x as f64 * y as f64).sum::<f64>() as f32
+}
+
+/// Squared L2 distance of two equal-length f32 slices.
+pub(crate) fn l2_sq(a: &[f32], b: &[f32]) -> f32 {
+    debug_assert_eq!(a.len(), b.len(), "vector dimension mismatch");
+    a.iter()
+        .zip(b.iter())
+        .map(|(&x, &y)| {
+            let d = x as f64 - y as f64;
+            d * d
+        })
+        .sum::<f64>() as f32
+}
+
+/// Compute a similarity score consistent with `1.0 − usearch_dist` for `metric`.
+///
+/// - Cosine    → `cosine_sim(a, b)` ∈ [−1, 1]
+/// - DotProduct → raw dot product (higher = more similar)
+/// - Euclidean → `1.0 − l2_sq(a, b)` (higher = closer)
+pub(crate) fn metric_sim(metric: super::traits::DistanceMetric, a: &[f32], b: &[f32]) -> f32 {
+    match metric {
+        super::traits::DistanceMetric::Cosine => cosine_sim(a, b),
+        super::traits::DistanceMetric::DotProduct => dot_product(a, b),
+        super::traits::DistanceMetric::Euclidean => 1.0 - l2_sq(a, b),
+    }
+}
+
+/// Convert a usearch distance value to a similarity score for `metric`.
+///
+/// Usearch minimizes distance, so the semantics differ per metric:
+/// - Cosine    → usearch returns `1.0 − cos`, so `sim = 1.0 − dist`
+/// - Euclidean → usearch returns `L2²`,        so `sim = 1.0 − dist`
+/// - DotProduct → usearch returns `−dot`,       so `sim = −dist`
+///
+/// Use this when converting HNSW search results to similarity scores so that
+/// HNSW-path and RYOW-path scores (computed via `metric_sim`) are consistent.
+pub(crate) fn dist_to_sim(metric: super::traits::DistanceMetric, dist: f32) -> f32 {
+    match metric {
+        super::traits::DistanceMetric::DotProduct => -dist,
+        _ => 1.0 - dist,
+    }
+}
+
 /// Ephemeral brute-force vector index. Stores (entity_key, vector) pairs
 /// and performs exact linear-scan KNN searches.
 ///
@@ -54,6 +102,7 @@ pub struct BruteForceIndex {
     last_replayed_timestamp: u64,
     property: SmolStr,
     memory_limit_bytes: Option<usize>,
+    metric: super::traits::DistanceMetric,
 }
 
 #[allow(dead_code)]
@@ -64,7 +113,7 @@ impl BruteForceIndex {
 
     /// Create a BruteForceIndex seeded with the index's property name (used in error messages).
     pub fn with_config(config: &super::traits::VectorIndexConfig) -> Self {
-        Self { property: config.property.clone(), ..Self::default() }
+        Self { property: config.property.clone(), metric: config.metric, ..Self::default() }
     }
 
     pub fn len(&self) -> usize {
@@ -171,6 +220,10 @@ impl VectorIndex for BruteForceIndex {
 
     fn set_last_replayed_timestamp(&mut self, seq: u64) {
         self.last_replayed_timestamp = seq;
+    }
+
+    fn metric(&self) -> super::traits::DistanceMetric {
+        self.metric
     }
 }
 

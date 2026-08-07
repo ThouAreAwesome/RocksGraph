@@ -344,24 +344,44 @@ class Traversal:
 
     def nearest(self, property, query, k):
         """Find the k most similar elements to the query vector."""
-        return self._add(OP_NEAREST, (property, query, k, None))
+        return self._add(OP_NEAREST, (property, query, k, None, None))
 
     def with_ef_search(self, ef):
-        """Override the HNSW beam width for the immediately preceding nearest() step.
+        """Override the HNSW beam width for the immediately preceding nearest() or neighbors() step.
 
-        Higher values improve recall at the cost of latency. Must be called
-        directly after nearest().
+        Higher values improve recall at the cost of latency.
         """
-        if not self.steps or self.steps[-1][0] != OP_NEAREST:
-            raise ValueError("with_ef_search() must immediately follow nearest()")
-        prop, query, k, _ = self.steps[-1][1]
+        if not self.steps or self.steps[-1][0] not in (OP_NEAREST, OP_NEIGHBORS):
+            raise ValueError("with_ef_search() must immediately follow nearest() or neighbors()")
         t = self._clone()
-        t.steps[-1] = (OP_NEAREST, (prop, query, k, ef))
+        op, args = t.steps[-1]
+        if op == OP_NEAREST:
+            prop, query, k, _, metric = args
+            t.steps[-1] = (OP_NEAREST, (prop, query, k, ef, metric))
+        else:  # OP_NEIGHBORS
+            source_prop, target_prop, k, _, entity_type = args
+            t.steps[-1] = (OP_NEIGHBORS, (source_prop, target_prop, k, ef, entity_type))
         return t
 
-    def similarity(self, property, query):
-        """Compute cosine similarity between each element's vector and the query."""
-        return self._add(OP_SIMILARITY, (property, query))
+    def with_metric(self, metric):
+        """Override the distance metric for the immediately preceding nearest() step.
+        Not applicable after similarity() (metric is a required parameter there) or
+        neighbors() (index metric is fixed at build time)."""
+        if not self.steps or self.steps[-1][0] != OP_NEAREST:
+            raise ValueError("with_metric() must immediately follow nearest()")
+        t = self._clone()
+        prop, query, k, ef, _ = t.steps[-1][1]
+        t.steps[-1] = (OP_NEAREST, (prop, query, k, ef, metric))
+        return t
+
+    def similarity(self, property, query, metric):
+        """Compute similarity between each element's vector and the query using the given metric."""
+        return self._add(OP_SIMILARITY, (property, query, metric))
+
+    def neighbors(self, source_prop, target_prop, k, entity_type):
+        """Flat-map: reads source_prop from each traverser as query, searches the target_prop
+        HNSW index of entity_type, emits up to k nearest results. Requires a declared index."""
+        return self._add(OP_NEIGHBORS, (source_prop, target_prop, k, None, entity_type))
 
     def id(self): return self._add(OP_ID, None)
     def label(self): return self._add(OP_LABEL, None)
@@ -563,7 +583,9 @@ class __:
     @staticmethod
     def nearest(property, query, k): return Traversal(None).nearest(property, query, k)
     @staticmethod
-    def similarity(property, query): return Traversal(None).similarity(property, query)
+    def similarity(property, query, metric): return Traversal(None).similarity(property, query, metric)
+    @staticmethod
+    def neighbors(source_prop, target_prop, k, entity_type): return Traversal(None).neighbors(source_prop, target_prop, k, entity_type)
 
 class P:
     def __init__(self, tag, value):

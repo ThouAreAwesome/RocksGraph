@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 // SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Vector search module. v0.1 provides brute-force KNN via the volcano step;
 //! v0.2 adds the `VectorIndex` trait and HNSW via usearch.
 
@@ -38,7 +39,7 @@ pub(crate) fn empty_vector_index_map() -> Arc<RwLock<VectorIndexMap>> {
 }
 
 #[allow(unused_imports)]
-pub(crate) use brute_force::{cosine_sim, BruteForceIndex, EntityKey};
+pub(crate) use brute_force::{cosine_sim, dist_to_sim, metric_sim, BruteForceIndex, EntityKey};
 #[allow(unused_imports)]
 pub(crate) use error::{VectorEntityType, VectorError};
 #[allow(unused_imports)]

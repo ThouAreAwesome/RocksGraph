@@ -17,6 +17,7 @@ use crate::types::{
     prop_key::PropKey,
     StoreError, ORDER_KEY_INLINE, SMALL_VECTOR_LENGTH, STEP_LABEL_INLINE, VERTEX_PROPS_LENGTH,
 };
+use crate::vector::{DistanceMetric, VectorEntityType};
 use smallvec::SmallVec;
 use smol_str::SmolStr;
 
@@ -189,6 +190,7 @@ pub enum LogicalStep {
     Local(LocalStep),
     Nearest(NearestLogicalStep),
     Similarity(SimilarityLogicalStep),
+    Neighbors(NeighborsLogicalStep),
 }
 
 /// Specifies when a repeat step should emit intermediate results.
@@ -783,11 +785,36 @@ pub struct NearestLogicalStep {
     pub k: usize,
     /// Per-query HNSW beam-width override. `None` uses the schema-level default.
     pub ef_search: Option<usize>,
+    pub metric_override: Option<DistanceMetric>,
 }
 
-/// Logical step: compute similarity between each traverser's vector and query.
+/// Logical step: compute similarity between each traverser's vector and query vector.
 #[derive(Clone)]
 pub struct SimilarityLogicalStep {
     pub prop_key: String,
     pub query_vec: Vec<f32>,
+    pub metric: DistanceMetric,
+}
+
+/// Logical step: flat-map each incoming traverser to its k nearest entities in the vector index.
+/// `source_prop` is read from the traverser as the query vector; `target_prop` names the index
+/// to search; `entity_type` disambiguates vertex vs edge index for `target_prop`.
+///
+/// Invariant: this struct intentionally has **no** `metric_override` field. The distance metric
+/// for `neighbors()` is always determined by the HNSW index that was configured at build time;
+/// overriding it at query time would produce meaningless scores. The `with_metric()` builder
+/// method enforces this by only accepting `Nearest` and `Similarity` as valid predecessors —
+/// if a `metric_override` field is ever added here, that guard **must** be updated too.
+#[derive(Clone)]
+pub struct NeighborsLogicalStep {
+    /// Property on the incoming traverser whose FloatVector is used as the query.
+    pub source_prop: String,
+    /// Property name of the declared vector index to search.
+    pub target_prop: String,
+    pub k: usize,
+    /// Per-query HNSW beam-width override. `None` uses the schema-level default.
+    pub ef_search: Option<usize>,
+    /// Which entity type's index to search — required to disambiguate when both vertex
+    /// and edge indexes exist for `target_prop`.
+    pub entity_type: VectorEntityType,
 }
