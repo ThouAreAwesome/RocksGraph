@@ -37,7 +37,7 @@ use crate::{
             vec_source::VecSourceStep,
         },
     },
-    planner::logical_step::LogicalPlan,
+    planner::logical_step::{LogicalPlan, LogicalStep},
     schema::Schema,
     types::{error::StoreError, LabelId},
 };
@@ -164,7 +164,17 @@ impl PhysicalPlanBuilder {
         }
 
         let mut upstream: Option<StepRef> = Some(source.clone());
-        for step in &plan.steps {
+        for (i, step) in plan.steps.iter().enumerate() {
+            if let LogicalStep::Nearest(_) = step {
+                let valid_upstream = i > 0 && matches!(&plan.steps[i - 1], LogicalStep::V(v) if v.ids.is_empty());
+                if !valid_upstream {
+                    return Err(StoreError::UnsupportedOperation(
+                        "nearest() is a vector index entry-point step and must immediately follow g.V([]). \
+                         To compute vector similarity on an existing stream of vertices, use .similarity()."
+                            .into(),
+                    ));
+                }
+            }
             upstream = self.build_step(step, upstream, schema_lock, track_path)?;
         }
 
