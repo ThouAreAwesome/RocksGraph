@@ -4,6 +4,7 @@
 use crate::{
     gremlin::traversal::TraversalBuilder,
     schema::DataType,
+    types::error::StoreError,
     vector::{AnnAlgorithm, DistanceMetric, Quantization, VectorEntityType, VectorIndexConfig},
     Graph, Value,
 };
@@ -264,12 +265,27 @@ fn test_nearest_upstream_filter_and_missing_props() {
 
         let mut snap = g.read();
 
-        // Query with upstream filter .has("category", "tech")
-        let filtered_results: Vec<i64> = snap
+        // Mid-stream .nearest() after .has() is rejected as invalid pattern
+        let err = snap
             .g()
             .V([])
             .has("category", "tech")
             .nearest("emb", vec![1.0, 0.0, 0.0, 0.0], 5)
+            .id()
+            .to_list()
+            .unwrap_err();
+        assert!(matches!(err, StoreError::UnsupportedOperation(_)));
+
+        // Mid-stream .nearest() after bounded V([1, 2]) is also rejected
+        let err2 = snap.g().V([1, 2]).nearest("emb", vec![1.0, 0.0, 0.0, 0.0], 5).id().to_list().unwrap_err();
+        assert!(matches!(err2, StoreError::UnsupportedOperation(_)));
+
+        // Downstream filter after .nearest() works properly
+        let filtered_results: Vec<i64> = snap
+            .g()
+            .V([])
+            .nearest("emb", vec![1.0, 0.0, 0.0, 0.0], 5)
+            .has("category", "tech")
             .id()
             .to_list()
             .unwrap()
@@ -280,7 +296,7 @@ fn test_nearest_upstream_filter_and_missing_props() {
             })
             .collect();
 
-        // v2 (finance) is filtered out, v4 (no emb) is ignored -> only v1 and v3 remain
+        // v2 (finance) is filtered out, v4 (no emb) was never emitted by nearest -> only v1 and v3 remain
         assert_eq!(filtered_results, vec![1, 3]);
 
         // Unfiltered query returns all 3 vector-bearing vertices in order: v1, v2, v3
