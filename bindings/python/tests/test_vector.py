@@ -25,16 +25,14 @@ class TestVectorSearch:
         txn.commit()
 
         snap = graph.read()
-        results = snap.g().V().hasLabel("doc") \
-            .nearest("emb", Vector([0.9, 0.0]), 3).to_list()
+        results = snap.g().V().nearest("emb", Vector([0.9, 0.0]), 3).hasLabel("doc").to_list()
         assert len(results) == 3, f"Expected 3 results, got {len(results)}"
         ids = [v["id"] for v in results]
         assert 9 in ids, f"Vertex 9 (exact match) should be in top-3, got {ids}"
 
     def test_nearest_empty_graph(self, graph):
         snap = graph.read()
-        results = snap.g().V().hasLabel("doc") \
-            .nearest("emb", Vector([1.0, 2.0]), 5).to_list()
+        results = snap.g().V().nearest("emb", Vector([1.0, 2.0]), 5).hasLabel("doc").to_list()
         assert results == []
 
     def test_cosine_similarity(self, graph):
@@ -133,14 +131,28 @@ class TestVectorSearch:
         snap = graph.read()
         # Query with [1.0, 0.0] — id=2 [1.0, 0.0] is exact, id=4 [0.9, 0.4] next
         results = (
-            snap.g().V().hasLabel("doc")
+            snap.g().V()
             .nearest("emb", Vector([1.0, 0.0]), 2)
+            .hasLabel("doc")
             .to_list()
         )
         assert len(results) == 2
         top_ids = [v["id"] for v in results]
         assert top_ids[0] == 2, f"Best match should be id=2, got {top_ids}"
         assert top_ids[1] == 4, f"Second best should be id=4, got {top_ids}"
+
+    def test_nearest_midstream_rejected(self, graph):
+        """nearest() placed midstream after hasLabel or bounded V([1]) must raise QueryError."""
+        txn = graph.begin()
+        txn.g().addV("doc").property("id", 1).property("emb", Vector([1.0, 0.0])).next()
+        txn.commit()
+
+        snap = graph.read()
+        with pytest.raises(Exception, match="nearest\\(\\) is a vector index entry-point"):
+            snap.g().V().hasLabel("doc").nearest("emb", Vector([1.0, 0.0]), 2).to_list()
+
+        with pytest.raises(Exception, match="nearest\\(\\) is a vector index entry-point"):
+            snap.g().V(1).nearest("emb", Vector([1.0, 0.0]), 2).to_list()
 
 
 class TestNeighbors:
