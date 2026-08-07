@@ -230,6 +230,18 @@ impl IndexOptions {
         self.per_index.push(opts);
         self
     }
+
+    /// Resolve the configured memory limit in bytes for a specific index.
+    pub fn memory_limit_bytes(&self, entity_type: VectorEntityType, property: &str) -> Option<usize> {
+        for ov in &self.per_index {
+            if ov.entity_type == entity_type && ov.property == property {
+                if let Some(ref limit) = ov.memory_limit {
+                    return Some(limit.memory_limit_bytes);
+                }
+            }
+        }
+        self.default_limit.as_ref().map(|l| l.memory_limit_bytes)
+    }
 }
 
 // ── VectorIndex trait ────────────────────────────────────────────────────────
@@ -273,4 +285,29 @@ pub(crate) trait VectorIndex: Send + Sync {
 
     /// The distance metric this index was configured with.
     fn metric(&self) -> DistanceMetric;
+
+    /// Number of vectors currently in the index.
+    fn size(&self) -> usize {
+        0
+    }
+
+    /// Current capacity (max vectors before next reserve).
+    fn capacity(&self) -> usize {
+        0
+    }
+
+    /// Expected dimension of vectors in this index.
+    fn dimension(&self) -> usize {
+        0
+    }
+
+    /// The configured memory limit, if any.
+    fn memory_limit_bytes(&self) -> Option<usize> {
+        None
+    }
+
+    /// Bytes per scalar dimension (2 for F16, 4 for F32).
+    fn bytes_per_scalar(&self) -> usize {
+        4 // BruteForce always uses f32
+    }
 }

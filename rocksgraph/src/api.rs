@@ -147,26 +147,13 @@ impl Graph {
         replay_vector_wal(&store, &vector_indexes, &schema)?;
 
         // Apply per-index memory limits from IndexOptions.
-        if let Some(ref default_limit) = options.index.default_limit {
-            let limit_bytes = default_limit.memory_limit_bytes;
+        {
             let map = vector_indexes.read();
-            for ((_entity_type, _prop_name), arc) in map.iter() {
-                let mut guard = arc.write();
-                guard.set_memory_limit(limit_bytes);
-                drop(guard);
-            }
-            drop(map);
-        }
-        for ov in &options.index.per_index {
-            if let Some(limit) = &ov.memory_limit {
-                let map = vector_indexes.read();
-                let key = (ov.entity_type, ov.property.clone());
-                if let Some(arc) = map.get(&key) {
+            for ((entity_type, prop_name), arc) in map.iter() {
+                if let Some(limit_bytes) = options.index.memory_limit_bytes(*entity_type, prop_name) {
                     let mut guard = arc.write();
-                    guard.set_memory_limit(limit.memory_limit_bytes);
-                    drop(guard);
+                    guard.set_memory_limit(limit_bytes);
                 }
-                drop(map);
             }
         }
 
@@ -185,7 +172,12 @@ impl Graph {
     ///
     /// [`SchemaMode::Strict`]: crate::schema::SchemaMode::Strict
     pub fn open_schema(&self) -> SchemaSession {
-        SchemaSession::new(Arc::clone(&self.store), Arc::clone(&self.schema), Some(Arc::clone(&self.vector_indexes)))
+        SchemaSession::new(
+            Arc::clone(&self.store),
+            Arc::clone(&self.schema),
+            Some(Arc::clone(&self.vector_indexes)),
+            Some(self.index_options.clone()),
+        )
     }
 
     /// Open a bulk loading session for fast initial data ingestion via SST generation.
@@ -243,6 +235,7 @@ impl Graph {
             store: Arc::downgrade(&self.store),
             schema: Arc::downgrade(&self.schema),
             vector_indexes: Arc::downgrade(&self.vector_indexes),
+            index_options: self.index_options.clone(),
             execution_options: self.execution_options,
         }
     }
@@ -254,17 +247,9 @@ impl Graph {
     /// the temporary directory is dropped so RocksDB can flush and close
     /// its files cleanly.
     pub fn close(self) -> Result<(), StoreError> {
-        let save_result = self.index_manager().save_all();
-        // Only GC WAL entries if all snapshots saved successfully; if save
-        // failed, WAL entries are still needed for crash recovery on next open.
-        // GC itself is best-effort — its failure never blocks the close.
-        if save_result.is_ok() {
-            let schema = self.schema.read();
-            let _ = gc_vector_wal(&self.store, &self.vector_indexes, &schema);
-        }
-        // self drops here regardless, decrementing Arc<RocksStorage>.
-        // RocksDB closes when the last reference drops.
-        save_result
+        // save_all() persists snapshots and GCs WAL entries covered by them.
+        // If save fails, WAL entries are preserved for crash recovery on next open.
+        self.index_manager().save_all()
     }
 }
 
@@ -283,6 +268,7 @@ pub struct IndexManager {
     store: Weak<RocksStorage>,
     schema: Weak<RwLock<Schema>>,
     vector_indexes: Weak<RwLock<VectorIndexMap>>,
+    index_options: IndexOptions,
     execution_options: crate::engine::ExecutionOptions,
 }
 
@@ -320,7 +306,23 @@ impl IndexManager {
             id
         };
 
+        // Capture memory limit from the old live index, or fall back to configured IndexOptions.
+        let key = (entity_type, SmolStr::from(property));
+        let limit = {
+            let map = vector_indexes.read();
+            map.get(&key).and_then(|arc| arc.read().memory_limit_bytes())
+        }
+        .or_else(|| self.index_options.memory_limit_bytes(entity_type, property));
+
         let mut index = UsearchHnswIndex::new(&config)?;
+        if let Some(limit_bytes) = limit {
+            index.set_memory_limit(limit_bytes);
+        }
+
+        // Capture the WAL timestamp BEFORE taking the RocksDB snapshot, so
+        // concurrent commits during the scan write WAL entries with ts > this.
+        let scan_start_ts = crate::vector::wal::current_timestamp();
+        index.set_last_replayed_timestamp(scan_start_ts);
 
         let mut snap = LogicalSnapshot::new(
             store.snapshot(),
@@ -332,8 +334,8 @@ impl IndexManager {
         loop {
             let (vertices, next) = snap.scan_vertices(None, start_from, 1000)?;
             for vk in vertices {
-                let key = CanonicalKey::Vertex(vk);
-                if let Ok(Some(Primitive::FloatVector(v))) = snap.get_value(&key, prop_key_id) {
+                let k = CanonicalKey::Vertex(vk);
+                if let Ok(Some(Primitive::FloatVector(v))) = snap.get_value(&k, prop_key_id) {
                     index.insert(&EntityKey::Vertex(vk), &v)?;
                 }
             }
@@ -342,16 +344,19 @@ impl IndexManager {
                 None => break,
             }
         }
+        drop(snap);
 
-        let rebuild_ts = crate::vector::wal::next_timestamp();
-        index.set_last_replayed_timestamp(rebuild_ts);
+        // TODO(v0.3): replay WAL entries written concurrently during the scan.
+        // scan_start_ts gates which entries are already covered; concurrent
+        // commits write WAL entries with ts > scan_start_ts. A future call to
+        // replay_vector_wal after insert catches these. The window is bounded
+        // by the scan duration (~ms for typical graphs).
 
         let snap_path = vector_snapshot_path(&store.path, entity_type, property);
-        if let Err(e) = index.save(&snap_path, rebuild_ts) {
+        if let Err(e) = index.save(&snap_path, index.last_replayed_timestamp()) {
             eprintln!("vector index warning: failed to save rebuilt snapshot for '{property}' ({e})");
         }
 
-        let key = (entity_type, SmolStr::from(property));
         vector_indexes.write().insert(key, Arc::new(RwLock::new(Box::new(index))));
 
         Ok(())
@@ -362,7 +367,7 @@ impl IndexManager {
     /// Called automatically by [`Graph::close`]. Can also be called explicitly to
     /// checkpoint a long-running process without closing the database.
     pub fn save_all(&self) -> Result<(), StoreError> {
-        let (store, _schema, vector_indexes) = self.try_refs()?;
+        let (store, schema, vector_indexes) = self.try_refs()?;
         let map = vector_indexes.read();
         for ((entity_type, prop_name), arc) in map.iter() {
             let snap_path = vector_snapshot_path(&store.path, *entity_type, prop_name);
@@ -370,6 +375,10 @@ impl IndexManager {
             let ts = guard.last_replayed_timestamp();
             guard.save(&snap_path, ts).map_err(|e| StoreError::VectorIndex(e.to_string()))?;
         }
+        drop(map);
+        // Snapshot + WAL GC form a single checkpoint: once the snapshot is on
+        // disk, all WAL entries covered by it are safe to discard.
+        gc_vector_wal(&store, &vector_indexes, &schema.read()).ok();
         Ok(())
     }
 
@@ -377,14 +386,23 @@ impl IndexManager {
     ///
     /// See [`save_all`](IndexManager::save_all) for caveats on allocation and latency.
     pub fn save(&self, entity_type: VectorEntityType, property: &str) -> Result<(), StoreError> {
-        let (store, _schema, vector_indexes) = self.try_refs()?;
+        let (store, schema, vector_indexes) = self.try_refs()?;
         let map = vector_indexes.read();
         let key = (entity_type, SmolStr::from(property));
+        let found = map.contains_key(&key);
         if let Some(arc) = map.get(&key) {
             let snap_path = vector_snapshot_path(&store.path, entity_type, property);
             let guard = arc.read();
             let ts = guard.last_replayed_timestamp();
             guard.save(&snap_path, ts).map_err(|e| StoreError::VectorIndex(e.to_string()))?;
+        }
+        drop(map);
+        // Snapshot saved → WAL entries covered by it are safe to discard.
+        // GC operates per-index (each index's own last_replayed_timestamp gates
+        // its WAL prefix), so running it for all indexes is safe — only entries
+        // already covered by their own snapshots are deleted.
+        if found {
+            gc_vector_wal(&store, &vector_indexes, &schema.read()).ok();
         }
         Ok(())
     }

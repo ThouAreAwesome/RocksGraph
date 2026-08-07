@@ -110,6 +110,7 @@ pub struct SchemaSession {
     pending_schema_mode: Option<SchemaMode>,
     pending_vector_indexes: Vec<VectorIndexConfig>,
     pending_drop_vector_indexes: Vec<(VectorEntityType, String)>,
+    index_options: Option<crate::vector::IndexOptions>,
 }
 
 impl SchemaSession {
@@ -118,6 +119,7 @@ impl SchemaSession {
         store: Arc<RocksStorage>,
         schema: Arc<parking_lot::RwLock<Schema>>,
         vector_indexes: Option<Arc<parking_lot::RwLock<crate::vector::VectorIndexMap>>>,
+        index_options: Option<crate::vector::IndexOptions>,
     ) -> Self {
         let base_version = schema.read().version;
         Self {
@@ -132,6 +134,7 @@ impl SchemaSession {
             pending_schema_mode: None,
             pending_vector_indexes: Vec::new(),
             pending_drop_vector_indexes: Vec::new(),
+            index_options,
         }
     }
 
@@ -353,15 +356,27 @@ impl SchemaSession {
                 if let std::collections::hash_map::Entry::Vacant(e) = vi_guard.entry(key) {
                     if let Ok(mut idx) = crate::vector::hnsw::UsearchHnswIndex::new(config) {
                         idx.set_last_replayed_timestamp(crate::vector::wal::next_timestamp());
+                        if let Some(ref opts) = self.index_options {
+                            if let Some(limit_bytes) = opts.memory_limit_bytes(config.entity_type, &config.property) {
+                                idx.set_memory_limit(limit_bytes);
+                            }
+                        }
                         e.insert(Arc::new(parking_lot::RwLock::new(Box::new(idx))));
                     }
                 }
             }
             for (entity_type, property) in &self.pending_drop_vector_indexes {
+                // Drop snapshot and in-memory index first.
                 vi_guard.remove(&(*entity_type, smol_str::SmolStr::from(property.as_str())));
                 let snap_path =
                     crate::vector::persistence::vector_snapshot_path(&self.store.path, *entity_type, property);
                 let _ = std::fs::remove_file(snap_path);
+                // Purge orphaned WAL entries for this index. Since the index is
+                // already removed from vi_guard, gc_vector_wal won't see it;
+                // delete WAL entries directly.
+                if let Some(pid) = schema.prop_key_id(property) {
+                    crate::vector::wal::purge_wal_index(&self.store, *entity_type, pid);
+                }
             }
         }
 

@@ -438,7 +438,11 @@ impl CoreStep for NeighborsStep {
                         crate::vector::PendingVectorOp::Inserted { key, prop_name, vector, .. } => {
                             if prop_name == &self.target_prop {
                                 let sim = crate::vector::metric_sim(metric, vector, &query_vec);
-                                if !candidates.iter().any(|(k, _)| k == key) {
+                                // Overwrite: update the similarity if this entity was already
+                                // returned by HNSW but has a newer uncommitted vector.
+                                if let Some(pos) = candidates.iter().position(|(k, _)| k == key) {
+                                    candidates[pos] = (key.clone(), sim);
+                                } else {
                                     candidates.push((key.clone(), sim));
                                 }
                             }

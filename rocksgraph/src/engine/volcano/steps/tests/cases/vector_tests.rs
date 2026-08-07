@@ -263,3 +263,87 @@ fn test_neighbors_skips_non_vector_traversers_no_error() {
     assert!(result.is_ok(), "no-embedding upstream must not error, got: {:?}", result);
     assert!(result.unwrap().is_none());
 }
+
+// ── Score consistency, mixed streams & edge cases ──────────────────────────
+
+#[test]
+fn test_nearest_and_similarity_score_consistency() {
+    let v1 = vec![1.0, 0.0];
+    let v2 = vec![0.6, 0.8];
+    let v3 = vec![0.0, 1.0];
+    let query = vec![1.0, 0.0];
+
+    for metric in [DistanceMetric::Cosine, DistanceMetric::Euclidean, DistanceMetric::DotProduct] {
+        // SimilarityStep scores
+        let src_sim = BufferedStep::new(VecSourceStep::empty());
+        src_sim.inner.borrow_mut().core.inject(smallvec![fv(v1.clone()), fv(v2.clone()), fv(v3.clone())]);
+        let mut sim_step = SimilarityStep::new("emb".into(), query.clone(), metric);
+        sim_step.add_upper(src_sim as StepRef);
+        let mut ctx = NoopCtx;
+        let sim_scores = drain_similarity(&mut sim_step, &mut ctx);
+        assert_eq!(sim_scores.len(), 3);
+
+        // NearestStep ordering
+        let src_near = BufferedStep::new(VecSourceStep::empty());
+        src_near.inner.borrow_mut().core.inject(smallvec![fv(v3.clone()), fv(v1.clone()), fv(v2.clone())]);
+        let mut near_step = NearestStep::new("emb".into(), query.clone(), 3, None, Some(metric));
+        near_step.add_upper(src_near as StepRef);
+        let mut ctx = NoopCtx;
+        let near_results = drain_all(&mut near_step, &mut ctx);
+        assert_eq!(near_results.len(), 3);
+
+        // Top-1 must be the vector with highest similarity score
+        let mut expected_order =
+            vec![(v1.clone(), sim_scores[0]), (v2.clone(), sim_scores[1]), (v3.clone(), sim_scores[2])];
+        expected_order.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+        for (i, (expected_vec, expected_sim)) in expected_order.into_iter().enumerate() {
+            assert_eq!(near_results[i].value, GValue::FloatVector(expected_vec.clone()));
+            let manual_sim = crate::vector::metric_sim(metric, &expected_vec, &query);
+            assert!(
+                (manual_sim - expected_sim).abs() < 1e-5,
+                "manual_sim ({manual_sim}) != expected_sim ({expected_sim}) for {metric:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_nearest_with_mixed_stream_entity_inference() {
+    use crate::types::keys::CanonicalEdgeKey;
+
+    let edge_key = CanonicalEdgeKey { src_id: 10, label_id: 1, dst_id: 20, rank: 0 }.out_key();
+
+    let src = BufferedStep::new(VecSourceStep::empty());
+    src.inner.borrow_mut().core.inject(smallvec![
+        Traverser::new_rc(GValue::Vertex(1)),
+        Traverser::new_rc(GValue::Edge(edge_key)),
+        fv(vec![1.0, 0.0]),
+        Traverser::new_rc(GValue::Scalar(Primitive::Int64(42))),
+        fv(vec![0.0, 1.0]),
+    ]);
+
+    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 5, None, None);
+    step.add_upper(src as StepRef);
+    let mut ctx = NoopCtx;
+    let results = drain_all(&mut step, &mut ctx);
+
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0].value, GValue::FloatVector(vec![1.0, 0.0]));
+    assert_eq!(results[1].value, GValue::FloatVector(vec![0.0, 1.0]));
+}
+
+#[test]
+fn test_similarity_on_non_vector_property() {
+    let src = BufferedStep::new(VecSourceStep::empty());
+    src.inner.borrow_mut().core.inject(smallvec![
+        Traverser::new_rc(GValue::Scalar(Primitive::String("hello".into()))),
+        Traverser::new_rc(GValue::Scalar(Primitive::Int64(123))),
+        Traverser::new_rc(GValue::Scalar(Primitive::Bool(true))),
+    ]);
+    let mut step = SimilarityStep::new("name".into(), vec![1.0, 0.0], DistanceMetric::Cosine);
+    step.add_upper(src as StepRef);
+    let mut ctx = NoopCtx;
+    let scores = drain_similarity(&mut step, &mut ctx);
+    assert!(scores.is_empty(), "non-vector properties must be skipped silently without error");
+}
