@@ -27,10 +27,16 @@ pub(crate) fn seed_clock(hwm: u64) {
     let now =
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_micros() as u64).unwrap_or(0);
     let seed = hwm.max(now);
-    WAL_CLOCK.store(seed, Ordering::Release);
+    WAL_CLOCK.fetch_max(seed, Ordering::AcqRel);
 }
 
 /// Allocate a new monotonically-increasing timestamp.
+/// Read the current WAL clock without advancing it.
+pub(crate) fn current_timestamp() -> u64 {
+    WAL_CLOCK.load(Ordering::SeqCst)
+}
+
+/// Allocate a new monotonic timestamp.
 pub(crate) fn next_timestamp() -> u64 {
     WAL_CLOCK.fetch_add(1, Ordering::AcqRel)
 }
@@ -336,4 +342,38 @@ pub(crate) fn gc_vector_wal(
     }
 
     Ok(())
+}
+
+/// Delete all WAL entries for a specific index identified by (entity_type, prop_key_id).
+/// Called from SchemaSession::commit() when drop_vector_index removes an index.
+pub(crate) fn purge_wal_index(
+    store: &crate::store::RocksStorage,
+    entity_type: crate::vector::VectorEntityType,
+    prop_key_id: u16,
+) {
+    use crate::store::rocks::CF_VECTOR_WAL;
+    use rocksdb::IteratorMode;
+
+    let Some(cf) = store.db.cf_handle(CF_VECTOR_WAL) else { return };
+
+    let entity_byte: u8 = match entity_type {
+        crate::vector::VectorEntityType::Vertex => 0x00,
+        crate::vector::VectorEntityType::Edge => 0x01,
+    };
+    let mut prefix = [0u8; 3];
+    prefix[0..2].copy_from_slice(&prop_key_id.to_be_bytes());
+    prefix[2] = entity_byte;
+
+    let iter = store.db.iterator_cf(&cf, IteratorMode::From(&prefix, rocksdb::Direction::Forward));
+    let mut keys_to_delete: Vec<Vec<u8>> = Vec::new();
+    for item in iter {
+        let Ok((key, _)) = item else { continue };
+        if key.len() < 3 || key[0..3] != prefix {
+            break;
+        }
+        keys_to_delete.push(key.to_vec());
+    }
+    for k in &keys_to_delete {
+        let _ = store.db.delete_cf(&cf, k);
+    }
 }

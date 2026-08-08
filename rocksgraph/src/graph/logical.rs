@@ -1148,6 +1148,53 @@ impl LogicalGraph {
             }
         }
 
+        // ── Pre-flight: verify all pending vector inserts can succeed ──
+        // The in-memory HNSW index is mutated incrementally during the post-commit
+        // loop below. If an insert fails mid-way (e.g. memory limit exceeded), the
+        // RocksDB transaction has already committed and we cannot roll back the
+        // in-memory state.  Check capacity headroom up front so the entire batch
+        // is atomic: either all inserts succeed, or none are attempted.
+        if !self.vector_pending_ops.is_empty() {
+            let indexes = self.vector_indexes.read();
+            let mut pending_per_index: HashMap<(crate::vector::VectorEntityType, smol_str::SmolStr), usize> =
+                HashMap::new();
+            for op in &self.vector_pending_ops {
+                // TODO(v0.4): derive entity_type from the op once edge index support is added.
+                if let crate::vector::PendingVectorOp::Inserted { prop_name, .. } = op {
+                    let idx_key = (crate::vector::VectorEntityType::Vertex, prop_name.clone());
+                    *pending_per_index.entry(idx_key).or_default() += 1;
+                }
+            }
+            for ((entity_type, prop_name), pending) in pending_per_index {
+                let idx_key = (entity_type, prop_name.clone());
+                if let Some(arc) = indexes.get(&idx_key) {
+                    let guard = arc.read();
+                    let dim = guard.dimension();
+                    let cur_size = guard.size();
+                    let cur_cap = guard.capacity().max(crate::vector::hnsw::DEFAULT_RESERVE_CAPACITY);
+                    // HNSW expands when size >= capacity: cur_cap * 2 (hnsw.rs insert()).
+                    // Only check if this batch would trigger expansion.
+                    if cur_size + pending >= cur_cap {
+                        // TODO(v0.3/edge-case): If pending is large enough to require multiple capacity
+                        // doublings (cur_size + pending > cur_cap * 2), simulate the full doubling loop to
+                        // compute exact final capacity rather than a single doubling.
+                        let new_cap =
+                            cur_cap.max(1).saturating_mul(2).max(crate::vector::hnsw::DEFAULT_RESERVE_CAPACITY);
+                        let used = new_cap.saturating_mul(dim).saturating_mul(guard.bytes_per_scalar());
+                        if let Some(limit) = guard.memory_limit_bytes() {
+                            if used >= limit {
+                                return Err(StoreError::VectorIndex(format!(
+                                    "memory limit exceeded for '{prop_name}': \
+                                     projected {used} bytes after capacity expand to {new_cap} \
+                                     (limit {limit} bytes)"
+                                )));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Write vector WAL entries from pending vector ops before the transaction commits.
         if !self.vector_pending_ops.is_empty() {
             crate::vector::wal::flush_vector_wal(&mut self.store, &self.vector_pending_ops, |p| {

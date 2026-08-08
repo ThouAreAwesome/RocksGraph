@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 // SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! [`VectorIndex`] trait and configuration types for vector search.
 //!
 //! Defines the trait that all vector index implementations must satisfy,
@@ -19,9 +20,10 @@ use super::error::{VectorEntityType, VectorError};
 /// The choice of metric is baked into the embedding model's training objective —
 /// using the wrong metric silently degrades retrieval quality without raising
 /// an error.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DistanceMetric {
     /// Cosine similarity: `dot(a, b) / (|a| * |b|)`.
+    #[default]
     Cosine = 0,
     /// Euclidean (L2) distance: `sqrt(sum((a_i - b_i)^2))`.
     Euclidean = 1,
@@ -228,6 +230,18 @@ impl IndexOptions {
         self.per_index.push(opts);
         self
     }
+
+    /// Resolve the configured memory limit in bytes for a specific index.
+    pub fn memory_limit_bytes(&self, entity_type: VectorEntityType, property: &str) -> Option<usize> {
+        for ov in &self.per_index {
+            if ov.entity_type == entity_type && ov.property == property {
+                if let Some(ref limit) = ov.memory_limit {
+                    return Some(limit.memory_limit_bytes);
+                }
+            }
+        }
+        self.default_limit.as_ref().map(|l| l.memory_limit_bytes)
+    }
 }
 
 // ── VectorIndex trait ────────────────────────────────────────────────────────
@@ -268,4 +282,32 @@ pub(crate) trait VectorIndex: Send + Sync {
 
     /// Apply memory limit from `IndexOptions`. No-op for BruteForce.
     fn set_memory_limit(&mut self, _limit_bytes: usize) {}
+
+    /// The distance metric this index was configured with.
+    fn metric(&self) -> DistanceMetric;
+
+    /// Number of vectors currently in the index.
+    fn size(&self) -> usize {
+        0
+    }
+
+    /// Current capacity (max vectors before next reserve).
+    fn capacity(&self) -> usize {
+        0
+    }
+
+    /// Expected dimension of vectors in this index.
+    fn dimension(&self) -> usize {
+        0
+    }
+
+    /// The configured memory limit, if any.
+    fn memory_limit_bytes(&self) -> Option<usize> {
+        None
+    }
+
+    /// Bytes per scalar dimension (2 for F16, 4 for F32).
+    fn bytes_per_scalar(&self) -> usize {
+        4 // BruteForce always uses f32
+    }
 }

@@ -70,9 +70,14 @@ pub(crate) mod vector;
 pub use api::{Graph, IndexManager, ReadSession, TxnSession};
 pub use bulk::{BulkEdge, BulkLoadStats, BulkLoader, BulkSchema, BulkVertex, IntoBulkEdge, IntoBulkVertex};
 pub use engine::ExecutionOptions;
-pub use schema::GraphOptions;
+pub use planner::logical_step::Order;
+pub use schema::{
+    AnnAlgorithm, DataType, DistanceMetric, EdgeMode, GraphOptions, HnswConfig, IndexOptions, Quantization, SchemaMode,
+    VectorEntityType, VectorIndexConfig,
+};
 pub use smol_str::SmolStr;
 pub use store::RocksOptions;
+pub use types::{DegreeDirection, Direction, Primitive, StoreError};
 // GraphTraversal is doc-hidden but must be pub so users can pass `__()` values
 // to where/coalesce/union without naming the type.
 #[doc(hidden)]
@@ -81,8 +86,6 @@ pub use gremlin::{
     traversal::{BuiltTraversal, ReadTraversal, TraversalBuilder, WriteTraversal, __},
     value::{between, eq, gt, gte, lt, lte, ne, within, without, Edge, Map, Path, Predicate, Property, Value, Vertex},
 };
-pub use types::gvalue::Primitive;
-pub use types::StoreError;
 
 #[cfg(test)]
 mod concurrency_tests;

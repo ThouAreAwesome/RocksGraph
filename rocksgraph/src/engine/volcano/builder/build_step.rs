@@ -776,7 +776,8 @@ impl PhysicalPlanBuilder {
                         s.prop_key.clone(),
                         s.query_vec.clone(),
                         s.k,
-                        s.ef_search
+                        s.ef_search,
+                        s.metric_override,
                     )),
                     upstream,
                     "NearestStep"
@@ -784,9 +785,26 @@ impl PhysicalPlanBuilder {
             }
             LogicalStep::Similarity(s) => {
                 wire_required!(
-                    BufferedStep::new(steps::vector::SimilarityStep::new(s.prop_key.clone(), s.query_vec.clone())),
+                    BufferedStep::new(steps::vector::SimilarityStep::new(
+                        s.prop_key.clone(),
+                        s.query_vec.clone(),
+                        s.metric,
+                    )),
                     upstream,
                     "SimilarityStep"
+                )
+            }
+            LogicalStep::Neighbors(s) => {
+                wire_required!(
+                    BufferedStep::new(steps::vector::NeighborsStep::new(
+                        s.source_prop.clone(),
+                        s.target_prop.clone(),
+                        s.k,
+                        s.entity_type,
+                        s.ef_search,
+                    )),
+                    upstream,
+                    "NeighborsStep"
                 )
             }
             LogicalStep::From(_) | LogicalStep::To(_) => Err(StoreError::UnsupportedOperation(

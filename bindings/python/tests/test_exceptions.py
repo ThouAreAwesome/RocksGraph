@@ -4,16 +4,15 @@ Verifies that Rust-side `StoreError` variants surface as the matching
 `rocksgraph.StoreError` subclass (per `StoreError::category()`), not a flat
 `RuntimeError`, and that the hierarchy itself is catchable at any level.
 """
+
 import pytest
 
 from rocksgraph import (
-    Graph,
     IntegrityError,
     QueryError,
     SchemaError,
     StoreError,
 )
-from tests.conftest import addv
 
 
 def test_hierarchy_shape():

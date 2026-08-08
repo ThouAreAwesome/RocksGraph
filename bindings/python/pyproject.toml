@@ -32,3 +32,27 @@ classifiers = [
 [tool.maturin]
 features = ["pyo3/extension-module"]
 module-name = "rocksgraph._rocksgraph"
+
+[tool.ruff]
+target-version = "py39"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "W",
+    "I",
+    "UP",
+    "PYI",
+    "RUF",
+    "SIM",
+    "PIE",
+    "RET",
+]
+ignore = [
+    "E501",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["rocksgraph"]

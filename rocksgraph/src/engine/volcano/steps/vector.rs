@@ -10,7 +10,7 @@ use crate::types::PIPELINE_PRODUCE_SIZE;
 use crate::types::{
     error::StoreError,
     gvalue::{GValue, Primitive},
-    keys::{CanonicalKey, VertexKey},
+    keys::CanonicalKey,
 };
 use parking_lot::RwLock;
 use smallvec::smallvec;
@@ -20,6 +20,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::schema::Schema;
+use crate::vector::DistanceMetric;
 use crate::vector::EntityKey;
 use crate::vector::VectorEntityType;
 
@@ -30,6 +31,7 @@ pub struct NearestStep {
     query_vec: Vec<f32>,
     k: usize,
     ef_search: Option<usize>,
+    metric_override: Option<DistanceMetric>,
     buffer: Vec<Rc<Traverser>>,
     cursor: usize,
     drained: bool,
@@ -37,13 +39,20 @@ pub struct NearestStep {
 }
 
 impl NearestStep {
-    pub fn new(prop_key: String, query_vec: Vec<f32>, k: usize, ef_search: Option<usize>) -> Self {
+    pub fn new(
+        prop_key: String,
+        query_vec: Vec<f32>,
+        k: usize,
+        ef_search: Option<usize>,
+        metric_override: Option<DistanceMetric>,
+    ) -> Self {
         Self {
             upstream: None,
             prop_key: SmolStr::from(prop_key),
             query_vec,
             k,
             ef_search,
+            metric_override,
             buffer: Vec::new(),
             cursor: 0,
             drained: false,
@@ -112,64 +121,112 @@ impl CoreStep for NearestStep {
         let prop_id = resolve_prop_key_id(&ctx.schema(), &mut self.prop_key_cache, &self.prop_key);
 
         if !self.drained {
+            if self.k == 0 {
+                self.drained = true;
+                return Ok(None);
+            }
             let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
             let mut used_index = false;
 
+            // Drain the first traverser to infer entity type for index selection.
+            // If the upstream stream is empty (`first` is None), `inferred_entity_type` defaults
+            // to Vertex; the candidate collection loop will simply find 0 items and cleanly produce None.
+            // TODO(mixed-streams): entity type is inferred from the first traverser only.
+            // A mixed vertex/edge stream would need per-element dispatch to select the right index.
+            let first = upstream.next(ctx)?;
+            let inferred_entity_type = first
+                .as_ref()
+                .map(|t| match &t.value {
+                    GValue::Vertex(_) => VectorEntityType::Vertex,
+                    GValue::Edge(_) => VectorEntityType::Edge,
+                    _ => VectorEntityType::Vertex,
+                })
+                .unwrap_or(VectorEntityType::Vertex);
+
             // ── HNSW path ──────────────────────────────────────────────
-            // Check availability first without holding the guard across
-            // the upstream drain (which needs &mut ctx).
             let hnsw_index = ctx.vector_indexes().and_then(|indexes| {
                 let guard = indexes.read();
-                guard.get(&(VectorEntityType::Vertex, self.prop_key.clone())).cloned()
+                guard.get(&(inferred_entity_type, self.prop_key.clone())).cloned()
             });
 
             if let Some(index) = hnsw_index {
-                // Drain upstream to collect the set of vertex IDs the
-                // caller filtered on, keeping the original traverser so
-                // path history and sacks are preserved.
-                let mut allowed: HashMap<VertexKey, Rc<Traverser>> = HashMap::new();
+                // TODO(perf/collect-all): We unconditionally drain the entire upstream into
+                // `allowed` before searching. For an unfiltered .V([]).nearest(...) on a 100M
+                // vertex graph this can consume hundreds of MB. Two future optimizations:
+                //   1. When the planner can prove the upstream is a full entity scan with no
+                //      filters, skip collection entirely and post-filter index results only
+                //      against RYOW pending ops.
+                //   2. When upstream is a bounded id-set (.V([1, 2, 3])), keep the current
+                //      approach — the allowed set is small and the index results are filtered
+                //      down to it.
+                // Both require planner cooperation to signal "unfiltered scan" vs "id-set".
+                let mut allowed: HashMap<EntityKey, Rc<Traverser>> = HashMap::new();
+                if let Some(ref t) = first {
+                    match &t.value {
+                        GValue::Vertex(vk) => {
+                            allowed.insert(EntityKey::Vertex(*vk), Rc::clone(t));
+                        }
+                        GValue::Edge(ek) => {
+                            allowed.insert(EntityKey::Edge(ek.canonical_edge_key()), Rc::clone(t));
+                        }
+                        _ => {}
+                    }
+                }
                 while let Some(t) = upstream.next(ctx)? {
-                    if let GValue::Vertex(vk) = &t.value {
-                        allowed.insert(*vk, t);
+                    match &t.value {
+                        GValue::Vertex(vk) => {
+                            allowed.insert(EntityKey::Vertex(*vk), Rc::clone(&t));
+                        }
+                        GValue::Edge(ek) => {
+                            allowed.insert(EntityKey::Edge(ek.canonical_edge_key()), Rc::clone(&t));
+                        }
+                        _ => {}
                     }
                 }
 
-                let results = index
-                    .read()
-                    .search(&self.query_vec, self.k, self.ef_search)
-                    .map_err(|e| StoreError::UnsupportedOperation(format!("vector search: {e}")))?;
-
-                let mut candidates: HashMap<VertexKey, (Rc<Traverser>, f32)> = HashMap::new();
+                // TODO(perf): ef_search is fixed at step-construction time (or uses the index default).
+                // A future improvement could choose ef_search adaptively — e.g. scale it with k,
+                // or expose a per-query recall target that the step translates to an ef_search value.
+                let (results, index_metric) = {
+                    let guard = index.read();
+                    let results = guard
+                        .search(&self.query_vec, self.k, self.ef_search)
+                        .map_err(|e| StoreError::UnsupportedOperation(format!("vector search: {e}")))?;
+                    let m = guard.metric();
+                    (results, m)
+                };
+                let metric = self.metric_override.unwrap_or(index_metric);
+                let mut candidates: HashMap<EntityKey, (Rc<Traverser>, f32)> = HashMap::new();
                 for (ek, dist) in results {
-                    if let EntityKey::Vertex(vk) = ek {
-                        if let Some(t) = allowed.get(&vk) {
-                            let sim = 1.0 - dist;
-                            candidates.insert(vk, (Rc::clone(t), sim));
-                        }
+                    if let Some(t) = allowed.get(&ek) {
+                        let sim = if self.metric_override.is_some() && self.metric_override != Some(index_metric) {
+                            if let Some(v) = resolve_vector(t, ctx, prop_id) {
+                                crate::vector::metric_sim(metric, &v, &self.query_vec)
+                            } else {
+                                crate::vector::dist_to_sim(index_metric, dist)
+                            }
+                        } else {
+                            crate::vector::dist_to_sim(index_metric, dist)
+                        };
+                        candidates.insert(ek, (Rc::clone(t), sim));
                     }
                 }
 
                 // ── RYOW merge ──────────────────────────────────────────
-                // Merge uncommitted pending vector ops from the current
-                // transaction so the write is visible within the same session.
                 let pending = ctx.vector_pending_ops();
                 if !pending.is_empty() {
                     for op in pending {
                         match op {
                             crate::vector::PendingVectorOp::Removed { key, prop_name, .. } => {
                                 if prop_name == &self.prop_key {
-                                    if let EntityKey::Vertex(vk) = key {
-                                        candidates.remove(vk);
-                                    }
+                                    candidates.remove(key);
                                 }
                             }
                             crate::vector::PendingVectorOp::Inserted { key, prop_name, vector, .. } => {
                                 if prop_name == &self.prop_key {
-                                    if let EntityKey::Vertex(vk) = key {
-                                        if let Some(t) = allowed.get(vk) {
-                                            let sim = crate::vector::cosine_sim(vector, &self.query_vec);
-                                            candidates.insert(*vk, (Rc::clone(t), sim));
-                                        }
+                                    if let Some(t) = allowed.get(key) {
+                                        let sim = crate::vector::metric_sim(metric, vector, &self.query_vec);
+                                        candidates.insert(key.clone(), (Rc::clone(t), sim));
                                     }
                                 }
                             }
@@ -185,11 +242,17 @@ impl CoreStep for NearestStep {
 
             // ── Brute-force fallback ───────────────────────────────────
             if !used_index {
+                let metric = self.metric_override.unwrap_or_default();
                 let mut candidates: Vec<(Rc<Traverser>, f32)> = Vec::new();
+                // Include the first traverser consumed for entity-type inference.
+                if let Some(t) = first {
+                    if let Some(v) = resolve_vector(&t, ctx, prop_id) {
+                        candidates.push((t, crate::vector::metric_sim(metric, &v, &self.query_vec)));
+                    }
+                }
                 while let Some(t) = upstream.next(ctx)? {
-                    let vec = resolve_vector(&t, ctx, prop_id);
-                    if let Some(v) = vec {
-                        candidates.push((t, crate::vector::cosine_sim(&v, &self.query_vec)));
+                    if let Some(v) = resolve_vector(&t, ctx, prop_id) {
+                        candidates.push((t, crate::vector::metric_sim(metric, &v, &self.query_vec)));
                     }
                 }
                 candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -216,11 +279,12 @@ pub struct SimilarityStep {
     upstream: Option<StepRef>,
     prop_key: SmolStr,
     query_vec: Vec<f32>,
+    metric: DistanceMetric,
     prop_key_cache: HashMap<SmolStr, u16>,
 }
 impl SimilarityStep {
-    pub fn new(prop_key: String, query_vec: Vec<f32>) -> Self {
-        Self { upstream: None, prop_key: SmolStr::from(prop_key), query_vec, prop_key_cache: HashMap::new() }
+    pub fn new(prop_key: String, query_vec: Vec<f32>, metric: DistanceMetric) -> Self {
+        Self { upstream: None, prop_key: SmolStr::from(prop_key), query_vec, metric, prop_key_cache: HashMap::new() }
     }
 }
 impl CoreStep for SimilarityStep {
@@ -240,13 +304,14 @@ impl CoreStep for SimilarityStep {
         ctx: &mut dyn GraphCtx,
     ) -> Result<Option<smallvec::SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>>, StoreError> {
         let prop_id = resolve_prop_key_id(&ctx.schema(), &mut self.prop_key_cache, &self.prop_key);
+        let metric = self.metric;
         let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
         let mut batch = smallvec::SmallVec::new();
         while batch.len() < PIPELINE_PRODUCE_SIZE {
             match upstream.next(ctx)? {
                 Some(t) => {
                     if let Some(v) = resolve_vector(&t, ctx, prop_id) {
-                        let sim = crate::vector::cosine_sim(&v, &self.query_vec);
+                        let sim = crate::vector::metric_sim(metric, &v, &self.query_vec);
                         batch.push(Rc::new(Traverser::new(GValue::Scalar(Primitive::Float32(sim)))));
                     }
                 }
@@ -261,6 +326,162 @@ impl CoreStep for SimilarityStep {
     }
     fn explain(&self) -> ExplainNode {
         ExplainNode::new("SimilarityStep")
+    }
+}
+
+#[derive(Debug)]
+pub struct NeighborsStep {
+    upstream: Option<StepRef>,
+    /// Property on the incoming traverser to read as the query vector.
+    source_prop: SmolStr,
+    /// Property name of the declared vector index to search.
+    target_prop: SmolStr,
+    /// Which entity type's index to search.
+    entity_type: VectorEntityType,
+    k: usize,
+    ef_search: Option<usize>,
+    source_prop_cache: HashMap<SmolStr, u16>,
+    buffer: Vec<Rc<Traverser>>,
+    cursor: usize,
+}
+
+impl NeighborsStep {
+    pub fn new(
+        source_prop: String,
+        target_prop: String,
+        k: usize,
+        entity_type: VectorEntityType,
+        ef_search: Option<usize>,
+    ) -> Self {
+        Self {
+            upstream: None,
+            source_prop: SmolStr::from(source_prop),
+            target_prop: SmolStr::from(target_prop),
+            entity_type,
+            k,
+            ef_search,
+            source_prop_cache: HashMap::new(),
+            buffer: Vec::new(),
+            cursor: 0,
+        }
+    }
+}
+
+impl CoreStep for NeighborsStep {
+    fn add_upper(&mut self, upstream: StepRef) {
+        self.upstream = Some(upstream);
+    }
+
+    fn reset(&mut self) {
+        if let Some(u) = &self.upstream {
+            u.reset();
+        }
+        self.buffer.clear();
+        self.cursor = 0;
+    }
+
+    fn upper(&self) -> Option<StepRef> {
+        self.upstream.clone()
+    }
+
+    fn produce(
+        &mut self,
+        ctx: &mut dyn GraphCtx,
+    ) -> Result<Option<smallvec::SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>>, StoreError> {
+        if self.k == 0 {
+            return Ok(None);
+        }
+        let prop_id = resolve_prop_key_id(&ctx.schema(), &mut self.source_prop_cache, &self.source_prop);
+        let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
+
+        loop {
+            // Return buffered results before fetching the next upstream traverser.
+            if self.cursor < self.buffer.len() {
+                let t = Rc::clone(&self.buffer[self.cursor]);
+                self.cursor += 1;
+                return Ok(Some(smallvec![t]));
+            }
+
+            self.buffer.clear();
+            self.cursor = 0;
+
+            let Some(t) = upstream.next(ctx)? else { return Ok(None) };
+
+            let Some(query_vec) = resolve_vector(&t, ctx, prop_id) else {
+                continue; // traverser has no embedding for source_prop — skip silently
+            };
+
+            let hnsw_index = ctx.vector_indexes().and_then(|indexes| {
+                let guard = indexes.read();
+                guard.get(&(self.entity_type, self.target_prop.clone())).cloned()
+            });
+
+            let Some(index) = hnsw_index else {
+                // TODO(accuracy): brute-force fallback would require scanning all entities,
+                // which GraphCtx does not currently expose. Require an index for now.
+                return Err(StoreError::UnsupportedOperation(
+                    "neighbors() requires a configured HNSW vector index; \
+                     brute-force fallback over the full graph is not yet implemented"
+                        .into(),
+                ));
+            };
+
+            let (results, metric) = {
+                let guard = index.read();
+                let r = guard
+                    .search(&query_vec, self.k, self.ef_search)
+                    .map_err(|e| StoreError::UnsupportedOperation(format!("vector search: {e}")))?;
+                let m = guard.metric();
+                (r, m)
+            };
+
+            let mut candidates: Vec<(EntityKey, f32)> =
+                results.into_iter().map(|(ek, dist)| (ek, crate::vector::dist_to_sim(metric, dist))).collect();
+
+            // RYOW merge: apply uncommitted writes from the current transaction.
+            let pending = ctx.vector_pending_ops();
+            if !pending.is_empty() {
+                for op in pending {
+                    match op {
+                        crate::vector::PendingVectorOp::Removed { key, prop_name, .. } => {
+                            if prop_name == &self.target_prop {
+                                candidates.retain(|(k, _)| k != key);
+                            }
+                        }
+                        crate::vector::PendingVectorOp::Inserted { key, prop_name, vector, .. } => {
+                            if prop_name == &self.target_prop {
+                                let sim = crate::vector::metric_sim(metric, vector, &query_vec);
+                                // Overwrite: update the similarity if this entity was already
+                                // returned by HNSW but has a newer uncommitted vector.
+                                if let Some(pos) = candidates.iter().position(|(k, _)| k == key) {
+                                    candidates[pos] = (key.clone(), sim);
+                                } else {
+                                    candidates.push((key.clone(), sim));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            self.buffer = candidates
+                .into_iter()
+                .take(self.k)
+                .map(|(ek, _)| {
+                    let val = match ek {
+                        EntityKey::Vertex(vk) => GValue::Vertex(vk),
+                        EntityKey::Edge(cek) => GValue::Edge(cek.out_key()),
+                    };
+                    Rc::new(Traverser::new(val))
+                })
+                .collect();
+            // Loop back to return from the now-filled buffer.
+        }
+    }
+
+    fn explain(&self) -> ExplainNode {
+        ExplainNode::new("NeighborsStep")
     }
 }
 

@@ -1,7 +1,7 @@
-from tests.conftest import addv
 """Persistence across reopen — §7 of TODO.md."""
-from rocksgraph import Graph, GraphOptions, RocksOptions, IndexOptions, Int64, Float64
-import os
+
+from rocksgraph import Float64, Graph, GraphOptions, Int64, RocksOptions
+from tests.conftest import addv
 
 
 class TestPersistence:
@@ -48,7 +48,8 @@ class TestPersistence:
         assert found[0]["id"] == vid
 
     def test_edge_survives_reopen(self, tmpdir):
-        from rocksgraph import Graph, GraphOptions, RocksOptions, IndexOptions, Int64
+        from rocksgraph import Graph, Int64
+
         g1 = Graph(tmpdir)
         txn = g1.begin()
         v1 = addv(txn, "person", name="Alice")
@@ -65,12 +66,12 @@ class TestPersistence:
         assert edge["src"] == v1["id"]
         assert edge["dst"] == v2["id"]
 
+
 def test_open_with_options_strict_mode(tmp_path):
     """Verify strict schema mode rejects undeclared labels."""
-    import os
-    from rocksgraph import Graph, GraphOptions, RocksOptions, IndexOptions, SchemaError
+    from rocksgraph import Graph, SchemaError
 
-    db_path = os.path.join(tmp_path, "strict_db")
+    db_path = str(tmp_path / "strict_db")
 
     g = Graph.open_with_options(db_path, options=GraphOptions(mode="strict"))
 
@@ -86,11 +87,12 @@ def test_open_with_options_strict_mode(tmp_path):
 
 def test_open_with_options_custom_cache(tmp_path):
     """Verify custom block_cache_size is accepted."""
-    import os
-    from rocksgraph import Graph, GraphOptions, RocksOptions, IndexOptions
+    from rocksgraph import Graph
 
-    db_path = os.path.join(tmp_path, "cache_db")
-    g = Graph.open_with_options(db_path, options=GraphOptions(storage=RocksOptions(block_cache_size=64 * 1024 * 1024)))  # 64 MB
+    db_path = str(tmp_path / "cache_db")
+    g = Graph.open_with_options(
+        db_path, options=GraphOptions(storage=RocksOptions(block_cache_size=64 * 1024 * 1024))
+    )  # 64 MB
 
     with g.begin() as txn:
         txn.g().addV("test", 1).next()

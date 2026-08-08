@@ -1,0 +1,26 @@
+name: Sync Docs to GitHub Wiki
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/guides/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync-wiki:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Sync documentation guides to GitHub Wiki
+        uses: SwiftDocOrg/github-wiki-action@v1
+        with:
+          path: docs/guides
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
