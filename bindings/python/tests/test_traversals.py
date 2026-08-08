@@ -1,8 +1,22 @@
 """Graph traversal correctness — §8 of TODO.md."""
-import pytest
-from tests.conftest import addv
 
-from rocksgraph import Graph, __, P, Int64, Float32, Vertex, Edge, Property, T, Direction, Order
+import pytest
+
+from rocksgraph import (
+    Direction,
+    Edge,
+    Float32,
+    Int64,
+    Order,
+    P,
+    Property,
+    T,
+    Vertex,
+    __,
+    asc,
+    desc,
+)
+from tests.conftest import addv
 
 
 class TestVertexTraversals:
@@ -142,7 +156,7 @@ class TestVertexTraversals:
 
     def test_has_3arg_form(self, graph):
         txn = graph.begin()
-        v = addv(txn, "person", name="Alice", age=Int64(30))
+        addv(txn, "person", name="Alice", age=Int64(30))
         addv(txn, "dog", name="Rex")
         txn.commit()
 
@@ -158,10 +172,14 @@ class TestVertexTraversals:
 
         rs = graph.read()
         # Search for existing user → should find it without calling addV
-        found = rs.g().V().has("email", "a@b.com").fold().coalesce(
-            __.unfold(),
-            __.addV("user").property("id", 999).property("email", "fallback")
-        ).to_list()
+        found = (
+            rs.g()
+            .V()
+            .has("email", "a@b.com")
+            .fold()
+            .coalesce(__.unfold(), __.addV("user").property("id", 999).property("email", "fallback"))
+            .to_list()
+        )
         assert len(found) == 1
 
     def test_drop(self, graph):
@@ -176,6 +194,7 @@ class TestVertexTraversals:
         assert count_before == [1]
 
     # group/groupCount tests moved to dedicated TestGroup class below
+
 
 class TestHashExistence:
     """§5: has('key') without value — existence check."""
@@ -227,6 +246,7 @@ class TestEdgeTraversals:
         v2 = addv(txn, "person")
         txn.g().addE("knows").from_(v1).to(v2).property("since", Int64(2020)).next()
         txn.commit()
+
 
 class TestInBothTraversals:
     def test_in_traversal(self, graph):
@@ -377,10 +397,7 @@ class TestUnion:
         txn.commit()
 
         rs = graph.read()
-        result = rs.g().V(v1["id"]).union(
-            rs.g().V(v1["id"]),
-            rs.g().V(v2["id"])
-        ).values("name").to_list()
+        result = rs.g().V(v1["id"]).union(rs.g().V(v1["id"]), rs.g().V(v2["id"])).values("name").to_list()
         assert sorted(result) == ["A", "B"]
 
 
@@ -489,35 +506,36 @@ class TestWithProperties:
         assert results[0]["properties"]["name"] == "Alice"
         assert "age" not in results[0]["properties"]
 
+
 class TestDegree:
     def test_degree_default(self, graph):
         txn = graph.begin()
-        v1 = addv(txn, 'node', name='A')
-        v2 = addv(txn, 'node', name='B')
-        txn.g().addE('link').from_(v1).to(v2).next()
+        v1 = addv(txn, "node", name="A")
+        v2 = addv(txn, "node", name="B")
+        txn.g().addE("link").from_(v1).to(v2).next()
         txn.commit()
         rs = graph.read()
-        deg = rs.g().V(v1['id']).degree().to_list()
+        deg = rs.g().V(v1["id"]).degree().to_list()
         assert deg == [1]
 
     def test_degree_out(self, graph):
         txn = graph.begin()
-        v1 = addv(txn, 'node', name='A')
-        v2 = addv(txn, 'node', name='B')
-        txn.g().addE('link').from_(v1).to(v2).next()
+        v1 = addv(txn, "node", name="A")
+        v2 = addv(txn, "node", name="B")
+        txn.g().addE("link").from_(v1).to(v2).next()
         txn.commit()
         rs = graph.read()
-        deg = rs.g().V(v1['id']).degree('out').to_list()
+        deg = rs.g().V(v1["id"]).degree("out").to_list()
         assert deg == [1]
 
     def test_degree_in(self, graph):
         txn = graph.begin()
-        v1 = addv(txn, 'node', name='A')
-        v2 = addv(txn, 'node', name='B')
-        txn.g().addE('link').from_(v1).to(v2).next()
+        v1 = addv(txn, "node", name="A")
+        v2 = addv(txn, "node", name="B")
+        txn.g().addE("link").from_(v1).to(v2).next()
         txn.commit()
         rs = graph.read()
-        deg = rs.g().V(v2['id']).degree('in').to_list()
+        deg = rs.g().V(v2["id"]).degree("in").to_list()
         assert deg == [1]
 
 
@@ -525,37 +543,37 @@ class TestAggregations:
     def test_sum(self, graph):
         txn = graph.begin()
         for n in [10, 20, 30]:
-            addv(txn, 'item', n=n)
+            addv(txn, "item", n=n)
         txn.commit()
         rs = graph.read()
-        result = rs.g().V().hasLabel('item').values('n').sum().to_list()
+        result = rs.g().V().hasLabel("item").values("n").sum().to_list()
         assert result == [60]
 
     def test_max(self, graph):
         txn = graph.begin()
         for n in [10, 30, 20]:
-            addv(txn, 'item', n=n)
+            addv(txn, "item", n=n)
         txn.commit()
         rs = graph.read()
-        result = rs.g().V().hasLabel('item').values('n').max().to_list()
+        result = rs.g().V().hasLabel("item").values("n").max().to_list()
         assert result == [30]
 
     def test_min(self, graph):
         txn = graph.begin()
         for n in [10, 30, 20]:
-            addv(txn, 'item', n=n)
+            addv(txn, "item", n=n)
         txn.commit()
         rs = graph.read()
-        result = rs.g().V().hasLabel('item').values('n').min().to_list()
+        result = rs.g().V().hasLabel("item").values("n").min().to_list()
         assert result == [10]
 
     def test_mean(self, graph):
         txn = graph.begin()
         for n in [10, 20, 30]:
-            addv(txn, 'item', n=n)
+            addv(txn, "item", n=n)
         txn.commit()
         rs = graph.read()
-        result = rs.g().V().hasLabel('item').values('n').mean().to_list()
+        result = rs.g().V().hasLabel("item").values("n").mean().to_list()
         assert result == [20]
 
 
@@ -563,102 +581,105 @@ class TestCyclicPath:
     def test_cyclicPath(self, graph):
         # simplePath on non-cyclic path passes through; cyclicPath needs actual cycle
         txn = graph.begin()
-        v1 = addv(txn, 'node', name='A')
-        v2 = addv(txn, 'node', name='B')
-        txn.g().addE('link').from_(v1).to(v2).next()
-        txn.g().addE('link').from_(v2).to(v1).next()
+        v1 = addv(txn, "node", name="A")
+        v2 = addv(txn, "node", name="B")
+        txn.g().addE("link").from_(v1).to(v2).next()
+        txn.g().addE("link").from_(v2).to(v1).next()
         txn.commit()
         rs = graph.read()
         # A→B→A: A appears twice in the path, so the traverser (A) is cyclic
-        result = rs.g().V(v1['id']).out('link').out('link').cyclicPath().values('name').to_list()
-        assert 'A' in result
+        result = rs.g().V(v1["id"]).out("link").out("link").cyclicPath().values("name").to_list()
+        assert "A" in result
 
 
 class TestChoose:
     def test_choose(self, graph):
         txn = graph.begin()
-        addv(txn, 'person', name='Alice', age=Int64(30))
-        addv(txn, 'person', name='Bob', age=Int64(15))
+        addv(txn, "person", name="Alice", age=Int64(30))
+        addv(txn, "person", name="Bob", age=Int64(15))
         txn.commit()
         rs = graph.read()
         # If has age >= 18 → constant("adult"), else → constant("minor")
-        result = rs.g().V().hasLabel('person').choose(
-            __.has('age', P.gte(Int64(18))),
-            __.constant('adult'),
-            __.constant('minor')
-        ).to_list()
-        assert 'adult' in result
-        assert 'minor' in result
+        result = (
+            rs.g()
+            .V()
+            .hasLabel("person")
+            .choose(__.has("age", P.gte(Int64(18))), __.constant("adult"), __.constant("minor"))
+            .to_list()
+        )
+        assert "adult" in result
+        assert "minor" in result
 
 
 class TestLocal:
     def test_local(self, graph):
         txn = graph.begin()
-        v1 = addv(txn, 'node', name='A')
-        v2 = addv(txn, 'node', name='B')
-        v3 = addv(txn, 'node', name='C')
-        txn.g().addE('link').from_(v1).to(v2).next()
-        txn.g().addE('link').from_(v1).to(v3).next()
+        v1 = addv(txn, "node", name="A")
+        v2 = addv(txn, "node", name="B")
+        v3 = addv(txn, "node", name="C")
+        txn.g().addE("link").from_(v1).to(v2).next()
+        txn.g().addE("link").from_(v1).to(v3).next()
         txn.commit()
         rs = graph.read()
         # local: count out-edges for each traverser individually
-        result = rs.g().V(v1['id']).local(__.out('link').count()).to_list()
+        result = rs.g().V(v1["id"]).local(__.out("link").count()).to_list()
         assert result == [2]
 
 
 class TestRepeatUntilEmit:
     def test_repeat_until(self, graph):
         txn = graph.begin()
-        v1 = addv(txn, 'node', name='A')
-        v2 = addv(txn, 'node', name='B')
-        v3 = addv(txn, 'node', name='C')
-        txn.g().addE('link').from_(v1).to(v2).next()
-        txn.g().addE('link').from_(v2).to(v3).next()
+        v1 = addv(txn, "node", name="A")
+        v2 = addv(txn, "node", name="B")
+        v3 = addv(txn, "node", name="C")
+        txn.g().addE("link").from_(v1).to(v2).next()
+        txn.g().addE("link").from_(v2).to(v3).next()
         txn.commit()
         rs = graph.read()
         # repeat out until name is C (stops early when condition met)
-        result = rs.g().V(v1['id']).repeat(__.out('link')).until(__.has('name', 'C')).values('name').to_list()
-        assert 'C' in result
+        result = rs.g().V(v1["id"]).repeat(__.out("link")).until(__.has("name", "C")).values("name").to_list()
+        assert "C" in result
 
     def test_repeat_emit(self, graph):
         txn = graph.begin()
-        v1 = addv(txn, 'node', name='A')
-        v2 = addv(txn, 'node', name='B')
-        v3 = addv(txn, 'node', name='C')
-        txn.g().addE('link').from_(v1).to(v2).next()
-        txn.g().addE('link').from_(v2).to(v3).next()
+        v1 = addv(txn, "node", name="A")
+        v2 = addv(txn, "node", name="B")
+        v3 = addv(txn, "node", name="C")
+        txn.g().addE("link").from_(v1).to(v2).next()
+        txn.g().addE("link").from_(v2).to(v3).next()
         txn.commit()
         rs = graph.read()
         # emit after each iteration: hop1→B, hop2→C both emitted
-        result = rs.g().V(v1['id']).repeat(__.out('link')).emit().times(2).values('name').to_list()
-        assert 'B' in result
-        assert 'C' in result
+        result = rs.g().V(v1["id"]).repeat(__.out("link")).emit().times(2).values("name").to_list()
+        assert "B" in result
+        assert "C" in result
+
 
 class TestIs:
     def test_is_eq_shorthand(self, graph):
         txn = graph.begin()
-        addv(txn, 'item', name='Alice')
-        addv(txn, 'item', name='Bob')
+        addv(txn, "item", name="Alice")
+        addv(txn, "item", name="Bob")
         txn.commit()
         rs = graph.read()
-        result = rs.g().V().hasLabel('item').values('name').is_('Alice').to_list()
-        assert result == ['Alice']
+        result = rs.g().V().hasLabel("item").values("name").is_("Alice").to_list()
+        assert result == ["Alice"]
 
     def test_is_with_predicate(self, graph):
         txn = graph.begin()
         for n in [10, 20, 30]:
-            addv(txn, 'item', n=n)
+            addv(txn, "item", n=n)
         txn.commit()
         rs = graph.read()
-        result = rs.g().V().hasLabel('item').values('n').is_(P.gt(Int64(15))).to_list()
+        result = rs.g().V().hasLabel("item").values("n").is_(P.gt(Int64(15))).to_list()
         assert sorted(result) == [20, 30]
 
     def test_is_filters_none(self, graph):
         txn = graph.begin()
-        addv(txn, 'item', name='Alice')
+        addv(txn, "item", name="Alice")
         txn.commit()
         rs = graph.read()
-        result = rs.g().V().hasLabel('item').values('name').is_('Bob').to_list()
+        result = rs.g().V().hasLabel("item").values("name").is_("Bob").to_list()
         assert result == []
 
 
@@ -693,8 +714,8 @@ class TestVertexEdgePropertyObjects:
 
     def test_vertex_hashable(self, graph):
         txn = graph.begin()
-        v1 = addv(txn, "person", name="Alice")
-        v2 = addv(txn, "person", name="Bob")
+        addv(txn, "person", name="Alice")
+        addv(txn, "person", name="Bob")
         txn.commit()
         rs = graph.read()
         vertices = rs.g().V().to_list()
@@ -794,8 +815,10 @@ class TestGLVEnums:
             addv(txn, "item", age=Int64(n))
         txn.commit()
         rs = graph.read()
-        result = rs.g().V().hasLabel("item").order().by("age", Order.asc).values("age").to_list()
-        assert result == sorted(result)
+        result = rs.g().V().hasLabel("item").order().by("age", Order.Asc).values("age").to_list()
+        assert result == [10, 20, 30]
+        result2 = rs.g().V().hasLabel("item").order().by("age", asc).values("age").to_list()
+        assert result2 == [10, 20, 30]
 
     def test_order_enum_desc(self, graph):
         txn = graph.begin()
@@ -803,8 +826,31 @@ class TestGLVEnums:
             addv(txn, "item", age=Int64(n))
         txn.commit()
         rs = graph.read()
-        result = rs.g().V().hasLabel("item").order().by("age", Order.desc).values("age").to_list()
-        assert result == sorted(result, reverse=True)
+        result = rs.g().V().hasLabel("item").order().by("age", Order.Desc).values("age").to_list()
+        assert result == [30, 20, 10]
+        result2 = rs.g().V().hasLabel("item").order().by("age", desc).values("age").to_list()
+        assert result2 == [30, 20, 10]
+
+    def test_order_by_value_standard_gremlin(self, graph):
+        txn = graph.begin()
+        for n in [30, 10, 20]:
+            addv(txn, "item", age=Int64(n))
+        txn.commit()
+        rs = graph.read()
+        # values("age").order().by(Order.Desc) or by(desc)
+        result1 = rs.g().V().hasLabel("item").values("age").order().by(Order.Desc).to_list()
+        assert result1 == [30, 20, 10]
+        result2 = rs.g().V().hasLabel("item").values("age").order().by(desc).to_list()
+        assert result2 == [30, 20, 10]
+        result3 = rs.g().V().hasLabel("item").values("age").order().by(Order.Asc).to_list()
+        assert result3 == [10, 20, 30]
+        result4 = rs.g().V().hasLabel("item").values("age").order().by(asc).to_list()
+        assert result4 == [10, 20, 30]
+
+    def test_order_invalid_raises_error(self, graph):
+        rs = graph.read()
+        with pytest.raises(ValueError):
+            rs.g().V().order().by("age", "invalid_order").to_list()
 
     def test_direction_out(self, graph):
         txn = graph.begin()
@@ -814,8 +860,17 @@ class TestGLVEnums:
         txn.commit()
         rs = graph.read()
         assert rs.g().V(v1["id"]).degree(Direction.OUT).to_list() == [1]
+        assert rs.g().V(v1["id"]).degree(Direction.Out).to_list() == [1]
         assert rs.g().V(v1["id"]).degree(Direction.IN).to_list() == [0]
+        assert rs.g().V(v1["id"]).degree(Direction.In).to_list() == [0]
         assert rs.g().V(v1["id"]).degree(Direction.BOTH).to_list() == [1]
+        assert rs.g().V(v1["id"]).degree(Direction.Both).to_list() == [1]
+        assert rs.g().V(v1["id"]).degree().to_list() == [1]
+
+    def test_direction_invalid_raises_error(self, graph):
+        rs = graph.read()
+        with pytest.raises(ValueError):
+            rs.g().V(1).degree("invalid_dir").to_list()
 
 
 class TestGLVTerminals:
@@ -870,10 +925,10 @@ class TestTxContextManager:
         assert graph.read().g().V(9002).count().to_list() == [0]
 
     def test_exception_not_suppressed(self, graph):
-        with pytest.raises(ValueError):
-            with graph.begin() as txn:
-                txn.g().addV("person").property("id", 9003).property("name", "Carol").next()
-                raise ValueError("should propagate")
+        with pytest.raises(ValueError), graph.begin() as txn:
+            txn.g().addV("person").property("id", 9003).property("name", "Carol").next()
+            raise ValueError("should propagate")
+
 
 class TestGroup:
     def test_group_by(self, graph):
@@ -991,6 +1046,6 @@ class TestExplain:
 
     def test_explain_anonymous_traversal_raises(self):
         import pytest
+
         with pytest.raises(RuntimeError, match="Anonymous traversal cannot be explained"):
             __.V().hasLabel("person").explain()
-

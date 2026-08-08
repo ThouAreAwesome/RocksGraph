@@ -266,6 +266,69 @@ struct PyGraph {
     graph: Option<Graph>,
 }
 
+fn parse_schema_mode(mode: &str) -> PyResult<SchemaMode> {
+    match mode.to_ascii_lowercase().as_str() {
+        "strict" => Ok(SchemaMode::Strict),
+        "auto" => Ok(SchemaMode::Auto),
+        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Invalid SchemaMode: '{other}'. Expected 'strict' or 'auto'."
+        ))),
+    }
+}
+
+fn parse_edge_mode(mode: &str) -> PyResult<EdgeMode> {
+    match mode.to_ascii_lowercase().as_str() {
+        "single" => Ok(EdgeMode::Single),
+        "multi" => Ok(EdgeMode::Multi),
+        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Invalid EdgeMode: '{other}'. Expected 'single' or 'multi'."
+        ))),
+    }
+}
+
+fn parse_entity_type(entity_type: &str) -> PyResult<VectorEntityType> {
+    match entity_type.to_ascii_lowercase().as_str() {
+        "vertex" => Ok(VectorEntityType::Vertex),
+        "edge" => Ok(VectorEntityType::Edge),
+        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Invalid VectorEntityType: '{other}'. Expected 'vertex' or 'edge'."
+        ))),
+    }
+}
+
+fn parse_distance_metric(metric: &str) -> PyResult<DistanceMetric> {
+    match metric.to_ascii_lowercase().as_str() {
+        "cosine" => Ok(DistanceMetric::Cosine),
+        "euclidean" | "l2" => Ok(DistanceMetric::Euclidean),
+        "dot_product" | "dot" => Ok(DistanceMetric::DotProduct),
+        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Invalid DistanceMetric: '{other}'. Expected 'cosine', 'euclidean' (or 'l2'), or 'dot_product'."
+        ))),
+    }
+}
+
+fn parse_ann_algorithm(algorithm: &str, m: usize, ef_construction: usize, ef_search: usize) -> PyResult<AnnAlgorithm> {
+    match algorithm.to_ascii_lowercase().as_str() {
+        "hnsw" => Ok(AnnAlgorithm::Hnsw(
+            HnswConfig::default().with_m(m).with_ef_construction(ef_construction).with_ef_search(ef_search),
+        )),
+        "brute_force" | "exact" => Ok(AnnAlgorithm::BruteForce),
+        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Invalid AnnAlgorithm: '{other}'. Expected 'hnsw' or 'brute_force'."
+        ))),
+    }
+}
+
+fn parse_quantization(quantization: &str) -> PyResult<Quantization> {
+    match quantization.to_ascii_lowercase().as_str() {
+        "f16" => Ok(Quantization::F16),
+        "f32" => Ok(Quantization::F32),
+        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Invalid Quantization: '{other}'. Expected 'f16' or 'f32'."
+        ))),
+    }
+}
+
 #[pymethods]
 impl PyGraph {
     #[staticmethod]
@@ -286,14 +349,8 @@ impl PyGraph {
     ) -> PyResult<Self> {
         let path = PathBuf::from(path);
 
-        let schema_mode = match mode {
-            "strict" => SchemaMode::Strict,
-            _ => SchemaMode::Auto,
-        };
-        let em = match edge_mode {
-            "multi" => EdgeMode::Multi,
-            _ => EdgeMode::Single,
-        };
+        let schema_mode = parse_schema_mode(mode)?;
+        let em = parse_edge_mode(edge_mode)?;
 
         let mut rocks = RocksOptions::default();
         if let Some(d) = storage {
@@ -330,12 +387,22 @@ impl PyGraph {
                 let mut vec = Vec::with_capacity(list.len());
                 for o in list.iter() {
                     let o = o.downcast::<PyDict>()?;
-                    let et_byte: u8 = o.get_item("entity_type")?.map(|v| v.extract()).transpose()?.unwrap_or(0);
-                    let prop: String = o.get_item("property")?.map(|v| v.extract()).transpose()?.unwrap_or_default();
-                    let et = match et_byte {
-                        0 => VectorEntityType::Vertex,
-                        _ => VectorEntityType::Edge,
+                    let et_val = o.get_item("entity_type")?;
+                    let et = if let Some(ref item) = et_val {
+                        if let Ok(byte_val) = item.extract::<u8>() {
+                            match byte_val {
+                                1 => VectorEntityType::Edge,
+                                _ => VectorEntityType::Vertex,
+                            }
+                        } else if let Ok(str_val) = item.extract::<String>() {
+                            parse_entity_type(&str_val)?
+                        } else {
+                            VectorEntityType::Vertex
+                        }
+                    } else {
+                        VectorEntityType::Vertex
                     };
+                    let prop: String = o.get_item("property")?.map(|v| v.extract()).transpose()?.unwrap_or_default();
                     let mut entry = PerIndexOptions::new(et, prop);
                     if let Some(v) = o.get_item("memory_limit_bytes")? {
                         entry = entry.with_memory_limit(VectorIndexLimit::new(v.extract()?));
@@ -439,10 +506,7 @@ impl PySchemaSession {
             .session
             .as_mut()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("SchemaSession already closed"))?;
-        let em = match mode {
-            "multi" => EdgeMode::Multi,
-            _ => EdgeMode::Single,
-        };
+        let em = parse_edge_mode(mode)?;
         s.set_edge_mode(em);
         Ok(())
     }
@@ -452,10 +516,7 @@ impl PySchemaSession {
             .session
             .as_mut()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("SchemaSession already closed"))?;
-        let sm = match mode {
-            "strict" => SchemaMode::Strict,
-            _ => SchemaMode::Auto,
-        };
+        let sm = parse_schema_mode(mode)?;
         s.set_schema_mode(sm);
         Ok(())
     }
@@ -478,25 +539,10 @@ impl PySchemaSession {
             .session
             .as_mut()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("SchemaSession already closed"))?;
-        let et = match entity_type {
-            "edge" => VectorEntityType::Edge,
-            _ => VectorEntityType::Vertex,
-        };
-        let met = match metric {
-            "euclidean" | "l2" => DistanceMetric::Euclidean,
-            "dot_product" | "dot" => DistanceMetric::DotProduct,
-            _ => DistanceMetric::Cosine,
-        };
-        let alg = match algorithm {
-            "brute_force" | "exact" => AnnAlgorithm::BruteForce,
-            _ => AnnAlgorithm::Hnsw(
-                HnswConfig::default().with_m(m).with_ef_construction(ef_construction).with_ef_search(ef_search),
-            ),
-        };
-        let quant = match quantization {
-            "f32" => Quantization::F32,
-            _ => Quantization::F16,
-        };
+        let et = parse_entity_type(entity_type)?;
+        let met = parse_distance_metric(metric)?;
+        let alg = parse_ann_algorithm(algorithm, m, ef_construction, ef_search)?;
+        let quant = parse_quantization(quantization)?;
         let config = VectorIndexConfig::new(property, et, dimension, met, alg).with_quantization(quant);
         s.add_vector_index(config);
         Ok(())
@@ -507,10 +553,7 @@ impl PySchemaSession {
             .session
             .as_mut()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("SchemaSession already closed"))?;
-        let et = match entity_type {
-            "edge" => VectorEntityType::Edge,
-            _ => VectorEntityType::Vertex,
-        };
+        let et = parse_entity_type(entity_type)?;
         s.drop_vector_index(et, property);
         Ok(())
     }
@@ -605,18 +648,12 @@ struct PyIndexManager {
 #[pymethods]
 impl PyIndexManager {
     fn rebuild(&self, entity_type: &str, property: &str) -> PyResult<()> {
-        let et = match entity_type {
-            "edge" => VectorEntityType::Edge,
-            _ => VectorEntityType::Vertex,
-        };
+        let et = parse_entity_type(entity_type)?;
         self.manager.rebuild(et, property).map_err(store_error_to_pyerr)
     }
 
     fn save(&self, entity_type: &str, property: &str) -> PyResult<()> {
-        let et = match entity_type {
-            "edge" => VectorEntityType::Edge,
-            _ => VectorEntityType::Vertex,
-        };
+        let et = parse_entity_type(entity_type)?;
         self.manager.save(et, property).map_err(store_error_to_pyerr)
     }
 

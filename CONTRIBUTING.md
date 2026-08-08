@@ -33,6 +33,14 @@ Match the style of the surrounding code rather than introducing a new convention
 `rustfmt.toml` is authoritative for formatting — don't hand-format against it. Comments should
 explain *why*, not *what*; avoid restating what well-named code already says.
 
+## Documentation
+
+Changes to `docs/guides/*.md` or the per-binding READMEs are user-facing
+documentation, published to the GitHub Wiki. Before editing them, read
+[`docs/documentation_principles.md`](docs/documentation_principles.md) —
+it covers the failure modes we've actually hit (unverified API claims,
+mislabeled anti-patterns, uncomparable benchmark numbers, and so on).
+
 ## Pull requests
 
 - Keep PRs focused — one logical change per PR is easier to review than a bundle of unrelated

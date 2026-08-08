@@ -129,6 +129,8 @@ impl CoreStep for NearestStep {
             let mut used_index = false;
 
             // Drain the first traverser to infer entity type for index selection.
+            // If the upstream stream is empty (`first` is None), `inferred_entity_type` defaults
+            // to Vertex; the candidate collection loop will simply find 0 items and cleanly produce None.
             // TODO(mixed-streams): entity type is inferred from the first traverser only.
             // A mixed vertex/edge stream would need per-element dispatch to select the right index.
             let first = upstream.next(ctx)?;
@@ -194,11 +196,19 @@ impl CoreStep for NearestStep {
                     (results, m)
                 };
                 let metric = self.metric_override.unwrap_or(index_metric);
-
                 let mut candidates: HashMap<EntityKey, (Rc<Traverser>, f32)> = HashMap::new();
                 for (ek, dist) in results {
                     if let Some(t) = allowed.get(&ek) {
-                        candidates.insert(ek, (Rc::clone(t), crate::vector::dist_to_sim(metric, dist)));
+                        let sim = if self.metric_override.is_some() && self.metric_override != Some(index_metric) {
+                            if let Some(v) = resolve_vector(t, ctx, prop_id) {
+                                crate::vector::metric_sim(metric, &v, &self.query_vec)
+                            } else {
+                                crate::vector::dist_to_sim(index_metric, dist)
+                            }
+                        } else {
+                            crate::vector::dist_to_sim(index_metric, dist)
+                        };
+                        candidates.insert(ek, (Rc::clone(t), sim));
                     }
                 }
 
@@ -378,6 +388,9 @@ impl CoreStep for NeighborsStep {
         &mut self,
         ctx: &mut dyn GraphCtx,
     ) -> Result<Option<smallvec::SmallVec<[Rc<Traverser>; PIPELINE_PRODUCE_SIZE]>>, StoreError> {
+        if self.k == 0 {
+            return Ok(None);
+        }
         let prop_id = resolve_prop_key_id(&ctx.schema(), &mut self.source_prop_cache, &self.source_prop);
         let Some(upstream) = self.upstream.as_ref() else { return Ok(None) };
 

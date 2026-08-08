@@ -1,15 +1,31 @@
 """Pure-Python codec unit tests — no native module needed."""
+
 import struct
+
+from rocksgraph import Int64, P, Traversal, __
 from rocksgraph._codec import (
+    OP_DEGREE,
+    OP_HASLABEL,
+    OP_HASPROPERTY,
+    OP_LIMIT,
+    OP_OUT,
+    OP_OUTE,
+    OP_RANGE,
+    OP_REPEAT,
+    OP_SKIP,
+    OP_TAIL,
+    PRED_BETWEEN,
+    PRED_EQ,
+    PRED_GT,
+    PRED_GTE,
+    PRED_LT,
+    PRED_LTE,
+    PRED_NEQ,
+    PRED_WITHIN,
+    PRED_WITHOUT,
     encode,
-    OP_LIMIT, OP_RANGE, OP_SKIP, OP_TAIL, OP_REPEAT,
-    OP_HASPROPERTY, OP_HASLABEL, OP_BOTHE, OP_INE, OP_OUTE,
-    OP_BOTH, OP_IN, OP_OUT, OP_DEGREE,
-    PRED_EQ, PRED_NEQ, PRED_GT, PRED_GTE, PRED_LT, PRED_LTE,
-    PRED_BETWEEN, PRED_WITHIN, PRED_WITHOUT,
-    PRIM_INT64,
 )
-from rocksgraph import P, Int64, Traversal, __
+
 
 class TestPredicateTags:
     def test_eq(self):
@@ -137,8 +153,12 @@ class TestEdgeTraversalEncoding:
         # After opcode: u16 labels count (2 bytes) + u16 len (2 bytes) + "knows" (5 bytes) = 9 bytes
         # Then end_vertex_ids flag (0x00) + rank flag (0x00) = 2 more bytes
         after_labels = idx + 1 + 2 + 2 + 5  # opcode + u16 count + u16 len + "knows"
-        assert buf[after_labels] == 0x00, f"Expected end_vertex_ids=0x00 at offset {after_labels}, got {buf[after_labels]:#x}"
-        assert buf[after_labels + 1] == 0x00, f"Expected rank=0x00 at offset {after_labels+1}, got {buf[after_labels+1]:#x}"
+        assert buf[after_labels] == 0x00, (
+            f"Expected end_vertex_ids=0x00 at offset {after_labels}, got {buf[after_labels]:#x}"
+        )
+        assert buf[after_labels + 1] == 0x00, (
+            f"Expected rank=0x00 at offset {after_labels + 1}, got {buf[after_labels + 1]:#x}"
+        )
 
     def test_oute_and_out_have_different_byte_lengths(self):
         """OP_OUTE should be 1 byte longer than OP_OUT due to rank byte."""
@@ -189,8 +209,10 @@ class TestCloningDoesNotMutate:
 class TestVertexId:
     def test_vertex_id_from_dict(self):
         from rocksgraph._builder import _vertex_id
+
         assert _vertex_id({"id": 7}) == 7
 
     def test_vertex_id_from_int(self):
         from rocksgraph._builder import _vertex_id
+
         assert _vertex_id(42) == 42

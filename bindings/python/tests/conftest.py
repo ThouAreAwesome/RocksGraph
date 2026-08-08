@@ -1,23 +1,29 @@
-import pytest, os, shutil, itertools
+import contextlib
+import itertools
+import shutil
 import tempfile
+
+import pytest
+
 
 @pytest.fixture
 def tmpdir():
     """A temporary directory that is cleaned up after the test."""
     path = tempfile.mkdtemp()
     yield path
-    try:
-        shutil.rmtree(path)
-    except PermissionError:
-        pass  # Windows: RocksDB LOCK file may still be held
+    with contextlib.suppress(PermissionError):
+        shutil.rmtree(path)  # Windows: RocksDB LOCK file may still be held
+
 
 @pytest.fixture
 def graph(tmpdir):
     """A fresh Graph instance on a temp directory."""
     from rocksgraph import Graph
+
     g = Graph(tmpdir)
     yield g
     g.close()
+
 
 _id_counter = itertools.count(1)
 

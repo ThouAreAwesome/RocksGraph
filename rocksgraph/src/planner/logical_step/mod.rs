@@ -803,7 +803,7 @@ pub struct SimilarityLogicalStep {
 /// Invariant: this struct intentionally has **no** `metric_override` field. The distance metric
 /// for `neighbors()` is always determined by the HNSW index that was configured at build time;
 /// overriding it at query time would produce meaningless scores. The `with_metric()` builder
-/// method enforces this by only accepting `Nearest` and `Similarity` as valid predecessors —
+/// method enforces this by only accepting `Nearest` as a valid predecessor —
 /// if a `metric_override` field is ever added here, that guard **must** be updated too.
 #[derive(Clone)]
 pub struct NeighborsLogicalStep {

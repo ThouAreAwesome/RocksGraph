@@ -1,6 +1,8 @@
 """Predicate correctness — §4 of TODO.md."""
+
+from rocksgraph import Int64, P
 from tests.conftest import addv
-from rocksgraph import P, Int64
+
 
 def insert_ages(graph):
     """Insert vertices with ages [10, 20, 30, 40, 50], commit, return read session."""

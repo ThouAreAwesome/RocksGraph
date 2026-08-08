@@ -1,6 +1,8 @@
 """Property type round-trip tests — write, commit, read, compare."""
+
+from rocksgraph import Float32, Float64, Int32, Int64, UInt16, Uuid
 from tests.conftest import addv
-from rocksgraph import Graph, Int32, Int64, UInt16, Float32, Float64, Uuid
+
 
 def assert_roundtrip(graph, key, value, checker=None):
     """Write a vertex with property(key, value), commit, read it back."""
@@ -16,7 +18,7 @@ def assert_roundtrip(graph, key, value, checker=None):
         checker(got)
     else:
         # Type wrappers round-trip as plain Python types; compare .value if applicable
-        expected = value.value if hasattr(value, 'value') else value
+        expected = value.value if hasattr(value, "value") else value
         assert got == expected, f"expected {expected!r}, got {got!r}"
 
 
@@ -48,6 +50,7 @@ class TestPrimitiveTypes:
     def test_float32(self, graph):
         def check(got):
             assert abs(got - 3.14) < 1e-6
+
         # Float32(3.14) may round-trip as f32 → f64, so use epsilon
         assert_roundtrip(graph, "f", Float32(3.14), check)
 
@@ -71,8 +74,10 @@ class TestPrimitiveTypes:
 
     def test_uuid(self, graph):
         uid = Uuid("550e8400-e29b-41d4-a716-446655440000")
+
         def check(got):
             assert "550e8400" in str(got)
+
         assert_roundtrip(graph, "uid", uid, check)
 
     def test_plain_int_roundtrip_as_int64(self, graph):

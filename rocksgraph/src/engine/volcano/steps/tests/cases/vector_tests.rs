@@ -347,3 +347,49 @@ fn test_similarity_on_non_vector_property() {
     let scores = drain_similarity(&mut step, &mut ctx);
     assert!(scores.is_empty(), "non-vector properties must be skipped silently without error");
 }
+
+#[test]
+fn test_nearest_k_zero() {
+    let src = BufferedStep::new(VecSourceStep::empty());
+    src.inner.borrow_mut().core.inject(smallvec![fv(vec![1.0, 0.0]), fv(vec![0.0, 1.0]),]);
+    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 0, None, None);
+    step.add_upper(src as StepRef);
+    let mut ctx = NoopCtx;
+    let results = drain_all(&mut step, &mut ctx);
+    assert!(results.is_empty(), "k=0 must short-circuit and return 0 results");
+}
+
+#[test]
+fn test_neighbors_k_zero() {
+    let src = BufferedStep::new(VecSourceStep::empty());
+    src.inner.borrow_mut().core.inject(smallvec![fv(vec![1.0, 0.0]),]);
+    let mut step = NeighborsStep::new("emb".into(), "emb".into(), 0, crate::vector::VectorEntityType::Vertex, None);
+    step.add_upper(src as StepRef);
+    let mut ctx = NoopCtx;
+    let result = step.produce(&mut ctx);
+    assert!(result.is_ok());
+    assert!(result.unwrap().is_none(), "k=0 must return None without searching or erroring");
+}
+
+#[test]
+fn test_neighbors_reset() {
+    let src = BufferedStep::new(VecSourceStep::empty());
+    src.inner.borrow_mut().core.inject(smallvec![Traverser::new_rc(GValue::Scalar(Primitive::Int64(1))),]);
+    let mut step = NeighborsStep::new("emb".into(), "emb".into(), 5, crate::vector::VectorEntityType::Vertex, None);
+    step.add_upper(src as StepRef);
+    let mut ctx = NoopCtx;
+
+    // Produce once
+    let _ = step.produce(&mut ctx);
+
+    // Reset should clear buffer and cursor
+    step.reset();
+
+    // Re-inject and produce again
+    let src2 = BufferedStep::new(VecSourceStep::empty());
+    src2.inner.borrow_mut().core.inject(smallvec![Traverser::new_rc(GValue::Scalar(Primitive::Int64(2))),]);
+    step.add_upper(src2 as StepRef);
+    let res = step.produce(&mut ctx);
+    assert!(res.is_ok());
+    assert!(res.unwrap().is_none());
+}

@@ -1,4 +1,5 @@
 from tests.conftest import addv
+
 """Transaction semantics — §6 of TODO.md."""
 
 
@@ -26,12 +27,14 @@ class TestTransactionCommit:
         addv(txn, "person")
         txn.commit()
         # Second commit should raise or be a no-op
+        from rocksgraph import StoreError, TransactionError
+
         try:
             txn.commit()
             # If no-op, second commit does nothing. Acceptable.
-        except Exception as e:
+        except (StoreError, TransactionError, RuntimeError) as e:
             # If raises, also acceptable. Just verify no crash.
-            assert "RuntimeError" in type(e).__name__ or "closed" in str(e).lower()
+            assert "RuntimeError" in type(e).__name__ or "closed" in str(e).lower() or "transaction" in str(e).lower()
 
     def test_snapshot_isolation(self, graph):
         """A read session opened before commit should not see committed data."""

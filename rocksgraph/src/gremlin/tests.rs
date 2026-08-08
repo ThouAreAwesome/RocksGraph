@@ -1820,6 +1820,31 @@ mod integration_test {
     }
 
     #[test]
+    fn test_order_desc_by_property_e2e() {
+        use crate::Order;
+        let graph = setup_modern_graph();
+        let mut txn = graph.begin();
+        let ages: Vec<i64> = txn
+            .g()
+            .V([])
+            .hasLabel(["person"])
+            .order_by("age", Order::Desc)
+            .values(["age"])
+            .to_list()
+            .unwrap()
+            .iter()
+            .map(|v| match v {
+                Value::Int32(i) => *i as i64,
+                Value::Int64(i) => *i,
+                _ => panic!(),
+            })
+            .collect();
+        let mut sorted = ages.clone();
+        sorted.sort_by(|a, b| b.cmp(a));
+        assert_eq!(ages, sorted);
+    }
+
+    #[test]
     fn test_group_e2e() {
         let graph = setup_modern_graph();
         let mut txn = graph.begin();

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum, IntEnum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 
 class DataType(IntEnum):
@@ -50,6 +50,19 @@ class Quantization(str, Enum):
     F32 = "f32"
 
 
+def _to_enum_value(val: Any, enum_cls: type[Enum]) -> str:
+    if isinstance(val, enum_cls):
+        return val.value
+    if isinstance(val, str):
+        val_lower = val.lower()
+        for member in enum_cls:
+            if val_lower == member.value.lower() or val_lower == member.name.lower():
+                return member.value
+        valid = [m.value for m in enum_cls]
+        raise ValueError(f"Invalid {enum_cls.__name__}: '{val}'. Valid options: {valid}")
+    raise TypeError(f"Expected {enum_cls.__name__} or str, got {type(val).__name__}")
+
+
 class VectorIndexConfig:
     def __init__(
         self,
@@ -66,13 +79,13 @@ class VectorIndexConfig:
     ):
         self.property = str(property)
         self.dimension = int(dimension)
-        self.entity_type = entity_type.value if isinstance(entity_type, Enum) else str(entity_type)
-        self.metric = metric.value if isinstance(metric, Enum) else str(metric)
-        self.algorithm = algorithm.value if isinstance(algorithm, Enum) else str(algorithm)
+        self.entity_type = _to_enum_value(entity_type, VectorEntityType)
+        self.metric = _to_enum_value(metric, DistanceMetric)
+        self.algorithm = _to_enum_value(algorithm, AnnAlgorithm)
         self.m = int(m)
         self.ef_construction = int(ef_construction)
         self.ef_search = int(ef_search)
-        self.quantization = quantization.value if isinstance(quantization, Enum) else str(quantization)
+        self.quantization = _to_enum_value(quantization, Quantization)
 
     def __repr__(self):
         return (
@@ -84,7 +97,7 @@ class VectorIndexConfig:
 class BulkVertex:
     """Represents a vertex to be ingested via BulkLoader."""
 
-    def __init__(self, id: int, label: str, props: dict = None):
+    def __init__(self, id: int, label: str, props: dict | None = None):
         self.id = int(id)
         self.label = str(label)
         self.props = props or {}
@@ -96,7 +109,7 @@ class BulkVertex:
 class BulkEdge:
     """Represents an edge to be ingested via BulkLoader."""
 
-    def __init__(self, src: int, dst: int, label: str, props: dict = None, rank: int | None = None):
+    def __init__(self, src: int, dst: int, label: str, props: dict | None = None, rank: int | None = None):
         self.src = int(src)
         self.dst = int(dst)
         self.label = str(label)
