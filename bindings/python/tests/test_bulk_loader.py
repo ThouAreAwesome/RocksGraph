@@ -1,16 +1,14 @@
 import os
-import pytest
+
 from rocksgraph import (
-    Graph,
-    BulkLoader,
-    BulkVertex,
     BulkEdge,
     BulkLoadStats,
+    BulkVertex,
     DataType,
+    DistanceMetric,
+    Graph,
     Int64,
     Vector,
-    VectorIndexConfig,
-    DistanceMetric,
 )
 
 
@@ -36,18 +34,22 @@ def test_bulk_loader_basic(tmp_path):
     loader.with_max_memory(32 * 1024 * 1024)
 
     # Load with BulkVertex objects and dicts in a single pass
-    loader.load_vertices([
-        BulkVertex(1, "person", {"name": "Alice", "age": Int64(30)}),
-        BulkVertex(2, "person", {"name": "Bob", "age": Int64(25)}),
-        {"id": 3, "label": "software", "props": {"name": "RocksGraph"}},
-    ])
+    loader.load_vertices(
+        [
+            BulkVertex(1, "person", {"name": "Alice", "age": Int64(30)}),
+            BulkVertex(2, "person", {"name": "Bob", "age": Int64(25)}),
+            {"id": 3, "label": "software", "props": {"name": "RocksGraph"}},
+        ]
+    )
 
     # Load edges with BulkEdge objects and dicts in a single pass
-    loader.load_edges([
-        BulkEdge(1, 2, "knows", {"since": Int64(2020)}),
-        BulkEdge(1, 3, "created"),
-        {"src": 2, "dst": 3, "label": "created"},
-    ])
+    loader.load_edges(
+        [
+            BulkEdge(1, 2, "knows", {"since": Int64(2020)}),
+            BulkEdge(1, 3, "created"),
+            {"src": 2, "dst": 3, "label": "created"},
+        ]
+    )
 
     stats = loader.commit()
 
@@ -82,13 +84,17 @@ def test_bulk_loader_context_manager(tmp_path):
         s.add_property_key("val", DataType.Int64)
 
     with g.open_bulk_loader() as loader:
-        loader.load_vertices([
-            BulkVertex(10, "node", {"val": Int64(100)}),
-            BulkVertex(20, "node", {"val": Int64(200)}),
-        ])
-        loader.load_edges([
-            BulkEdge(10, 20, "connects"),
-        ])
+        loader.load_vertices(
+            [
+                BulkVertex(10, "node", {"val": Int64(100)}),
+                BulkVertex(20, "node", {"val": Int64(200)}),
+            ]
+        )
+        loader.load_edges(
+            [
+                BulkEdge(10, 20, "connects"),
+            ]
+        )
 
     snap = g.read()
     assert snap.g().V(10).out("connects").id().to_list() == [20]
@@ -111,11 +117,13 @@ def test_bulk_loader_with_vector_index(tmp_path):
 
     # 2. Bulk load documents with vector embeddings
     with g.open_bulk_loader() as loader:
-        loader.load_vertices([
-            BulkVertex(1, "doc", {"embedding": Vector([1.0, 0.0, 0.0])}),
-            BulkVertex(2, "doc", {"embedding": Vector([0.0, 1.0, 0.0])}),
-            BulkVertex(3, "doc", {"embedding": Vector([0.0, 0.0, 1.0])}),
-        ])
+        loader.load_vertices(
+            [
+                BulkVertex(1, "doc", {"embedding": Vector([1.0, 0.0, 0.0])}),
+                BulkVertex(2, "doc", {"embedding": Vector([0.0, 1.0, 0.0])}),
+                BulkVertex(3, "doc", {"embedding": Vector([0.0, 0.0, 1.0])}),
+            ]
+        )
 
     # 3. Vector search should immediately work after bulk load commit
     snap = g.read()

@@ -60,10 +60,10 @@ use crate::{
             CountStep, CyclicPathStep, DedupStep, DegreeStep, DropStep, EStep, EmitSpec, FoldStep, FromStep,
             GroupCountStep, GroupStep, HasIdStep, HasLabelStep, HasRankStep, IdStep, IdentityStep, InEStep, InStep,
             InVStep, LabelStep, LimitStep, LocalStep, LogicalPlan, LogicalStep, MaxStep, MeanStep, MinStep,
-            NearestLogicalStep, NeighborsLogicalStep, NotStep, OrStep, Order, OrderKey, OrderKeySpec, OrderStep,
-            OtherVStep, OutEStep, OutStep, OutVStep, PathStep, PropertiesStep, PropertyStep, RangeStep, RankStep,
-            RepeatStep, ScalarFilterStep, SelectStep, SimilarityLogicalStep, SimplePathStep, SkipStep, SumStep,
-            TailStep, ToStep, UnfoldStep, UnionStep, ValuesStep, WhereStep,
+            NearestLogicalStep, NeighborsLogicalStep, NotStep, OrStep, OrderKey, OrderKeySpec, OrderStep, OtherVStep,
+            OutEStep, OutStep, OutVStep, PathStep, PropertiesStep, PropertyStep, RangeStep, RankStep, RepeatStep,
+            ScalarFilterStep, SelectStep, SimilarityLogicalStep, SimplePathStep, SkipStep, SumStep, TailStep, ToStep,
+            UnfoldStep, UnionStep, ValuesStep, WhereStep,
         },
     },
     types::{prop_key::LABEL, StoreError},
@@ -71,6 +71,7 @@ use crate::{
 
 pub(crate) mod built;
 
+pub use crate::planner::logical_step::Order;
 pub use built::BuiltTraversal;
 
 // ── RepeatBuilder ──────────────────────────────────────────────────────────────

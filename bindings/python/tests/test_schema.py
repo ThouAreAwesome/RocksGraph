@@ -1,20 +1,20 @@
 import os
+
 import pytest
+
 from rocksgraph import (
+    AnnAlgorithm,
+    DataType,
+    DistanceMetric,
     Graph,
     GraphOptions,
-    SchemaSession,
-    DataType,
-    SchemaMode,
-    EdgeMode,
-    VectorEntityType,
-    DistanceMetric,
-    AnnAlgorithm,
-    Quantization,
-    VectorIndexConfig,
     Int64,
-    Vector,
+    Quantization,
     SchemaError,
+    SchemaMode,
+    Vector,
+    VectorEntityType,
+    VectorIndexConfig,
 )
 
 
@@ -134,5 +134,55 @@ def test_schema_vector_index_config_object(tmp_path):
 
     snap = g.read()
     assert snap.g().V(100).count().to_list() == [1]
+
+    g.close()
+
+
+def test_schema_invalid_modes_raise_error(tmp_path):
+    db_path = os.path.join(tmp_path, "schema_invalid_db")
+    g = Graph(db_path)
+
+    # Invalid mode in open_with_options
+    with pytest.raises(ValueError):
+        Graph.open_with_options(db_path, options=GraphOptions(mode="invalid_mode"))
+
+    with pytest.raises(ValueError):
+        Graph.open_with_options(db_path, options=GraphOptions(edge_mode="invalid_edge_mode"))
+
+    # Invalid mode in schema session
+    with g.open_schema() as s:
+        with pytest.raises(ValueError):
+            s.set_schema_mode("invalid_mode")
+
+        with pytest.raises(ValueError):
+            s.set_edge_mode("invalid_edge_mode")
+
+        with pytest.raises(ValueError):
+            s.drop_vector_index("invalid_entity", "vec")
+
+        with pytest.raises(ValueError):
+            s.add_vector_index(property="vec", dimension=4, entity_type="invalid_entity")
+
+        with pytest.raises(ValueError):
+            s.add_vector_index(property="vec", dimension=4, metric="invalid_metric")
+
+        with pytest.raises(ValueError):
+            s.add_vector_index(property="vec", dimension=4, algorithm="invalid_algo")
+
+        with pytest.raises(ValueError):
+            s.add_vector_index(property="vec", dimension=4, quantization="invalid_quant")
+
+    # Invalid VectorIndexConfig initialization
+    with pytest.raises(ValueError):
+        VectorIndexConfig(property="vec", dimension=4, entity_type="invalid_entity")
+
+    with pytest.raises(ValueError):
+        VectorIndexConfig(property="vec", dimension=4, metric="invalid_metric")
+
+    with pytest.raises(ValueError):
+        VectorIndexConfig(property="vec", dimension=4, algorithm="invalid_algo")
+
+    with pytest.raises(ValueError):
+        VectorIndexConfig(property="vec", dimension=4, quantization="invalid_quant")
 
     g.close()

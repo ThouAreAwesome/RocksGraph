@@ -10,11 +10,13 @@ They also document the exact RuntimeError a user gets when they misuse a
 session after it has been closed, so the error is always at the point of
 misuse rather than some internal traversal detail.
 """
+
 import pytest
+
 from rocksgraph import Graph, StorageError
 
-
 # ── ReadSession: lock release ─────────────────────────────────────────────────
+
 
 class TestReadSessionLifecycle:
     def test_context_manager_releases_lock(self, tmp_path):
@@ -73,6 +75,7 @@ class TestReadSessionLifecycle:
 
 # ── ReadSession: misuse diagnostics ──────────────────────────────────────────
 
+
 class TestReadSessionMisuse:
     def test_g_after_close_raises_at_call_site(self, tmp_path):
         """snap.g() after snap.close() raises immediately, not at the terminal.
@@ -101,6 +104,7 @@ class TestReadSessionMisuse:
 
 
 # ── TxnSession: lock release ───────────────────────────────────────────────────
+
 
 class TestTxnSessionLifecycle:
     def test_commit_releases_lock(self, tmp_path):
@@ -150,10 +154,9 @@ class TestTxnSessionLifecycle:
         db_path = str(tmp_path / "db")
         g = Graph(db_path)
 
-        with pytest.raises(RuntimeError):
-            with g.begin() as txn:
-                txn.g().addV("node", 1).next()
-                raise RuntimeError("abort")
+        with pytest.raises(RuntimeError), g.begin() as txn:
+            txn.g().addV("node", 1).next()
+            raise RuntimeError("abort")
 
         g.close()
 
@@ -165,6 +168,7 @@ class TestTxnSessionLifecycle:
 
 
 # ── TxnSession: misuse diagnostics ────────────────────────────────────────────
+
 
 class TestTxnSessionMisuse:
     def test_g_after_commit_raises_at_call_site(self, tmp_path):

@@ -1463,3 +1463,95 @@ fn test_schema_session_applies_configured_memory_limit() {
     assert!(result.is_err(), "dynamically created vector index must inherit configured memory limit");
     g.close().unwrap();
 }
+
+#[test]
+fn test_nearest_k_zero_live_hnsw() {
+    let tmp = tempfile::tempdir().unwrap();
+    let graph = crate::Graph::open(tmp.path()).unwrap();
+
+    let mut schema = graph.open_schema();
+    schema.add_vector_index(VectorIndexConfig {
+        property: "emb".into(),
+        entity_type: VectorEntityType::Vertex,
+        dimension: 2,
+        metric: DistanceMetric::Cosine,
+        algorithm: AnnAlgorithm::Hnsw(Default::default()),
+        quantization: Quantization::F32,
+    });
+    schema.commit().unwrap();
+
+    let mut txn = graph.begin();
+    txn.g().addV("item").property("id", 1i64).property("emb", Value::FloatVector(vec![1.0, 0.0])).next().unwrap();
+    txn.g().addV("item").property("id", 2i64).property("emb", Value::FloatVector(vec![0.0, 1.0])).next().unwrap();
+    txn.commit().unwrap();
+
+    let mut snap = graph.read();
+    let results = snap.g().V([]).nearest("emb", vec![1.0f32, 0.0], 0).to_list().unwrap();
+    assert!(results.is_empty(), "k=0 against live HNSW must return 0 results without error");
+}
+
+#[test]
+fn test_neighbors_k_zero_live_hnsw() {
+    let tmp = tempfile::tempdir().unwrap();
+    let graph = crate::Graph::open(tmp.path()).unwrap();
+
+    let mut schema = graph.open_schema();
+    schema.add_vector_index(VectorIndexConfig {
+        property: "emb".into(),
+        entity_type: VectorEntityType::Vertex,
+        dimension: 2,
+        metric: DistanceMetric::Cosine,
+        algorithm: AnnAlgorithm::Hnsw(Default::default()),
+        quantization: Quantization::F32,
+    });
+    schema.commit().unwrap();
+
+    let mut txn = graph.begin();
+    txn.g().addV("item").property("id", 1i64).property("emb", Value::FloatVector(vec![1.0, 0.0])).next().unwrap();
+    txn.commit().unwrap();
+
+    let mut snap = graph.read();
+    let results = snap.g().V([1i64]).neighbors("emb", "emb", 0, VectorEntityType::Vertex).id().to_list().unwrap();
+    assert!(results.is_empty(), "k=0 neighbors against live HNSW must return 0 results without error");
+}
+
+#[test]
+fn test_nearest_with_metric_live_hnsw() {
+    let tmp = tempfile::tempdir().unwrap();
+    let graph = crate::Graph::open(tmp.path()).unwrap();
+
+    let mut schema = graph.open_schema();
+    schema.add_vector_index(VectorIndexConfig {
+        property: "emb".into(),
+        entity_type: VectorEntityType::Vertex,
+        dimension: 2,
+        metric: DistanceMetric::Cosine, // index built with Cosine
+        algorithm: AnnAlgorithm::Hnsw(Default::default()),
+        quantization: Quantization::F32,
+    });
+    schema.commit().unwrap();
+
+    let mut txn = graph.begin();
+    // Item 1: normalized vector [1.0, 0.0]
+    txn.g().addV("item").property("id", 1i64).property("emb", Value::FloatVector(vec![1.0, 0.0])).next().unwrap();
+    // Item 2: large magnitude vector [10.0, 0.0]
+    txn.g().addV("item").property("id", 2i64).property("emb", Value::FloatVector(vec![10.0, 0.0])).next().unwrap();
+    txn.commit().unwrap();
+
+    let mut snap = graph.read();
+
+    // With metric override DotProduct: item 2 has dot product 10.0 vs item 1 dot product 1.0 with [1.0, 0.0]
+    let results = snap
+        .g()
+        .V([])
+        .nearest("emb", vec![1.0f32, 0.0], 2)
+        .with_metric(DistanceMetric::DotProduct)
+        .id()
+        .to_list()
+        .unwrap();
+
+    assert_eq!(results.len(), 2);
+    // Under DotProduct, Item 2 (score 10) must rank before Item 1 (score 1)
+    assert_eq!(results[0], Value::Int64(2), "item 2 must rank first under DotProduct metric override");
+    assert_eq!(results[1], Value::Int64(1));
+}

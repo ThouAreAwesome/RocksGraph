@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 import struct
-from typing import List, Any, Optional
+from typing import Any
 
 VERSION = 1
 
@@ -91,71 +93,103 @@ PRED_BETWEEN = 6
 PRED_WITHIN = 7
 PRED_WITHOUT = 8
 
-def encode(steps: List[Any]) -> bytes:
+
+def encode(steps: list[Any]) -> bytes:
     """Encode a sequence of steps into the binary format."""
     buf = bytearray()
     buf.append(VERSION)
     _encode_plan(steps, buf)
     return bytes(buf)
 
-def _encode_plan(steps: List[Any], buf: bytearray):
+
+def _encode_plan(steps: list[Any], buf: bytearray):
     buf.extend(struct.pack(">H", len(steps)))
     for opcode, args in steps:
         _encode_step(opcode, args, buf)
 
+
 def _encode_step(opcode: int, args: Any, buf: bytearray):
     buf.append(opcode)
-    
-    if opcode in (OP_COUNT, OP_DROP, OP_PATH, OP_DEDUP, OP_FOLD, OP_SUM, OP_MEAN, 
-                  OP_MAX, OP_MIN, OP_UNFOLD, OP_SIMPLEPATH, OP_CYCLICPATH, 
-                  OP_ID, OP_LABEL, OP_RANK, OP_IDENTITY):
+
+    if opcode in (
+        OP_COUNT,
+        OP_DROP,
+        OP_PATH,
+        OP_DEDUP,
+        OP_FOLD,
+        OP_SUM,
+        OP_MEAN,
+        OP_MAX,
+        OP_MIN,
+        OP_UNFOLD,
+        OP_SIMPLEPATH,
+        OP_CYCLICPATH,
+        OP_ID,
+        OP_LABEL,
+        OP_RANK,
+        OP_IDENTITY,
+    ):
         return
-        
+
     if opcode in (OP_BOTH, OP_IN, OP_OUT):
         buf.extend(struct.pack(">H", len(args)))
         for label in args:
             _encode_string(label, buf)
-        buf.append(0) # end_vertex_ids = None
+        buf.append(0)  # end_vertex_ids = None
 
     elif opcode in (OP_BOTHE, OP_INE, OP_OUTE):
         buf.extend(struct.pack(">H", len(args)))
         for label in args:
             _encode_string(label, buf)
-        buf.append(0) # end_vertex_ids = None
-        buf.append(0) # rank = None
+        buf.append(0)  # end_vertex_ids = None
+        buf.append(0)  # rank = None
 
     elif opcode == OP_DEGREE:
         # 0=Both, 1=Out, 2=In
-        dir_map = {"out": 1, "in": 2}
-        buf.append(dir_map.get(args, 0))
+        if args is None:
+            buf.append(0)
+        elif isinstance(args, str):
+            args_lower = args.lower()
+            if args_lower == "both":
+                buf.append(0)
+            elif args_lower == "out":
+                buf.append(1)
+            elif args_lower == "in":
+                buf.append(2)
+            else:
+                raise ValueError(
+                    f"Invalid Direction: '{args}'. Expected Direction.OUT, Direction.IN, or Direction.BOTH."
+                )
+        else:
+            raise TypeError(f"Expected Direction, str, or None, got {type(args).__name__}")
 
     elif opcode in (OP_VALUES, OP_PROPERTIES, OP_AS, OP_SELECT, OP_E):
         buf.extend(struct.pack(">H", len(args)))
         for label in args:
             _encode_string(label, buf)
-            
+
     elif opcode == OP_HASLABEL:
         _encode_predicate(args, buf)
-            
+
     elif opcode == OP_SCALARFILTER:
         # Predicate
         _encode_predicate(args, buf)
-        
+
     elif opcode == OP_HASPROPERTY:
         k, p = args
         _encode_string(k, buf)
         _encode_predicate(p, buf)
-        
+
     elif opcode == OP_WHERE:
         # Single plan
         _encode_plan(args, buf)
-        
+
     elif opcode in (OP_UNION, OP_COALESCE, OP_AND, OP_OR):
         # List of plans
         buf.extend(struct.pack(">H", len(args)))
         for plan in args:
             _encode_plan(plan, buf)
-            
+
     elif opcode == OP_ADDV:
         # label, vid, properties
         if len(args) == 3:
@@ -173,7 +207,7 @@ def _encode_step(opcode: int, args: Any, buf: bytearray):
         for k, v in props.items():
             _encode_string(k, buf)
             _encode_primitive(v, buf)
-            
+
     elif opcode == OP_ADDE:
         # label, from_id, to_id, properties, rank
         label, from_id, to_id, properties, rank = args
@@ -183,43 +217,43 @@ def _encode_step(opcode: int, args: Any, buf: bytearray):
             buf.extend(struct.pack(">q", from_id))
         else:
             buf.append(0)
-            
+
         if to_id is not None:
             buf.append(1)
             buf.extend(struct.pack(">q", to_id))
         else:
             buf.append(0)
-            
+
         buf.extend(struct.pack(">H", len(properties)))
         for k, v in properties.items():
             _encode_string(k, buf)
             _encode_primitive(v, buf)
-            
+
         if rank is not None:
             buf.append(1)
             buf.extend(struct.pack(">H", rank))
         else:
             buf.append(0)
-            
+
     elif opcode in (OP_FROM, OP_TO):
         buf.extend(struct.pack(">q", args))
-        
+
     elif opcode == OP_PROPERTY:
         k, v = args
         _encode_string(k, buf)
         _encode_primitive(v, buf)
-        
+
     elif opcode == OP_V:
         buf.extend(struct.pack(">H", len(args)))
         for item in args:
             buf.extend(struct.pack(">q", item))
-            
+
     elif opcode == OP_LIMIT:
         buf.extend(struct.pack(">q", args))
-        
+
     elif opcode in (OP_HASID, OP_HASRANK):
         _encode_predicate(args, buf)
-        
+
     elif opcode == OP_ENDVERTEXFILTER:
         ids, label_preds, property_preds = args
         if ids is not None:
@@ -229,44 +263,44 @@ def _encode_step(opcode: int, args: Any, buf: bytearray):
                 buf.extend(struct.pack(">q", item))
         else:
             buf.append(0)
-            
+
         buf.extend(struct.pack(">H", len(label_preds)))
         for item in label_preds:
             _encode_predicate(item, buf)
-            
+
         buf.extend(struct.pack(">H", len(property_preds)))
         for k, v in property_preds:
             _encode_string(k, buf)
             _encode_predicate(v, buf)
-            
+
     elif opcode == OP_REPEAT:
         body, until, times, emit = args
         _encode_plan(body, buf)
-        
+
         if until is not None:
             buf.append(1)
             _encode_plan(until, buf)
         else:
             buf.append(0)
-            
+
         if times is not None:
             buf.append(1)
             buf.extend(struct.pack(">q", times))
         else:
             buf.append(0)
-            
+
         _encode_emit_spec(emit, buf)
-        
+
     elif opcode == OP_NOT:
         _encode_plan(args, buf)
-        
+
     elif opcode == OP_RANGE:
         lo, hi = args
         buf.extend(struct.pack(">qq", lo, hi))
-        
+
     elif opcode in (OP_SKIP, OP_TAIL):
         buf.extend(struct.pack(">q", args))
-        
+
     elif opcode == OP_ORDER:
         buf.extend(struct.pack(">H", len(args)))
         for key_spec, order in args:
@@ -275,8 +309,17 @@ def _encode_step(opcode: int, args: Any, buf: bytearray):
             else:
                 buf.append(1)
                 _encode_string(key_spec, buf)
-            buf.append(0 if order == "asc" else 1)
-            
+            if isinstance(order, str):
+                order_lower = order.lower()
+                if order_lower == "asc":
+                    buf.append(0)
+                elif order_lower == "desc":
+                    buf.append(1)
+                else:
+                    raise ValueError(f"Invalid Order: '{order}'. Expected Order.Asc or Order.Desc.")
+            else:
+                raise TypeError(f"Expected Order or str, got {type(order).__name__}")
+
     elif opcode == OP_CHOOSE:
         predicate, true_choice, false_choice = args
         _encode_plan(predicate, buf)
@@ -286,16 +329,17 @@ def _encode_step(opcode: int, args: Any, buf: bytearray):
             _encode_plan(false_choice, buf)
         else:
             buf.append(0)
-            
+
     elif opcode in (OP_GROUP, OP_GROUPCOUNT):
         if args is not None:
             buf.append(1)
             _encode_string(args, buf)
         else:
             buf.append(0)
-            
+
     elif opcode == OP_NEAREST:
         from ._types import Vector
+
         prop, query, k, ef_search, metric_override = args
         _encode_string(prop, buf)
         buf.extend(struct.pack(">I", k))
@@ -312,6 +356,7 @@ def _encode_step(opcode: int, args: Any, buf: bytearray):
             buf.extend(struct.pack("<f", f))
     elif opcode == OP_SIMILARITY:
         from ._types import Vector
+
         prop, query, metric = args
         _encode_string(prop, buf)
         buf.append(_metric_to_byte(metric))
@@ -334,36 +379,66 @@ def _encode_step(opcode: int, args: Any, buf: bytearray):
 
     elif opcode == OP_CONSTANT:
         _encode_primitive(args, buf)
-        
+
     elif opcode == OP_LOCAL:
         _encode_plan(args, buf)
+
 
 def _entity_type_to_byte(et) -> int:
     if et is None:
         return 0
     from ._types import VectorEntityType
-    return 1 if et == VectorEntityType.Edge else 0
+
+    if isinstance(et, VectorEntityType):
+        return 1 if et == VectorEntityType.Edge else 0
+    if isinstance(et, str):
+        et_lower = et.lower()
+        if et_lower in ("vertex", "v"):
+            return 0
+        if et_lower in ("edge", "e"):
+            return 1
+        raise ValueError(
+            f"Invalid VectorEntityType: '{et}'. Expected VectorEntityType.Vertex or VectorEntityType.Edge."
+        )
+    raise TypeError(f"Expected VectorEntityType or str, got {type(et).__name__}")
+
 
 def _metric_to_byte(m):
     if m is None:
         return 0
     from ._types import DistanceMetric
-    if m == DistanceMetric.Cosine:
-        return 1
-    if m == DistanceMetric.Euclidean:
-        return 2
-    if m == DistanceMetric.DotProduct:
-        return 3
-    return 0
+
+    if isinstance(m, DistanceMetric):
+        if m == DistanceMetric.Cosine:
+            return 1
+        if m in (DistanceMetric.Euclidean, DistanceMetric.L2):
+            return 2
+        if m == DistanceMetric.DotProduct:
+            return 3
+        return 0
+    if isinstance(m, str):
+        m_lower = m.lower()
+        if m_lower == "cosine":
+            return 1
+        if m_lower in ("euclidean", "l2"):
+            return 2
+        if m_lower in ("dot_product", "dot"):
+            return 3
+        raise ValueError(f"Invalid DistanceMetric: '{m}'. Expected DistanceMetric.Cosine, Euclidean, or DotProduct.")
+    raise TypeError(f"Expected DistanceMetric or str, got {type(m).__name__}")
+
 
 def _encode_string(s: str, buf: bytearray):
-    b = s.encode('utf-8')
+    b = s.encode("utf-8")
     buf.extend(struct.pack(">H", len(b)))
     buf.extend(b)
 
+
 def _encode_primitive(val: Any, buf: bytearray):
-    from ._types import Int32, Int64, UInt16, Float32, Float64, Uuid, Vector
     import uuid
+
+    from ._types import Float32, Float64, Int32, Int64, UInt16, Uuid, Vector
+
     if val is None:
         buf.append(PRIM_NULL)
     elif isinstance(val, bool):
@@ -393,7 +468,7 @@ def _encode_primitive(val: Any, buf: bytearray):
     elif isinstance(val, str):
         buf.append(PRIM_STRING)
         _encode_string(val, buf)
-    elif isinstance(val, bytes) or isinstance(val, bytearray):
+    elif isinstance(val, (bytes, bytearray)):
         buf.append(PRIM_BYTES)
         buf.extend(struct.pack(">I", len(val)))
         buf.extend(val)
@@ -412,6 +487,7 @@ def _encode_primitive(val: Any, buf: bytearray):
     else:
         raise ValueError(f"Unsupported primitive type: {type(val)}")
 
+
 def _encode_predicate(pred: Any, buf: bytearray):
     tag, val = pred
     buf.append(tag)
@@ -425,59 +501,69 @@ def _encode_predicate(pred: Any, buf: bytearray):
     else:
         _encode_primitive(val, buf)
 
+
 def _encode_emit_spec(emit: Any, buf: bytearray):
     if emit is None:
-        buf.append(0) # Never
-    elif emit == True:
-        buf.append(1) # Always
+        buf.append(0)  # Never
+    elif emit:
+        buf.append(1)  # Always
     else:
-        buf.append(2) # If(plan)
+        buf.append(2)  # If(plan)
         _encode_plan(emit, buf)
+
 
 def value_to_py(tag, buf, offset):
     """Decode a single value from response buffer. Returns (value, new_offset)."""
     if tag == PRIM_NULL:
         return None, offset
-    elif tag == PRIM_BOOL:
+    if tag == PRIM_BOOL:
         return buf[offset] != 0, offset + 1
-    elif tag == PRIM_INT32:
+    if tag == PRIM_INT32:
         import struct
-        v = struct.unpack('>i', buf[offset:offset+4])[0]
+
+        v = struct.unpack(">i", buf[offset : offset + 4])[0]
         return v, offset + 4
-    elif tag == PRIM_INT64:
+    if tag == PRIM_INT64:
         import struct
-        v = struct.unpack('>q', buf[offset:offset+8])[0]
+
+        v = struct.unpack(">q", buf[offset : offset + 8])[0]
         return v, offset + 8
-    elif tag == PRIM_FLOAT32:
+    if tag == PRIM_FLOAT32:
         import struct
-        v = struct.unpack('>f', buf[offset:offset+4])[0]
+
+        v = struct.unpack(">f", buf[offset : offset + 4])[0]
         return v, offset + 4
-    elif tag == PRIM_FLOAT64:
+    if tag == PRIM_FLOAT64:
         import struct
-        v = struct.unpack('>d', buf[offset:offset+8])[0]
+
+        v = struct.unpack(">d", buf[offset : offset + 8])[0]
         return v, offset + 8
-    elif tag == PRIM_STRING:
+    if tag == PRIM_STRING:
         import struct
-        slen = struct.unpack('>I', buf[offset:offset+4])[0]
+
+        slen = struct.unpack(">I", buf[offset : offset + 4])[0]
         offset += 4
-        v = buf[offset:offset+slen].decode('utf-8')
+        v = buf[offset : offset + slen].decode("utf-8")
         return v, offset + slen
-    elif tag == PRIM_UUID:
+    if tag == PRIM_UUID:
         import uuid
-        v = str(uuid.UUID(bytes=buf[offset:offset+16]))
+
+        v = str(uuid.UUID(bytes=buf[offset : offset + 16]))
         return v, offset + 16
-    elif tag == PRIM_BYTES:
+    if tag == PRIM_BYTES:
         import struct
-        blen = struct.unpack('>I', buf[offset:offset+4])[0]
+
+        blen = struct.unpack(">I", buf[offset : offset + 4])[0]
         offset += 4
-        v = bytes(buf[offset:offset+blen])
+        v = bytes(buf[offset : offset + blen])
         return v, offset + blen
-    elif tag == PRIM_FLOATVECTOR:
+    if tag == PRIM_FLOATVECTOR:
         import struct
-        dim = struct.unpack('>I', buf[offset:offset+4])[0]
+
+        dim = struct.unpack(">I", buf[offset : offset + 4])[0]
         offset += 4
         from ._types import Vector
-        v = Vector(values=list(struct.unpack(f'<{dim}f', buf[offset:offset+dim*4])))
+
+        v = Vector(values=list(struct.unpack(f"<{dim}f", buf[offset : offset + dim * 4])))
         return v, offset + dim * 4
-    else:
-        raise ValueError(f'Unknown primitive tag {tag}')
+    raise ValueError(f"Unknown primitive tag {tag}")

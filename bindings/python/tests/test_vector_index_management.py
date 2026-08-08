@@ -1,11 +1,11 @@
 import os
-import pytest
+
 from rocksgraph import (
-    Graph,
     DataType,
-    VectorEntityType,
     DistanceMetric,
+    Graph,
     Vector,
+    VectorEntityType,
 )
 
 
