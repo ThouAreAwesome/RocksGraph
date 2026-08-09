@@ -77,7 +77,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install wheel
-        run: pip install dist/*.whl
+        run: pip install --no-index --find-links dist rocksgraph
       - name: Run tests
         run: python -m pytest --pyargs rocksgraph || true
         # --pyargs won't find test files in a separate tests/ package.
