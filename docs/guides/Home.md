@@ -10,14 +10,14 @@ This wiki contains all the official guides, tutorials, and references to help yo
 
 Whether you're just getting started or looking to optimize an existing workload, we have you covered:
 
-- 🚀 **[Getting Started](getting_started)** — Installation, connecting, and your first queries.
-- 🏗️ **[Data Model & Types](data_model)** — Vertices, edges, properties, and supported primitives.
-- 🗺️ **[Gremlin Step Reference](step_reference)** — Complete list of supported traversal steps (`has`, `outE`, `order`, etc.).
-- 📐 **[Schema Management](schema_management)** — Strict vs Auto schema modes, index creation, and type enforcement.
-- 🎯 **[Vector Search Deep Dive](vector_search)** — Using HNSW indexes to find similar embeddings directly within graph traversals.
-- 🔒 **[Transactions & Concurrency](concurrency_and_tx)** — Read/write isolation, OCC, and retries.
-- ⚡ **[Bulk Loading & SST Ingest](bulk_loading)** — How to bypass transactions for massive initial data imports.
-- 🏎️ **[Performance Tuning](performance)** — Tips for batching, query optimization, and tuning execution options.
+- 🚀 **[Getting Started](getting_started.md)** — Installation, connecting, and your first queries.
+- 🏗️ **[Data Model & Types](data_model.md)** — Vertices, edges, properties, and supported primitives.
+- 🗺️ **[Gremlin Step Reference](step_reference.md)** — Complete list of supported traversal steps (`has`, `outE`, `order`, etc.).
+- 📐 **[Schema Management](schema_management.md)** — Strict vs Auto schema modes, index creation, and type enforcement.
+- 🎯 **[Vector Search Deep Dive](vector_search.md)** — Using HNSW indexes to find similar embeddings directly within graph traversals.
+- 🔒 **[Transactions & Concurrency](concurrency_and_tx.md)** — Read/write isolation, OCC, and retries.
+- ⚡ **[Bulk Loading & SST Ingest](bulk_loading.md)** — How to bypass transactions for massive initial data imports.
+- 🏎️ **[Performance Tuning](performance.md)** — Tips for batching, query optimization, and tuning execution options.
 
 ---
 
