@@ -12,6 +12,12 @@ keywords = ["graph", "gremlin", "embedded", "vector-search", "database"]
 categories = ["database-implementations"]
 rust-version = "1.80"
 
+[package.metadata.docs.rs]
+# Build with every optional feature enabled so feature-gated public items
+# (e.g. `Graph::statistics()`, behind `rocksdb-stats`) actually appear on
+# the hosted docs — docs.rs otherwise builds with default features only.
+all-features = true
+
 
 [features]
 # Enable RocksDB statistics collection. Adds ~5-10% overhead on every storage

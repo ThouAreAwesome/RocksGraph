@@ -31,6 +31,8 @@ use std::fmt;
 
 use crate::types::{CanonicalEdgeKey, VertexKey};
 
+/// The unified error type for storage and runtime failures — see the module docs
+/// for the full variant-layer breakdown and which errors are retryable.
 #[derive(Debug)]
 pub enum StoreError {
     // ═══════════════════════════════════════════════════════════════════

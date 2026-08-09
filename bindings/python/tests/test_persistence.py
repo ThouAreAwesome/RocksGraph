@@ -1,6 +1,6 @@
 """Persistence across reopen — §7 of TODO.md."""
 
-from rocksgraph import Float64, Graph, GraphOptions, Int64, RocksOptions
+from rocksgraph import ExecutionOptions, Float64, Graph, GraphOptions, Int64, RocksOptions
 from tests.conftest import addv
 
 
@@ -99,5 +99,64 @@ def test_open_with_options_custom_cache(tmp_path):
 
     snap = g.read()
     assert snap.g().V().count().to_list() == [1]
+
+    g.close()
+
+
+def test_open_with_options_custom_execution_batch_sizes(tmp_path):
+    """Verify GraphOptions(execution=...) is accepted and doesn't break scans, even with
+    batch sizes far smaller than the vertex count (forcing multiple internal fetch rounds)."""
+    db_path = str(tmp_path / "execution_options_db")
+    g = Graph.open_with_options(
+        db_path,
+        options=GraphOptions(
+            execution=ExecutionOptions(
+                scan_vertices_batch_size=4,
+                scan_edges_batch_size=4,
+                get_adjacent_edges_batch_size=2,
+            )
+        ),
+    )
+
+    with g.begin() as txn:
+        for i in range(1, 21):
+            txn.g().addV("item", i).next()
+        for i in range(1, 20):
+            txn.g().addE("next").from_(i).to(i + 1).next()
+
+    snap = g.read()
+    assert snap.g().V().count().to_list() == [20]
+    assert snap.g().V(1).out("next").out("next").out("next").count().to_list() == [1]
+
+    g.close()
+
+
+def test_read_session_with_execution_options_overrides_batch_size(tmp_path):
+    """Verify ReadSession.with_execution_options() applies a per-session override and
+    doesn't affect correctness even with a batch size smaller than the result set."""
+    db_path = str(tmp_path / "session_execution_options_db")
+    g = Graph(db_path)
+
+    with g.begin() as txn:
+        for i in range(1, 11):
+            txn.g().addV("item", i).next()
+
+    snap = g.read().with_execution_options(ExecutionOptions(scan_vertices_batch_size=1))
+    assert sorted(v["id"] for v in snap.g().V().to_list()) == list(range(1, 11))
+
+    g.close()
+
+
+def test_txn_session_with_execution_options_overrides_batch_size(tmp_path):
+    """Verify TxnSession.with_execution_options() applies a per-session override and
+    doesn't affect correctness even with a batch size smaller than the result set."""
+    db_path = str(tmp_path / "txn_execution_options_db")
+    g = Graph(db_path)
+
+    txn = g.begin().with_execution_options(ExecutionOptions(scan_vertices_batch_size=1))
+    for i in range(1, 11):
+        txn.g().addV("item", i).next()
+    assert sorted(v["id"] for v in txn.g().V().to_list()) == list(range(1, 11))
+    txn.commit()
 
     g.close()

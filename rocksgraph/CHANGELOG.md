@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Python: `by()` now accepts an anonymous sub-traversal as a sort key (`.by(__.out("knows").count())`, optionally with an `Order`), matching the Rust modulator below — sorts vertices/edges by a computed value without replacing the traverser with that value, unlike computing it as a preceding step
+- Python: `ExecutionOptions` (scan/traversal batch size tuning) is now exposed, matching the existing Rust API — set globally via `GraphOptions(execution=ExecutionOptions(...))` or per session via `ReadSession.with_execution_options(...)` / `TxnSession.with_execution_options(...)`
+
 ### Changed
 - `order_by(key, order)` removed from `TraversalBuilder`; `by()` is now a generic Gremlin-standard modulator accepting a property key (`.by("age")`), a key/direction tuple (`.by(("age", Order::Desc))`), a bare `Order` to sort the traverser's own value (`.by(Order::Desc)`), or an anonymous sub-traversal for a computed sort key (`.by(__().out(["knows"]).count())`), optionally paired with an `Order` (`.by((sub_traversal, Order::Desc))`)
 
@@ -28,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `VectorEntityType::Edge` returns explicit `Unsupported` error for unsupported edge rebuild
 
 ### Fixed
-- `SstBulkLoader` removed from public API; use `Graph::open_bulk_loader()` instead
+- `SstBulkLoader` deprecated in favor of `Graph::open_bulk_loader()`; still present and usable, but emits a deprecation warning
 
 ## [0.1.0] — 2026-07
 

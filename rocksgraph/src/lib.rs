@@ -7,7 +7,7 @@
 //! ## Quick start
 //!
 //! ```
-//! use rocksgraph::{Graph, Value};
+//! use rocksgraph::{Graph, TraversalBuilder, Value};
 //!
 //! # let dir = tempfile::tempdir().unwrap();
 //! # let graph = Graph::open(dir.path()).unwrap();
@@ -34,26 +34,47 @@
 //! # graph.close().unwrap();
 //! ```
 //!
-//! ## Guides
+//! ## User Guides
 //!
 //! - [Getting Started](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/guides/getting_started.md)
-//! - [Vector Search](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/guides/vector_search.md)
-//! - [Gremlin Step Reference](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/guides/step_reference.md)
+//! - [Data Model](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/guides/data_model.md)
 //! - [Schema Management](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/guides/schema_management.md)
 //! - [Transactions & Concurrency](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/guides/concurrency_and_tx.md)
 //! - [Bulk Loading](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/guides/bulk_loading.md)
+//! - [Vector Search](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/guides/vector_search.md)
+//! - [Performance Tuning](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/guides/performance.md)
+//! - [Gremlin Step Reference](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/guides/step_reference.md)
+//!
+//! ## Feature Flags
+//!
+//! Both are opt-in and off by default:
+//!
+//! - **`rocksdb-stats`** — collects RocksDB internal statistics (bloom-filter hit
+//!   rates, compaction counters, etc.), retrievable via
+//!   [`Graph::statistics`](api::Graph::statistics). Adds roughly 5-10% overhead to
+//!   every storage operation from the added atomic counters; enable only when
+//!   profiling, not in production.
+//! - **`tracing`** — instruments the query engine with [`tracing`](https://docs.rs/tracing)
+//!   spans/events, logging the traversers each pipeline step emits or filters out.
+//!   Zero-cost when the feature is disabled.
 //!
 //! ## Architecture
+//!
+//! Only [`api`], [`schema`], and [`bulk`] are `pub` — the rest are internal
+//! (`pub(crate)`) and listed here for orientation only; their public items reach
+//! this crate's docs solely through the re-exports at the root (`Value`, `Vertex`,
+//! `Edge`, `TraversalBuilder`, `StoreError`, etc.) or through `api`/`schema`/`bulk`.
+//! There's no supported way to reach them by their internal module path.
 //!
 //! | Module | Purpose |
 //! |--------|---------|
 //! | [`api`] | [`Graph`], [`ReadSession`], [`TxnSession`], [`IndexManager`] |
-//! | `vector` | HNSW index, BruteForce fallback, WAL, traits |
+//! | `vector` *(private)* | HNSW index, BruteForce fallback, WAL, traits |
 //! | [`schema`] | Schema modes, property types, [`VectorIndexConfig`] |
-//! | `gremlin` | Traversal builder, step types, [`Value`]/[`Vertex`]/[`Edge`] |
-//! | `store` | RocksDB column families, transactions, snapshots |
-//! | `engine` | Volcano physical operators, traverser, context |
-//! | `planner` | Logical plan optimization, filter reordering |
+//! | `gremlin` *(private)* | Traversal builder, step types, [`Value`]/[`Vertex`]/[`Edge`] |
+//! | `store` *(private)* | RocksDB column families, transactions, snapshots |
+//! | `engine` *(private)* | Volcano physical operators, traverser, context |
+//! | `planner` *(private)* | Logical plan optimization, filter reordering |
 //! | [`bulk`] | High-throughput [`BulkLoader`] for offline SST ingestion |
 #![warn(clippy::undocumented_unsafe_blocks)]
 
