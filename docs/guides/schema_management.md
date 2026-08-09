@@ -7,7 +7,7 @@ RocksGraph supports flexible schema evolution through two operational modes: **A
 This guide covers schema declaration, system limits, atomic schema updates using `SchemaSession`, property key types, label definitions, and runtime vector index management.
 
 > [!NOTE]
-> Snippets below are excerpts, not full programs — they assume `graph`/`schema` are already open as shown in [Getting Started](getting_started), and that relevant enums (`DataType`, `SchemaMode`, `EdgeMode`, `VectorEntityType`, `DistanceMetric`, `AnnAlgorithm`, `Quantization`) are imported from `rocksgraph` where used.
+> Snippets below are excerpts, not full programs — they assume `graph`/`schema` are already open as shown in [Getting Started](getting_started.md), and that relevant enums (`DataType`, `SchemaMode`, `EdgeMode`, `VectorEntityType`, `DistanceMetric`, `AnnAlgorithm`, `Quantization`) are imported from `rocksgraph` where used.
 
 ---
 
@@ -326,7 +326,7 @@ with graph.open_schema() as s:
 
 ## Related Topics
 
-- [Data Model & Type System](data_model) — Supported types, capacities, identifiers, and labels.
-- [Bulk Loading](bulk_loading) — High-throughput ingestion with declared schemas.
-- [Transactions & Concurrency](concurrency_and_tx) — ACID isolation and session types.
+- [Data Model & Type System](data_model.md) — Supported types, capacities, identifiers, and labels.
+- [Bulk Loading](bulk_loading.md) — High-throughput ingestion with declared schemas.
+- [Transactions & Concurrency](concurrency_and_tx.md) — ACID isolation and session types.
 

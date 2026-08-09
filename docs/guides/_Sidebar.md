@@ -3,14 +3,14 @@
 - [Home](https://github.com/ThouAreAwesome/RocksGraph)
 
 ### User Guides
-- [Getting Started](getting_started)
-- [Data Model & Types](data_model)
-- [Gremlin Step Reference](step_reference)
-- [Schema Management](schema_management)
-- [Vector Search Deep Dive](vector_search)
-- [Transactions & Concurrency](concurrency_and_tx)
-- [Bulk Loading & SST Ingest](bulk_loading)
-- [Performance Tuning](performance)
+- [Getting Started](getting_started.md)
+- [Data Model & Types](data_model.md)
+- [Gremlin Step Reference](step_reference.md)
+- [Schema Management](schema_management.md)
+- [Vector Search Deep Dive](vector_search.md)
+- [Transactions & Concurrency](concurrency_and_tx.md)
+- [Bulk Loading & SST Ingest](bulk_loading.md)
+- [Performance Tuning](performance.md)
 
 ### Developer Resources
 - [GitHub Repository](https://github.com/ThouAreAwesome/RocksGraph)
