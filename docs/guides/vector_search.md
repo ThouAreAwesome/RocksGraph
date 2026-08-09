@@ -7,7 +7,7 @@ RocksGraph provides integrated, in-process approximate nearest neighbor (ANN) ve
 Unlike separated architectures where vector databases and graph databases run in separate systems requiring complex distributed joins, RocksGraph embeds vector embeddings directly into graph properties and traversal streams.
 
 > [!NOTE]
-> Snippets below are excerpts, not full programs — they assume `graph`/`snap`/`schema` are already open as shown in [Getting Started](getting_started), and that relevant enums (`VectorEntityType`, `DistanceMetric`, `AnnAlgorithm`, `Quantization`, `Order`) are imported from `rocksgraph` where used.
+> Snippets below are excerpts, not full programs — they assume `graph`/`snap`/`schema` are already open as shown in [Getting Started](getting_started.md), and that relevant enums (`VectorEntityType`, `DistanceMetric`, `AnnAlgorithm`, `Quantization`, `Order`) are imported from `rocksgraph` where used.
 
 ---
 
