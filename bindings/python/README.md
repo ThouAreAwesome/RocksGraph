@@ -124,16 +124,16 @@ Full documentation and guides are available in the repository docs and GitHub Wi
 
 | Guide | Description |
 | :--- | :--- |
-| 🚀 [**Getting Started**](../../docs/guides/getting_started.md) | 5-minute end-to-end walkthrough in Rust & Python. |
-| 📐 [**Data Model & Types**](../../docs/guides/data_model.md) | Graph primitives, property types, identifier policies, and reserved keys. |
-| 🔍 [**Vector Search Deep Dive**](../../docs/guides/vector_search.md) | HNSW parameters, quantization (`F16`), memory limits, and query primitives (`nearest`, `similarity`, `neighbors`). |
-| 🗺️ [**Gremlin Step Reference**](../../docs/guides/step_reference.md) | Comprehensive step-by-step reference for all traversal steps and type transitions. |
-| 📋 [**Schema Management & DDL**](../../docs/guides/schema_management.md) | Strict vs Auto schema modes, `SchemaSession`, and dynamic vector index management. |
-| 🔒 [**Transactions & Concurrency**](../../docs/guides/concurrency_and_tx.md) | OCC conflict handling, Snapshot Isolation, and session lifecycles. |
-| ⚡ [**Bulk Loading & SST Ingest**](../../docs/guides/bulk_loading.md) | High-throughput offline SST file generation and instant atomic DB loading. |
-| 🏎️ [**Performance Tuning**](../../docs/guides/performance.md) | Batching strategies, memory sizing formulas, and query optimization patterns. |
+| 🚀 [**Getting Started**](https://github.com/ThouAreAwesome/RocksGraph/wiki/getting_started) | 5-minute end-to-end walkthrough in Rust & Python. |
+| 📐 [**Data Model & Types**](https://github.com/ThouAreAwesome/RocksGraph/wiki/data_model) | Graph primitives, property types, identifier policies, and reserved keys. |
+| 🔍 [**Vector Search Deep Dive**](https://github.com/ThouAreAwesome/RocksGraph/wiki/vector_search) | HNSW parameters, quantization (`F16`), memory limits, and query primitives (`nearest`, `similarity`, `neighbors`). |
+| 🗺️ [**Gremlin Step Reference**](https://github.com/ThouAreAwesome/RocksGraph/wiki/step_reference) | Comprehensive step-by-step reference for all traversal steps and type transitions. |
+| 📋 [**Schema Management & DDL**](https://github.com/ThouAreAwesome/RocksGraph/wiki/schema_management) | Strict vs Auto schema modes, `SchemaSession`, and dynamic vector index management. |
+| 🔒 [**Transactions & Concurrency**](https://github.com/ThouAreAwesome/RocksGraph/wiki/concurrency_and_tx) | OCC conflict handling, Snapshot Isolation, and session lifecycles. |
+| ⚡ [**Bulk Loading & SST Ingest**](https://github.com/ThouAreAwesome/RocksGraph/wiki/bulk_loading) | High-throughput offline SST file generation and instant atomic DB loading. |
+| 🏎️ [**Performance Tuning**](https://github.com/ThouAreAwesome/RocksGraph/wiki/performance) | Batching strategies, memory sizing formulas, and query optimization patterns. |
 
-For the Rust crate, see the [main repository README](../../rocksgraph/README.md).
+For the Rust crate, see the [main repository README](https://github.com/ThouAreAwesome/RocksGraph/tree/main/rocksgraph).
 
 ---
 
