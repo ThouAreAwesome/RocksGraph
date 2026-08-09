@@ -1828,7 +1828,8 @@ mod integration_test {
             .g()
             .V([])
             .hasLabel(["person"])
-            .order_by("age", Order::Desc)
+            .order()
+            .by(("age", Order::Desc))
             .values(["age"])
             .to_list()
             .unwrap()
@@ -1842,6 +1843,56 @@ mod integration_test {
         let mut sorted = ages.clone();
         sorted.sort_by(|a, b| b.cmp(a));
         assert_eq!(ages, sorted);
+    }
+
+    #[test]
+    fn test_order_desc_by_value_e2e() {
+        use crate::Order;
+        let graph = setup_modern_graph();
+        let mut txn = graph.begin();
+        let ages: Vec<i64> = txn
+            .g()
+            .V([])
+            .hasLabel(["person"])
+            .values(["age"])
+            .order()
+            .by(Order::Desc)
+            .to_list()
+            .unwrap()
+            .iter()
+            .map(|v| match v {
+                Value::Int32(i) => *i as i64,
+                Value::Int64(i) => *i,
+                _ => panic!(),
+            })
+            .collect();
+        let mut sorted = ages.clone();
+        sorted.sort_by(|a, b| b.cmp(a));
+        assert_eq!(ages, sorted);
+    }
+
+    #[test]
+    fn test_order_by_subtraversal_e2e() {
+        use crate::Order;
+        let graph = setup_modern_graph();
+        let mut txn = graph.begin();
+        let names: Vec<String> = txn
+            .g()
+            .V([])
+            .hasLabel(["person"])
+            .order()
+            .by((__().values(["age"]), Order::Desc))
+            .values(["name"])
+            .to_list()
+            .unwrap()
+            .iter()
+            .map(|v| match v {
+                Value::String(s) => s.to_string(),
+                _ => panic!(),
+            })
+            .collect();
+        // Peter (35), Josh (32), Marko (29), Vadas (27)
+        assert_eq!(names, vec!["peter", "josh", "marko", "vadas"]);
     }
 
     #[test]

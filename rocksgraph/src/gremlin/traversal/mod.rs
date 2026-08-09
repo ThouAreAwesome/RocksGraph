@@ -87,8 +87,8 @@ pub(crate) struct RepeatBuilder {
     emit: EmitSpec,
 }
 
-/// `group()`/`group_count()` do not yet support a `by()` modulator (`docs/query-engine/design_group_step.md`).
-/// Without this check, `.by()`/`.order_by()` would silently insert a new `order()`
+/// `group()`/`group_count()` do not yet support a `by()` modulator (`docs/design/query-engine/design_group_step.md`).
+/// Without this check, `.by()` would silently insert a new `order()`
 /// step after them instead — sorting the resulting `Map` traverser by a property it
 /// doesn't have, rather than doing what the caller almost certainly intended.
 fn follows_group_step(plan: &LogicalPlan) -> bool {
@@ -98,7 +98,7 @@ fn follows_group_step(plan: &LogicalPlan) -> bool {
 fn by_after_group_error(caller: &str) -> StoreError {
     StoreError::TraversalError(format!(
         "{caller} is not yet supported after group()/group_count(); the by() modulator for \
-         group is not yet implemented — see docs/query-engine/design_group_step.md"
+         group is not yet implemented — see docs/design/query-engine/design_group_step.md"
     ))
 }
 
@@ -250,6 +250,95 @@ impl PlanAppender for GraphTraversal {
     }
     fn pending_repeat_mut(&mut self) -> &mut Option<RepeatBuilder> {
         &mut self.pending_repeat
+    }
+}
+
+// ── By Modulators ─────────────────────────────────────────────────────────────
+
+/// Target for the `by()` modulator.
+pub enum ByTarget {
+    /// Sort by property value (e.g. `.by("age")` or `.by(("age", Order::Desc))`).
+    Property(SmolStr),
+    /// Sort by traverser scalar value / score directly (e.g. `.by(Order::Desc)`).
+    Value,
+    /// Sort by the output of an anonymous sub-traversal (e.g. `.by(__().out(["knows"]).count())`).
+    Traversal(GraphTraversal),
+}
+
+/// A complete `by()` modulator specification containing target and sort direction.
+pub struct ByModulator {
+    pub target: ByTarget,
+    pub order: Order,
+}
+
+/// Types that can be converted into a `by()` modulator for `order().by(...)`.
+pub trait IntoBy {
+    fn into_by(self) -> ByModulator;
+}
+
+impl IntoBy for &str {
+    fn into_by(self) -> ByModulator {
+        ByModulator { target: ByTarget::Property(SmolStr::from(self)), order: Order::Asc }
+    }
+}
+
+impl IntoBy for &String {
+    fn into_by(self) -> ByModulator {
+        ByModulator { target: ByTarget::Property(SmolStr::from(self.as_str())), order: Order::Asc }
+    }
+}
+
+impl IntoBy for String {
+    fn into_by(self) -> ByModulator {
+        ByModulator { target: ByTarget::Property(SmolStr::from(self)), order: Order::Asc }
+    }
+}
+
+impl IntoBy for SmolStr {
+    fn into_by(self) -> ByModulator {
+        ByModulator { target: ByTarget::Property(self), order: Order::Asc }
+    }
+}
+
+impl IntoBy for (&str, Order) {
+    fn into_by(self) -> ByModulator {
+        ByModulator { target: ByTarget::Property(SmolStr::from(self.0)), order: self.1 }
+    }
+}
+
+impl IntoBy for (&String, Order) {
+    fn into_by(self) -> ByModulator {
+        ByModulator { target: ByTarget::Property(SmolStr::from(self.0.as_str())), order: self.1 }
+    }
+}
+
+impl IntoBy for (String, Order) {
+    fn into_by(self) -> ByModulator {
+        ByModulator { target: ByTarget::Property(SmolStr::from(self.0)), order: self.1 }
+    }
+}
+
+impl IntoBy for (SmolStr, Order) {
+    fn into_by(self) -> ByModulator {
+        ByModulator { target: ByTarget::Property(self.0), order: self.1 }
+    }
+}
+
+impl IntoBy for Order {
+    fn into_by(self) -> ByModulator {
+        ByModulator { target: ByTarget::Value, order: self }
+    }
+}
+
+impl IntoBy for GraphTraversal {
+    fn into_by(self) -> ByModulator {
+        ByModulator { target: ByTarget::Traversal(self), order: Order::Asc }
+    }
+}
+
+impl IntoBy for (GraphTraversal, Order) {
+    fn into_by(self) -> ByModulator {
+        ByModulator { target: ByTarget::Traversal(self.0), order: self.1 }
     }
 }
 
@@ -661,86 +750,60 @@ pub trait TraversalBuilder: PlanAppender {
         self
     }
 
-    /// Modulates the most recent `order()` step to sort by a property value
-    /// instead of traverser identity.  If the last key is still the default
-    /// `Value` placeholder left by `order()`, it is replaced; otherwise the
-    /// new key is appended (enabling multi-key tie-breaking):
+    /// Modulates the most recent `order()` step to sort by a property, scalar value direction,
+    /// or anonymous sub-traversal. If the last key is still the default `Value` placeholder
+    /// left by `order()`, it is replaced; otherwise the new key is appended (enabling multi-key
+    /// tie-breaking):
     ///
     /// ```
-    /// # use rocksgraph::{Graph, TraversalBuilder};
+    /// # use rocksgraph::{Graph, Order, TraversalBuilder, __};
     /// # let dir = tempfile::tempdir().unwrap();
     /// # let graph = Graph::open(dir.path()).unwrap();
     /// # let mut snap = graph.read();
-    /// // sort by age, ties broken by name
-    /// snap.g().V([]).order().by("age").by("name");
+    /// // sort by age ascending (default)
+    /// snap.g().V([]).order().by("age");
+    /// // sort by age descending
+    /// snap.g().V([]).order().by(("age", Order::Desc));
+    /// // sort by value/score descending
+    /// snap.g().V([]).values(["age"]).order().by(Order::Desc);
+    /// // sort by age ascending, ties broken by name descending
+    /// snap.g().V([]).order().by("age").by(("name", Order::Desc));
     /// ```
     ///
     /// `by()` is not yet supported immediately after `group()`/`group_count()` —
     /// the `by()` modulator for those steps is not yet implemented (see
-    /// `docs/query-engine/design_group_step.md`). Using `by()` here would silently sort the
-    /// resulting `Map` traverser by a property it doesn't have, rather than act as
-    /// a group key/value modulator.
-    fn by(mut self, key: impl Into<SmolStr>) -> Self {
+    /// `docs/design/query-engine/design_group_step.md`). Using `by()` here will return an error.
+    fn by(mut self, modulator: impl IntoBy) -> Self {
         if follows_group_step(self.plan_mut()) {
             self.record_error(by_after_group_error("by()"));
             return self;
         }
-        let key: SmolStr = key.into();
-        let key2 = key.clone();
-        let needs_order = {
-            let plan = self.plan_mut();
-            match plan.steps.last_mut() {
-                Some(LogicalStep::Order(order_step)) => {
-                    let is_default = matches!(order_step.keys.as_slice(), [OrderKey { spec: OrderKeySpec::Value, .. }]);
-                    if is_default {
-                        order_step.keys =
-                            smallvec::smallvec![OrderKey { spec: OrderKeySpec::Property(key), order: Order::Asc }];
-                    } else {
-                        order_step.keys.push(OrderKey { spec: OrderKeySpec::Property(key), order: Order::Asc });
-                    }
-                    false
-                }
-                _ => true,
+        let ByModulator { target, order } = modulator.into_by();
+        let (spec, sub_err) = match target {
+            ByTarget::Property(k) => (OrderKeySpec::Property(k), None),
+            ByTarget::Value => (OrderKeySpec::Value, None),
+            ByTarget::Traversal(mut sub) => {
+                let err = sub.error.take();
+                (OrderKeySpec::Traversal(sub.into_plan()), err)
             }
         };
-        if needs_order {
-            self = self.order();
-            let plan = self.plan_mut();
-            match plan.steps.last_mut() {
-                Some(LogicalStep::Order(order_step)) => {
-                    let is_default = matches!(order_step.keys.as_slice(), [OrderKey { spec: OrderKeySpec::Value, .. }]);
-                    if is_default {
-                        order_step.keys =
-                            smallvec::smallvec![OrderKey { spec: OrderKeySpec::Property(key2), order: Order::Asc }];
-                    } else {
-                        order_step.keys.push(OrderKey { spec: OrderKeySpec::Property(key2), order: Order::Asc });
-                    }
-                }
-                _ => unreachable!("order() just pushed an Order step"),
-            }
+        if let Some(err) = sub_err {
+            self.record_error(err);
         }
-        self
-    }
 
-    /// Creates or modulates an `order()` step with an explicit sort direction.
-    /// Follows the same accumulate-vs-replace logic as [`by`](Self::by), including
-    /// the same rejection immediately after `group()`/`group_count()`.
-    fn order_by(mut self, key: impl Into<SmolStr>, order: Order) -> Self {
-        if follows_group_step(self.plan_mut()) {
-            self.record_error(by_after_group_error("order_by()"));
-            return self;
-        }
-        let key: SmolStr = key.into();
+        let order_key = OrderKey { spec, order };
         let needs_order = {
             let plan = self.plan_mut();
             match plan.steps.last_mut() {
                 Some(LogicalStep::Order(order_step)) => {
-                    let is_default = matches!(order_step.keys.as_slice(), [OrderKey { spec: OrderKeySpec::Value, .. }]);
+                    let is_default = matches!(
+                        order_step.keys.as_slice(),
+                        [OrderKey { spec: OrderKeySpec::Value, order: Order::Asc }]
+                    );
                     if is_default {
-                        order_step.keys =
-                            smallvec::smallvec![OrderKey { spec: OrderKeySpec::Property(key.clone()), order }];
+                        order_step.keys = smallvec::smallvec![order_key.clone()];
                     } else {
-                        order_step.keys.push(OrderKey { spec: OrderKeySpec::Property(key.clone()), order });
+                        order_step.keys.push(order_key.clone());
                     }
                     false
                 }
@@ -752,13 +815,7 @@ pub trait TraversalBuilder: PlanAppender {
             let plan = self.plan_mut();
             match plan.steps.last_mut() {
                 Some(LogicalStep::Order(order_step)) => {
-                    let is_default = matches!(order_step.keys.as_slice(), [OrderKey { spec: OrderKeySpec::Value, .. }]);
-                    if is_default {
-                        order_step.keys =
-                            smallvec::smallvec![OrderKey { spec: OrderKeySpec::Property(key.clone()), order }];
-                    } else {
-                        order_step.keys.push(OrderKey { spec: OrderKeySpec::Property(key.clone()), order });
-                    }
+                    order_step.keys = smallvec::smallvec![order_key];
                 }
                 _ => unreachable!("order() just pushed an Order step"),
             }

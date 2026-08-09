@@ -1,55 +1,60 @@
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! RocksGraph — a Gremlin-inspired property graph database engine backed by RocksDB.
+//! RocksGraph — an embeddable, ACID-compliant property graph database with
+//! Gremlin traversals and integrated HNSW vector search.
 //!
 //! ## Quick start
 //!
 //! ```
-//! use rocksgraph::{Graph, TraversalBuilder, Value};
+//! use rocksgraph::{Graph, Value};
 //!
 //! # let dir = tempfile::tempdir().unwrap();
 //! # let graph = Graph::open(dir.path()).unwrap();
 //!
-//! // Read-write transaction
+//! // Write in an ACID transaction
 //! let mut txn = graph.begin();
-//! txn.g().addV("person").property("id", 1).property("name", "alice").next().unwrap();
-//! txn.g().addV("person").property("id", 2).property("name", "bob").next().unwrap();
-//! txn.g().addE("knows").from(1).to(2).property("weight", 0.9f64).next().unwrap();
+//! txn.g().addV("person").property("id", 1i64).property("name", "alice")
+//!     .property("emb", Value::FloatVector(vec![0.9, 0.1, 0.0]))
+//!     .next().unwrap();
+//! txn.g().addV("person").property("id", 2i64).property("name", "bob")
+//!     .property("emb", Value::FloatVector(vec![0.1, 0.9, 0.0]))
+//!     .next().unwrap();
+//! txn.g().addE("knows").from(1i64).to(2i64).property("weight", 0.9f64).next().unwrap();
 //! txn.commit().unwrap();
 //!
-//! // Read-only snapshot query
+//! // Read from a point-in-time snapshot
 //! let mut snap = graph.read();
-//! let count = snap.g().V([1]).out(["knows"]).count().next().unwrap().unwrap();
-//! assert_eq!(count, Value::Int64(1));
-//! let names = snap.g().V([1]).out(["knows"]).values(["name"]).to_list().unwrap();
-//! assert_eq!(names, vec![Value::String("bob".into())]);
-//! for v in snap.g().V([]).out(["knows"]).iter().unwrap() { println!("{:?}", v.unwrap()); }
+//! let friends = snap.g().V([1i64]).out(["knows"]).values(["name"]).to_list().unwrap();
+//! assert_eq!(friends, vec![Value::String("bob".into())]);
+//!
+//! // Vector search: find nearest vertex to a query embedding
+//! let nearest = snap.g().V([]).nearest("emb", vec![1.0f32, 0.0, 0.0], 1)
+//!     .values(["name"]).to_list().unwrap();
 //! # graph.close().unwrap();
 //! ```
 //!
+//! ## Guides
+//!
+//! - [Getting Started](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/guides/getting_started.md)
+//! - [Vector Search](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/guides/vector_search.md)
+//! - [Gremlin Step Reference](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/guides/step_reference.md)
+//! - [Schema Management](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/guides/schema_management.md)
+//! - [Transactions & Concurrency](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/guides/concurrency_and_tx.md)
+//! - [Bulk Loading](https://github.com/ThouAreAwesome/RocksGraph/blob/main/docs/guides/bulk_loading.md)
+//!
 //! ## Architecture
 //!
-//! ```text
-//! Graph::open / graph.read() / graph.begin()          ← api (pub)
-//!   │  session.g() → ReadTraversal / WriteTraversal
-//!   │               step methods: self → Self (move semantics)
-//!   │               terminals: .next()? / .to_list()? / .iter()?
-//!   ▼
-//! gremlin::traversal   fluent builder → LogicalPlan AST
-//!   ▼
-//! planner              AST → LogicalPlan IR + optimizer
-//!   ▼
-//! engine::volcano      pull-based Volcano iterator pipeline
-//!   ▼
-//! graph                query-scoped overlay (OCC dirty tracking)
-//!   ▼
-//! store / RocksDB      OptimisticTransactionDB
-//! ```
-//!
-//! All modules below `api` are `pub(crate)` — users only interact through
-//! [`Graph`], [`ReadSession`], [`TxnSession`], and the traversal types re-exported
-//! at the crate root.
+//! | Module | Purpose |
+//! |--------|---------|
+//! | [`api`] | [`Graph`], [`ReadSession`], [`TxnSession`], [`IndexManager`] |
+//! | `vector` | HNSW index, BruteForce fallback, WAL, traits |
+//! | [`schema`] | Schema modes, property types, [`VectorIndexConfig`] |
+//! | `gremlin` | Traversal builder, step types, [`Value`]/[`Vertex`]/[`Edge`] |
+//! | `store` | RocksDB column families, transactions, snapshots |
+//! | `engine` | Volcano physical operators, traverser, context |
+//! | `planner` | Logical plan optimization, filter reordering |
+//! | [`bulk`] | High-throughput [`BulkLoader`] for offline SST ingestion |
 #![warn(clippy::undocumented_unsafe_blocks)]
 
 pub mod api;
@@ -83,7 +88,7 @@ pub use types::{DegreeDirection, Direction, Primitive, StoreError};
 #[doc(hidden)]
 pub use gremlin::traversal::GraphTraversal;
 pub use gremlin::{
-    traversal::{BuiltTraversal, ReadTraversal, TraversalBuilder, WriteTraversal, __},
+    traversal::{BuiltTraversal, ByModulator, ByTarget, IntoBy, ReadTraversal, TraversalBuilder, WriteTraversal, __},
     value::{between, eq, gt, gte, lt, lte, ne, within, without, Edge, Map, Path, Predicate, Property, Value, Vertex},
 };
 

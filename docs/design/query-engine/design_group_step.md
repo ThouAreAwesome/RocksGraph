@@ -74,12 +74,15 @@ writing this section:
    call shape) or using distinct method names (e.g. mirroring `order_by()` vs `by()`)
    to avoid the collision outright.
 
-   **v0.1.0 mitigation (in place):** `.by()`/`.order_by()` now reject outright —
+   **v0.1.0 mitigation (in place):** `.by()` now rejects outright —
    `StoreError::TraversalError` pointing at this doc — when the immediately preceding
    step is `Group`/`GroupCount`, instead of falling through to the auto-insert
    sugar (`follows_group_step`/`by_after_group_error` in `traversal/mod.rs`; tests
    `test_builder_by_after_group_rejected`, `test_builder_by_after_group_count_rejected`,
-   `test_builder_order_by_after_group_rejected` in `order_tests.rs`). This closes the
+   `test_builder_by_with_order_after_group_rejected` in `order_tests.rs`). `order_by(key, order)`,
+   the standalone method that existed at the time of the mitigation, was later removed in favor
+   of folding `order`/direction into `by()` itself (see `rocksgraph/CHANGELOG.md`); the same
+   rejection now applies uniformly to every `by()` call shape. This closes the
    silent-garbage footgun without deciding how `group().by()` should eventually work —
    risks 2 and 3 are still open, and the auto-insert sugar itself is untouched for
    every other step (still covered by `test_builder_by_without_order_auto_creates_order_step`).
@@ -88,11 +91,13 @@ writing this section:
    and capped at two: 1st call sets the key extractor, 2nd sets the value extractor;
    a 3rd `.by()` doesn't target `group()` at all in real Gremlin. None of `OrderStep`'s
    accumulate-or-replace logic carries over — this is a different state machine.
-3. **Key type generality.** The existing `.by(impl Into<SmolStr>)` only accepts a
-   property name. TinkerPop's `group().by(label)` / `.by(values('age').mean())` takes
-   an arbitrary sub-traversal. Real parity needs a new overload shaped like
-   `where_()`/`local()` (which already accept a `GraphTraversal`), not a variant of
-   the string-typed `by()`.
+3. **Key type generality.** `OrderStep`'s `.by()` (`impl IntoBy`) has since gained a
+   sub-traversal target (`ByTarget::Traversal`, taking a `GraphTraversal` the same way
+   `where_()`/`local()` do) alongside property key and value-direction targets — this
+   risk is resolved for `order()`. It's still open for `group()`/`group_count()`: risk 2's
+   arity mismatch means `group()` can't just reuse `OrderStep`'s `IntoBy`/`ByModulator`
+   as-is even though the underlying "accept a `GraphTraversal`" plumbing now exists —
+   `group()`'s two-slot (key extractor, value extractor) shape still needs its own design.
 
 Not a compatibility risk, but a principle tension to track once 1-3 are resolved:
 option 3's `group().by(key).by(count())` would duplicate what `groupCount()` already

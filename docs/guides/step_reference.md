@@ -279,7 +279,7 @@ Vector search steps can be customized at query time using chained modifier steps
 | `groupCount()`| `Map<Key, Int64>`| Frequency histogram by key/label | `snap.g().V().groupCount().by("city").next()` |
 | `degree(dir)` | `Int64` | Direct degree calculation (`OUT`, `IN`, `BOTH`) | `snap.g().V(1).degree(Direction.OUT).next()` |
 | `order()` | *(unchanged)* | Sort traverser stream (default ascending) | `snap.g().V().values("age").order().next()` |
-| `by(key, order)` | *(unchanged)* | Modulate order by property key and/or direction (`Order.Asc` / `Order.Desc`) | `snap.g().V().order().by("age", Order.Desc).to_list()` |
+| `by(...)` | *(unchanged)* | Modulate order by property key, value direction, and/or sub-traversal | `snap.g().V().order().by("age", Order.Desc).to_list()` |
 | `fold()` | `List[Element]` | Collects entire stream into a single list | `snap.g().V(1).out("knows").values("name").fold().next()` |
 
 ### Degree Optimization & Counts Are O(1)
@@ -295,13 +295,24 @@ Additionally, `.out().count()`, `.in_().count()`, and `.both().count()` are auto
 
 ### Ordering & Sorting Modulators
 
+`order()` opens a sort; `by(...)` modulates it — chain multiple `.by(...)` calls for tie-breaking, in priority order. `by()` accepts a property key, a scalar `Order` (sorts the traverser's own value/score), or an anonymous sub-traversal whose result becomes the sort key — all forms work identically in both languages.
+
 - 🦀 **Rust**:
   - `snap.g().V([]).order().by("age").to_list()?` (sort by property ascending)
-  - `snap.g().V([]).order_by("age", Order::Desc).to_list()?` (sort by property descending)
+  - `snap.g().V([]).order().by(("age", Order::Desc)).to_list()?` (sort by property descending)
+  - `snap.g().V([]).values(["age"]).order().by(Order::Desc).to_list()?` (sort values directly, descending)
+  - `snap.g().V([]).order().by((__().out(["knows"]).count(), Order::Desc)).to_list()?` (sort by a computed sub-traversal result — here, descending friend count)
+  - `snap.g().V([]).order().by("age").by(("name", Order::Desc)).to_list()?` (tie-break: age ascending, then name descending)
 - 🐍 **Python**:
-  - `snap.g().V().values("age").order().by(Order.Desc).to_list()` (sort values directly)
-  - `snap.g().V().order().by("age", Order.Desc).to_list()` (sort by property)
+  - `snap.g().V().order().by("age").to_list()` (sort by property ascending)
+  - `snap.g().V().order().by("age", Order.Desc).to_list()` (sort by property descending)
+  - `snap.g().V().values("age").order().by(Order.Desc).to_list()` (sort values directly, descending)
   - `snap.g().V().similarity("emb", q, DistanceMetric.Cosine).order().by(Order.Desc).to_list()` (sort by similarity score descending — `metric` is required, not optional)
+  - `snap.g().V().order().by(__.out("knows").count(), Order.Desc).to_list()` (sort by a computed sub-traversal result — here, descending friend count)
+  - `snap.g().V().order().by("age").by("name", Order.Desc).to_list()` (tie-break: age ascending, then name descending)
+
+> [!NOTE]
+> The sub-traversal form of `by()` runs the sub-traversal once per candidate being sorted, evaluating it fresh for each one. Reach for it when the sort key isn't the traverser's own value or a plain property (a computed value like a neighbor count) *and* you need to keep the traverser itself in the result — e.g. sorting vertices by similarity score without losing the vertex (see the [Vector Search guide's anti-pattern section](vector_search.md#7-vector-search-anti-patterns) for a worked example, including why it's not just a slower way to do the same thing as sorting a value directly). If you only need the computed value itself, not the original traverser, compute it as a regular step before `.order()` and sort that instead — simpler, with less per-element dispatch overhead.
 
 ---
 

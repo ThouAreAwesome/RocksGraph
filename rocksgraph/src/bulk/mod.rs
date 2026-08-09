@@ -1,6 +1,21 @@
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+//! High-throughput offline SST ingestion.
+//!
+//! [`BulkLoader`] streams vertices and edges into external sorters, generates
+//! sorted RocksDB SST files directly, and ingests them atomically — bypassing
+//! the WAL and OCC for orders-of-magnitude faster initial imports.
+//!
+//! ## Key types
+//!
+//! | Type | Purpose |
+//! |------|---------|
+//! | [`BulkLoader`] | Main entry point: `Graph::open_bulk_loader()` |
+//! | [`BulkVertex`] / [`BulkEdge`] | Pre-serialized vertex/edge records |
+//! | [`IntoBulkVertex`] / [`IntoBulkEdge`] | Conversion trait for iterators |
+//! | [`BulkLoadStats`] | Throughput and count statistics after commit |
+//! 
 //! Bulk loading and offline SST ingestion subsystem.
 //!
 //! Provides the [`BulkLoader`] session for high-throughput initial database bootstrap,

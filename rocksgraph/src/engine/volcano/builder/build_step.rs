@@ -15,7 +15,7 @@ use smol_str::SmolStr;
 
 use crate::{
     engine::volcano::steps,
-    planner::logical_step::LogicalStep,
+    planner::logical_step::{LogicalStep, OrderKeySpec},
     schema::{DataType, EdgeMode, Schema, SchemaMode},
     types::{
         error::StoreError,
@@ -690,7 +690,19 @@ impl PhysicalPlanBuilder {
             }
             LogicalStep::Order(s) => {
                 drop(schema);
-                wire_required!(BufferedStep::new(steps::order::OrderStep::new(s.keys.clone())), upstream, "OrderStep")
+                let mut physical_keys = SmallVec::new();
+                for k in &s.keys {
+                    let spec = match &k.spec {
+                        OrderKeySpec::Value => steps::order::PhysicalOrderKeySpec::Value,
+                        OrderKeySpec::Property(p) => steps::order::PhysicalOrderKeySpec::Property(p.clone()),
+                        OrderKeySpec::Traversal(plan) => {
+                            let physical_plan = self.build_steps(plan, schema_lock, track_path)?;
+                            steps::order::PhysicalOrderKeySpec::Traversal(physical_plan)
+                        }
+                    };
+                    physical_keys.push(steps::order::PhysicalOrderKey { spec, order: k.order });
+                }
+                wire_required!(BufferedStep::new(steps::order::OrderStep::new(physical_keys)), upstream, "OrderStep")
             }
             LogicalStep::SimplePath(_) => {
                 drop(schema);
