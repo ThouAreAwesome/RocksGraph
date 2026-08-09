@@ -1,6 +1,6 @@
 [package]
 authors = ["Austin Han <austinhan1024@gmail.com>"]
-description = "Embedded property graph database with Gremlin-style traversals. Persistent via RocksDB, zero infrastructure — link it in, open a graph, traverse it."
+description = "Embeddable, ACID-compliant property graph database with Gremlin traversals and integrated HNSW vector search."
 edition = "2021"
 license = "MIT OR Apache-2.0"
 name = "rocksgraph"
