@@ -1,7 +1,16 @@
 // Copyright (c) 2026 Austin Han <austinhan1024@gmail.com>
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! High-level user-facing API.
+//! Graph lifecycle, sessions, and the [`IndexManager`].
+//!
+//!
+//!  - [`Graph::open`] — open or create a database at a path
+//!  - [`Graph::read`] — point-in-time snapshot ([`ReadSession`])
+//!  - [`Graph::begin`] — ACID read-write transaction ([`TxnSession`])
+//!  - [`Graph::open_schema`] — atomic DDL ([`crate::schema::SchemaSession`])
+//!  - [`Graph::index_manager`] — vector index maintenance ([`IndexManager`])
+//!
+//!    High-level user-facing API.
 //!
 //! ```text
 //! Graph::open("./db")
@@ -87,7 +96,7 @@ use crate::{
 ///
 /// - [`read`](Self::read) — open a read-only snapshot
 /// - [`begin`](Self::begin) — open a read-write OCC transaction
-/// - [`open_schema`](Self::open_schema) — declare schema in [`SchemaMode::Strict`](crate::schema::SchemaMode::Strict)
+/// - [`open_schema`](Self::open_schema) — declare schema in [`crate::schema::SchemaMode::Strict`]
 /// - [`open_bulk_loader`](Self::open_bulk_loader) — high-throughput SST-based data ingestion
 /// - [`close`](Self::close) — flush vector index snapshots and release the RocksDB handle
 ///

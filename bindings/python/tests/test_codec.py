@@ -8,6 +8,7 @@ from rocksgraph._codec import (
     OP_HASLABEL,
     OP_HASPROPERTY,
     OP_LIMIT,
+    OP_ORDER,
     OP_OUT,
     OP_OUTE,
     OP_RANGE,
@@ -204,6 +205,32 @@ class TestCloningDoesNotMutate:
         # t1 should not have a by() spec
         assert t1.steps[-1][1] == []
         assert t2.steps[-1][1] == [("age", "asc")]
+
+
+class TestOrderBySubtraversal:
+    def test_by_unwraps_traversal_to_its_step_list(self):
+        # by()'s builder-side contract: a Traversal key_spec is unwrapped to its raw
+        # .steps list before storage, matching where()/local()/union()'s convention —
+        # _codec.py never sees a Traversal object directly.
+        sub = __.out("knows").count()
+        t = Traversal(None).order().by(sub)
+        assert t.steps[-1][1] == [(sub.steps, "asc")]
+
+    def test_by_subtraversal_with_explicit_order(self):
+        sub = __.out("knows").count()
+        t = Traversal(None).order().by(sub, "desc")
+        assert t.steps[-1][1] == [(sub.steps, "desc")]
+
+    def test_encode_tags_subtraversal_key_as_2(self):
+        # OP_ORDER key-spec tag byte: 0=Value(None), 1=Property(str), 2=Traversal(sub-plan).
+        sub = __.out("knows").count()
+        t = Traversal(None).order().by(sub, "desc")
+        buf = encode(t.steps)
+        idx = list(buf).index(OP_ORDER)
+        key_count = struct.unpack(">H", buf[idx + 1 : idx + 3])[0]
+        assert key_count == 1
+        tag = buf[idx + 3]
+        assert tag == 2
 
 
 class TestVertexId:

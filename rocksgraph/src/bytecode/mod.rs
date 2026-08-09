@@ -524,6 +524,10 @@ fn encode_step(step: &LogicalStep, buf: &mut Vec<u8>) {
                         buf.push(1);
                         encode_smolstr(p, buf);
                     }
+                    OrderKeySpec::Traversal(plan) => {
+                        buf.push(2);
+                        encode_plan(plan, buf);
+                    }
                 }
                 match k.order {
                     Order::Asc => buf.push(0),
@@ -946,6 +950,7 @@ fn decode_step(bytes: &[u8], offset: &mut usize) -> Result<LogicalStep, StoreErr
                     let spec = match read_u8(bytes, offset)? {
                         0 => OrderKeySpec::Value,
                         1 => OrderKeySpec::Property(read_smolstr(bytes, offset)?),
+                        2 => OrderKeySpec::Traversal(decode_plan(bytes, offset)?),
                         _ => return Err(StoreError::UnsupportedOperation("Unknown OrderKeySpec".into())),
                     };
                     let order = match read_u8(bytes, offset)? {
@@ -1794,6 +1799,47 @@ mod tests {
                 assert_eq!(b.rank, Some(10));
             }
             _ => panic!("Expected BothEStep"),
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_order_by_traversal_key() {
+        let plan = LogicalPlan {
+            steps: vec![LogicalStep::Order(OrderStep {
+                keys: smallvec::smallvec![OrderKey {
+                    spec: OrderKeySpec::Traversal(LogicalPlan {
+                        steps: vec![
+                            LogicalStep::Out(OutStep {
+                                labels: smallvec::smallvec!["knows".into()],
+                                end_vertex_ids: None
+                            }),
+                            LogicalStep::Count(CountStep {}),
+                        ],
+                    }),
+                    order: Order::Desc,
+                }],
+            })],
+        };
+        let encoded = encode(&plan);
+        let decoded = decode(&encoded).unwrap();
+        assert_eq!(decoded.steps.len(), 1);
+        match &decoded.steps[0] {
+            LogicalStep::Order(o) => {
+                assert_eq!(o.keys.len(), 1);
+                assert!(matches!(o.keys[0].order, Order::Desc));
+                match &o.keys[0].spec {
+                    OrderKeySpec::Traversal(sub_plan) => {
+                        assert_eq!(sub_plan.steps.len(), 2);
+                        match &sub_plan.steps[0] {
+                            LogicalStep::Out(s) => assert_eq!(s.labels[0].as_str(), "knows"),
+                            _ => panic!("Expected OutStep"),
+                        }
+                        assert!(matches!(sub_plan.steps[1], LogicalStep::Count(_)));
+                    }
+                    _ => panic!("Expected Traversal spec"),
+                }
+            }
+            _ => panic!("Expected OrderStep"),
         }
     }
 }

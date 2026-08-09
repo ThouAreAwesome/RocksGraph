@@ -9,12 +9,12 @@ use crate::{
         context::NoopCtx,
         traverser::Traverser,
         volcano::steps::{
-            order::OrderStep,
+            order::{OrderStep, PhysicalOrderKey, PhysicalOrderKeySpec},
             traits::{BufferedStep, StepRef},
             vec_source::VecSourceStep,
         },
     },
-    planner::logical_step::{Order, OrderKey, OrderKeySpec},
+    planner::logical_step::{Order, OrderKeySpec},
     types::gvalue::{GValue, Primitive},
 };
 use smallvec::smallvec;
@@ -28,7 +28,7 @@ fn t(v: i64) -> Rc<Traverser> {
 fn test_order_asc() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![t(3), t(1), t(2)]);
-    let mut step = OrderStep::new(smallvec![OrderKey { spec: OrderKeySpec::Value, order: Order::Asc }]);
+    let mut step = OrderStep::new(smallvec![PhysicalOrderKey { spec: PhysicalOrderKeySpec::Value, order: Order::Asc }]);
     step.add_upper(src.clone() as StepRef);
     let mut ctx = NoopCtx;
     assert_eq!(step.produce(&mut ctx).unwrap().unwrap()[0].value, GValue::Scalar(Primitive::Int64(1)));
@@ -41,7 +41,8 @@ fn test_order_asc() {
 fn test_order_desc() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![t(3), t(1), t(2)]);
-    let mut step = OrderStep::new(smallvec![OrderKey { spec: OrderKeySpec::Value, order: Order::Desc }]);
+    let mut step =
+        OrderStep::new(smallvec![PhysicalOrderKey { spec: PhysicalOrderKeySpec::Value, order: Order::Desc }]);
     step.add_upper(src.clone() as StepRef);
     let mut ctx = NoopCtx;
     assert_eq!(step.produce(&mut ctx).unwrap().unwrap()[0].value, GValue::Scalar(Primitive::Int64(3)));
@@ -52,7 +53,7 @@ fn test_order_desc() {
 #[test]
 fn test_order_empty() {
     let src = BufferedStep::new(VecSourceStep::empty());
-    let mut step = OrderStep::new(smallvec![OrderKey { spec: OrderKeySpec::Value, order: Order::Asc }]);
+    let mut step = OrderStep::new(smallvec![PhysicalOrderKey { spec: PhysicalOrderKeySpec::Value, order: Order::Asc }]);
     step.add_upper(src.clone() as StepRef);
     let mut ctx = NoopCtx;
     assert!(step.produce(&mut ctx).unwrap().is_none());
@@ -62,7 +63,7 @@ fn test_order_empty() {
 fn test_order_reset() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![t(3), t(1)]);
-    let mut step = OrderStep::new(smallvec![OrderKey { spec: OrderKeySpec::Value, order: Order::Asc }]);
+    let mut step = OrderStep::new(smallvec![PhysicalOrderKey { spec: PhysicalOrderKeySpec::Value, order: Order::Asc }]);
     step.add_upper(src.clone() as StepRef);
     let mut ctx = NoopCtx;
     assert!(step.produce(&mut ctx).unwrap().is_some());
@@ -73,14 +74,14 @@ fn test_order_reset() {
 
 #[test]
 fn test_order_no_upstream() {
-    let mut step = OrderStep::new(smallvec![OrderKey { spec: OrderKeySpec::Value, order: Order::Asc }]);
+    let mut step = OrderStep::new(smallvec![PhysicalOrderKey { spec: PhysicalOrderKeySpec::Value, order: Order::Asc }]);
     let mut ctx = NoopCtx;
     assert!(step.produce(&mut ctx).unwrap().is_none());
 }
 
 #[test]
 fn test_order_upper() {
-    let mut step = OrderStep::new(smallvec![OrderKey { spec: OrderKeySpec::Value, order: Order::Asc }]);
+    let mut step = OrderStep::new(smallvec![PhysicalOrderKey { spec: PhysicalOrderKeySpec::Value, order: Order::Asc }]);
     assert!(step.upper().is_none());
     let src = BufferedStep::new(VecSourceStep::empty());
     step.add_upper(src.clone() as StepRef);
@@ -91,7 +92,7 @@ fn test_order_upper() {
 fn test_order_done_flag() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![t(1)]);
-    let mut step = OrderStep::new(smallvec![OrderKey { spec: OrderKeySpec::Value, order: Order::Asc }]);
+    let mut step = OrderStep::new(smallvec![PhysicalOrderKey { spec: PhysicalOrderKeySpec::Value, order: Order::Asc }]);
     step.add_upper(src.clone() as StepRef);
     let mut ctx = NoopCtx;
     assert!(step.produce(&mut ctx).unwrap().is_some());
@@ -234,7 +235,6 @@ fn test_order_by_property_vertex_asc() {
     let mut schema = Schema::default();
     let age_id = schema.register_prop_key(SmolStr::from("age")).unwrap();
 
-    // Vertices 1,2,3 with ages 30,10,20
     let ctx = PropTestCtx::new(schema)
         .with_vertex_prop(1, age_id, Primitive::Int32(30))
         .with_vertex_prop(2, age_id, Primitive::Int32(10))
@@ -243,8 +243,10 @@ fn test_order_by_property_vertex_asc() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![vertex_t(1), vertex_t(2), vertex_t(3)]);
 
-    let mut step =
-        OrderStep::new(smallvec![OrderKey { spec: OrderKeySpec::Property(SmolStr::from("age")), order: Order::Asc }]);
+    let mut step = OrderStep::new(smallvec![PhysicalOrderKey {
+        spec: PhysicalOrderKeySpec::Property(SmolStr::from("age")),
+        order: Order::Asc
+    }]);
     step.add_upper(src.clone() as StepRef);
 
     let mut ctx = ctx;
@@ -268,8 +270,10 @@ fn test_order_by_property_vertex_desc() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![vertex_t(1), vertex_t(2), vertex_t(3)]);
 
-    let mut step =
-        OrderStep::new(smallvec![OrderKey { spec: OrderKeySpec::Property(SmolStr::from("age")), order: Order::Desc }]);
+    let mut step = OrderStep::new(smallvec![PhysicalOrderKey {
+        spec: PhysicalOrderKeySpec::Property(SmolStr::from("age")),
+        order: Order::Desc
+    }]);
     step.add_upper(src.clone() as StepRef);
 
     let mut ctx = ctx;
@@ -294,8 +298,10 @@ fn test_order_by_missing_property_is_null() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![vertex_t(1), vertex_t(2), vertex_t(3)]);
 
-    let mut step =
-        OrderStep::new(smallvec![OrderKey { spec: OrderKeySpec::Property(SmolStr::from("age")), order: Order::Asc }]);
+    let mut step = OrderStep::new(smallvec![PhysicalOrderKey {
+        spec: PhysicalOrderKeySpec::Property(SmolStr::from("age")),
+        order: Order::Asc
+    }]);
     step.add_upper(src.clone() as StepRef);
 
     let mut ctx = ctx;
@@ -315,8 +321,10 @@ fn test_order_by_property_name_resolution_cached() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![vertex_t(1)]);
 
-    let mut step =
-        OrderStep::new(smallvec![OrderKey { spec: OrderKeySpec::Property(SmolStr::from("score")), order: Order::Asc }]);
+    let mut step = OrderStep::new(smallvec![PhysicalOrderKey {
+        spec: PhysicalOrderKeySpec::Property(SmolStr::from("score")),
+        order: Order::Asc
+    }]);
     step.add_upper(src.clone() as StepRef);
 
     let mut ctx = ctx;
@@ -350,8 +358,8 @@ fn test_order_by_two_properties_tie_break() {
     src.inner.borrow_mut().core.inject(smallvec![vertex_t(1), vertex_t(2), vertex_t(3)]);
 
     let mut step = OrderStep::new(smallvec![
-        OrderKey { spec: OrderKeySpec::Property(SmolStr::from("age")), order: Order::Asc },
-        OrderKey { spec: OrderKeySpec::Property(SmolStr::from("name")), order: Order::Asc },
+        PhysicalOrderKey { spec: PhysicalOrderKeySpec::Property(SmolStr::from("age")), order: Order::Asc },
+        PhysicalOrderKey { spec: PhysicalOrderKeySpec::Property(SmolStr::from("name")), order: Order::Asc },
     ]);
     step.add_upper(src.clone() as StepRef);
 
@@ -392,6 +400,39 @@ fn test_builder_order_by_two_keys_tie_break() {
 }
 
 #[test]
+fn test_builder_order_by_desc_tuple() {
+    let traversal = crate::gremlin::traversal::__();
+    let plan = traversal.order().by(("age", Order::Desc)).into_plan();
+    assert_eq!(plan.steps.len(), 1);
+    let LogicalStep::Order(ref os) = plan.steps[0] else { panic!("expected Order step") };
+    assert_eq!(os.keys.len(), 1);
+    assert!(matches!(os.keys[0].spec, OrderKeySpec::Property(ref k) if k == "age"));
+    assert_eq!(os.keys[0].order, Order::Desc);
+}
+
+#[test]
+fn test_builder_order_by_value_desc() {
+    let traversal = crate::gremlin::traversal::__();
+    let plan = traversal.order().by(Order::Desc).into_plan();
+    assert_eq!(plan.steps.len(), 1);
+    let LogicalStep::Order(ref os) = plan.steps[0] else { panic!("expected Order step") };
+    assert_eq!(os.keys.len(), 1);
+    assert!(matches!(os.keys[0].spec, OrderKeySpec::Value));
+    assert_eq!(os.keys[0].order, Order::Desc);
+}
+
+#[test]
+fn test_builder_order_by_subtraversal() {
+    let traversal = crate::gremlin::traversal::__();
+    let plan = traversal.order().by((crate::gremlin::traversal::__().values(["age"]), Order::Desc)).into_plan();
+    assert_eq!(plan.steps.len(), 1);
+    let LogicalStep::Order(ref os) = plan.steps[0] else { panic!("expected Order step") };
+    assert_eq!(os.keys.len(), 1);
+    assert!(matches!(os.keys[0].spec, OrderKeySpec::Traversal(_)));
+    assert_eq!(os.keys[0].order, Order::Desc);
+}
+
+#[test]
 fn test_builder_order_by_replaces_default_value_key() {
     // Bare .order() produces a single Value key. .by("age") should replace it.
     let traversal = crate::gremlin::traversal::__();
@@ -412,9 +453,9 @@ fn test_builder_by_without_order_auto_creates_order_step() {
     assert!(matches!(os.keys[0].spec, OrderKeySpec::Property(ref k) if k == "age"));
 }
 
-// `by()`/`order_by()` immediately after `group()`/`group_count()` must be rejected rather
+// `by()` immediately after `group()`/`group_count()` must be rejected rather
 // than silently auto-inserting an `order()` step that sorts the resulting `Map` by a
-// property it doesn't have (see `docs/query-engine/design_group_step.md`, compatibility risk #1).
+// property it doesn't have (see `docs/design/query-engine/design_group_step.md`, compatibility risk #1).
 
 #[test]
 fn test_builder_by_after_group_rejected() {
@@ -435,8 +476,8 @@ fn test_builder_by_after_group_count_rejected() {
 }
 
 #[test]
-fn test_builder_order_by_after_group_rejected() {
-    let traversal = crate::gremlin::traversal::__().group().order_by("age", Order::Desc);
+fn test_builder_by_with_order_after_group_rejected() {
+    let traversal = crate::gremlin::traversal::__().group().by(("age", Order::Desc));
     assert!(traversal.error.is_some());
     let plan = traversal.into_plan();
     assert_eq!(plan.steps.len(), 1);

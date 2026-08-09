@@ -46,10 +46,12 @@ system could use. RocksGraph separates `ReadTraversal` and `WriteTraversal` at t
 level, and uses typed terminal methods.
 
 **`by()` modulator complexity.** The `by()` modulator is powerful but opaque — it changes
-the behavior of the preceding step in non-obvious ways. RocksGraph currently supports
-`order().by(key)` but full `by()` modulator semantics are not yet supported for steps like
-`group()`/`groupCount()`. See `docs/design_group_step.md` for the open design questions
-and compatibility risks that need to be resolved before implementation.
+the behavior of the preceding step in non-obvious ways. RocksGraph's `order()` supports the
+full modulator shape (property key, key/direction tuple, bare `Order` for value-based sort,
+and — Rust only — an anonymous sub-traversal for a computed key), but `by()` semantics are
+not yet supported for steps like `group()`/`groupCount()`. See
+`docs/design/query-engine/design_group_step.md` for the open design questions and
+compatibility risks that need to be resolved before implementation.
 
 ---
 

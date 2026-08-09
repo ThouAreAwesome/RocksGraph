@@ -847,6 +847,35 @@ class TestGLVEnums:
         result4 = rs.g().V().hasLabel("item").values("age").order().by(asc).to_list()
         assert result4 == [10, 20, 30]
 
+    def test_order_by_subtraversal_bare(self, graph):
+        # .by(<sub-traversal>) with no explicit Order defaults to ascending, same as .by("prop").
+        txn = graph.begin()
+        v1 = addv(txn, "person", name="v1")
+        v2 = addv(txn, "person", name="v2")
+        v3 = addv(txn, "person", name="v3")
+        txn.g().addE("knows").from_(v1["id"]).to(v2["id"]).next()
+        txn.g().addE("knows").from_(v1["id"]).to(v3["id"]).next()
+        txn.commit()
+        rs = graph.read()
+        result = rs.g().V().hasLabel("person").order().by(__.out("knows").count()).values("name").to_list()
+        assert result == ["v2", "v3", "v1"]
+
+    def test_order_by_subtraversal_with_order(self, graph):
+        # .by(<sub-traversal>, Order.Desc) sorts by a computed value per element, descending.
+        txn = graph.begin()
+        v1 = addv(txn, "person", name="v1")
+        v2 = addv(txn, "person", name="v2")
+        v3 = addv(txn, "person", name="v3")
+        txn.g().addE("knows").from_(v1["id"]).to(v2["id"]).next()
+        txn.g().addE("knows").from_(v1["id"]).to(v3["id"]).next()
+        txn.commit()
+        rs = graph.read()
+        result = (
+            rs.g().V().hasLabel("person").order().by(__.out("knows").count(), Order.Desc).values("name").to_list()
+        )
+        assert result[0] == "v1"
+        assert set(result[1:]) == {"v2", "v3"}
+
     def test_order_invalid_raises_error(self, graph):
         rs = graph.read()
         with pytest.raises(ValueError):

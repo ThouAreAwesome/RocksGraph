@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `order_by(key, order)` removed from `TraversalBuilder`; `by()` is now a generic Gremlin-standard modulator accepting a property key (`.by("age")`), a key/direction tuple (`.by(("age", Order::Desc))`), a bare `Order` to sort the traverser's own value (`.by(Order::Desc)`), or an anonymous sub-traversal for a computed sort key (`.by(__().out(["knows"]).count())`), optionally paired with an `Order` (`.by((sub_traversal, Order::Desc))`)
+
 ## [0.2.0] — 2026-08
 
 ### Added

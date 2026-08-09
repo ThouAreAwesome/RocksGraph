@@ -116,6 +116,15 @@ impl LogicalPlan {
                     Local(LocalStep { plan }) if scan(&plan.steps) => {
                         return true;
                     }
+                    Order(OrderStep { keys }) => {
+                        for k in keys {
+                            if let OrderKeySpec::Traversal(plan) = &k.spec {
+                                if scan(&plan.steps) {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -368,27 +377,39 @@ pub enum Order {
 }
 
 /// Specifies what to compare when sorting.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum OrderKeySpec {
     /// Compare by the traverser value itself.
     Value,
     /// Compare by a property value (resolved at build time).
     Property(SmolStr),
+    /// Compare by the output of an anonymous sub-traversal.
+    Traversal(LogicalPlan),
 }
 
 /// A single sort key with direction.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct OrderKey {
     pub spec: OrderKeySpec,
     pub order: Order,
 }
 
 /// Sorts traversers using the given key specifications.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct OrderStep {
     pub keys: SmallVec<[OrderKey; ORDER_KEY_INLINE]>,
 }
-impl Optimizer for OrderStep {}
+impl Optimizer for OrderStep {
+    fn optimize(&mut self, optimizer_rule: &OptimizerRule) -> Result<bool, StoreError> {
+        let mut changed = false;
+        for k in self.keys.iter_mut() {
+            if let OrderKeySpec::Traversal(ref mut plan) = k.spec {
+                changed |= optimizer_rule(plan)?;
+            }
+        }
+        Ok(changed)
+    }
+}
 
 /// Filters out traversers whose path contains duplicate vertices (keeps simple paths).
 #[derive(Clone, Debug)]

@@ -124,30 +124,29 @@ top_matches = (
 ---
 
 ### 2. `.similarity(property, query_vector, metric)` (Compute Score & Sort)
-Computes the similarity score between each candidate vertex currently in the traversal and a reference vector, replacing each traverser with its scalar score. `.order()` alone sorts that score **ascending** (lowest first) — for similarity you almost always want the highest scores first, so sort descending explicitly.
+Computes the similarity score between each candidate vertex currently in the traversal and a reference vector, **replacing each traverser with its scalar score** — the vertex itself is gone from the stream after this step, only the number remains. `.order()` alone sorts that score **ascending** (lowest first) — for similarity you almost always want the highest scores first, so sort descending explicitly.
 
 > [!NOTE]
-> `.similarity()` computes an **exact** score for every candidate it's given — it isn't a faster or slower version of `.nearest()`, it's a different guarantee. `.nearest()` searches the HNSW index and is **approximate**: the crate's own test suite targets ≥95% recall against brute-force ground truth, not 100%. Use `.similarity(...).order().by(Order.Desc).limit(k)` when you need the *exact* top-k (small candidate sets, verification/eval, or no index declared yet); use `.nearest()` when approximate is acceptable and the candidate set is large — that's the common case, which is why brute-force scanning is the anti-pattern below.
-
-> [!IMPORTANT]
-> Python's `.by(Order.Desc)` sorts by the traverser's own value (the score) in either direction. As of v0.2, Rust's `.order()`/`.by()`/`.order_by()` don't have a value-based descending path — `.by()`/`.order_by()` always sort by a named *property*, and bare `.order()` is ascending-only. Sort ascending and reverse the collected `Vec` instead, as shown below.
+> `.similarity()` computes an **exact** score for every candidate it's given — it isn't a faster or slower version of `.nearest()`, it's a different guarantee. `.nearest()` searches the HNSW index and is **approximate**: the crate's own test suite targets ≥95% recall against brute-force ground truth, not 100%. Use `.similarity(...).order().by(Order.Desc).limit(k)` when you need the *exact* top-k **scores** (small candidate sets, verification/eval, or no index declared yet, as covered in this section); use `.nearest()` when approximate is acceptable and the candidate set is large — that's the common case, which is why brute-force scanning is the anti-pattern below. If you need the exact top-k **vertices** (not bare scores) via brute force, see the sub-traversal form in [§7](#7-vector-search-anti-patterns) — `.similarity()` used directly, as below, cannot give you that.
 
 #### 🦀 Rust
 ```rust
-use rocksgraph::schema::DistanceMetric;
+use rocksgraph::{schema::DistanceMetric, Order};
 
 let mut snap = graph.read();
 let target_vector = vec![0.5f32, 0.5, 0.0];
 
-// Find friends of user 1, sorted by similarity (ascending), then reverse for highest-first
-let mut similar_friends = snap
+// Similarity score of each of user 1's friends to target_vector, highest first.
+// Note: the result is a list of scores (Vec<f32>), not the friends themselves —
+// .similarity() replaces the traverser with its score.
+let friend_scores = snap
     .g()
     .V([1])
     .out(["knows"])
     .similarity("emb", target_vector, DistanceMetric::Cosine)
     .order()
+    .by(Order::Desc)
     .to_list()?;
-similar_friends.reverse();
 ```
 
 #### 🐍 Python
@@ -157,7 +156,8 @@ from rocksgraph import DistanceMetric, Order
 snap = graph.read()
 target_vector = [0.5, 0.5, 0.0]
 
-similar_friends = (
+# Result is a list of scores, not the friends themselves — see the note above.
+friend_scores = (
     snap.g()
     .V(1)
     .out("knows")
@@ -281,18 +281,32 @@ Set `ef_search = 32` for low-latency interactive search ($<1\text{ms}$), or incr
 ## 7. Vector Search Anti-Patterns
 
 ### ❌ Anti-Pattern 1: Brute-Force Vector Scans over Unindexed Properties
-Using `.similarity()` over the full vertex set forces a linear $O(N)$ scan, computing an exact score for every vertex on CPU. This is only the right tool when you specifically need exact results (§3.2) — if approximate nearest neighbors are acceptable, which is the common case, declare an HNSW index and use `.nearest()` instead: same intent, sub-linear cost, ~95%+ recall rather than exact.
+Using `.similarity()` over the full vertex set forces a linear $O(N)$ scan, computing an exact score for every vertex on CPU. This is only the right tool when you specifically need exact results (§3.2) — if approximate nearest neighbors are acceptable, which is the common case, declare an HNSW index and use `.nearest()` instead: same result shape (vertices, not scores), sub-linear cost, ~95%+ recall rather than exact.
 
+#### 🦀 Rust
+```rust
+// ❌ ANTI-PATTERN: exact top-10 *vertices* via full scan, when approximate would do.
+// The sub-traversal form of by() is required here to keep the vertex as the traverser —
+// plain `.similarity(...).order().by(Order::Desc)` (§2) would replace it with a bare score.
+snap.g().V([]).order().by((__().similarity("raw_emb", query_vec, DistanceMetric::Cosine), Order::Desc)).limit(10).to_list()?;
+
+// ✅ BETTER (when exact isn't required): declare an HNSW index on "raw_emb" and use .nearest() — same shape, less work
+snap.g().V([]).nearest("raw_emb", query_vec, 10).to_list()?;
+```
+
+#### 🐍 Python
 ```python
-# ❌ ANTI-PATTERN: Exact top-k via full scan, when approximate would do
-snap.g().V().similarity("raw_emb", query_vec, DistanceMetric.Cosine).order().by(Order.Desc).limit(10).to_list()
+# ❌ ANTI-PATTERN: exact top-10 *vertices* via full scan, when approximate would do.
+# The sub-traversal form of by() is required here to keep the vertex as the traverser —
+# plain `.similarity(...).order().by(Order.Desc)` (§2) would replace it with a bare score.
+snap.g().V().order().by(__.similarity("raw_emb", query_vec, DistanceMetric.Cosine), Order.Desc).limit(10).to_list()
 
-# ✅ BETTER (when exact isn't required): declare an HNSW index on "raw_emb" and use .nearest()
+# ✅ BETTER (when exact isn't required): declare an HNSW index on "raw_emb" and use .nearest() — same shape, less work
 snap.g().V().nearest("raw_emb", query_vec, 10).to_list()
 ```
 
 > [!WARNING]
-> If you do need the exact/brute-force form, compute the score first and sort second, as above — `.similarity(...).order().by(Order.Desc)` — not `.order().by(<sub-traversal>, Order.Desc)`. Gremlin's `by(anonymous-traversal)` modulator (e.g. TinkerPop's `by(__.values("score"), desc)`) isn't supported here: `.by()` accepts a property-name string, sort direction (`Order.Desc`), or both (`.by("key", Order.Desc)`). Passing a sub-traversal fails — a confusing runtime error in Python, a compile error in Rust — rather than doing what you'd expect.
+> `.similarity(...).order().by(Order.Desc)` and `.order().by(__.similarity(...), Order.Desc)` (Rust: `.order().by((__().similarity(...), Order::Desc))`) are **not interchangeable**, and the difference isn't performance — both are $O(N)$ overall, one similarity computation per vertex either way, since `.similarity()` does a single point-lookup per traverser it receives rather than an independent scan. The difference is the *result*: the direct form discards the vertex and sorts bare scores (§2); the sub-traversal form keeps the vertex as the traverser and uses the score only as the sort key, matching what `.nearest()` returns. Pick based on what you need downstream — chain `.values(...)` or further graph steps after the sort → use the sub-traversal form; only need the numbers → use the direct form, which has less per-element overhead (no nested sub-plan dispatch) for the same asymptotic cost.
 
 ### ❌ Anti-Pattern 2: Unbounded In-Memory Index Sizing
 Creating multiple unquantized F32 indexes with $M=64$ on memory-constrained servers without estimating RAM usage can cause out-of-memory crashes. Always calculate your memory budget with the formula in [§5](#5-memory-footprint--quantization) before provisioning.

@@ -579,7 +579,10 @@ class Traversal:
         return self._add(OP_ORDER, [])
 
     def by(self, key_spec: Any = None, order: str | Order = Order.Asc):
-        # Standard Gremlin support: .by(Order.Desc), .by(desc), .by("desc"), or .by("prop", Order.Desc)
+        # Standard Gremlin support: .by(Order.Desc), .by(desc), .by("desc"), .by("prop", Order.Desc),
+        # or .by(<sub-traversal>[, Order.Desc]) to sort by a computed value while keeping the
+        # traverser itself (e.g. .by(__.similarity("emb", q, metric), Order.Desc) sorts vertices
+        # by similarity without replacing them with the score, unlike .similarity().order().by()).
         if isinstance(key_spec, Order):
             order_val = key_spec.value
             key_spec = None
@@ -587,6 +590,8 @@ class Traversal:
             order_val = key_spec.lower()
             key_spec = None
         else:
+            if isinstance(key_spec, Traversal):
+                key_spec = key_spec.steps
             if isinstance(order, Order):
                 order_val = order.value
             elif isinstance(order, str):

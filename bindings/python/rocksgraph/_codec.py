@@ -306,9 +306,14 @@ def _encode_step(opcode: int, args: Any, buf: bytearray):
         for key_spec, order in args:
             if key_spec is None:
                 buf.append(0)
-            else:
+            elif isinstance(key_spec, str):
                 buf.append(1)
                 _encode_string(key_spec, buf)
+            else:
+                # Sub-traversal key: `by()` in _builder.py already unwrapped a `Traversal`
+                # into its raw step list before it reached here.
+                buf.append(2)
+                _encode_plan(key_spec, buf)
             if isinstance(order, str):
                 order_lower = order.lower()
                 if order_lower == "asc":

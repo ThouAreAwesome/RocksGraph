@@ -30,7 +30,7 @@ The [action roadmap](./market_landscape_and_positioning.md#31-工程路线图) m
     per-language step wrappers.
   - **Python builder covers all Gremlin steps:**
     - Traversal: `V`, `out`, `in`, `both`, `outE`, `inE`, `bothE`, `inV`, `outV`, `otherV`
-    - Filtering: `has`, `hasLabel`, `hasId`, `hasRank`, `is`, `limit`, `range`, `skip`, `tail`, `dedup`, `order`, `order_by`
+    - Filtering: `has`, `hasLabel`, `hasId`, `hasRank`, `is`, `limit`, `range`, `skip`, `tail`, `dedup`, `order`, `by`
     - Extraction: `values`, `properties`, `id`, `label`, `rank`
     - Aggregation: `count`, `fold`, `sum`, `mean`, `max`, `min`, `unfold`, `group`, `groupCount`, `path`
     - Composition: `as_`, `select`, `identity`, `constant`, `simplePath`, `cyclicPath`

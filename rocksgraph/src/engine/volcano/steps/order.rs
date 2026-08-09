@@ -3,6 +3,7 @@
 
 // Physical step: order()
 
+use crate::engine::volcano::builder::PhysicalPlan;
 use crate::engine::volcano::steps::traits::ExplainNode;
 use crate::types::PIPELINE_PRODUCE_SIZE;
 use crate::{
@@ -11,7 +12,7 @@ use crate::{
         traverser::Traverser,
         volcano::steps::traits::{CoreStep, StepRef},
     },
-    planner::logical_step::{Order, OrderKey, OrderKeySpec},
+    planner::logical_step::Order,
     schema::Schema,
     types::{
         error::StoreError,
@@ -27,11 +28,29 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
+/// Physical specification of what to compare when sorting.
+#[derive(Debug)]
+pub enum PhysicalOrderKeySpec {
+    /// Compare by the traverser value itself.
+    Value,
+    /// Compare by a property value (resolved at runtime via cache).
+    Property(SmolStr),
+    /// Compare by the output of an anonymous sub-traversal.
+    Traversal(PhysicalPlan),
+}
+
+/// A physical sort key with direction.
+#[derive(Debug)]
+pub struct PhysicalOrderKey {
+    pub spec: PhysicalOrderKeySpec,
+    pub order: Order,
+}
+
 /// Sorts all upstream traversers and emits them in order.
 #[derive(Debug)]
 pub struct OrderStep {
     upstream: Option<StepRef>,
-    keys: SmallVec<[OrderKey; ORDER_KEY_INLINE]>,
+    keys: SmallVec<[PhysicalOrderKey; ORDER_KEY_INLINE]>,
     buffer: Vec<(Rc<Traverser>, SmallVec<[Primitive; ORDER_KEY_INLINE]>)>,
     cursor: usize,
     drained: bool,
@@ -40,7 +59,7 @@ pub struct OrderStep {
 }
 
 impl OrderStep {
-    pub fn new(keys: SmallVec<[OrderKey; ORDER_KEY_INLINE]>) -> Self {
+    pub fn new(keys: SmallVec<[PhysicalOrderKey; ORDER_KEY_INLINE]>) -> Self {
         Self { upstream: None, keys, buffer: Vec::new(), cursor: 0, drained: false, prop_key_cache: HashMap::new() }
     }
 }
@@ -57,29 +76,45 @@ fn resolve_prop_key_id(schema: &Arc<RwLock<Schema>>, cache: &mut HashMap<SmolStr
 }
 
 /// Extract a comparison key from a traverser, resolving property lookups
-/// where needed.
+/// or executing sub-traversals where needed.
 fn extract_order_key(
     prop_key_cache: &mut HashMap<SmolStr, u16>,
     ctx: &mut dyn GraphCtx,
-    value: &GValue,
-    spec: &OrderKeySpec,
-) -> Option<Primitive> {
+    traverser: &Rc<Traverser>,
+    spec: &PhysicalOrderKeySpec,
+) -> Result<Option<Primitive>, StoreError> {
+    let value = &traverser.value;
     match spec {
-        OrderKeySpec::Value => match value {
-            GValue::Scalar(p) => Some(p.clone()),
-            GValue::Vertex(v) => Some(Primitive::Int64(*v)),
-            _ => None,
+        PhysicalOrderKeySpec::Value => match value {
+            GValue::Scalar(p) => Ok(Some(p.clone())),
+            GValue::Vertex(v) => Ok(Some(Primitive::Int64(*v))),
+            _ => Ok(None),
         },
-        OrderKeySpec::Property(prop_name) => {
+        PhysicalOrderKeySpec::Property(prop_name) => {
             let schema = ctx.schema();
-            let prop_id = resolve_prop_key_id(&schema, prop_key_cache, prop_name)?;
+            let Some(prop_id) = resolve_prop_key_id(&schema, prop_key_cache, prop_name) else {
+                return Ok(None);
+            };
             let canonical_key = match value {
                 GValue::Vertex(vk) => CanonicalKey::Vertex(*vk),
                 GValue::Edge(ek) => CanonicalKey::Edge(ek.canonical_edge_key()),
-                GValue::Scalar(_) => return extract_key_fallback(value),
-                _ => return None,
+                GValue::Scalar(_) => return Ok(extract_key_fallback(value)),
+                _ => return Ok(None),
             };
-            ctx.get_value(&canonical_key, prop_id).ok().flatten()
+            Ok(ctx.get_value(&canonical_key, prop_id).ok().flatten())
+        }
+        PhysicalOrderKeySpec::Traversal(sub_plan) => {
+            sub_plan.reset();
+            sub_plan.inject(smallvec![Rc::clone(traverser)]);
+            if let Some(res) = sub_plan.next(ctx)? {
+                match &res.value {
+                    GValue::Scalar(p) => Ok(Some(p.clone())),
+                    GValue::Vertex(v) => Ok(Some(Primitive::Int64(*v))),
+                    _ => Ok(None),
+                }
+            } else {
+                Ok(None)
+            }
         }
     }
 }
@@ -101,6 +136,11 @@ impl CoreStep for OrderStep {
         self.buffer.clear();
         self.cursor = 0;
         self.drained = false;
+        for k in &mut self.keys {
+            if let PhysicalOrderKeySpec::Traversal(sub_plan) = &mut k.spec {
+                sub_plan.reset();
+            }
+        }
         if let Some(u) = &self.upstream {
             u.reset();
         }
@@ -119,7 +159,8 @@ impl CoreStep for OrderStep {
             while let Some(t) = upstream.next(ctx)? {
                 let mut key_values = SmallVec::new();
                 for k in &self.keys {
-                    key_values.push(extract_order_key(cache, ctx, &t.value, &k.spec).unwrap_or(Primitive::Null));
+                    let key = extract_order_key(cache, ctx, &t, &k.spec)?.unwrap_or(Primitive::Null);
+                    key_values.push(key);
                 }
                 self.buffer.push((t, key_values));
             }
@@ -146,6 +187,16 @@ impl CoreStep for OrderStep {
     }
 
     fn explain(&self) -> ExplainNode {
-        ExplainNode::new("OrderStep")
+        let mut node = ExplainNode::new("OrderStep");
+        let mut children = Vec::new();
+        for (i, k) in self.keys.iter().enumerate() {
+            if let PhysicalOrderKeySpec::Traversal(sub_plan) = &k.spec {
+                children.push((format!("key[{}]", i), sub_plan.explain()));
+            }
+        }
+        if !children.is_empty() {
+            node = node.with_children(children);
+        }
+        node
     }
 }
