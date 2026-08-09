@@ -9,7 +9,7 @@ This guide provides practical recommendations for maximizing write throughput, r
 ## 1. Write Throughput Optimization
 
 ### Rule 1: Batch Writes — Sized to Your Contention
-Committing each mutation in its own `TxnSession` adds per-commit overhead, and batching amortizes it — but a bigger transaction also means a bigger OCC conflict window and a costlier retry if it collides. See [Transactions & Concurrency](concurrency_and_tx.md#5-what-actually-conflicts-the-occ-conflict-matrix) for the trade-off, and [§6 there](concurrency_and_tx.md#6-transaction-best-practices) for how to size batches for your workload — there's no universal number, try out the best parameter that best suits your workload.
+Committing each mutation in its own `TxnSession` adds per-commit overhead, and batching amortizes it — but a bigger transaction also means a bigger OCC conflict window and a costlier retry if it collides. See [Transactions & Concurrency](concurrency_and_tx#5-what-actually-conflicts-the-occ-conflict-matrix) for the trade-off, and [§6 there](concurrency_and_tx#6-transaction-best-practices) for how to size batches for your workload — there's no universal number, try out the best parameter that best suits your workload.
 
 ```python
 # ✅ Low contention: batch mutations for throughput
@@ -19,7 +19,7 @@ with graph.begin() as txn:
 ```
 
 ### Rule 2: Use `BulkLoader` for Initial Imports
-For initial dataset loading ($> 1,000,000$ entities), bypass the transactional write path completely and use [`BulkLoader`](bulk_loading.md). `BulkLoader` creates sorted storage files directly on disk, bypassing write-ahead logging and OCC entirely — substantially higher throughput for bulk imports than incremental transactional writes. See [`BENCHMARKS.md`](https://github.com/ThouAreAwesome/RocksGraph/blob/main/rocksgraph/BENCHMARKS.md) for measured figures; the write-path benchmarks there were run at different dataset scales (1M vs 69M edges), so don't treat them as a controlled comparison or derive a specific multiplier from them.
+For initial dataset loading ($> 1,000,000$ entities), bypass the transactional write path completely and use [`BulkLoader`](bulk_loading). `BulkLoader` creates sorted storage files directly on disk, bypassing write-ahead logging and OCC entirely — substantially higher throughput for bulk imports than incremental transactional writes. See [`BENCHMARKS.md`](https://github.com/ThouAreAwesome/RocksGraph/blob/main/rocksgraph/BENCHMARKS.md) for measured figures; the write-path benchmarks there were run at different dataset scales (1M vs 69M edges), so don't treat them as a controlled comparison or derive a specific multiplier from them.
 
 ---
 
@@ -150,6 +150,6 @@ $$\text{RAM (bytes)} \approx N \times \left( \text{dim} \times \text{bytes\_per\
 
 ## Related Topics
 
-- [Vector Search Deep Dive](vector_search.md) — Vector parameters and query primitives.
-- [Bulk Loading](bulk_loading.md) — Offline SST import engine.
-- [Transactions & Concurrency](concurrency_and_tx.md) — OCC transaction lifecycle.
+- [Vector Search Deep Dive](vector_search) — Vector parameters and query primitives.
+- [Bulk Loading](bulk_loading) — Offline SST import engine.
+- [Transactions & Concurrency](concurrency_and_tx) — OCC transaction lifecycle.

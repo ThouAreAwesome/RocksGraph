@@ -71,7 +71,7 @@ graph.close()
 All graph writes in RocksGraph execute inside an ACID transaction (`TxnSession`). Transactions provide Snapshot Isolation with Optimistic Concurrency Control (OCC) and **Read-Your-Own-Writes (RYOW)**.
 
 > [!NOTE]
-> **Auto-Rollback on Drop**: `TxnSession` rolls back automatically if dropped without calling `.commit()` — see [Transactions & Concurrency](concurrency_and_tx.md#3-writing-data-txnsession--read-your-own-writes-ryow) for details.
+> **Auto-Rollback on Drop**: `TxnSession` rolls back automatically if dropped without calling `.commit()` — see [Transactions & Concurrency](concurrency_and_tx#3-writing-data-txnsession--read-your-own-writes-ryow) for details.
 
 Let's insert two people (`Alice` and `Bob`), a `knows` relationship, and attach vector embeddings for semantic search:
 
@@ -201,7 +201,7 @@ RocksGraph embeds an in-memory HNSW index for fast approximate nearest neighbor 
 > `.nearest()` is an **entry-point step** that seeds a traversal stream directly from the vector index. It must immediately follow `g.V([])`. You can then chain standard Gremlin filtering and navigation steps on the returned candidate stream.
 
 > [!NOTE]
-> Example B below never declares a vector index (no `graph.open_schema()` call) — in Auto mode, `.property("emb", ...)` only registers the property's *type*, not an HNSW index. Without a declared index, `.nearest()` silently falls back to an exact brute-force scan rather than erroring — correct results, but O(N), not the sub-linear ANN search the paragraph above describes. That's invisible at 2 vertices; at real scale it isn't. Declare an index before relying on `.nearest()` for performance — see [Vector Search Deep Dive](vector_search.md#2-declaring-vector-indexes).
+> Example B below never declares a vector index (no `graph.open_schema()` call) — in Auto mode, `.property("emb", ...)` only registers the property's *type*, not an HNSW index. Without a declared index, `.nearest()` silently falls back to an exact brute-force scan rather than erroring — correct results, but O(N), not the sub-linear ANN search the paragraph above describes. That's invisible at 2 vertices; at real scale it isn't. Declare an index before relying on `.nearest()` for performance — see [Vector Search Deep Dive](vector_search#2-declaring-vector-indexes).
 
 ### Example B: Find top-1 closest vertex to query vector `[1.0, 0.0, 0.0]`
 
@@ -331,10 +331,10 @@ if __name__ == "__main__":
 
 Explore the focused topic guides for deep dives into specific subsystems:
 
-- [Data Model & Type System](data_model.md) — Properties, types, identifiers, and labels.
-- [Gremlin Step Reference](step_reference.md) — Comprehensive catalog of all traversal steps and type transitions.
-- [Vector Search Deep Dive](vector_search.md) — HNSW tuning, memory boundaries, distance metrics, and quantization.
-- [Schema Management](schema_management.md) — Strict vs Auto schema modes, `SchemaSession`, and runtime DDL.
-- [Transactions & Concurrency](concurrency_and_tx.md) — OCC conflict handling, isolation, and session lifecycles.
-- [Bulk Loading](bulk_loading.md) — High-throughput offline SST file ingestion.
-- [Performance Tuning](performance.md) — Batch sizing, vector memory calculations, and query optimization.
+- [Data Model & Type System](data_model) — Properties, types, identifiers, and labels.
+- [Gremlin Step Reference](step_reference) — Comprehensive catalog of all traversal steps and type transitions.
+- [Vector Search Deep Dive](vector_search) — HNSW tuning, memory boundaries, distance metrics, and quantization.
+- [Schema Management](schema_management) — Strict vs Auto schema modes, `SchemaSession`, and runtime DDL.
+- [Transactions & Concurrency](concurrency_and_tx) — OCC conflict handling, isolation, and session lifecycles.
+- [Bulk Loading](bulk_loading) — High-throughput offline SST file ingestion.
+- [Performance Tuning](performance) — Batch sizing, vector memory calculations, and query optimization.
