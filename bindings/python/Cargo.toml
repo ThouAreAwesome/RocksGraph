@@ -12,5 +12,5 @@ crate-type = ["cdylib"]
 
 [dependencies]
 rocksgraph = { version = "0.2.0", path = "../../rocksgraph" }
-pyo3 = { version = "0.21.2", features = ["extension-module"] }
+pyo3 = { version = "0.21.2", features = ["extension-module", "abi3-py39"] }
 smol_str = "0.2"
