@@ -138,7 +138,8 @@ fn py_to_primitive(val: &Bound<'_, PyAny>) -> PyResult<Primitive> {
     if let Ok(b) = val.downcast::<pyo3::types::PyBool>() {
         return Ok(Primitive::Bool(b.is_true()));
     }
-    let type_name = val.get_type().name()?.to_string();
+    let full_name = val.get_type().name()?.to_string();
+    let type_name = full_name.rsplit('.').next().unwrap_or(&full_name);
     if type_name == "Int32" {
         let v: i32 = val.getattr("value")?.extract()?;
         return Ok(Primitive::Int32(v));
