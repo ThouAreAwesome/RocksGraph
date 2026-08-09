@@ -149,11 +149,24 @@ class IndexOptions:
         per_index_overrides: list | None = None,
     ) -> None: ...
 
+class ExecutionOptions:
+    scan_vertices_batch_size: int
+    scan_edges_batch_size: int
+    get_adjacent_edges_batch_size: int
+    def __init__(
+        self,
+        *,
+        scan_vertices_batch_size: int = 1024,
+        scan_edges_batch_size: int = 1024,
+        get_adjacent_edges_batch_size: int = 64,
+    ) -> None: ...
+
 class GraphOptions:
     mode: str | SchemaMode
     edge_mode: str | EdgeMode
     storage: RocksOptions
     index: IndexOptions
+    execution: ExecutionOptions
     def __init__(
         self,
         *,
@@ -161,6 +174,7 @@ class GraphOptions:
         edge_mode: str | EdgeMode = "single",
         storage: RocksOptions | None = None,
         index: IndexOptions | None = None,
+        execution: ExecutionOptions | None = None,
     ) -> None: ...
 
 class P:
@@ -447,6 +461,7 @@ class BulkLoader:
 
 class ReadSession:
     def g(self) -> GraphTraversal: ...
+    def with_execution_options(self, options: ExecutionOptions) -> ReadSession: ...
     def close(self) -> None: ...
     def __enter__(self) -> Self: ...
     def __exit__(
@@ -458,6 +473,7 @@ class ReadSession:
 
 class TxSession:
     def g(self) -> GraphTraversal: ...
+    def with_execution_options(self, options: ExecutionOptions) -> TxSession: ...
     def commit(self) -> None: ...
     def rollback(self) -> None: ...
     def __enter__(self) -> Self: ...

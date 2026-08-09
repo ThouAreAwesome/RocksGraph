@@ -9,7 +9,7 @@ This guide provides practical recommendations for maximizing write throughput, r
 ## 1. Write Throughput Optimization
 
 ### Rule 1: Batch Writes — Sized to Your Contention
-Committing each mutation in its own `TxnSession` adds per-commit overhead, and batching amortizes it — but a bigger transaction also means a bigger OCC conflict window and a costlier retry if it collides. See [Transactions & Concurrency](concurrency_and_tx.md#5-what-actually-conflicts-the-occ-conflict-matrix) for the trade-off, and [§6 there](concurrency_and_tx.md#6-transaction-best-practices) for how to size batches for your workload — there's no universal number, and no RocksGraph-specific benchmark backing one.
+Committing each mutation in its own `TxnSession` adds per-commit overhead, and batching amortizes it — but a bigger transaction also means a bigger OCC conflict window and a costlier retry if it collides. See [Transactions & Concurrency](concurrency_and_tx.md#5-what-actually-conflicts-the-occ-conflict-matrix) for the trade-off, and [§6 there](concurrency_and_tx.md#6-transaction-best-practices) for how to size batches for your workload — there's no universal number, try out the best parameter that best suits your workload.
 
 ```python
 # ✅ Low contention: batch mutations for throughput
@@ -19,15 +19,13 @@ with graph.begin() as txn:
 ```
 
 ### Rule 2: Use `BulkLoader` for Initial Imports
-For initial dataset loading ($> 100,000$ entities), bypass the transactional write path completely and use [`BulkLoader`](bulk_loading.md). `BulkLoader` creates sorted storage files directly on disk, bypassing write-ahead logging and OCC entirely — substantially higher throughput for bulk imports than incremental transactional writes. See [`BENCHMARKS.md`](https://github.com/ThouAreAwesome/RocksGraph/blob/main/rocksgraph/BENCHMARKS.md) for measured figures; the write-path benchmarks there were run at different dataset scales (1M vs 69M edges), so don't treat them as a controlled comparison or derive a specific multiplier from them.
+For initial dataset loading ($> 1,000,000$ entities), bypass the transactional write path completely and use [`BulkLoader`](bulk_loading.md). `BulkLoader` creates sorted storage files directly on disk, bypassing write-ahead logging and OCC entirely — substantially higher throughput for bulk imports than incremental transactional writes. See [`BENCHMARKS.md`](https://github.com/ThouAreAwesome/RocksGraph/blob/main/rocksgraph/BENCHMARKS.md) for measured figures; the write-path benchmarks there were run at different dataset scales (1M vs 69M edges), so don't treat them as a controlled comparison or derive a specific multiplier from them.
 
 ---
 
 ## 2. Query Traversal Optimization
 
 ### Rule 1: Filter Each Hop When You Reach It
-`.limit(n)` already stops as soon as `n` items pass a preceding `.has()` — no need to reorder them for that, and doing so isn't equivalent: it caps the *unfiltered* candidate count first, which can return fewer or different results than "the first `n` that match."
-
 For multi-hop traversals, apply `.has()` on a hop's properties as soon as you reach that hop, before navigating further away from it — this keeps the fan-out small for every later hop, and isn't just faster: the property may not even exist on a later hop's entity type (e.g. `"age"` belongs to a person, not a product they bought).
 
 ```python
@@ -36,7 +34,7 @@ snap.g().V(1).out("knows").has("age", P.gt(30)).out("bought").limit(5).to_list()
 ```
 
 ### Rule 2: Specify Edge Labels in Traversal Steps
-Always pass explicit edge labels to `.out()`, `.in()`, or `.both()` when navigating graph topology to avoid scanning irrelevant relationship types:
+Pass explicit edge labels to `.out()`, `.in()`, or `.both()` when navigating graph topology to avoid scanning irrelevant relationship types:
 
 ```rust
 // ❌ Slower: Scans all relationship types incident to Vertex 1
@@ -44,6 +42,39 @@ snap.g().V([1]).out([])...
 
 // ✅ Faster: Reads only "knows" adjacency records
 snap.g().V([1]).out(["knows"])...
+```
+
+### Rule 3: Tune Fetch Batch Sizes with `ExecutionOptions`
+The engine fetches results from storage in batches, not one row at a time — `scan_vertices_batch_size` / `scan_edges_batch_size` control full-scan steps (`.V()` / `.E()`), and `get_adjacent_edges_batch_size` controls adjacency expansion (`.out()` / `.in()` / `.both()`). Defaults are `1024`, `1024`, and `64` respectively.
+
+There's no single right batch size — smaller batches mean more round-trips to storage but less memory held per fetch; larger batches mean fewer round-trips but more memory per fetch. Tune based on your traversal shape (fanning out over vertices with very high degree benefits from a larger `get_adjacent_edges_batch_size`) and measure — the defaults are reasonable starting points, not universal answers.
+
+Set it globally at open time, or override per session (a session-level override doesn't affect other concurrent sessions):
+
+#### 🦀 Rust
+```rust
+use rocksgraph::{ExecutionOptions, Graph, GraphOptions};
+
+let opts = GraphOptions::default().with_execution(
+    ExecutionOptions::default().with_get_adjacent_edges_batch_size(256),
+);
+let graph = Graph::open_with_options("/tmp/my_graph_db", opts)?;
+
+// Or override for a single session:
+let mut snap = graph.read().with_execution_options(
+    ExecutionOptions::default().with_scan_vertices_batch_size(4096),
+);
+```
+
+#### 🐍 Python
+```python
+from rocksgraph import ExecutionOptions, Graph, GraphOptions
+
+opts = GraphOptions(execution=ExecutionOptions(get_adjacent_edges_batch_size=256))
+graph = Graph.open_with_options("/tmp/my_graph_db", options=opts)
+
+# Or override for a single session:
+snap = graph.read().with_execution_options(ExecutionOptions(scan_vertices_batch_size=4096))
 ```
 
 ---

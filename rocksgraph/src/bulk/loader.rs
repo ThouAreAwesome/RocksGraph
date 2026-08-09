@@ -71,36 +71,71 @@ const DEFAULT_MAX_MEMORY_BYTES: usize = 512 * 1024 * 1024;
 
 // ── Public types ───────────────────────────────────────────────────────────────
 
+/// Upfront schema declaration for [`SstBulkLoader::load_initial`] — the deprecated
+/// standalone loader path for bootstrapping a brand-new, not-yet-open database.
+/// [`Graph::open_bulk_loader`](crate::Graph::open_bulk_loader) does not need this: it
+/// loads into an already-open graph and uses that graph's existing schema.
 #[derive(Debug, Clone)]
 pub struct BulkSchema {
+    /// Every vertex label that will appear in the loaded dataset.
     pub vertex_labels: Vec<String>,
+    /// Every edge label that will appear in the loaded dataset.
     pub edge_labels: Vec<String>,
     /// (name, DataType). IDs 1–3 are reserved (id/label/rank); user keys start at 4.
     pub prop_keys: Vec<(String, DataType)>,
 }
 
+/// One vertex to ingest via [`BulkLoader::load_vertices`]. All fields are `pub`;
+/// construct with a struct literal:
+/// ```
+/// use rocksgraph::{bulk::BulkVertex, Primitive};
+/// let v = BulkVertex { id: 1, label: "person".into(), props: [("name".into(), Primitive::String("Alice".into()))].into() };
+/// # let _ = v;
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct BulkVertex {
+    /// The vertex's unique ID — caller-assigned, not auto-generated.
     pub id: VertexKey,
+    /// The vertex's label (schema label name, not a label ID).
     pub label: String,
+    /// Property name → value. Names not yet declared in the schema are
+    /// registered automatically (Auto mode) or rejected (Strict mode).
     pub props: HashMap<String, Primitive>,
 }
 
+/// One edge to ingest via [`BulkLoader::load_edges`]. `src`/`dst` must reference
+/// vertex IDs already loaded via a prior [`load_vertices`](BulkLoader::load_vertices)
+/// call. All fields are `pub`; construct with a struct literal:
+/// ```
+/// use rocksgraph::bulk::BulkEdge;
+/// use std::collections::HashMap;
+/// let e = BulkEdge { src: 1, dst: 2, label: "knows".into(), props: HashMap::new(), rank: None };
+/// # let _ = e;
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct BulkEdge {
+    /// Source vertex ID.
     pub src: VertexKey,
+    /// Destination vertex ID.
     pub dst: VertexKey,
+    /// The edge's label (schema label name, not a label ID).
     pub label: String,
+    /// Property name → value, same rules as [`BulkVertex::props`].
     pub props: HashMap<String, Primitive>,
     /// `None` = auto-assign (Multi mode). Ignored in Single mode (always rank 0).
     pub rank: Option<Rank>,
 }
 
+/// Throughput and count summary returned by [`BulkLoader::commit`] on success.
 #[derive(Debug)]
 pub struct BulkLoadStats {
+    /// Number of vertices written to the database.
     pub vertices_written: u64,
+    /// Number of edges written to the database.
     pub edges_written: u64,
+    /// Number of SST files generated and ingested.
     pub sst_files: usize,
+    /// Wall-clock time for the whole `load_vertices` → `load_edges` → `commit` run, in seconds.
     pub duration_secs: f64,
 }
 
@@ -733,7 +768,7 @@ impl<'a> Drop for BulkLoader<'a> {
 // ── Deprecated Standalone SstBulkLoader ────────────────────────────────────────
 
 /// Standalone bulk loader (deprecated in favor of [`Graph::open_bulk_loader`](crate::Graph::open_bulk_loader)).
-#[deprecated(since = "0.3.0", note = "use `Graph::open_bulk_loader()` instead")]
+#[deprecated(since = "0.2.0", note = "use `Graph::open_bulk_loader()` instead")]
 pub struct SstBulkLoader {
     db_path: PathBuf,
     work_dir: PathBuf,
@@ -753,11 +788,13 @@ impl SstBulkLoader {
         }
     }
 
+    /// Sets the target size in bytes for each generated SST file (defaults to 58 MiB).
     pub fn with_max_sst_size(mut self, bytes: usize) -> Self {
         self.max_sst_size = bytes;
         self
     }
 
+    /// Sets the total memory budget in bytes allocated for sorting passes (defaults to 512 MiB).
     pub fn with_max_memory(mut self, bytes: usize) -> Self {
         self.max_memory_bytes = bytes;
         self

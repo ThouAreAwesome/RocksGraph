@@ -15,7 +15,7 @@
 //! | [`BulkVertex`] / [`BulkEdge`] | Pre-serialized vertex/edge records |
 //! | [`IntoBulkVertex`] / [`IntoBulkEdge`] | Conversion trait for iterators |
 //! | [`BulkLoadStats`] | Throughput and count statistics after commit |
-//! 
+//!
 //! Bulk loading and offline SST ingestion subsystem.
 //!
 //! Provides the [`BulkLoader`] session for high-throughput initial database bootstrap,

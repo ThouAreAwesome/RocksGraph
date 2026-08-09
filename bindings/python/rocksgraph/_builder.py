@@ -984,16 +984,42 @@ class IndexOptions:
         self.per_index_overrides = per_index_overrides or []
 
 
+class ExecutionOptions:
+    """Gremlin engine runtime options (scan and traversal batch sizes). Mirrors rocksgraph::ExecutionOptions.
+
+    Can be set globally via `GraphOptions.execution` or overridden per session via
+    `ReadSession.with_execution_options()` / `TxnSession.with_execution_options()`.
+    """
+
+    def __init__(
+        self,
+        *,
+        scan_vertices_batch_size: int = 1024,
+        scan_edges_batch_size: int = 1024,
+        get_adjacent_edges_batch_size: int = 64,
+    ):
+        self.scan_vertices_batch_size = scan_vertices_batch_size
+        self.scan_edges_batch_size = scan_edges_batch_size
+        self.get_adjacent_edges_batch_size = get_adjacent_edges_batch_size
+
+
 class GraphOptions:
     """Database open options. Mirrors rocksgraph::GraphOptions."""
 
     def __init__(
-        self, *, mode: str = "auto", edge_mode: str = "single", storage: RocksOptions = None, index: IndexOptions = None
+        self,
+        *,
+        mode: str = "auto",
+        edge_mode: str = "single",
+        storage: RocksOptions = None,
+        index: IndexOptions = None,
+        execution: ExecutionOptions = None,
     ):
         self.mode = mode
         self.edge_mode = edge_mode
         self.storage = storage or RocksOptions()
         self.index = index or IndexOptions()
+        self.execution = execution or ExecutionOptions()
 
 
 class IndexManager:
@@ -1043,6 +1069,11 @@ class Graph:
                 "cache_index_and_filter_blocks": opts.storage.cache_index_and_filter_blocks,
             },
             index=index_dict,
+            execution={
+                "scan_vertices_batch_size": opts.execution.scan_vertices_batch_size,
+                "scan_edges_batch_size": opts.execution.scan_edges_batch_size,
+                "get_adjacent_edges_batch_size": opts.execution.get_adjacent_edges_batch_size,
+            },
         )
 
     @staticmethod
@@ -1051,7 +1082,7 @@ class Graph:
 
         Args:
             path: Path to the database directory.
-            options: GraphOptions instance (mode, edge_mode, storage, index).
+            options: GraphOptions instance (mode, edge_mode, storage, index, execution).
         """
         return Graph(path, options=options)
 
@@ -1224,6 +1255,17 @@ class ReadSession:
             raise RuntimeError("ReadSession is already closed")
         return GraphTraversal(self._session)
 
+    def with_execution_options(self, options: ExecutionOptions):
+        """Override runtime execution options (scan/traversal batch sizes) for this session."""
+        if self._session is None:
+            raise RuntimeError("ReadSession is already closed")
+        self._session._set_execution_options(
+            options.scan_vertices_batch_size,
+            options.scan_edges_batch_size,
+            options.get_adjacent_edges_batch_size,
+        )
+        return self
+
     def close(self):
         """Release the snapshot, allowing the database to fully close."""
         self._session = None
@@ -1244,6 +1286,17 @@ class TxnSession:
         if self._session is None:
             raise RuntimeError("TxnSession is already closed")
         return GraphTraversal(self._session)
+
+    def with_execution_options(self, options: ExecutionOptions):
+        """Override runtime execution options (scan/traversal batch sizes) for this session."""
+        if self._session is None:
+            raise RuntimeError("TxnSession is already closed")
+        self._session._set_execution_options(
+            options.scan_vertices_batch_size,
+            options.scan_edges_batch_size,
+            options.get_adjacent_edges_batch_size,
+        )
+        return self
 
     def commit(self):
         if self._session is None:

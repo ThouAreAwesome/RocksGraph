@@ -122,6 +122,11 @@ use crate::engine::ExecutionOptions;
 use crate::store::RocksOptions;
 use crate::vector::traits::IndexOptions;
 
+/// Configuration for [`Graph::open_with_options`](crate::api::Graph::open_with_options).
+///
+/// `mode` and `edge_mode` are persisted to disk on first open and ignored on every
+/// subsequent open of the same database; `storage`, `index`, and `execution` are
+/// runtime-only and may be changed freely between opens.
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct GraphOptions {

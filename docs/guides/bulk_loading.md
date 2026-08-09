@@ -48,11 +48,14 @@ The bulk loading process executes in three distinct phases:
 ## 4. Bulk Loading Example
 
 #### 🦀 Rust
+`BulkVertex`/`BulkEdge` have no builder methods — all fields are `pub`; construct them with struct literals:
+
 ```rust
 use rocksgraph::{
     bulk::{BulkEdge, BulkVertex},
-    Graph, StoreError,
+    Graph, Primitive, StoreError,
 };
+use std::collections::HashMap;
 
 fn import_large_graph(graph: &Graph) -> Result<(), StoreError> {
     let mut loader = graph.open_bulk_loader()?;
@@ -63,21 +66,37 @@ fn import_large_graph(graph: &Graph) -> Result<(), StoreError> {
 
     // 1. Prepare and stream vertices
     let vertices = vec![
-        BulkVertex::new(1i64, "person")
-            .with_property("name", "Alice")
-            .with_property("age", 30i32),
-        BulkVertex::new(2i64, "person")
-            .with_property("name", "Bob")
-            .with_property("age", 32i32),
+        BulkVertex {
+            id: 1,
+            label: "person".into(),
+            props: HashMap::from([
+                ("name".into(), Primitive::String("Alice".into())),
+                ("age".into(), Primitive::Int32(30)),
+            ]),
+        },
+        BulkVertex {
+            id: 2,
+            label: "person".into(),
+            props: HashMap::from([
+                ("name".into(), Primitive::String("Bob".into())),
+                ("age".into(), Primitive::Int32(32)),
+            ]),
+        },
     ];
     loader.load_vertices(vertices)?;
 
     // 2. Prepare and stream edges (with optional multi-edge rank: 0..=65534)
     let edges = vec![
-        BulkEdge::new(1i64, "knows", 2i64)
-            .with_rank(0u16)
-            .with_property("since", 2020i32)
-            .with_property("weight", 0.95f64),
+        BulkEdge {
+            src: 1,
+            dst: 2,
+            label: "knows".into(),
+            props: HashMap::from([
+                ("since".into(), Primitive::Int32(2020)),
+                ("weight".into(), Primitive::Float64(0.95)),
+            ]),
+            rank: Some(0),
+        },
     ];
     loader.load_edges(edges)?;
 
@@ -107,9 +126,9 @@ def import_large_graph(graph: Graph):
     ]
     loader.load_vertices(vertices)
 
-    # 2. Prepare and load edges (supports rank: int, 0..65534)
+    # 2. Prepare and load edges — positional order is (src, dst, label, props, rank)
     edges = [
-        BulkEdge(1, "knows", 2, {"since": 2020, "weight": 0.95}, rank=0),
+        BulkEdge(1, 2, "knows", {"since": 2020, "weight": 0.95}, rank=0),
     ]
     loader.load_edges(edges)
 
@@ -127,8 +146,8 @@ def import_large_graph(graph: Graph):
 
 #### 🦀 Rust
 ```rust
-use rocksgraph::{bulk::BulkVertex, StoreError};
-use std::{fs::File, io::{BufRead, BufReader}};
+use rocksgraph::{bulk::BulkVertex, Primitive, StoreError};
+use std::{collections::HashMap, fs::File, io::{BufRead, BufReader}};
 
 fn stream_vertices_from_csv(path: &str) -> impl Iterator<Item = Result<BulkVertex, StoreError>> {
     let reader = BufReader::new(File::open(path).expect("open csv"));
@@ -140,7 +159,11 @@ fn stream_vertices_from_csv(path: &str) -> impl Iterator<Item = Result<BulkVerte
             .and_then(|s| s.parse().ok())
             .ok_or_else(|| StoreError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, "missing id column")))?;
         let name = cols.next().unwrap_or_default();
-        Ok(BulkVertex::new(id, "person").with_property("name", name))
+        Ok(BulkVertex {
+            id,
+            label: "person".into(),
+            props: HashMap::from([("name".into(), Primitive::String(name.into()))]),
+        })
     })
 }
 

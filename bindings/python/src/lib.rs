@@ -9,7 +9,7 @@ use rocksgraph::{
         AnnAlgorithm, DataType, DistanceMetric, EdgeMode, GraphOptions, HnswConfig, IndexOptions, PerIndexOptions,
         Quantization, SchemaMode, SchemaSession, VectorEntityType, VectorIndexConfig, VectorIndexLimit,
     },
-    Graph, IndexManager, Primitive, ReadSession, RocksOptions, TxnSession, Value,
+    ExecutionOptions, Graph, IndexManager, Primitive, ReadSession, RocksOptions, TxnSession, Value,
 };
 use smol_str::SmolStr;
 use std::collections::HashMap;
@@ -339,13 +339,14 @@ impl PyGraph {
     }
 
     #[staticmethod]
-    #[pyo3(signature = (path, *, mode = "auto", edge_mode = "single", storage = None, index = None))]
+    #[pyo3(signature = (path, *, mode = "auto", edge_mode = "single", storage = None, index = None, execution = None))]
     fn open_with_options(
         path: &str,
         mode: &str,
         edge_mode: &str,
         storage: Option<&Bound<'_, PyDict>>,
         index: Option<&Bound<'_, PyDict>>,
+        execution: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let path = PathBuf::from(path);
 
@@ -413,8 +414,25 @@ impl PyGraph {
             }
         }
 
-        let options =
-            GraphOptions::default().with_mode(schema_mode).with_edge_mode(em).with_storage(rocks).with_index(idx);
+        let mut exec = ExecutionOptions::default();
+        if let Some(d) = execution {
+            if let Some(v) = d.get_item("scan_vertices_batch_size")? {
+                exec = exec.with_scan_vertices_batch_size(v.extract()?);
+            }
+            if let Some(v) = d.get_item("scan_edges_batch_size")? {
+                exec = exec.with_scan_edges_batch_size(v.extract()?);
+            }
+            if let Some(v) = d.get_item("get_adjacent_edges_batch_size")? {
+                exec = exec.with_get_adjacent_edges_batch_size(v.extract()?);
+            }
+        }
+
+        let options = GraphOptions::default()
+            .with_mode(schema_mode)
+            .with_edge_mode(em)
+            .with_storage(rocks)
+            .with_index(idx)
+            .with_execution(exec);
         let graph = Graph::open_with_options(path, options).map_err(store_error_to_pyerr)?;
         Ok(Self { graph: Some(graph) })
     }
@@ -677,6 +695,20 @@ impl PyReadSession {
     fn _explain(&mut self, bytes: &[u8], prop_keys: Option<Vec<String>>) -> PyResult<String> {
         self.session.explain(bytes, prop_keys).map_err(store_error_to_pyerr)
     }
+
+    fn _set_execution_options(
+        &mut self,
+        scan_vertices_batch_size: u32,
+        scan_edges_batch_size: u32,
+        get_adjacent_edges_batch_size: u32,
+    ) {
+        self.session.set_execution_options(
+            ExecutionOptions::default()
+                .with_scan_vertices_batch_size(scan_vertices_batch_size)
+                .with_scan_edges_batch_size(scan_edges_batch_size)
+                .with_get_adjacent_edges_batch_size(get_adjacent_edges_batch_size),
+        );
+    }
 }
 
 #[pyclass(unsendable)]
@@ -710,6 +742,23 @@ impl PyTxnSession {
         let session =
             slf.session.take().ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Session already closed"))?;
         session.rollback();
+        Ok(())
+    }
+
+    fn _set_execution_options(
+        &mut self,
+        scan_vertices_batch_size: u32,
+        scan_edges_batch_size: u32,
+        get_adjacent_edges_batch_size: u32,
+    ) -> PyResult<()> {
+        let session =
+            self.session.as_mut().ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Session already closed"))?;
+        session.set_execution_options(
+            ExecutionOptions::default()
+                .with_scan_vertices_batch_size(scan_vertices_batch_size)
+                .with_scan_edges_batch_size(scan_edges_batch_size)
+                .with_get_adjacent_edges_batch_size(get_adjacent_edges_batch_size),
+        );
         Ok(())
     }
 }
