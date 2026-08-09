@@ -213,7 +213,7 @@ Hashing strings to arbitrary 64-bit random values (e.g. `hash(uuid)`) scatters k
 
 ## Related Topics
 
-- [Getting Started](getting_started.md) — 5-minute practical onboarding.
-- [Schema Management](schema_management.md) — Declaring labels, property types, and strict validation.
-- [Gremlin Step Reference](step_reference.md) — Step catalog for navigating and querying graph entities.
-- [Performance Tuning](performance.md) — Optimization rules and memory sizing.
+- [Getting Started](getting_started) — 5-minute practical onboarding.
+- [Schema Management](schema_management) — Declaring labels, property types, and strict validation.
+- [Gremlin Step Reference](step_reference) — Step catalog for navigating and querying graph entities.
+- [Performance Tuning](performance) — Optimization rules and memory sizing.

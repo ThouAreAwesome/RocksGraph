@@ -190,7 +190,7 @@ def stream_vertices_from_csv(path):
 
 ## 6. Vector Indexes & Bulk Loading
 
-If a vector index is declared in the schema before bulk loading, it's built automatically during `loader.commit()` and persisted to disk. If it wasn't declared beforehand, `.nearest()` on that property doesn't error — it silently falls back to an exact brute-force scan (see [Vector Search Deep Dive](vector_search.md#7-vector-search-anti-patterns)). Build the real index after the fact with `graph.index_manager().rebuild(VectorEntityType::Vertex, "embedding_property")` (or `graph.index_manager().rebuild(VectorEntityType.Vertex, "embedding_property")` in Python, `from rocksgraph import VectorEntityType`) before relying on `.nearest()` for performance.
+If a vector index is declared in the schema before bulk loading, it's built automatically during `loader.commit()` and persisted to disk. If it wasn't declared beforehand, `.nearest()` on that property doesn't error — it silently falls back to an exact brute-force scan (see [Vector Search Deep Dive](vector_search#7-vector-search-anti-patterns)). Build the real index after the fact with `graph.index_manager().rebuild(VectorEntityType::Vertex, "embedding_property")` (or `graph.index_manager().rebuild(VectorEntityType.Vertex, "embedding_property")` in Python, `from rocksgraph import VectorEntityType`) before relying on `.nearest()` for performance.
 
 ---
 
@@ -227,7 +227,7 @@ loader.commit()
 
 ## Related Topics
 
-- [Data Model & Type System](data_model.md) — Identifier capacities, rank limits, and types.
-- [Performance Tuning](performance.md) — Throughput optimization and batching.
-- [Schema Management](schema_management.md) — Pre-declaring schemas for bulk ingestion.
-- [Vector Search Deep Dive](vector_search.md) — HNSW index build during bulk loads.
+- [Data Model & Type System](data_model) — Identifier capacities, rank limits, and types.
+- [Performance Tuning](performance) — Throughput optimization and batching.
+- [Schema Management](schema_management) — Pre-declaring schemas for bulk ingestion.
+- [Vector Search Deep Dive](vector_search) — HNSW index build during bulk loads.

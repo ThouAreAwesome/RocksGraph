@@ -5,7 +5,7 @@
 RocksGraph provides a Gremlin-compatible traversal language executed on top of a streaming, pull-based query engine. All traversals are lazily evaluated stream pipelines, minimizing memory allocations and enabling early termination via `.limit()`.
 
 > [!NOTE]
-> Snippets below are excerpts, not full programs — they assume `graph`/`snap`/`txn` are already open as shown in [Getting Started](getting_started.md).
+> Snippets below are excerpts, not full programs — they assume `graph`/`snap`/`txn` are already open as shown in [Getting Started](getting_started).
 
 ---
 
@@ -312,7 +312,7 @@ Additionally, `.out().count()`, `.in_().count()`, and `.both().count()` are auto
   - `snap.g().V().order().by("age").by("name", Order.Desc).to_list()` (tie-break: age ascending, then name descending)
 
 > [!NOTE]
-> The sub-traversal form of `by()` runs the sub-traversal once per candidate being sorted, evaluating it fresh for each one. Reach for it when the sort key isn't the traverser's own value or a plain property (a computed value like a neighbor count) *and* you need to keep the traverser itself in the result — e.g. sorting vertices by similarity score without losing the vertex (see the [Vector Search guide's anti-pattern section](vector_search.md#7-vector-search-anti-patterns) for a worked example, including why it's not just a slower way to do the same thing as sorting a value directly). If you only need the computed value itself, not the original traverser, compute it as a regular step before `.order()` and sort that instead — simpler, with less per-element dispatch overhead.
+> The sub-traversal form of `by()` runs the sub-traversal once per candidate being sorted, evaluating it fresh for each one. Reach for it when the sort key isn't the traverser's own value or a plain property (a computed value like a neighbor count) *and* you need to keep the traverser itself in the result — e.g. sorting vertices by similarity score without losing the vertex (see the [Vector Search guide's anti-pattern section](vector_search#7-vector-search-anti-patterns) for a worked example, including why it's not just a slower way to do the same thing as sorting a value directly). If you only need the computed value itself, not the original traverser, compute it as a regular step before `.order()` and sort that instead — simpler, with less per-element dispatch overhead.
 
 ---
 
@@ -367,7 +367,7 @@ snap.g().V(1).coalesce(values("nickname"), values("name")).next()
 ## 9. Traversal Best Practices
 
 ### Pattern 1: Filter Each Hop When You Reach It
-`.has()` immediately followed by `.limit(n)` already stops as soon as `n` matching items are found — no extra work needed. Apply `.has()` on a hop's properties as soon as you reach that hop, rather than navigating further away from it first; see [Performance Tuning](performance.md#rule-1-filter-each-hop-when-you-reach-it) for why this differs from reordering across hops.
+`.has()` immediately followed by `.limit(n)` already stops as soon as `n` matching items are found — no extra work needed. Apply `.has()` on a hop's properties as soon as you reach that hop, rather than navigating further away from it first; see [Performance Tuning](performance#rule-1-filter-each-hop-when-you-reach-it) for why this differs from reordering across hops.
 
 ```python
 # ✅ BEST PRACTICE: Terminate immediately after finding 5 candidates
@@ -431,7 +431,7 @@ friend_names = snap.g().V(*user_ids).out("knows").values("name").to_list()
 
 ## Related Topics
 
-- [Getting Started](getting_started.md) — 5-minute practical introduction.
-- [Vector Search Deep Dive](vector_search.md) — HNSW vector queries and similarity scoring.
-- [Data Model](data_model.md) — Properties, types, and entity structures.
-- [Performance Tuning](performance.md) — Query tuning and memory optimization.
+- [Getting Started](getting_started) — 5-minute practical introduction.
+- [Vector Search Deep Dive](vector_search) — HNSW vector queries and similarity scoring.
+- [Data Model](data_model) — Properties, types, and entity structures.
+- [Performance Tuning](performance) — Query tuning and memory optimization.

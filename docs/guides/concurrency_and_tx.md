@@ -30,7 +30,7 @@ Graph(path)
 | **`IndexManager`** | Direct, immediate execution | No staging — each call mutates live index state | Applied instantly, nothing to commit |
 
 > [!TIP]
-> **`IndexManager`**: unlike `SchemaSession`, which accumulates DDL changes and commits them atomically, `IndexManager` (`graph.index_manager()`) executes each operation (`rebuild()`, `save_all()`) immediately against the live index — there's no batching or rollback. See [Vector Search Deep Dive](vector_search.md) and [Bulk Loading](bulk_loading.md) for usage.
+> **`IndexManager`**: unlike `SchemaSession`, which accumulates DDL changes and commits them atomically, `IndexManager` (`graph.index_manager()`) executes each operation (`rebuild()`, `save_all()`) immediately against the live index — there's no batching or rollback. See [Vector Search Deep Dive](vector_search) and [Bulk Loading](bulk_loading) for usage.
 >
 > **Python context managers**: `ReadSession`, `TxnSession`, `SchemaSession`, and `BulkLoader` all support `with ... as x:` — for `TxnSession`/`SchemaSession` this commits on clean exit and rolls back on exception (see §3 below); for `ReadSession`/`BulkLoader` it's a scoping convenience with no commit/rollback semantics.
 
@@ -190,7 +190,7 @@ Conflict detection works on individual physical keys, not whole traversals — k
 | A transaction scans `.out()` over many edges but writes none of them | ❌, regardless of scan size |
 | A transaction scans `.out()`, then writes one scanned edge that another transaction also writes | ✅, but only for that one edge |
 | A `ReadSession`, alongside any number of `TxnSession`s | ❌ — never conflicts; it reads an immutable snapshot outside OCC entirely |
-| Two transactions in `SchemaMode::Auto` both auto-register the same new label/property key for the first time | ✅ — first-time registration writes shared catalog metadata; see [Schema Management](schema_management.md#10-schema-anti-patterns) |
+| Two transactions in `SchemaMode::Auto` both auto-register the same new label/property key for the first time | ✅ — first-time registration writes shared catalog metadata; see [Schema Management](schema_management#10-schema-anti-patterns) |
 
 ---
 
@@ -263,6 +263,6 @@ In multi-threaded environments, two concurrent transactions modifying the same v
 
 ## Related Topics
 
-- [Getting Started](getting_started.md) — 5-minute practical onboarding.
-- [Bulk Loading](bulk_loading.md) — High-throughput offline SST ingestion.
-- [Performance Tuning](performance.md) — Optimizing throughput and concurrency.
+- [Getting Started](getting_started) — 5-minute practical onboarding.
+- [Bulk Loading](bulk_loading) — High-throughput offline SST ingestion.
+- [Performance Tuning](performance) — Optimizing throughput and concurrency.
