@@ -18,6 +18,23 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Strip .md extensions for Wiki links
+        run: |
+          python -c '
+          import os, re
+          directory = "docs/guides"
+          pattern = re.compile(r"\]\((?!http)([^)]+)\.md(#[^)]*)?\)")
+          for filename in os.listdir(directory):
+              if filename.endswith(".md"):
+                  filepath = os.path.join(directory, filename)
+                  with open(filepath, "r", encoding="utf-8") as f:
+                      content = f.read()
+                  new_content = pattern.sub(r"](\1\2)", content)
+                  if content != new_content:
+                      with open(filepath, "w", encoding="utf-8") as f:
+                          f.write(new_content)
+          '
+
       - name: Sync documentation guides to GitHub Wiki
         uses: Andrew-Chen-Wang/github-wiki-action@v4
         with:
