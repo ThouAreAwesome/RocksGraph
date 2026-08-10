@@ -794,6 +794,104 @@ fn test_bulk_loader_strict_schema_enforcement() {
 }
 
 #[test]
+fn test_bulk_loader_enforces_property_types() {
+    let dir = tempdir().unwrap();
+    let db_path = dir.path().join("db");
+    let graph =
+        Graph::open_with_options(&db_path, GraphOptions { mode: SchemaMode::Strict, ..Default::default() }).unwrap();
+
+    // Setup strict schema with expected type
+    {
+        let mut s = graph.open_schema();
+        s.add_vertex_label("User");
+        s.add_property_key("age", crate::schema::DataType::Int32);
+        s.add_edge_label("Follows");
+        s.commit().unwrap();
+    }
+
+    // 1. Vertex Property Mismatch -> SchemaViolation
+    {
+        let mut loader = graph.open_bulk_loader().unwrap();
+        let res = loader.load_vertices(vec![BulkVertex {
+            id: 1,
+            label: "User".into(),
+            props: [("age".into(), Primitive::String("thirty".into()))].into(),
+        }]);
+        assert!(matches!(res, Err(StoreError::SchemaViolation(msg)) if msg.contains("type mismatch")));
+    }
+
+    // 2. Edge Property Mismatch -> SchemaViolation
+    {
+        let mut loader = graph.open_bulk_loader().unwrap();
+        loader
+            .load_vertices(vec![
+                BulkVertex { id: 1, label: "User".into(), props: [("age".into(), Primitive::Int32(30))].into() },
+                BulkVertex { id: 2, label: "User".into(), props: [("age".into(), Primitive::Int32(31))].into() },
+            ])
+            .unwrap();
+        let res = loader.load_edges(vec![BulkEdge {
+            src: 1,
+            dst: 2,
+            label: "Follows".into(),
+            props: [("age".into(), Primitive::String("thirty".into()))].into(),
+            rank: None,
+        }]);
+        assert!(matches!(res, Err(StoreError::SchemaViolation(msg)) if msg.contains("type mismatch")));
+    }
+}
+
+#[test]
+fn test_bulk_loader_auto_mode_enforces_property_types() {
+    let dir = tempdir().unwrap();
+    let graph = Graph::open(dir.path().join("db")).unwrap(); // default = Auto mode
+
+    // 1. Vertex Property Mismatch: "age" is implicitly registered as Int64 by vertex 1,
+    // so vertex 2's conflicting String must be rejected — not silently accepted just
+    // because Auto mode would otherwise register unknown keys on the fly.
+    {
+        let mut loader = graph.open_bulk_loader().unwrap();
+        let res = loader.load_vertices(vec![
+            BulkVertex { id: 1, label: "User".into(), props: [("age".into(), Primitive::Int64(30))].into() },
+            BulkVertex {
+                id: 2,
+                label: "User".into(),
+                props: [("age".into(), Primitive::String("thirty".into()))].into(),
+            },
+        ]);
+        assert!(matches!(res, Err(StoreError::SchemaViolation(msg)) if msg.contains("type mismatch")));
+    }
+
+    // 2. Edge Property Mismatch: same check on the edge-loading path.
+    {
+        let mut loader = graph.open_bulk_loader().unwrap();
+        loader
+            .load_vertices(vec![
+                BulkVertex { id: 1, label: "User".into(), props: HashMap::new() },
+                BulkVertex { id: 2, label: "User".into(), props: HashMap::new() },
+                BulkVertex { id: 3, label: "User".into(), props: HashMap::new() },
+            ])
+            .unwrap();
+        let res = loader.load_edges(vec![
+            BulkEdge {
+                src: 1,
+                dst: 2,
+                label: "Follows".into(),
+                props: [("since".into(), Primitive::Int32(2020))].into(),
+                rank: None,
+            },
+            BulkEdge {
+                src: 2,
+                dst: 3,
+                label: "Follows".into(),
+                props: [("since".into(), Primitive::String("2020".into()))].into(),
+                rank: None,
+            },
+        ]);
+        assert!(matches!(res, Err(StoreError::SchemaViolation(msg)) if msg.contains("type mismatch")));
+    }
+}
+
+#[test]
 fn test_bulk_loader_drop_and_custom_work_dir_cleanup() {
     let dir = tempdir().unwrap();
     let graph = Graph::open(dir.path().join("db")).unwrap();
