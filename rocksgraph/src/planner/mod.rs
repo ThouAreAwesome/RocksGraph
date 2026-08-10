@@ -15,7 +15,8 @@ use crate::{
         logical_step::{LogicalPlan, Optimizer, OptimizerRule},
         optimizer::{
             degree_pushdown, extract_end_vertex_filter, merge_adde_ids, merge_end_vertex_filter,
-            merge_haslabel_into_edge, merge_property_into_add, merge_v_id_filter, normalize_inv_outv, reorder_filter,
+            merge_haslabel_into_edge, merge_property_into_add, merge_v_id_filter, merge_v_into_nearest,
+            normalize_inv_outv, reorder_filter,
         },
     },
     types::StoreError,
@@ -25,6 +26,7 @@ use crate::{
 pub fn apply_rules(plan: &mut LogicalPlan) -> Result<bool, StoreError> {
     const OPTIMIZERS: &[OptimizerRule] = &[
         reorder_filter::reorder_filters,
+        merge_v_into_nearest::merge_v_into_nearest,
         merge_v_id_filter::merge_v_id_filter,
         merge_adde_ids::merge_adde_from,
         normalize_inv_outv::normalize_inv_outv,

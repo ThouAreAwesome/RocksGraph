@@ -42,7 +42,7 @@ pip install rocksgraph
 
 ---
 
-## 20-Second Quickstart
+## 30-Second Quickstart
 
 ```python
 from rocksgraph import Graph, Vector
@@ -132,6 +132,7 @@ Full documentation and guides are available in the repository docs and GitHub Wi
 | 🔒 [**Transactions & Concurrency**](https://github.com/ThouAreAwesome/RocksGraph/wiki/concurrency_and_tx) | OCC conflict handling, Snapshot Isolation, and session lifecycles. |
 | ⚡ [**Bulk Loading & SST Ingest**](https://github.com/ThouAreAwesome/RocksGraph/wiki/bulk_loading) | High-throughput offline SST file generation and instant atomic DB loading. |
 | 🏎️ [**Performance Tuning**](https://github.com/ThouAreAwesome/RocksGraph/wiki/performance) | Batching strategies, memory sizing formulas, and query optimization patterns. |
+| 📊 [**Benchmarks**](https://github.com/ThouAreAwesome/RocksGraph/wiki/benchmarks) | Measured write (bulk load, transactional OCC) and read throughput/latency across dataset scales. |
 
 For the Rust crate, see the [main repository README](https://github.com/ThouAreAwesome/RocksGraph/tree/main/rocksgraph).
 

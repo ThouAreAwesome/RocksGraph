@@ -19,7 +19,7 @@ with graph.begin() as txn:
 ```
 
 ### Rule 2: Use `BulkLoader` for Initial Imports
-For initial dataset loading ($> 1,000,000$ entities), bypass the transactional write path completely and use [`BulkLoader`](bulk_loading.md). `BulkLoader` creates sorted storage files directly on disk, bypassing write-ahead logging and OCC entirely — substantially higher throughput for bulk imports than incremental transactional writes. See [`BENCHMARKS.md`](https://github.com/ThouAreAwesome/RocksGraph/blob/main/rocksgraph/BENCHMARKS.md) for measured figures; the write-path benchmarks there were run at different dataset scales (1M vs 69M edges), so don't treat them as a controlled comparison or derive a specific multiplier from them.
+For initial dataset loading ($> 1,000,000$ entities), bypass the transactional write path completely and use [`BulkLoader`](bulk_loading.md). `BulkLoader` creates sorted storage files directly on disk, bypassing write-ahead logging and OCC entirely — substantially higher throughput for bulk imports than incremental transactional writes. See [Benchmarks](benchmarks.md) for measured figures; the write-path benchmarks there were run at different dataset scales (1M vs 69M edges), so don't treat them as a controlled comparison or derive a specific multiplier from them.
 
 ---
 

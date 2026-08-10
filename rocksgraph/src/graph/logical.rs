@@ -361,56 +361,75 @@ impl LogicalGraph {
         start_from: Option<VertexKey>,
         limit: u32,
     ) -> Result<(Vec<VertexKey>, Option<VertexKey>), StoreError> {
-        let (committed, cursor) = self.store.scan_vertices(label, start_from, limit)?;
+        let (committed, store_cursor) = self.store.scan_vertices(label, start_from, limit)?;
+
+        // Candidate universe for this batch = the committed page just fetched, plus any
+        // session-local NEW (not-yet-persisted) vertices whose key falls in
+        // `(start_from, store_cursor]` (or `(start_from, ∞)` once storage is exhausted).
+        // Deliberately NOT `self.vertices` in full: that cache accumulates every vertex
+        // ever seen this session, so re-scanning and re-sorting all of it on every
+        // paginated batch made a full scan O(N²) instead of O(N). `self.dirty` only holds
+        // elements actually mutated this session — bounded by write volume, not scan
+        // progress — so restricting the merge to it keeps each batch's cost independent
+        // of how much of the graph has already been scanned. Existing vertices that were
+        // only Modified keep their original key, so the committed scan above already
+        // surfaces them at the right position; only brand-new vertices need merging here.
+        let mut candidate_ids: Vec<VertexKey> = Vec::with_capacity(committed.len());
         for vt in committed {
             // Upgrade a LabelOnly placeholder if a full record just arrived from
             // the scan — don't waste the read scan_vertices already paid for.
             match self.vertices.entry(vt.id) {
                 Entry::Vacant(e) => {
+                    candidate_ids.push(*e.key());
                     e.insert(vt);
                 }
                 Entry::Occupied(mut e) if e.get().is_label_only() => {
+                    candidate_ids.push(*e.key());
                     e.insert(vt);
                 }
-                Entry::Occupied(_) => {}
+                Entry::Occupied(e) => {
+                    candidate_ids.push(*e.key());
+                }
             }
         }
-
-        let mut matching = Vec::new();
-        let dirty = &self.dirty;
-        for (&vk, vt) in &self.vertices {
-            if dirty.get(&CanonicalKey::Vertex(vk)) == Some(&Existence::Tombstone) {
+        for (&key, &existence) in &self.dirty {
+            let CanonicalKey::Vertex(vk) = key else { continue };
+            if existence != Existence::New {
                 continue;
             }
-            if let Some(lbl) = label {
-                if vt.label_id != lbl {
-                    continue;
-                }
+            if start_from.is_some_and(|sf| vk <= sf) {
+                continue;
             }
-            if let Some(last_committed) = cursor {
-                if vk > last_committed {
-                    continue;
-                }
+            if store_cursor.is_some_and(|sc| vk > sc) {
+                continue;
             }
-            matching.push(vk);
+            candidate_ids.push(vk);
         }
+        candidate_ids.sort_unstable();
+        candidate_ids.dedup();
 
-        matching.sort();
-
-        let mut start_idx = 0;
-        if let Some(start_vk) = start_from {
-            if let Some(pos) = matching.iter().position(|&vk| vk == start_vk) {
-                start_idx = pos + 1;
-            } else {
-                start_idx = matching.iter().position(|&vk| vk > start_vk).unwrap_or(matching.len());
-            }
-        }
+        let dirty = &self.dirty;
+        let vertices = &self.vertices;
+        let matching: Vec<VertexKey> = candidate_ids
+            .into_iter()
+            .filter(|vk| {
+                if dirty.get(&CanonicalKey::Vertex(*vk)) == Some(&Existence::Tombstone) {
+                    return false;
+                }
+                if let Some(lbl) = label {
+                    if vertices.get(vk).map(|vt| vt.label_id) != Some(lbl) {
+                        return false;
+                    }
+                }
+                true
+            })
+            .collect();
 
         let limit_val = limit as usize;
-        let end_idx = std::cmp::min(start_idx + limit_val, matching.len());
-        let result = matching[start_idx..end_idx].to_vec();
+        let end_idx = std::cmp::min(limit_val, matching.len());
+        let result = matching[..end_idx].to_vec();
 
-        let next_cursor = if end_idx < matching.len() { Some(matching[end_idx - 1]) } else { cursor };
+        let next_cursor = if end_idx < matching.len() { Some(matching[end_idx - 1]) } else { store_cursor };
 
         Ok((result, next_cursor))
     }
@@ -421,7 +440,12 @@ impl LogicalGraph {
         start_from: Option<CanonicalEdgeKey>,
         limit: u32,
     ) -> Result<(Vec<EdgeKey>, Option<CanonicalEdgeKey>), StoreError> {
-        let (committed, cursor) = self.store.scan_edges(label, start_from, limit)?;
+        let (committed, store_cursor) = self.store.scan_edges(label, start_from, limit)?;
+
+        // See `scan_vertices` above for why this merges only the committed batch with
+        // `self.dirty` (bounded by session write volume) instead of re-scanning and
+        // re-sorting the whole `self.edges` cache on every paginated batch.
+        let mut candidate_ceks: Vec<CanonicalEdgeKey> = Vec::with_capacity(committed.len());
         for edge in committed {
             if let Some(l) = edge.src_label {
                 self.cache_vertex_label(edge.src_id, l);
@@ -431,43 +455,46 @@ impl LogicalGraph {
             }
             let cek = edge.canonical_key();
             self.edges.entry(cek).or_insert(edge);
+            candidate_ceks.push(cek);
         }
-
-        let mut matching = Vec::new();
-        let dirty = &self.dirty;
-        for (&cek, edge) in &self.edges {
-            if dirty.get(&CanonicalKey::Edge(cek)) == Some(&Existence::Tombstone) {
+        for (&key, &existence) in &self.dirty {
+            let CanonicalKey::Edge(cek) = key else { continue };
+            if existence != Existence::New {
                 continue;
             }
-            if let Some(lbl) = label {
-                if edge.label_id != lbl {
-                    continue;
-                }
+            if start_from.is_some_and(|sf| cek <= sf) {
+                continue;
             }
-            if let Some(last_committed) = cursor {
-                if cek > last_committed {
-                    continue;
-                }
+            if store_cursor.is_some_and(|sc| cek > sc) {
+                continue;
             }
-            matching.push(cek);
+            candidate_ceks.push(cek);
         }
+        candidate_ceks.sort_unstable();
+        candidate_ceks.dedup();
 
-        matching.sort();
-
-        let mut start_idx = 0;
-        if let Some(start_cek) = start_from {
-            if let Some(pos) = matching.iter().position(|&cek| cek == start_cek) {
-                start_idx = pos + 1;
-            } else {
-                start_idx = matching.iter().position(|&cek| cek > start_cek).unwrap_or(matching.len());
-            }
-        }
+        let dirty = &self.dirty;
+        let edges = &self.edges;
+        let matching: Vec<CanonicalEdgeKey> = candidate_ceks
+            .into_iter()
+            .filter(|cek| {
+                if dirty.get(&CanonicalKey::Edge(*cek)) == Some(&Existence::Tombstone) {
+                    return false;
+                }
+                if let Some(lbl) = label {
+                    if edges.get(cek).map(|e| e.label_id) != Some(lbl) {
+                        return false;
+                    }
+                }
+                true
+            })
+            .collect();
 
         let limit_val = limit as usize;
-        let end_idx = std::cmp::min(start_idx + limit_val, matching.len());
-        let result = matching[start_idx..end_idx].iter().map(|cek| cek.out_key()).collect();
+        let end_idx = std::cmp::min(limit_val, matching.len());
+        let result = matching[..end_idx].iter().map(|cek| cek.out_key()).collect();
 
-        let next_cursor = if end_idx < matching.len() { Some(matching[end_idx - 1]) } else { cursor };
+        let next_cursor = if end_idx < matching.len() { Some(matching[end_idx - 1]) } else { store_cursor };
 
         Ok((result, next_cursor))
     }
@@ -944,18 +971,7 @@ impl LogicalGraph {
                         .collect()
                 };
                 if !vertex_prop_ids.is_empty() {
-                    let mut pids_to_remove = Vec::new();
-                    if let Ok(Some(_)) = self.get_vertex(id) {
-                        let _ = self.ensure_vertex_props_loaded(id);
-                        if let Some(vt) = self.vertices.get(&id) {
-                            for pid in vertex_prop_ids {
-                                if let Some(crate::types::Primitive::FloatVector(_)) = vt.get_value(pid) {
-                                    pids_to_remove.push(pid);
-                                }
-                            }
-                        }
-                    }
-                    for pid in pids_to_remove {
+                    for pid in vertex_prop_ids {
                         self.maybe_record_wal_remove(key, pid);
                     }
                 }

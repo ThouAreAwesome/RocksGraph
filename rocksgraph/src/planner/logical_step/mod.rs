@@ -807,6 +807,8 @@ pub struct NearestLogicalStep {
     /// Per-query HNSW beam-width override. `None` uses the schema-level default.
     pub ef_search: Option<usize>,
     pub metric_override: Option<DistanceMetric>,
+    /// Set by the optimizer when an upstream VStep is deleted, making this step the root.
+    pub is_root: bool,
 }
 
 /// Logical step: compute similarity between each traverser's vector and query vector.

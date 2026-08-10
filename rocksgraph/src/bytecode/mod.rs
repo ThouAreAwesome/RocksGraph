@@ -1006,6 +1006,7 @@ fn decode_step(bytes: &[u8], offset: &mut usize) -> Result<LogicalStep, StoreErr
                 k,
                 ef_search,
                 metric_override,
+                is_root: false,
             }))
         }
         OP_SIMILARITY => {

@@ -56,7 +56,7 @@ fn test_nearest_returns_top_k() {
         fv(vec![0.0, 1.0]), // orthogonal
         fv(vec![0.7, 0.7]), // 45 degrees
     ]);
-    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 2, None, None);
+    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 2, None, None, false);
     step.add_upper(src as StepRef);
     let mut ctx = NoopCtx;
     let results = drain_all(&mut step, &mut ctx);
@@ -72,7 +72,7 @@ fn test_nearest_ordering() {
         fv(vec![0.7, 0.7]), // sim ≈ 0.71
         fv(vec![1.0, 0.0]), // sim = 1.0
     ]);
-    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 3, None, None);
+    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 3, None, None, false);
     step.add_upper(src as StepRef);
     let mut ctx = NoopCtx;
     let results = drain_all(&mut step, &mut ctx);
@@ -87,7 +87,7 @@ fn test_nearest_ordering() {
 fn test_nearest_k_larger_than_input() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![fv(vec![1.0, 0.0]), fv(vec![0.0, 1.0])]);
-    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 10, None, None);
+    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 10, None, None, false);
     step.add_upper(src as StepRef);
     let mut ctx = NoopCtx;
     let results = drain_all(&mut step, &mut ctx);
@@ -97,7 +97,7 @@ fn test_nearest_k_larger_than_input() {
 #[test]
 fn test_nearest_empty_input() {
     let src = BufferedStep::new(VecSourceStep::empty());
-    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 5, None, None);
+    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 5, None, None, false);
     step.add_upper(src as StepRef);
     let mut ctx = NoopCtx;
     let results = drain_all(&mut step, &mut ctx);
@@ -112,7 +112,7 @@ fn test_nearest_skips_non_vector_traversers() {
         Traverser::new_rc(GValue::Scalar(Primitive::Int64(42))), // non-vector — must be skipped
         fv(vec![0.0, 1.0]),
     ]);
-    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 5, None, None);
+    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 5, None, None, false);
     step.add_upper(src as StepRef);
     let mut ctx = NoopCtx;
     let results = drain_all(&mut step, &mut ctx);
@@ -196,6 +196,43 @@ fn test_similarity_skips_non_vector_traversers() {
     assert_eq!(scores.len(), 2, "non-vector traversers must be silently skipped");
 }
 
+// ── is_root (V().nearest() optimization) ───────────────────────────────────
+
+#[test]
+fn test_nearest_root_without_upstream_no_index_scans_vertices() {
+    // is_root=true means the optimizer deleted the preceding unbounded V([]),
+    // so there is no upstream to drain — the brute-force fallback must scan
+    // vertices itself instead of silently producing empty output (the bug this
+    // guards against: it used to try draining a nonexistent upstream and
+    // silently return Ok(None)/empty). NoopCtx has no index and no vertices,
+    // so `scan_vertices` returns its own explicit "unsupported" error — proof
+    // the root path actually reaches and calls scan_vertices, rather than
+    // short-circuiting before it.
+    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 5, None, None, true);
+    // The physical builder always wires *some* upstream, even for a root step —
+    // an empty dummy source, never `None`. Match that here.
+    let src = BufferedStep::new(VecSourceStep::empty());
+    step.add_upper(src as StepRef);
+    let mut ctx = NoopCtx;
+    let result = step.produce(&mut ctx);
+    assert!(result.is_err(), "root nearest() with no index must attempt scan_vertices, not silently succeed");
+    let msg = format!("{:?}", result.unwrap_err());
+    assert!(msg.contains("scan_vertices"), "expected the scan_vertices path to be reached, got: {msg}");
+}
+
+#[test]
+fn test_nearest_root_k_zero_short_circuits_before_scanning() {
+    // k=0 must still short-circuit immediately, even when is_root — it must not
+    // attempt a vertex scan (which would error against NoopCtx) just to discard it.
+    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 0, None, None, true);
+    let src = BufferedStep::new(VecSourceStep::empty());
+    step.add_upper(src as StepRef);
+    let mut ctx = NoopCtx;
+    let result = step.produce(&mut ctx);
+    assert!(result.is_ok());
+    assert!(result.unwrap().is_none());
+}
+
 // ── metric selection ────────────────────────────────────────────────────────
 
 #[test]
@@ -221,7 +258,7 @@ fn test_nearest_brute_force_metric_override_changes_ordering() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![fv(vec![0.1, 0.0]), fv(vec![0.5, 0.866_f32])]);
 
-    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 1, None, Some(DistanceMetric::DotProduct));
+    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 1, None, Some(DistanceMetric::DotProduct), false);
     step.add_upper(src as StepRef);
     let mut ctx = NoopCtx;
     let results = drain_all(&mut step, &mut ctx);
@@ -286,7 +323,7 @@ fn test_nearest_and_similarity_score_consistency() {
         // NearestStep ordering
         let src_near = BufferedStep::new(VecSourceStep::empty());
         src_near.inner.borrow_mut().core.inject(smallvec![fv(v3.clone()), fv(v1.clone()), fv(v2.clone())]);
-        let mut near_step = NearestStep::new("emb".into(), query.clone(), 3, None, Some(metric));
+        let mut near_step = NearestStep::new("emb".into(), query.clone(), 3, None, Some(metric), false);
         near_step.add_upper(src_near as StepRef);
         let mut ctx = NoopCtx;
         let near_results = drain_all(&mut near_step, &mut ctx);
@@ -323,7 +360,7 @@ fn test_nearest_with_mixed_stream_entity_inference() {
         fv(vec![0.0, 1.0]),
     ]);
 
-    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 5, None, None);
+    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 5, None, None, false);
     step.add_upper(src as StepRef);
     let mut ctx = NoopCtx;
     let results = drain_all(&mut step, &mut ctx);
@@ -352,7 +389,7 @@ fn test_similarity_on_non_vector_property() {
 fn test_nearest_k_zero() {
     let src = BufferedStep::new(VecSourceStep::empty());
     src.inner.borrow_mut().core.inject(smallvec![fv(vec![1.0, 0.0]), fv(vec![0.0, 1.0]),]);
-    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 0, None, None);
+    let mut step = NearestStep::new("emb".into(), vec![1.0, 0.0], 0, None, None, false);
     step.add_upper(src as StepRef);
     let mut ctx = NoopCtx;
     let results = drain_all(&mut step, &mut ctx);

@@ -8,6 +8,7 @@ pub mod merge_end_vertex_filter;
 pub mod merge_haslabel_into_edge;
 pub mod merge_property_into_add;
 pub mod merge_v_id_filter;
+pub mod merge_v_into_nearest;
 pub mod normalize_inv_outv;
 pub mod reorder_filter;
 
