@@ -303,19 +303,37 @@ impl<'a> BulkLoader<'a> {
 
             let mut id_props = HashMap::with_capacity(v.props.len());
             for (k, val) in &v.props {
+                let incoming_type = DataType::from_primitive(val);
                 let pkid = if is_strict {
-                    self.staging_schema
+                    let id = self
+                        .staging_schema
                         .prop_key_id(k)
-                        .ok_or_else(|| StoreError::SchemaViolation(format!("unknown property key '{k}'")))?
+                        .ok_or_else(|| StoreError::SchemaViolation(format!("unknown property key '{k}'")))?;
+                    if let Some(cfg) = self.staging_schema.prop_key_types.get(&id) {
+                        if cfg.data_type != incoming_type {
+                            return Err(StoreError::SchemaViolation(format!(
+                                "type mismatch for property key '{}': expected {:?}, got {:?}",
+                                k, cfg.data_type, incoming_type
+                            )));
+                        }
+                    }
+                    id
                 } else {
                     let id = self
                         .staging_schema
                         .register_prop_key(k)
                         .ok_or_else(|| StoreError::SchemaExhausted("property key capacity exhausted".into()))?;
-                    self.staging_schema
+                    let cfg = self
+                        .staging_schema
                         .prop_key_types
                         .entry(id)
-                        .or_insert(PropKeyConfig { data_type: DataType::from_primitive(val) });
+                        .or_insert(PropKeyConfig { data_type: incoming_type });
+                    if cfg.data_type != incoming_type {
+                        return Err(StoreError::SchemaViolation(format!(
+                            "type mismatch for property key '{}': expected {:?}, got {:?}",
+                            k, cfg.data_type, incoming_type
+                        )));
+                    }
                     id
                 };
                 id_props.insert(pkid, val.clone());
@@ -387,21 +405,38 @@ impl<'a> BulkLoader<'a> {
 
                     let mut id_props = HashMap::with_capacity(edge.props.len());
                     for (k, val) in &edge.props {
-                        let pkid = if is_strict {
-                            self.staging_schema
-                                .prop_key_id(k)
-                                .ok_or_else(|| StoreError::SchemaViolation(format!("unknown property key '{k}'")))?
-                        } else {
-                            let id = self
-                                .staging_schema
-                                .register_prop_key(k)
-                                .ok_or_else(|| StoreError::SchemaExhausted("property key capacity exhausted".into()))?;
-                            self.staging_schema
-                                .prop_key_types
-                                .entry(id)
-                                .or_insert(PropKeyConfig { data_type: DataType::from_primitive(val) });
-                            id
-                        };
+                        let incoming_type = DataType::from_primitive(val);
+                        let pkid =
+                            if is_strict {
+                                let id = self.staging_schema.prop_key_id(k).ok_or_else(|| {
+                                    StoreError::SchemaViolation(format!("unknown property key '{k}'"))
+                                })?;
+                                if let Some(cfg) = self.staging_schema.prop_key_types.get(&id) {
+                                    if cfg.data_type != incoming_type {
+                                        return Err(StoreError::SchemaViolation(format!(
+                                            "type mismatch for property key '{}': expected {:?}, got {:?}",
+                                            k, cfg.data_type, incoming_type
+                                        )));
+                                    }
+                                }
+                                id
+                            } else {
+                                let id = self.staging_schema.register_prop_key(k).ok_or_else(|| {
+                                    StoreError::SchemaExhausted("property key capacity exhausted".into())
+                                })?;
+                                let cfg = self
+                                    .staging_schema
+                                    .prop_key_types
+                                    .entry(id)
+                                    .or_insert(PropKeyConfig { data_type: incoming_type });
+                                if cfg.data_type != incoming_type {
+                                    return Err(StoreError::SchemaViolation(format!(
+                                        "type mismatch for property key '{}': expected {:?}, got {:?}",
+                                        k, cfg.data_type, incoming_type
+                                    )));
+                                }
+                                id
+                            };
                         id_props.insert(pkid, val.clone());
                     }
 

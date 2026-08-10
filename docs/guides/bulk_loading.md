@@ -296,8 +296,8 @@ If a vector index is declared in the schema before bulk loading, it's built auto
 ### Pattern 1: Declare a Strict Schema Before Bulk Loading
 Open the database in `SchemaMode::Strict` and declare every vertex/edge label and property key you intend to load — *before* calling `open_bulk_loader()` — rather than letting Auto mode register them implicitly from whatever the first record happens to contain. In Strict mode, a record referencing an undeclared label or property key fails fast with a clear `StoreError::SchemaViolation` naming the offending key, at the point that record is streamed. In Auto mode, a typo'd label (`"Person"` vs. `"person"`) is simply registered as a second, unintended label with no warning — you only discover the split later, at query time.
 
-> [!WARNING]
-> This only catches undeclared *names*, not mismatched *value types*. Bulk loading does not currently validate a record's property value against its declared `DataType` the way transactional writes do — a property declared `Int64` will silently accept a `String` value in either schema mode during a bulk load. Strict mode narrows the failure mode to "wrong data quietly stored," not "wrong data rejected" — validate value types in your own parsing/streaming code if that distinction matters for your dataset.
+> [!NOTE]
+> BulkLoader strictly validates property value types during ingestion. If a property is declared as `Int64` in the schema (or was registered as `Int64` by the first record that used it in Auto mode), any subsequent record attempting to store a `String` under that key will immediately fail with a `StoreError::SchemaViolation`.
 
 ### Pattern 2: Ordered Phase Ingestion (Vertices First, Then Edges)
 Always stream and complete all vertices via `load_vertices()` before calling `load_edges()`. The edge ingestion phase relies on the vertex catalog to resolve endpoint vertices and relationships.
