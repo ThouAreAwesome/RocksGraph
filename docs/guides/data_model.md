@@ -201,13 +201,12 @@ Whenever you need to traverse, filter, or hop between entities, represent the re
 ### ❌ Anti-Pattern 1: Embedding Foreign Key Lists in String / Binary Properties
 Storing related IDs in a delimited string or binary payload prevents index-accelerated traversal.
 
-### ❌ Anti-Pattern 2: Sparse Random Hashing for Vertex IDs
-Hashing strings to arbitrary 64-bit random values (e.g. `hash(uuid)`) scatters keys uniformly across the entire integer space, reducing index locality and storage compression efficiency.
+### ❌ Anti-Pattern 2: Locating the Initial Vertex by Property Filtering
+**RocksGraph has no secondary property index.** Starting a traversal with `.has("prop", value)` instead of `.hasId(...)` is not a point lookup — `.has()` scans every vertex the traversal reaches, same as any other filter step. `snap.g().V([]).has("external_id", "abc123")` touches every vertex in the graph just to find the one you want.
 
-**What to do instead**: derive the `i64` primary key from a dense, sequential allocator your application controls (e.g. an auto-increment counter, or a per-shard counter if writes are distributed). If you have multiple concurrent writers without a shared counter, prefer a coarsely-monotonic scheme (e.g. timestamp-prefixed IDs) over a pure hash — it's still not perfectly sequential, but preserves far more locality than scattering across the full 64-bit space.
+This is fine on a small graph — a full scan over a few thousand vertices finishes in microseconds to low milliseconds — but it's a genuine anti-pattern as the graph grows: the cost scales linearly with vertex count, so a query that should be a cheap point lookup turns into a full scan on every execution once you're at millions of vertices.
 
-> [!WARNING]
-> **RocksGraph has no secondary property index.** Storing a natural key (UUID, username) as a regular property and looking it up with `.has("external_id", ...)` is *not* an indexed lookup — it's a full scan of every vertex the traversal reaches, same as any other `.has()` call. Only `.hasId()` is a point lookup. If you need fast lookup by a natural key, either maintain the natural-key → `i64` mapping yourself outside RocksGraph (e.g. an in-process map or a small side store you load at startup), or, where the natural key already has a numeric/time-ordered component (a Snowflake ID, a ULID, an existing auto-increment ID from another system), derive the `i64` primary key directly from that component so no separate mapping is needed.
+**What to do instead**: always give the traversal an explicit starting point — a known `i64` ID via `.hasId(...)`/`V([id])`, or, for a semantic entry point, `.nearest()`/`.neighbors()` against a declared vector index. If your natural key (UUID, username, external ID) isn't itself the vertex ID, either maintain that natural-key → `i64` mapping yourself outside RocksGraph (an in-process map, or a small side store loaded at startup), or, where the natural key already has a numeric/time-ordered component (a Snowflake ID, a ULID, an existing auto-increment ID from another system), derive the `i64` primary key directly from that component so no separate mapping is needed.
 
 ---
 
