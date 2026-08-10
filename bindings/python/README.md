@@ -3,7 +3,7 @@
 [![CI](https://github.com/ThouAreAwesome/RocksGraph/actions/workflows/ci.yml/badge.svg)](https://github.com/ThouAreAwesome/RocksGraph/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/rocksgraph.svg)](https://pypi.org/project/rocksgraph/)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://pypi.org/project/rocksgraph/)
-[![License: Apache 2.0 / MIT](https://img.shields.io/badge/License-Apache_2.0_|_MIT-blue.svg)](https://github.com/ThouAreAwesome/RocksGraph/blob/main/LICENSE)
+[![License: Apache 2.0 / MIT](https://img.shields.io/badge/License-Apache_2.0_|_MIT-blue.svg)](https://github.com/ThouAreAwesome/RocksGraph/blob/main/rocksgraph/LICENSE-APACHE)
 
 **RocksGraph** is an embeddable, ACID-compliant property graph database with Gremlin query language and integrated HNSW vector search, compiled directly to native code via PyO3.
 

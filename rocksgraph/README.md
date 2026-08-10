@@ -4,7 +4,7 @@
 [![crates.io](https://img.shields.io/crates/v/rocksgraph.svg)](https://crates.io/crates/rocksgraph)
 [![docs.rs](https://docs.rs/rocksgraph/badge.svg)](https://docs.rs/rocksgraph)
 [![PyPI](https://img.shields.io/pypi/v/rocksgraph.svg)](https://pypi.org/project/rocksgraph/)
-[![License: Apache 2.0 / MIT](https://img.shields.io/badge/License-Apache_2.0_|_MIT-blue.svg)](LICENSE)
+[![License: Apache 2.0 / MIT](https://img.shields.io/badge/License-Apache_2.0_|_MIT-blue.svg)](LICENSE-APACHE)
 
 **RocksGraph** is an embeddable, ACID-compliant property graph database with Gremlin query language and integrated HNSW vector search. Open a database with one line of code, traverse relationships, and query semantic similarity—**no external servers, no network overhead, no JVM**.
 
@@ -142,7 +142,7 @@ Comprehensive guides are available in the [`docs/guides/`](https://github.com/Th
 | ⚡ [**Bulk Loading & SST Ingest**](https://github.com/ThouAreAwesome/RocksGraph/wiki/bulk_loading) | High-throughput offline SST file generation and instant atomic DB loading. |
 | 🏎️ [**Performance Tuning**](https://github.com/ThouAreAwesome/RocksGraph/wiki/performance) | Batching strategies, memory sizing formulas, and query optimization patterns. |
 
-For Python developers, see the dedicated [Python Storefront](bindings/python/README.md).
+For Python developers, see the dedicated [Python Storefront](https://github.com/ThouAreAwesome/RocksGraph/blob/main/bindings/python/README.md).
 
 ---
 
@@ -150,7 +150,7 @@ For Python developers, see the dedicated [Python Storefront](bindings/python/REA
 
 A Gremlin traversal is parsed into a logical plan, optimized (index-seek folding, filter reordering), and lowered into a physical plan executed by a streaming, pull-based iterator engine. That engine reads from two co-located backends: on-disk graph storage (vertices, edges, adjacency index) and an in-memory HNSW vector index, so a single traversal pipeline can mix edge navigation with nearest-neighbor lookups without crossing a process or network boundary.
 
-For the full internal design — query planner rules, storage layout, WAL/vector-index lifecycle — see [`docs/design/architecture/`](../docs/design/architecture/).
+For the full internal design — query planner rules, storage layout, WAL/vector-index lifecycle — see [`docs/design/architecture/`](https://github.com/ThouAreAwesome/RocksGraph/tree/main/docs/design/architecture/).
 
 ---
 
