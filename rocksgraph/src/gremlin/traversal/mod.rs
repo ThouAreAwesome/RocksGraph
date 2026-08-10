@@ -630,6 +630,7 @@ pub trait TraversalBuilder: PlanAppender {
             k,
             ef_search: None,
             metric_override: None,
+            is_root: false,
         }));
         self
     }

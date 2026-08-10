@@ -165,8 +165,17 @@ impl PhysicalPlanBuilder {
 
         let mut upstream: Option<StepRef> = Some(source.clone());
         for (i, step) in plan.steps.iter().enumerate() {
-            if let LogicalStep::Nearest(_) = step {
-                let valid_upstream = i > 0 && matches!(&plan.steps[i - 1], LogicalStep::V(v) if v.ids.is_empty());
+            if let LogicalStep::Nearest(n) = step {
+                // `is_root` is set only by the `merge_v_into_nearest` optimizer, when it deletes
+                // a preceding unbounded `V([])`. A `Nearest` at position 0 that was NOT produced
+                // by that rewrite (e.g. `.nearest()` called directly, or bytecode encoding
+                // `OP_NEAREST` as the first op) must still be rejected — checking position alone
+                // would let it silently run rootless (no upstream wired) and yield empty results.
+                let valid_upstream = if i == 0 {
+                    n.is_root
+                } else {
+                    matches!(&plan.steps[i - 1], LogicalStep::V(v) if v.ids.is_empty())
+                };
                 if !valid_upstream {
                     return Err(StoreError::UnsupportedOperation(
                         "nearest() is a vector index entry-point step and must immediately follow g.V([]). \
@@ -189,7 +198,9 @@ mod tests {
     use super::*;
     use crate::{
         engine::{context::NoopCtx, traverser::Traverser},
-        planner::logical_step::{CountStep, LogicalPlan, LogicalStep, ScalarFilterStep, WhereStep},
+        planner::logical_step::{
+            CountStep, LogicalPlan, LogicalStep, NearestLogicalStep, ScalarFilterStep, VStep, WhereStep,
+        },
         schema::Schema,
         types::gvalue::{GValue, Primitive, PrimitivePredicate},
     };
@@ -264,6 +275,63 @@ mod tests {
         let result = physical_plan.next(&mut ctx).expect("store error").expect("Expected one result");
         assert_eq!(result.as_ref().value, gvalue(2));
         assert!(physical_plan.next(&mut ctx).expect("store error").is_none());
+    }
+
+    fn nearest_step(is_root: bool) -> LogicalStep {
+        LogicalStep::Nearest(NearestLogicalStep {
+            prop_key: "emb".to_string(),
+            query_vec: vec![1.0, 0.0],
+            k: 5,
+            ef_search: None,
+            metric_override: None,
+            is_root,
+        })
+    }
+
+    #[test]
+    fn test_nearest_at_root_without_is_root_is_rejected() {
+        // A `Nearest` step at position 0 that was NOT produced by the
+        // `merge_v_into_nearest` optimizer (is_root still false) must be rejected —
+        // it has no upstream wired, so silently accepting it would make it run
+        // rootless and yield empty results instead of a clear error. Reachable via
+        // `.nearest()` called without `.V([])`, or bytecode encoding `OP_NEAREST`
+        // as the first op.
+        let plan = LogicalPlan { steps: vec![nearest_step(false)] };
+        let mut builder: PhysicalPlanBuilder = Default::default();
+        let schema_lock = parking_lot::RwLock::new(Schema::default());
+        let err = builder.build(&plan, &schema_lock).expect_err("orphan nearest() must be rejected");
+        assert!(matches!(err, StoreError::UnsupportedOperation(_)));
+    }
+
+    #[test]
+    fn test_nearest_at_root_with_is_root_is_accepted() {
+        // What `merge_v_into_nearest` actually produces: `Nearest` at position 0
+        // with `is_root: true` after deleting the preceding unbounded `V([])`.
+        let plan = LogicalPlan { steps: vec![nearest_step(true)] };
+        let mut builder: PhysicalPlanBuilder = Default::default();
+        let schema_lock = parking_lot::RwLock::new(Schema::default());
+        assert!(builder.build(&plan, &schema_lock).is_ok());
+    }
+
+    #[test]
+    fn test_nearest_after_unbounded_v_is_accepted() {
+        // Pre-optimization shape: an explicit unbounded `V([])` immediately
+        // followed by `Nearest` (is_root still false at this point) is valid —
+        // unaffected by the position-0 fix, since i > 0 here.
+        let plan = LogicalPlan { steps: vec![LogicalStep::V(VStep { ids: Default::default() }), nearest_step(false)] };
+        let mut builder: PhysicalPlanBuilder = Default::default();
+        let schema_lock = parking_lot::RwLock::new(Schema::default());
+        assert!(builder.build(&plan, &schema_lock).is_ok());
+    }
+
+    #[test]
+    fn test_nearest_after_id_filtered_v_is_rejected() {
+        // `V([1])` is not an unbounded scan, so `Nearest` still can't validly follow it.
+        let plan = LogicalPlan { steps: vec![LogicalStep::V(VStep { ids: smallvec![1i64] }), nearest_step(false)] };
+        let mut builder: PhysicalPlanBuilder = Default::default();
+        let schema_lock = parking_lot::RwLock::new(Schema::default());
+        let err = builder.build(&plan, &schema_lock).expect_err("nearest() after V(ids) must be rejected");
+        assert!(matches!(err, StoreError::UnsupportedOperation(_)));
     }
 
     #[cfg(test)]

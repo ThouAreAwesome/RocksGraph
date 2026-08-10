@@ -11,6 +11,7 @@
 - [Transactions & Concurrency](concurrency_and_tx.md)
 - [Bulk Loading & SST Ingest](bulk_loading.md)
 - [Performance Tuning](performance.md)
+- [Benchmarks](benchmarks.md)
 
 ### Developer Resources
 - [GitHub Repository](https://github.com/ThouAreAwesome/RocksGraph)

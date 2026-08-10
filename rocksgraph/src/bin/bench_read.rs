@@ -182,7 +182,7 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     run_query_benchmark(
-        "Q6: g.V(id).out(label).hasLabel(v_label).dedup().out(label).hasLabel(v_label).dedup().hasId(not(id)).count()",
+        "Q6: g.V(id).out(label).hasLabel(v_label).dedup().out(label).hasLabel(v_label).dedup().hasId(not(id)).limit(10000).count()",
         &lines,
         &graph,
         parallelism,
@@ -197,6 +197,7 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                 .hasLabel([VERTEX_LABEL])
                 .dedup()
                 .hasId(ne(src))
+                .limit(10000)
                 .count()
                 .next()?
                 .unwrap()
@@ -209,7 +210,7 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     run_query_benchmark(
-        "Q7: g.V(id).repeat(out(label).hasLabel(v_label).dedup()).times(2).hasId(not(id)).count()",
+        "Q7: g.V(id).repeat(out(label).hasLabel(v_label).dedup()).times(2).hasId(not(id)).limit(10000).count()",
         &lines,
         &graph,
         parallelism,
@@ -220,6 +221,7 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                 .repeat(__().out([EDGE_LABEL]).hasLabel([VERTEX_LABEL]).dedup())
                 .times(2)
                 .hasId(ne(src))
+                .limit(10000)
                 .count()
                 .next()?
                 .unwrap()
@@ -319,7 +321,7 @@ fn explain_all(graph: &Graph) -> Result<(), Box<dyn std::error::Error>> {
             }),
         ),
         (
-            "Q6: g.V(src).out(label).hasLabel(v_label).dedup().out(label).hasLabel(v_label).dedup().hasId(ne(src)).count()",
+            "Q6: g.V(src).out(label).hasLabel(v_label).dedup().out(label).hasLabel(v_label).dedup().hasId(ne(src)).limit(10000).count()",
             Box::new(move |s| {
                 s.g()
                     .V([src])
@@ -330,18 +332,20 @@ fn explain_all(graph: &Graph) -> Result<(), Box<dyn std::error::Error>> {
                     .hasLabel([VERTEX_LABEL])
                     .dedup()
                     .hasId(ne(src))
+                    .limit(10000)
                     .count()
                     .explain()
             }),
         ),
         (
-            "Q7: g.V(src).repeat(out(label).hasLabel(v_label).dedup()).times(2).hasId(ne(src)).count()",
+            "Q7: g.V(src).repeat(out(label).hasLabel(v_label).dedup()).times(2).hasId(ne(src)).limit(10000).count()",
             Box::new(move |s| {
                 s.g()
                     .V([src])
                     .repeat(__().out([EDGE_LABEL]).hasLabel([VERTEX_LABEL]).dedup())
                     .times(2)
                     .hasId(ne(src))
+                    .limit(10000)
                     .count()
                     .explain()
             }),

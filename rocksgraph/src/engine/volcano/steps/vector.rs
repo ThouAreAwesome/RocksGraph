@@ -10,7 +10,7 @@ use crate::types::PIPELINE_PRODUCE_SIZE;
 use crate::types::{
     error::StoreError,
     gvalue::{GValue, Primitive},
-    keys::CanonicalKey,
+    keys::{BatchScenario, CanonicalKey},
 };
 use parking_lot::RwLock;
 use smallvec::smallvec;
@@ -36,6 +36,7 @@ pub struct NearestStep {
     cursor: usize,
     drained: bool,
     prop_key_cache: HashMap<SmolStr, u16>,
+    is_root: bool,
 }
 
 impl NearestStep {
@@ -45,6 +46,7 @@ impl NearestStep {
         k: usize,
         ef_search: Option<usize>,
         metric_override: Option<DistanceMetric>,
+        is_root: bool,
     ) -> Self {
         Self {
             upstream: None,
@@ -57,6 +59,7 @@ impl NearestStep {
             cursor: 0,
             drained: false,
             prop_key_cache: HashMap::new(),
+            is_root,
         }
     }
 }
@@ -130,10 +133,9 @@ impl CoreStep for NearestStep {
 
             // Drain the first traverser to infer entity type for index selection.
             // If the upstream stream is empty (`first` is None), `inferred_entity_type` defaults
-            // to Vertex; the candidate collection loop will simply find 0 items and cleanly produce None.
-            // TODO(mixed-streams): entity type is inferred from the first traverser only.
-            // A mixed vertex/edge stream would need per-element dispatch to select the right index.
-            let first = upstream.next(ctx)?;
+            // to Vertex; the candidate collection loop will simply find 0 items and cleanly produce None
+            // (UNLESS this step is the root step, in which case we skip upstream entirely).
+            let first = if self.is_root { None } else { upstream.next(ctx)? };
             let inferred_entity_type = first
                 .as_ref()
                 .map(|t| match &t.value {
@@ -161,26 +163,28 @@ impl CoreStep for NearestStep {
                 //      down to it.
                 // Both require planner cooperation to signal "unfiltered scan" vs "id-set".
                 let mut allowed: HashMap<EntityKey, Rc<Traverser>> = HashMap::new();
-                if let Some(ref t) = first {
-                    match &t.value {
-                        GValue::Vertex(vk) => {
-                            allowed.insert(EntityKey::Vertex(*vk), Rc::clone(t));
+                if !self.is_root {
+                    if let Some(ref t) = first {
+                        match &t.value {
+                            GValue::Vertex(vk) => {
+                                allowed.insert(EntityKey::Vertex(*vk), Rc::clone(t));
+                            }
+                            GValue::Edge(ek) => {
+                                allowed.insert(EntityKey::Edge(ek.canonical_edge_key()), Rc::clone(t));
+                            }
+                            _ => {}
                         }
-                        GValue::Edge(ek) => {
-                            allowed.insert(EntityKey::Edge(ek.canonical_edge_key()), Rc::clone(t));
-                        }
-                        _ => {}
                     }
-                }
-                while let Some(t) = upstream.next(ctx)? {
-                    match &t.value {
-                        GValue::Vertex(vk) => {
-                            allowed.insert(EntityKey::Vertex(*vk), Rc::clone(&t));
+                    while let Some(t) = upstream.next(ctx)? {
+                        match &t.value {
+                            GValue::Vertex(vk) => {
+                                allowed.insert(EntityKey::Vertex(*vk), Rc::clone(&t));
+                            }
+                            GValue::Edge(ek) => {
+                                allowed.insert(EntityKey::Edge(ek.canonical_edge_key()), Rc::clone(&t));
+                            }
+                            _ => {}
                         }
-                        GValue::Edge(ek) => {
-                            allowed.insert(EntityKey::Edge(ek.canonical_edge_key()), Rc::clone(&t));
-                        }
-                        _ => {}
                     }
                 }
 
@@ -198,15 +202,50 @@ impl CoreStep for NearestStep {
                 let metric = self.metric_override.unwrap_or(index_metric);
                 let mut candidates: HashMap<EntityKey, (Rc<Traverser>, f32)> = HashMap::new();
                 for (ek, dist) in results {
-                    if let Some(t) = allowed.get(&ek) {
+                    let index_sim = crate::vector::dist_to_sim(index_metric, dist);
+                    if self.is_root {
+                        // For a root query, metric_override is rarely needed because it requires fetching the original vector,
+                        // but if it is provided, we compute it. If not, use the fast index-provided distance.
+                        let final_sim = if self.metric_override.is_some() && self.metric_override != Some(index_metric)
+                        {
+                            let gv = match &ek {
+                                EntityKey::Vertex(id) => GValue::Vertex(*id),
+                                EntityKey::Edge(cek) => GValue::Edge(crate::types::keys::EdgeKey::out_e(
+                                    cek.src_id,
+                                    cek.label_id,
+                                    cek.dst_id,
+                                    cek.rank,
+                                )),
+                            };
+                            let dummy_t = Traverser::new(gv.clone());
+                            if let Some(v) = resolve_vector(&dummy_t, ctx, prop_id) {
+                                crate::vector::metric_sim(metric, &v, &self.query_vec)
+                            } else {
+                                index_sim
+                            }
+                        } else {
+                            index_sim
+                        };
+                        let gv = match ek.clone() {
+                            EntityKey::Vertex(id) => GValue::Vertex(id),
+                            EntityKey::Edge(cek) => GValue::Edge(crate::types::keys::EdgeKey::out_e(
+                                cek.src_id,
+                                cek.label_id,
+                                cek.dst_id,
+                                cek.rank,
+                            )),
+                        };
+                        let t = Rc::new(Traverser::new(gv));
+                        candidates.insert(ek, (t, final_sim));
+                    } else if let Some(t) = allowed.get(&ek) {
                         let sim = if self.metric_override.is_some() && self.metric_override != Some(index_metric) {
                             if let Some(v) = resolve_vector(t, ctx, prop_id) {
                                 crate::vector::metric_sim(metric, &v, &self.query_vec)
                             } else {
-                                crate::vector::dist_to_sim(index_metric, dist)
+                                index_sim
                             }
                         } else {
-                            crate::vector::dist_to_sim(index_metric, dist)
+                            index_sim
                         };
                         candidates.insert(ek, (Rc::clone(t), sim));
                     }
@@ -224,7 +263,20 @@ impl CoreStep for NearestStep {
                             }
                             crate::vector::PendingVectorOp::Inserted { key, prop_name, vector, .. } => {
                                 if prop_name == &self.prop_key {
-                                    if let Some(t) = allowed.get(key) {
+                                    if self.is_root {
+                                        let sim = crate::vector::metric_sim(metric, vector, &self.query_vec);
+                                        let gv = match key.clone() {
+                                            EntityKey::Vertex(id) => GValue::Vertex(id),
+                                            EntityKey::Edge(cek) => GValue::Edge(crate::types::keys::EdgeKey::out_e(
+                                                cek.src_id,
+                                                cek.label_id,
+                                                cek.dst_id,
+                                                cek.rank,
+                                            )),
+                                        };
+                                        let t = Rc::new(Traverser::new(gv));
+                                        candidates.insert(key.clone(), (t, sim));
+                                    } else if let Some(t) = allowed.get(key) {
                                         let sim = crate::vector::metric_sim(metric, vector, &self.query_vec);
                                         candidates.insert(key.clone(), (Rc::clone(t), sim));
                                     }
@@ -244,15 +296,41 @@ impl CoreStep for NearestStep {
             if !used_index {
                 let metric = self.metric_override.unwrap_or_default();
                 let mut candidates: Vec<(Rc<Traverser>, f32)> = Vec::new();
-                // Include the first traverser consumed for entity-type inference.
-                if let Some(t) = first {
-                    if let Some(v) = resolve_vector(&t, ctx, prop_id) {
-                        candidates.push((t, crate::vector::metric_sim(metric, &v, &self.query_vec)));
+                if self.is_root {
+                    // No upstream to drain — the optimizer deleted the unbounded `V([])`
+                    // that used to enumerate vertices. Scan them directly, mirroring what
+                    // that VStep would have produced (root is always vertex-only: this
+                    // step only becomes root when `merge_v_into_nearest` matches a
+                    // preceding `LogicalStep::V`, never `E`).
+                    let batch_size = ctx.batch_size(BatchScenario::ScanVertices);
+                    let mut cursor = None;
+                    loop {
+                        let (vks, next_cursor) = ctx.scan_vertices(None, cursor, batch_size)?;
+                        if vks.is_empty() {
+                            break;
+                        }
+                        for vk in vks {
+                            let t = Traverser::new_rc(GValue::Vertex(vk));
+                            if let Some(v) = resolve_vector(&t, ctx, prop_id) {
+                                candidates.push((t, crate::vector::metric_sim(metric, &v, &self.query_vec)));
+                            }
+                        }
+                        if next_cursor.is_none() {
+                            break;
+                        }
+                        cursor = next_cursor;
                     }
-                }
-                while let Some(t) = upstream.next(ctx)? {
-                    if let Some(v) = resolve_vector(&t, ctx, prop_id) {
-                        candidates.push((t, crate::vector::metric_sim(metric, &v, &self.query_vec)));
+                } else {
+                    // Include the first traverser consumed for entity-type inference.
+                    if let Some(t) = first {
+                        if let Some(v) = resolve_vector(&t, ctx, prop_id) {
+                            candidates.push((t, crate::vector::metric_sim(metric, &v, &self.query_vec)));
+                        }
+                    }
+                    while let Some(t) = upstream.next(ctx)? {
+                        if let Some(v) = resolve_vector(&t, ctx, prop_id) {
+                            candidates.push((t, crate::vector::metric_sim(metric, &v, &self.query_vec)));
+                        }
                     }
                 }
                 candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));

@@ -3147,4 +3147,88 @@ mod integration_test {
 
         graph.close().unwrap();
     }
+
+    // ── V().nearest() optimization (merge_v_into_nearest) ──────────────────
+
+    #[test]
+    fn test_v_nearest_brute_force_no_index_returns_correct_match() {
+        // Regression test: the `merge_v_into_nearest` optimizer deletes the unbounded
+        // `V([])` and makes `nearest()` the root step. With no HNSW index declared for
+        // this property (the exact pattern used in both READMEs' quickstarts), the
+        // brute-force fallback must still enumerate vertices itself — it previously
+        // silently returned empty results because it tried to drain the now-deleted
+        // upstream instead.
+        let dir = tempfile::tempdir().unwrap();
+        let graph = Graph::open(dir.path()).unwrap();
+
+        let mut txn = graph.begin();
+        txn.g()
+            .addV("person")
+            .property("id", 1i64)
+            .property("name", "Alice")
+            .property("emb", Value::FloatVector(vec![0.9, 0.1, 0.0]))
+            .next()
+            .unwrap();
+        txn.g()
+            .addV("person")
+            .property("id", 2i64)
+            .property("name", "Bob")
+            .property("emb", Value::FloatVector(vec![0.1, 0.9, 0.0]))
+            .next()
+            .unwrap();
+        txn.commit().unwrap();
+
+        let mut snap = graph.read();
+        let nearest = snap.g().V([]).nearest("emb", vec![1.0f32, 0.0, 0.0], 1).values(["name"]).to_list().unwrap();
+        assert_eq!(nearest, vec![Value::String("Alice".to_string())]);
+
+        graph.close().unwrap();
+    }
+
+    #[test]
+    fn test_v_nearest_with_hnsw_index_returns_correct_match() {
+        use crate::schema::{AnnAlgorithm, DistanceMetric, VectorEntityType, VectorIndexConfig};
+
+        let dir = tempfile::tempdir().unwrap();
+        let graph = Graph::open(dir.path()).unwrap();
+
+        {
+            let mut mgmt = graph.open_schema();
+            mgmt.add_vector_index(VectorIndexConfig::new(
+                "emb",
+                VectorEntityType::Vertex,
+                3,
+                DistanceMetric::Cosine,
+                AnnAlgorithm::Hnsw(Default::default()),
+            ));
+            mgmt.commit().unwrap();
+        }
+
+        let mut txn = graph.begin();
+        txn.g()
+            .addV("person")
+            .property("id", 1i64)
+            .property("name", "Alice")
+            .property("emb", Value::FloatVector(vec![0.9, 0.1, 0.0]))
+            .next()
+            .unwrap();
+        txn.g()
+            .addV("person")
+            .property("id", 2i64)
+            .property("name", "Bob")
+            .property("emb", Value::FloatVector(vec![0.1, 0.9, 0.0]))
+            .next()
+            .unwrap();
+        txn.commit().unwrap();
+        graph.index_manager().rebuild(VectorEntityType::Vertex, "emb").unwrap();
+
+        let mut snap = graph.read();
+        let explain = snap.g().V([]).nearest("emb", vec![1.0f32, 0.0, 0.0], 1).explain().unwrap();
+        assert!(!explain.contains("VStep"), "VStep must be deleted by merge_v_into_nearest, got:\n{explain}");
+
+        let nearest = snap.g().V([]).nearest("emb", vec![1.0f32, 0.0, 0.0], 1).values(["name"]).to_list().unwrap();
+        assert_eq!(nearest, vec![Value::String("Alice".to_string())]);
+
+        graph.close().unwrap();
+    }
 }

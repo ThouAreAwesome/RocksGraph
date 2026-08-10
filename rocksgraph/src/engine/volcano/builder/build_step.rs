@@ -790,6 +790,7 @@ impl PhysicalPlanBuilder {
                         s.k,
                         s.ef_search,
                         s.metric_override,
+                        s.is_root,
                     )),
                     upstream,
                     "NearestStep"

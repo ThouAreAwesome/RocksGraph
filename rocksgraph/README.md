@@ -141,6 +141,7 @@ Comprehensive guides are available in the [`docs/guides/`](https://github.com/Th
 | 🔒 [**Transactions & Concurrency**](https://github.com/ThouAreAwesome/RocksGraph/wiki/concurrency_and_tx) | OCC conflict handling, Snapshot Isolation, and session lifecycles. |
 | ⚡ [**Bulk Loading & SST Ingest**](https://github.com/ThouAreAwesome/RocksGraph/wiki/bulk_loading) | High-throughput offline SST file generation and instant atomic DB loading. |
 | 🏎️ [**Performance Tuning**](https://github.com/ThouAreAwesome/RocksGraph/wiki/performance) | Batching strategies, memory sizing formulas, and query optimization patterns. |
+| 📊 [**Benchmarks**](https://github.com/ThouAreAwesome/RocksGraph/wiki/benchmarks) | Measured write (bulk load, transactional OCC) and read throughput/latency across dataset scales. |
 
 For Python developers, see the dedicated [Python Storefront](https://github.com/ThouAreAwesome/RocksGraph/blob/main/bindings/python/README.md).
 

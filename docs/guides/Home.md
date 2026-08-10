@@ -18,6 +18,7 @@ Whether you're just getting started or looking to optimize an existing workload,
 - 🔒 **[Transactions & Concurrency](concurrency_and_tx.md)** — Read/write isolation, OCC, and retries.
 - ⚡ **[Bulk Loading & SST Ingest](bulk_loading.md)** — How to bypass transactions for massive initial data imports.
 - 🏎️ **[Performance Tuning](performance.md)** — Tips for batching, query optimization, and tuning execution options.
+- 📊 **[Benchmarks](benchmarks.md)** — Measured write and read throughput/latency across dataset scales.
 
 ---
 

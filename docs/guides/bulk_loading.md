@@ -18,7 +18,7 @@ Bulk loading bypasses online transaction logging, sorts data chunks offline into
 | **Best For** | OLTP queries, live mutations | Initial dataset imports, large batch syncs |
 
 > [!NOTE]
-> See [`BENCHMARKS.md`](https://github.com/ThouAreAwesome/RocksGraph/blob/main/rocksgraph/BENCHMARKS.md) for measured figures. The write-path benchmarks there were run at different dataset scales (`TxnSession` at 1M edges, `BulkLoader` at 69M), so they aren't a controlled side-by-side comparison — don't derive a specific multiplier from them.
+> See [Benchmarks](benchmarks.md) for measured figures. The write-path benchmarks there were run at different dataset scales (`TxnSession` at 1M edges, `BulkLoader` at 69M), so they aren't a controlled side-by-side comparison — don't derive a specific multiplier from them.
 
 ---
 
