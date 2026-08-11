@@ -27,6 +27,33 @@ Before opening a PR:
    project's testing conventions.
 3. `cargo clippy -- --deny warnings` must be clean; CI enforces this on both Linux and macOS.
 
+## Scripts
+
+Beyond the `just` recipes above, `scripts/` has a few task-specific helpers — not part of the
+required PR workflow, but useful when touching benchmarks or bulk loading. Each script documents
+its own flags in its header comment; run it with no arguments to see the defaults.
+
+- `prepare_dataset.sh <name>` — downloads/prepares a SNAP dataset (LiveJournal or Orkut) into
+  `rocksgraph/bench_data/snap/`.
+- `bench_write.sh <name>` / `bench_read.sh <name>` — prepare-and-bulk-load / query-benchmark a SNAP
+  dataset; see [`docs/guides/benchmarks.md`](docs/guides/benchmarks.md) for the numbers these
+  produce.
+- `bench_integrity.sh <name>` — checks degree-CF consistency against a full adjacency scan on a
+  store already built by `bench_write.sh`.
+- `instruments_write.sh` / `instruments_read.sh` — macOS-only `cargo instruments` CPU-profiling
+  wrappers around the same benchmarks.
+- `coverage.sh [--summary]` — runs the test suite under `cargo-llvm-cov`; opens an HTML report by
+  default.
+- `generate_synthetic_ldbc.py <out_dir> <num_vertices> <num_edges>` — generates a synthetic
+  LDBC-SNB-shaped dataset (every scalar `DataType` plus a `FloatVector` embedding) for the
+  bulk-load examples and the cross-validation harness below.
+- `run_bulkload.py --dataset {snap,ldbc} --lang {rust,python} --data-dir <path>` — runs one of the
+  bulk-load examples under `rocksgraph/examples/` or `bindings/python/examples/`.
+- `run_cross_validate.sh [num_vertices] [num_edges]` — cross-validates `BulkLoader` against the
+  transactional (`TxnSession`) write path, and the Rust `BulkLoader` against its Python binding:
+  generates a dataset, loads it three ways, and compares the resulting databases structurally and
+  via ANN (`.nearest()`/`.neighbors()`) recall.
+
 ## Code style
 
 Match the style of the surrounding code rather than introducing a new convention.
