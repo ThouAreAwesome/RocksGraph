@@ -197,77 +197,14 @@ The example above assumes your source lists vertices explicitly. Many real datas
 2. **Second pass** — re-open the same file and stream it again as edges, exactly like the CSV example above.
 
 #### 🦀 Rust
-```rust
-use rocksgraph::{bulk::{BulkEdge, BulkVertex}, StoreError};
-use std::{collections::{BTreeSet, HashMap}, fs::File, io::{BufRead, BufReader}};
-
-// Pass 1: collect every distinct vertex ID mentioned by an edge.
-// BTreeSet gives sorted, de-duplicated IDs — sorted order isn't required by
-// `load_vertices`, but it does mean vertices arrive in the same order BulkLoader
-// will write them, which is a minor sequential-I/O win.
-fn collect_vertex_ids(path: &str) -> std::io::Result<BTreeSet<i64>> {
-    let mut ids = BTreeSet::new();
-    for line in BufReader::new(File::open(path)?).lines() {
-        let line = line?;
-        let mut cols = line.split_whitespace();
-        if let (Some(src), Some(dst)) = (cols.next(), cols.next()) {
-            if let (Ok(src), Ok(dst)) = (src.parse::<i64>(), dst.parse::<i64>()) {
-                ids.insert(src);
-                ids.insert(dst);
-            }
-        }
-    }
-    Ok(ids)
-}
-
-// Pass 2: stream the same file again, this time as edges.
-fn stream_edges_from_list(path: &str) -> impl Iterator<Item = Result<BulkEdge, StoreError>> {
-    let reader = BufReader::new(File::open(path).expect("open edge list"));
-    reader.lines().filter_map(|line| {
-        let line = line.ok()?;
-        let mut cols = line.split_whitespace();
-        let (Some(src), Some(dst)) = (cols.next(), cols.next()) else { return None };
-        let (Ok(src), Ok(dst)) = (src.parse::<i64>(), dst.parse::<i64>()) else { return None };
-        Some(Ok(BulkEdge { src, dst, label: "knows".into(), props: HashMap::new(), rank: None }))
-    })
-}
-
-// let vertices = collect_vertex_ids("edges.txt")?
-//     .into_iter()
-//     .map(|id| BulkVertex { id, label: "person".into(), props: HashMap::new() });
-// loader.load_vertices(vertices)?;
-// loader.load_edges(stream_edges_from_list("edges.txt"))?;
-```
+For a complete, runnable version of the two-pass pattern above (including `--mode strict`/`auto` and sort-buffer sizing as CLI flags), see:  
+[`rocksgraph/examples/bulkload_snap.rs`](https://github.com/ThouAreAwesome/RocksGraph/tree/main/rocksgraph/examples/bulkload_snap.rs)
 
 #### 🐍 Python
-```python
-def collect_vertex_ids(path):
-    ids = set()
-    with open(path) as f:
-        for line in f:
-            parts = line.split()
-            if len(parts) != 2:
-                continue
-            src, dst = int(parts[0]), int(parts[1])
-            ids.add(src)
-            ids.add(dst)
-    return sorted(ids)
+For a complete, runnable example using the concurrent `yield` pattern, see:  
+[`bindings/python/examples/bulkload_snap.py`](https://github.com/ThouAreAwesome/RocksGraph/tree/main/bindings/python/examples/bulkload_snap.py)
 
-
-def stream_edges_from_list(path):
-    with open(path) as f:
-        for line in f:
-            parts = line.split()
-            if len(parts) != 2:
-                continue
-            src, dst = int(parts[0]), int(parts[1])
-            yield BulkEdge(src, dst, "knows")
-
-
-# vertices = (BulkVertex(vid, "person") for vid in collect_vertex_ids("edges.txt"))
-# loader.load_vertices(vertices)
-# loader.load_edges(stream_edges_from_list("edges.txt"))
-```
+This script demonstrates how to lazily stream a massive edge-list text file with memory efficiency in Python.
 
 > [!WARNING]
 > `BulkEdge`'s constructor argument order is `(src, dst, label, props=None, rank=None)` — not `(src, label, dst, ...)`. Passing them in the wrong order fails fast in Python (`dst` ends up a `str` where an `int` is expected), but it's an easy mistake since `label` reads naturally as the "middle" argument.
