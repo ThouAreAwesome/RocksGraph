@@ -339,7 +339,7 @@ impl<'a> BulkLoader<'a> {
                 id_props.insert(pkid, val.clone());
             }
 
-            let blob = prop_codec::encode_props(&id_props);
+            let blob = prop_codec::encode_props(&id_props)?;
             vertex_sorter.push(
                 kv_codec::encode_vertex_key(v.id).to_vec(),
                 kv_codec::VertexValue { label_id: lid, property_blob: blob }.encode(),
@@ -440,7 +440,7 @@ impl<'a> BulkLoader<'a> {
                         id_props.insert(pkid, val.clone());
                     }
 
-                    let blob = prop_codec::encode_props(&id_props);
+                    let blob = prop_codec::encode_props(&id_props)?;
                     let cek = CanonicalEdgeKey { src_id: edge.src, label_id: lid, dst_id: edge.dst, rank: 0 };
 
                     let mut dk = [0u8; 30];
@@ -503,7 +503,7 @@ impl<'a> BulkLoader<'a> {
                         id_props.insert(pkid, val.clone());
                     }
 
-                    let blob = prop_codec::encode_props(&id_props);
+                    let blob = prop_codec::encode_props(&id_props)?;
                     let rank_for_sort = edge.rank.unwrap_or(Rank::MAX);
                     let mut sort_key = [0u8; 22];
                     sort_key[0..8].copy_from_slice(&edge.src.to_be_bytes());

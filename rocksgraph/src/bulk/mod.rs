@@ -29,6 +29,9 @@ pub(crate) mod sort;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod proptests;
+
 #[allow(deprecated)]
 pub use loader::{
     BulkEdge, BulkLoadStats, BulkLoader, BulkSchema, BulkVertex, IntoBulkEdge, IntoBulkVertex, SstBulkLoader,

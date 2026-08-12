@@ -19,7 +19,7 @@ mod type_tests {
         let v1 = Vertex::with_props(1, 2, [(10u16, Primitive::Int32(42))].into());
         let v2 = Vertex::with_props(1, 2, [(10u16, Primitive::String("different".into()))].into());
         // v3: blob state
-        let blob = crate::types::prop_codec::encode_props(&[(10u16, Primitive::Int32(42))].into());
+        let blob = crate::types::prop_codec::encode_props(&[(10u16, Primitive::Int32(42))].into()).unwrap();
         let v3 = Vertex::from_raw(1, 2, blob.into_boxed_slice());
 
         // Equality is identity-only (see `PartialEq for Vertex`): id+label_id only.
@@ -35,7 +35,7 @@ mod type_tests {
         let e2 = Edge::with_props(1, 2, 3, 0, [(10u16, Primitive::String("different".into()))].into(), None, None);
         let _ = cek; // keep cek in scope for documentation
                      // e3: blob state
-        let blob = crate::types::prop_codec::encode_props(&[(10u16, Primitive::Int32(42))].into());
+        let blob = crate::types::prop_codec::encode_props(&[(10u16, Primitive::Int32(42))].into()).unwrap();
         let e3 = Edge::from_raw(1, 2, 3, 0, blob.into_boxed_slice(), None, None);
 
         // Equality is identity-only (see `PartialEq for Edge`): src+label+rank+dst only.

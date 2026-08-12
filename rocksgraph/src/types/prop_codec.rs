@@ -31,7 +31,12 @@ use std::collections::HashMap;
 
 use smallvec::SmallVec;
 
+use crate::types::error::StoreError;
 use crate::types::gvalue::Primitive;
+
+/// `String`/`Bytes` length is stored as a `u16` byte count in the wire
+/// format (see module docs) — a value longer than this cannot be encoded.
+const MAX_STRING_OR_BYTES_LEN: usize = u16::MAX as usize;
 
 // ── Format constants ──────────────────────────────────────────────────────────
 
@@ -161,8 +166,14 @@ fn decode_single_value(blob: &[u8], pos: usize) -> Option<Primitive> {
 // ── Encode ────────────────────────────────────────────────────────────────────
 
 /// Write a single `tag + payload` into `buf` (no key, no offset).
+///
+/// Returns an error for `String`/`Bytes` values whose byte length exceeds
+/// what the wire format's `u16` length prefix can represent. `Bytes`
+/// previously enforced this via a hard `assert!` (a panic, not a catchable
+/// `Result`); `String` had no check at all, silently truncating its length
+/// prefix and corrupting the blob for a value over 65,535 bytes.
 #[inline]
-fn write_value(buf: &mut Vec<u8>, value: &Primitive) {
+fn write_value(buf: &mut Vec<u8>, value: &Primitive) -> Result<(), StoreError> {
     match value {
         Primitive::Null => buf.push(TAG_NULL),
         Primitive::Bool(b) => {
@@ -190,8 +201,15 @@ fn write_value(buf: &mut Vec<u8>, value: &Primitive) {
             buf.extend_from_slice(&f.to_bits().to_be_bytes());
         }
         Primitive::String(s) => {
-            buf.push(TAG_STRING);
             let sb = s.as_bytes();
+            if sb.len() > MAX_STRING_OR_BYTES_LEN {
+                return Err(StoreError::PropertyValueTooLarge(format!(
+                    "String property is {} bytes, exceeds the {}-byte limit",
+                    sb.len(),
+                    MAX_STRING_OR_BYTES_LEN
+                )));
+            }
+            buf.push(TAG_STRING);
             buf.extend_from_slice(&(sb.len() as u16).to_be_bytes());
             buf.extend_from_slice(sb);
         }
@@ -200,7 +218,13 @@ fn write_value(buf: &mut Vec<u8>, value: &Primitive) {
             buf.extend_from_slice(&u.to_be_bytes());
         }
         Primitive::Bytes(b) => {
-            assert!(b.len() <= u16::MAX as usize, "Bytes property exceeds 65535-byte limit");
+            if b.len() > MAX_STRING_OR_BYTES_LEN {
+                return Err(StoreError::PropertyValueTooLarge(format!(
+                    "Bytes property is {} bytes, exceeds the {}-byte limit",
+                    b.len(),
+                    MAX_STRING_OR_BYTES_LEN
+                )));
+            }
             buf.push(TAG_BYTES);
             buf.extend_from_slice(&(b.len() as u16).to_be_bytes());
             buf.extend_from_slice(b);
@@ -213,6 +237,7 @@ fn write_value(buf: &mut Vec<u8>, value: &Primitive) {
             }
         }
     }
+    Ok(())
 }
 
 /// Encode a property map into the v1 prop_blob format.
@@ -220,7 +245,14 @@ fn write_value(buf: &mut Vec<u8>, value: &Primitive) {
 /// Sorts by key using a stack-allocated index (heap only for P > 32), reserves
 /// directory space, then fills offsets in-place while writing the value section —
 /// single pass, one heap allocation (the output buffer).
-pub(crate) fn encode_props(props: &HashMap<u16, Primitive>) -> Vec<u8> {
+///
+/// Returns [`StoreError::PropertyValueTooLarge`] if any `String`/`Bytes`
+/// value exceeds the 65,535-byte limit the wire format can encode, or if the
+/// cumulative value-section size across all properties would overflow the
+/// `u16` directory offset field (each entry's offset is the running total of
+/// every prior entry's encoded size — a per-value check alone isn't enough,
+/// since several small-enough values can still sum past 65,535 bytes).
+pub(crate) fn encode_props(props: &HashMap<u16, Primitive>) -> Result<Vec<u8>, StoreError> {
     let n = props.len();
     let mut idx: SmallVec<[u16; 32]> = props.keys().copied().collect();
     idx.sort_unstable();
@@ -232,16 +264,26 @@ pub(crate) fn encode_props(props: &HashMap<u16, Primitive>) -> Vec<u8> {
     buf.extend_from_slice(&header.to_be_bytes());
     buf.resize(dir_end, 0u8); // directory placeholder slots
 
-    let mut voff: u16 = 0;
+    // usize, not u16: must detect overflow before it happens, not after the
+    // offset has already been truncated into the u16 directory field.
+    let mut voff: usize = 0;
     for (slot, &key) in idx.iter().enumerate() {
+        if voff > u16::MAX as usize {
+            return Err(StoreError::PropertyValueTooLarge(format!(
+                "property blob value section exceeds {} bytes after {} of {} properties",
+                u16::MAX,
+                slot,
+                n
+            )));
+        }
         let dir_pos = HEADER_BYTES + slot * DIR_ENTRY_SIZE;
         buf[dir_pos..dir_pos + 2].copy_from_slice(&key.to_be_bytes());
-        buf[dir_pos + 2..dir_pos + DIR_ENTRY_SIZE].copy_from_slice(&voff.to_be_bytes());
+        buf[dir_pos + 2..dir_pos + DIR_ENTRY_SIZE].copy_from_slice(&(voff as u16).to_be_bytes());
         let before = buf.len();
-        write_value(&mut buf, props.get(&key).expect("key came from map"));
-        voff += (buf.len() - before) as u16;
+        write_value(&mut buf, props.get(&key).expect("key came from map"))?;
+        voff += buf.len() - before;
     }
-    buf
+    Ok(buf)
 }
 
 // ── Decode ────────────────────────────────────────────────────────────────────
@@ -326,12 +368,13 @@ mod tests {
 
     use smol_str::SmolStr;
 
-    use super::{decode_all_to_map, decode_prop_by_key, encode_props};
+    use super::{decode_all_to_map, decode_prop_by_key, encode_props, MAX_STRING_OR_BYTES_LEN};
+    use crate::types::error::StoreError;
     use crate::types::gvalue::Primitive;
 
     #[test]
     fn empty_props_roundtrip() {
-        let blob = encode_props(&HashMap::new());
+        let blob = encode_props(&HashMap::new()).unwrap();
         assert_eq!(blob.len(), 2, "empty blob should be header-only (2 bytes)");
         assert!(decode_all_to_map(&blob).is_empty());
     }
@@ -339,7 +382,7 @@ mod tests {
     #[test]
     fn single_prop_blob_size() {
         // header(2) + directory(4) + tag(1) + i64(8) = 15 B
-        let blob = encode_props(&[(1u16, Primitive::Int64(42))].into());
+        let blob = encode_props(&[(1u16, Primitive::Int64(42))].into()).unwrap();
         assert_eq!(blob.len(), 15, "single Int64 prop should be 15 bytes");
     }
 
@@ -351,7 +394,7 @@ mod tests {
             (5u16, Primitive::Bool(true)),
         ]
         .into();
-        let blob = encode_props(&m);
+        let blob = encode_props(&m).unwrap();
 
         assert_eq!(decode_prop_by_key(&blob, 5), Some(Primitive::Bool(true)));
         assert_eq!(decode_prop_by_key(&blob, 10), Some(Primitive::String(SmolStr::new("Alice"))));
@@ -374,7 +417,7 @@ mod tests {
             (10u16, Primitive::Bytes(vec![0xFF; 4])),
         ]
         .into();
-        let blob = encode_props(&m);
+        let blob = encode_props(&m).unwrap();
         let decoded = decode_all_to_map(&blob);
         assert_eq!(decoded.len(), m.len());
         for (k, v) in &m {
@@ -386,7 +429,8 @@ mod tests {
     fn binary_search_absent_key() {
         let blob = encode_props(
             &[(2u16, Primitive::Int32(1)), (4u16, Primitive::Int32(2)), (6u16, Primitive::Int32(3))].into(),
-        );
+        )
+        .unwrap();
         for absent in [1u16, 3, 5, 7] {
             assert_eq!(decode_prop_by_key(&blob, absent), None, "key {absent} should be absent");
         }
@@ -405,7 +449,8 @@ mod tests {
         // Valid header claiming 3 entries, but blob truncated before directory ends.
         let mut blob = encode_props(
             &[(1u16, Primitive::Int32(1)), (2u16, Primitive::Int32(2)), (3u16, Primitive::Int32(3))].into(),
-        );
+        )
+        .unwrap();
         blob.truncate(blob.len() - 5); // chop part of value section and last directory entry
                                        // Should not panic — binary search hits the out-of-bounds guard.
         let _ = decode_prop_by_key(&blob, 1);
@@ -449,7 +494,7 @@ mod tests {
     #[test]
     fn unknown_version_rejected() {
         // Build a valid v1 blob, then flip the version nibble to 0x2.
-        let mut blob = encode_props(&[(1u16, Primitive::Int32(42))].into());
+        let mut blob = encode_props(&[(1u16, Primitive::Int32(42))].into()).unwrap();
         blob[0] = (blob[0] & 0x0F) | 0x20; // version nibble → 0x2
         assert_eq!(decode_prop_by_key(&blob, 1), None);
         assert!(decode_all_to_map(&blob).is_empty());
@@ -459,7 +504,7 @@ mod tests {
 
     #[test]
     fn g1_zero_length_string_roundtrip() {
-        let blob = encode_props(&[(5u16, Primitive::String(SmolStr::new("")))].into());
+        let blob = encode_props(&[(5u16, Primitive::String(SmolStr::new("")))].into()).unwrap();
         assert_eq!(decode_prop_by_key(&blob, 5), Some(Primitive::String(SmolStr::new(""))));
         let map = decode_all_to_map(&blob);
         assert_eq!(map.get(&5), Some(&Primitive::String(SmolStr::new(""))));
@@ -467,7 +512,7 @@ mod tests {
 
     #[test]
     fn g2_zero_length_bytes_roundtrip() {
-        let blob = encode_props(&[(7u16, Primitive::Bytes(vec![]))].into());
+        let blob = encode_props(&[(7u16, Primitive::Bytes(vec![]))].into()).unwrap();
         assert_eq!(decode_prop_by_key(&blob, 7), Some(Primitive::Bytes(vec![])));
         let map = decode_all_to_map(&blob);
         assert_eq!(map.get(&7), Some(&Primitive::Bytes(vec![])));
@@ -477,7 +522,7 @@ mod tests {
     fn g3_max_key_boundary_values() {
         // key=0 (smallest possible) and key=u16::MAX (largest possible)
         let m: HashMap<u16, Primitive> = [(0u16, Primitive::Bool(true)), (u16::MAX, Primitive::Bool(false))].into();
-        let blob = encode_props(&m);
+        let blob = encode_props(&m).unwrap();
         assert_eq!(decode_prop_by_key(&blob, 0), Some(Primitive::Bool(true)));
         assert_eq!(decode_prop_by_key(&blob, u16::MAX), Some(Primitive::Bool(false)));
         let decoded = decode_all_to_map(&blob);
@@ -488,7 +533,7 @@ mod tests {
     fn g4_large_string_value() {
         // 10 000-char string: exercises u16 length-prefix for values > 255 bytes.
         let big: String = "x".repeat(10_000);
-        let blob = encode_props(&[(42u16, Primitive::String(SmolStr::new(&big)))].into());
+        let blob = encode_props(&[(42u16, Primitive::String(SmolStr::new(&big)))].into()).unwrap();
         let v = decode_prop_by_key(&blob, 42).unwrap();
         assert!(matches!(v, Primitive::String(ref s) if s.len() == 10_000));
     }
@@ -497,7 +542,7 @@ mod tests {
     fn g5_sequential_keys_binary_search_edges() {
         // Keys 1..=8 — verify first, last, and a middle key are all found.
         let m: HashMap<u16, Primitive> = (1u16..=8).map(|k| (k, Primitive::Int32(k as i32 * 10))).collect();
-        let blob = encode_props(&m);
+        let blob = encode_props(&m).unwrap();
         assert_eq!(decode_prop_by_key(&blob, 1), Some(Primitive::Int32(10))); // first
         assert_eq!(decode_prop_by_key(&blob, 8), Some(Primitive::Int32(80))); // last
         assert_eq!(decode_prop_by_key(&blob, 4), Some(Primitive::Int32(40))); // middle
@@ -508,7 +553,7 @@ mod tests {
     fn g6_sparse_key_range_binary_search() {
         let m: HashMap<u16, Primitive> =
             [(1000u16, Primitive::Int32(1)), (50000u16, Primitive::Int32(2)), (65500u16, Primitive::Int32(3))].into();
-        let blob = encode_props(&m);
+        let blob = encode_props(&m).unwrap();
         assert_eq!(decode_prop_by_key(&blob, 1000), Some(Primitive::Int32(1)));
         assert_eq!(decode_prop_by_key(&blob, 50000), Some(Primitive::Int32(2)));
         assert_eq!(decode_prop_by_key(&blob, 65500), Some(Primitive::Int32(3)));
@@ -521,9 +566,61 @@ mod tests {
     #[test]
     fn g7_decode_prop_by_key_on_empty_blob() {
         // An empty-property blob (count=0) should return None for any key without panicking.
-        let blob = encode_props(&HashMap::new());
+        let blob = encode_props(&HashMap::new()).unwrap();
         assert_eq!(decode_prop_by_key(&blob, 0), None);
         assert_eq!(decode_prop_by_key(&blob, 100), None);
         assert_eq!(decode_prop_by_key(&blob, u16::MAX), None);
+    }
+
+    // ── Oversized String/Bytes: clean error, not a panic or silent corruption ──
+
+    #[test]
+    fn bytes_over_limit_returns_clean_error_not_panic() {
+        // Previously a hard `assert!` panic. One byte over the u16 length-prefix limit.
+        let oversized = vec![0u8; MAX_STRING_OR_BYTES_LEN + 1];
+        let err = encode_props(&[(1u16, Primitive::Bytes(oversized))].into()).unwrap_err();
+        assert!(matches!(err, StoreError::PropertyValueTooLarge(_)), "expected PropertyValueTooLarge, got {err:?}");
+    }
+
+    #[test]
+    fn string_over_limit_returns_clean_error_not_silent_corruption() {
+        // Previously: unchecked `as u16` cast on the length prefix silently
+        // truncated it, corrupting the blob layout instead of erroring.
+        let oversized = "x".repeat(MAX_STRING_OR_BYTES_LEN + 1);
+        let err = encode_props(&[(1u16, Primitive::String(SmolStr::new(&oversized)))].into()).unwrap_err();
+        assert!(matches!(err, StoreError::PropertyValueTooLarge(_)), "expected PropertyValueTooLarge, got {err:?}");
+    }
+
+    #[test]
+    fn cumulative_value_section_overflow_returns_clean_error() {
+        // `a` alone is within the per-value limit, but its *encoded* size
+        // (tag + len-prefix + payload = 65538 bytes) already exceeds
+        // `u16::MAX` — so placing a second entry after it requires an offset
+        // that can't fit in the u16 directory field. Previously this
+        // silently wrapped (`voff += ... as u16`), corrupting `b`'s directory
+        // offset instead of erroring.
+        let a = vec![0u8; MAX_STRING_OR_BYTES_LEN];
+        let b = vec![0u8; 1];
+        let err = encode_props(&[(1u16, Primitive::Bytes(a)), (2u16, Primitive::Bytes(b))].into()).unwrap_err();
+        assert!(matches!(err, StoreError::PropertyValueTooLarge(_)), "expected PropertyValueTooLarge, got {err:?}");
+    }
+
+    #[test]
+    fn string_and_bytes_at_exact_limit_still_succeed() {
+        // Boundary check: exactly MAX_STRING_OR_BYTES_LEN bytes must still round-trip.
+        // One value per blob: a single entry at the limit alone produces a
+        // value-section byte count over `u16::MAX` (tag + len-prefix + payload
+        // > 65535) — harmless here since a lone entry's offset is written
+        // before accumulation happens, and there's no second entry for a
+        // corrupted running total to affect; see
+        // `cumulative_value_section_overflow_returns_clean_error` for the
+        // multi-entry case this would otherwise corrupt.
+        let s = "x".repeat(MAX_STRING_OR_BYTES_LEN);
+        let string_blob = encode_props(&[(1u16, Primitive::String(SmolStr::new(&s)))].into()).unwrap();
+        assert_eq!(decode_prop_by_key(&string_blob, 1), Some(Primitive::String(SmolStr::new(&s))));
+
+        let b = vec![0xAAu8; MAX_STRING_OR_BYTES_LEN];
+        let bytes_blob = encode_props(&[(1u16, Primitive::Bytes(b.clone()))].into()).unwrap();
+        assert_eq!(decode_prop_by_key(&bytes_blob, 1), Some(Primitive::Bytes(b)));
     }
 }
