@@ -49,14 +49,11 @@
 //!
 //! Both are opt-in and off by default:
 //!
-//! - **`rocksdb-stats`** — collects RocksDB internal statistics (bloom-filter hit
-//!   rates, compaction counters, etc.), retrievable via
-//!   [`Graph::statistics`](api::Graph::statistics). Adds roughly 5-10% overhead to
-//!   every storage operation from the added atomic counters; enable only when
-//!   profiling, not in production.
-//! - **`tracing`** — instruments the query engine with [`tracing`](https://docs.rs/tracing)
-//!   spans/events, logging the traversers each pipeline step emits or filters out.
-//!   Zero-cost when the feature is disabled.
+//! - **`rocksdb-stats`** — collects RocksDB internal statistics (bloom-filter hit rates, compaction counters, etc.),
+//!   retrievable via [`Graph::statistics`](api::Graph::statistics). Adds roughly 5-10% overhead to every storage
+//!   operation from the added atomic counters; enable only when profiling, not in production.
+//! - **`tracing`** — instruments the query engine with [`tracing`](https://docs.rs/tracing) spans/events, logging the
+//!   traversers each pipeline step emits or filters out. Zero-cost when the feature is disabled.
 //!
 //! ## Architecture
 //!
@@ -82,6 +79,11 @@ pub mod api;
 pub mod bulk;
 #[doc(hidden)]
 pub(crate) mod bytecode;
+
+#[cfg(feature = "fuzzing")]
+pub mod fuzzing_exports {
+    pub use crate::bytecode::decode;
+}
 pub(crate) mod engine;
 pub(crate) mod graph;
 pub(crate) mod gremlin;

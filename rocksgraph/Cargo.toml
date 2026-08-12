@@ -4,7 +4,7 @@ description = "Embeddable, ACID-compliant property graph database with Gremlin t
 edition = "2021"
 license = "MIT OR Apache-2.0"
 name = "rocksgraph"
-version = "0.2.1-rc.1"
+version = "0.2.2"
 readme = "README.md"
 repository = "https://github.com/ThouAreAwesome/RocksGraph"
 documentation = "https://docs.rs/rocksgraph"
@@ -20,6 +20,7 @@ all-features = true
 
 
 [features]
+fuzzing = []
 # Enable RocksDB statistics collection. Adds ~5-10% overhead on every storage
 # operation (atomic counter increments). Use only for profiling/diagnostics.
 rocksdb-stats = []
