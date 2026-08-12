@@ -610,7 +610,7 @@ mod vector_e2e_tests {
         use std::collections::HashMap;
         let mut props = HashMap::new();
         props.insert(1u16, Primitive::FloatVector(vec![1.0, 2.0, 3.0]));
-        let blob = encode_props(&props);
+        let blob = encode_props(&props).unwrap();
         assert!(!blob.is_empty(), "FloatVector must encode to non-empty blob");
         match decode_prop_by_key(&blob, 1) {
             Some(Primitive::FloatVector(v)) => assert_eq!(v, vec![1.0, 2.0, 3.0]),

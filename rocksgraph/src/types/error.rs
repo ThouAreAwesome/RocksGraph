@@ -121,6 +121,10 @@ pub enum StoreError {
     /// (e.g. passing a List where a scalar is required).
     UnexpectedDataType(String),
 
+    /// A `String` or `Bytes` property value exceeds the 65,535-byte limit the
+    /// prop_blob wire format can encode (length is stored as `u16`).
+    PropertyValueTooLarge(String),
+
     /// A traversal step or feature that is not yet implemented
     /// (e.g. range predicates on Label filters).
     UnsupportedOperation(String),
@@ -186,6 +190,7 @@ impl StoreError {
                 | Self::UnsupportedOperation(_)
                 | Self::UnexpectedDataType(_)
                 | Self::VerticesNotLoaded
+                | Self::PropertyValueTooLarge(_)
         )
     }
 
@@ -206,7 +211,8 @@ impl StoreError {
             Self::UnexpectedDataType(_)
             | Self::UnsupportedOperation(_)
             | Self::TraversalError(_)
-            | Self::VerticesNotLoaded => "query",
+            | Self::VerticesNotLoaded
+            | Self::PropertyValueTooLarge(_) => "query",
         }
     }
 }
@@ -232,6 +238,7 @@ impl fmt::Display for StoreError {
             StoreError::IncidentEdges => write!(f, "cannot drop vertex with incident edges"),
             StoreError::ReadOnly => write!(f, "write operation on read-only snapshot"),
             StoreError::UnexpectedDataType(msg) => write!(f, "unexpected datatype: {msg}"),
+            StoreError::PropertyValueTooLarge(msg) => write!(f, "property value too large: {msg}"),
             StoreError::UnsupportedOperation(msg) => write!(f, "unsupported operation: {msg}"),
             StoreError::TraversalError(msg) => write!(f, "traversal error: {msg}"),
             StoreError::IncompleteLoad { msg } => write!(f, "incomplete bulk load: {}", msg),

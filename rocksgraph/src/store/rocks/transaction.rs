@@ -421,7 +421,7 @@ impl Transaction {
     ) -> Result<(), StoreError> {
         let txn = self.db_txn.as_ref().expect("no active transaction");
         let cf_vertices = self.db.cf_handle(CF_VERTICES).ok_or(StoreError::MissingColumnFamily("vertices"))?;
-        let vv = VertexValue { label_id, property_blob: encode_props(props) };
+        let vv = VertexValue { label_id, property_blob: encode_props(props)? };
         txn.put_cf(&cf_vertices, encode_vertex_key(key), vv.encode()).map_err(StoreError::RocksDb)
     }
 
@@ -455,7 +455,7 @@ impl Transaction {
         };
         let key_bytes = encode_edge_key(key);
         let cf = self.db.cf_handle(cf_name).ok_or(StoreError::MissingColumnFamily(cf_name))?;
-        let ev_bytes = EdgeValue { end_vertex_label, property_blob: encode_props(props) }.encode();
+        let ev_bytes = EdgeValue { end_vertex_label, property_blob: encode_props(props)? }.encode();
         txn.put_cf(&cf, key_bytes, &ev_bytes).map_err(StoreError::RocksDb)
     }
 

@@ -62,10 +62,7 @@ use std::collections::HashMap;
 
 fn import_large_graph(graph: &Graph) -> Result<(), StoreError> {
     let mut loader = graph.open_bulk_loader()?;
-
-    // Optional configuration tuning:
-    loader = loader.with_max_memory(1024 * 1024 * 1024) // 1 GiB sort buffer
-                   .with_max_sst_size(64 * 1024 * 1024); // 64 MiB SST target
+    // For sort-buffer / output-file-size tuning, see Configuration Options (#3) below.
 
     // 1. Prepare and stream vertices
     let vertices = vec![
@@ -103,7 +100,7 @@ fn import_large_graph(graph: &Graph) -> Result<(), StoreError> {
     ];
     loader.load_edges(edges)?;
 
-    // 3. Finalize SST generation and atomically ingest into database
+    // 3. Finalize and atomically ingest into the database
     loader.commit()?;
 
     println!("Bulk load completed successfully!");
@@ -117,10 +114,7 @@ from rocksgraph import Graph, BulkVertex, BulkEdge
 
 def import_large_graph(graph: Graph):
     loader = graph.open_bulk_loader()
-
-    # Optional configuration:
-    loader.with_max_memory(1024 * 1024 * 1024)
-    loader.with_max_sst_size(64 * 1024 * 1024)
+    # For sort-buffer / output-file-size tuning, see Configuration Options (#3) below.
 
     # 1. Prepare and load vertices
     vertices = [
@@ -258,7 +252,7 @@ for row in csv_data:
     with graph.begin() as txn:
         txn.g().addV("item").property("id", row.id).next()
 
-# ✅ CORRECT: BulkLoader offline SST generation (~15 seconds)
+# ✅ CORRECT: BulkLoader offline batch ingest (~15 seconds)
 loader.load_vertices(bulk_vertices)
 loader.commit()
 ```

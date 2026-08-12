@@ -416,7 +416,7 @@ mod tests {
     #[test]
     fn vertex_value_encode_decode() {
         let raw = props_map(&[(1u16, Primitive::String(SmolStr::new("Alice"))), (2u16, Primitive::Int32(30))]);
-        let vv = VertexValue { label_id: 7, property_blob: crate::types::prop_codec::encode_props(&raw) };
+        let vv = VertexValue { label_id: 7, property_blob: crate::types::prop_codec::encode_props(&raw).unwrap() };
         let bytes = vv.encode();
         let dec = VertexValue::decode(&bytes).unwrap();
         assert_eq!(dec.label_id, 7);
@@ -458,7 +458,7 @@ mod tests {
         let raw = props_map(&[(1u16, Primitive::String(SmolStr::new("Bob"))), (2u16, Primitive::Float64(9.9))]);
         let key_bytes = encode_vertex_key(42);
         let val_bytes =
-            VertexValue { label_id: 1, property_blob: crate::types::prop_codec::encode_props(&raw) }.encode();
+            VertexValue { label_id: 1, property_blob: crate::types::prop_codec::encode_props(&raw).unwrap() }.encode();
         let id = decode_vertex_key(&key_bytes).unwrap();
         let vv = VertexValue::decode(&val_bytes).unwrap();
         assert_eq!(id, 42);
@@ -483,7 +483,8 @@ mod tests {
         ]);
         let key_bytes = encode_edge_key_out(cek);
         let val_bytes =
-            EdgeValue { end_vertex_label: 7, property_blob: crate::types::prop_codec::encode_props(&raw) }.encode();
+            EdgeValue { end_vertex_label: 7, property_blob: crate::types::prop_codec::encode_props(&raw).unwrap() }
+                .encode();
         let dec_cek = decode_edge_key_out(&key_bytes).unwrap();
         let ev = EdgeValue::decode(&val_bytes).unwrap();
         assert_eq!(dec_cek, cek);
@@ -513,7 +514,7 @@ mod tests {
         let mut m = HashMap::new();
         m.insert(5u16, Primitive::Int64(999));
         m.insert(10u16, Primitive::Bool(false));
-        let blob = crate::types::prop_codec::encode_props(&m);
+        let blob = crate::types::prop_codec::encode_props(&m).unwrap();
         let v = Vertex::from_raw(1, 0, blob.into_boxed_slice());
         assert_eq!(v.get_value(5), Some(Primitive::Int64(999)));
         assert_eq!(v.get_value(10), Some(Primitive::Bool(false)));

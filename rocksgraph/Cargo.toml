@@ -56,4 +56,5 @@ crc32fast = "1"
 parking_lot = "0.12"
 
 [dev-dependencies]
+proptest = "1"
 

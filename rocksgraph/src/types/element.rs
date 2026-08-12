@@ -406,7 +406,7 @@ mod tests {
     #[test]
     fn g11_props_mut_on_blob_transitions_to_map() {
         // props_mut() calls ensure_map() internally — Blob → Map, no panic.
-        let blob = crate::types::prop_codec::encode_props(&[(5u16, Primitive::Bool(true))].into());
+        let blob = crate::types::prop_codec::encode_props(&[(5u16, Primitive::Bool(true))].into()).unwrap();
         let mut v = Vertex::from_raw(1, 1, blob.into_boxed_slice());
         assert!(matches!(v.props, PropertyMap::Blob(_)));
         v.props_mut().insert(6, Primitive::Int32(99));
@@ -425,7 +425,7 @@ mod tests {
     #[test]
     fn g14_props_on_blob_transitions_to_map() {
         // props() triggers Blob → Map; as_map() returns Some afterward.
-        let blob = crate::types::prop_codec::encode_props(&[(10u16, Primitive::Int64(7))].into());
+        let blob = crate::types::prop_codec::encode_props(&[(10u16, Primitive::Int64(7))].into()).unwrap();
         let mut v = Vertex::from_raw(1, 1, blob.into_boxed_slice());
         assert!(matches!(v.props, PropertyMap::Blob(_)));
         let map = v.props();

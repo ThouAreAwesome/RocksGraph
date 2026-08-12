@@ -158,7 +158,7 @@ impl RocksStorage {
         let cf_degree = self.db.cf_handle(CF_VERTEX_DEGREE).ok_or(StoreError::MissingColumnFamily("vertex_degree"))?;
         let mut batch = WriteBatchWithTransaction::<true>::default();
         for vv in vertices {
-            let val = VertexValue { label_id: vv.label_id, property_blob: encode_props(vv.props()) };
+            let val = VertexValue { label_id: vv.label_id, property_blob: encode_props(vv.props())? };
             let degree = VertexDegree { vertex_label_id: vv.label_id, out_e_cnt: 0, in_e_cnt: 0 };
             batch.put_cf(&cf_vertices, encode_vertex_key(vv.id), val.encode());
             batch.put_cf(&cf_degree, encode_vertex_key(vv.id), degree.encode());
@@ -178,7 +178,7 @@ impl RocksStorage {
                 Direction::OUT => encode_edge_key(&ev.edge_key_out()),
                 Direction::IN => encode_edge_key(&ev.edge_key_in()),
             };
-            let bytes = EdgeValue { end_vertex_label: 0, property_blob: encode_props(ev.props()) }.encode();
+            let bytes = EdgeValue { end_vertex_label: 0, property_blob: encode_props(ev.props())? }.encode();
             batch.put_cf(&cf, key_bytes, &bytes);
         }
         self.db.write(batch).map_err(StoreError::RocksDb)
