@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "rocksgraph"
-version = "0.2.1"
+version = "0.2.2"
 description = "Embeddable, ACID-compliant property graph database with Gremlin traversals and integrated HNSW vector search."
 authors = [{ name = "Austin Han", email = "austinhan1024@gmail.com" }]
 requires-python = ">=3.9"

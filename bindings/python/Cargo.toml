@@ -1,6 +1,6 @@
 [package]
 name = "rocksgraph-python"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 authors = ["Austin Han <austinhan1024@gmail.com>"]
 license = "MIT OR Apache-2.0"
@@ -11,6 +11,6 @@ name = "_rocksgraph"
 crate-type = ["cdylib"]
 
 [dependencies]
-rocksgraph = { version = "0.2.1-rc.1", path = "../../rocksgraph" }
+rocksgraph = { version = "0.2.2", path = "../../rocksgraph" }
 pyo3 = { version = "0.21.2", features = ["extension-module", "abi3-py39"] }
 smol_str = "0.2"
