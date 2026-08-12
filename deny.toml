@@ -31,6 +31,7 @@ allow = [
     "0BSD",
     "Unlicense",
     "Unicode-3.0",
+    "NCSA",
 ]
 confidence-threshold = 0.8
 
