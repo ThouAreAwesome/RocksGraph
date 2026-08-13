@@ -6,19 +6,30 @@ RocksGraph is built upon the **Labeled Property Graph (LPG)** data model, extend
 
 This guide outlines the core graph primitives, identifier semantics, system capacities and constraints, supported data types, and reserved property rules.
 
+## Table of Contents
+
+- [1. The Property Graph Model](#1-the-property-graph-model)
+- [2. System Limits & Capacities](#2-system-limits--capacities)
+- [3. Supported Data Types](#3-supported-data-types)
+- [4. Reserved Keys & The Disjoint Access Model](#4-reserved-keys--the-disjoint-access-model)
+- [5. Property Retrieval & the `withProperties()` Hint](#5-property-retrieval--the-withproperties-hint)
+- [6. Data Modeling Best Practices](#6-data-modeling-best-practices)
+- [7. Data Modeling Anti-Patterns](#7-data-modeling-anti-patterns)
+- [Related Topics](#related-topics)
+
 ---
 
-## 1. The Property Graph Mental Model
+## 1. The Property Graph Model
 
 A graph in RocksGraph consists of two fundamental topological entities: **Vertices** (nodes) and **Edges** (relationships), both of which can store arbitrarily typed property key-value pairs.
 
 ```
   ┌─────────────────────────┐               ┌─────────────────────────┐
   │   Vertex (id=1, person) │               │   Vertex (id=2, person) │
-  ├─────────────────────────┤  ──knows──►   ├─────────────────────────┤
-  │ name: "Alice"           │   since: 2021 │ name: "Bob"             │
-  │ age: 30                 │   weight: 0.9 │ age: 32                 │
-  │ emb: [0.95, 0.10, 0.05] │   rank: 0     │ emb: [0.10, 0.90, 0.20] │
+  ├─────────────────────────┤  ───knows───► ├─────────────────────────┤
+  │ name: "Alice"           │  since: 2021  │ name: "Bob"             │
+  │ age: 30                 │  weight: 0.9  │ age: 32                 │
+  │ emb: [0.95, 0.10, 0.05] │               │ emb: [0.10, 0.90, 0.20] │
   └─────────────────────────┘               └─────────────────────────┘
 ```
 
@@ -32,14 +43,16 @@ A graph in RocksGraph consists of two fundamental topological entities: **Vertic
 - **Label (`label`)**: Identifies the relationship type (e.g. `"knows"`, `"purchased"`, `"created"`).
 - **Multiplicity & Ranks**:
   - `EdgeMode::Single`: At most one edge of a given label can exist between a specific pair of vertices. Duplicate edge writes return `StoreError::DuplicateEdge` (`IntegrityError` in Python).
-  - `EdgeMode::Multi`: Multiple parallel edges of the same label can exist between the same pair of vertices, distinguished by a 16-bit unsigned integer `rank`. Usable explicit rank range is `0` to `65,534` (`0x0000` to `0xFFFE`), default `0`. Rank `65,535` (`0xFFFF` / `u16::MAX`) is a reserved sentinel used internally for auto-assigning incrementing ranks.
+  - `EdgeMode::Multi`: Multiple parallel edges of the same label can exist between the same pair of vertices, distinguished by a 16-bit unsigned integer `rank` (see [System Limits](#2-system-limits--capacities) below).
   - **One-Way Ratchet**: Once set to `EdgeMode::Multi`, downgrading the database to `EdgeMode::Single` is strictly disallowed and rejected with `StoreError::SchemaConflict` (`SchemaError` in Python).
-- **ID Collision Behavior**:
-  - Adding a vertex with an existing primary key ID returns `StoreError::DuplicateVertex` (`IntegrityError` in Python).
-  - Adding an edge with identical `(src, label, dst)` in `Single` mode, or identical `(src, label, dst, rank)` in `Multi` mode, returns `StoreError::DuplicateEdge` (`IntegrityError` in Python).
 - **Canonical Edge Identifier (`id`)**: 
-  - Every edge has a unique 30-character URL-safe string identifier (e.g. `"AAAAAAAAAAEAAAADAAAAAAAAAAIAAA"`) that encodes its source vertex, label, destination vertex, and rank.
-  - Lookup by edge ID is supported via `g.E(["..."])` and `.hasId("...")`.
+  - Every edge has a unique 30-character URL-safe string identifier (e.g. `"AAAAAAAAAAEAAAADAAAAAAAAAAIAAA"`). This ID is inferred from the edge's source vertex, label, destination vertex, and rank — it is not user-specified.
+  - However, you can retrieve and filter by this inferred edge ID via `g.E(["..."])` and `.hasId("...")`.
+
+> [!NOTE]
+> **ID Collision Behavior:**
+> - Adding a vertex with an existing primary key ID returns `StoreError::DuplicateVertex` (`IntegrityError` in Python).
+> - Adding an edge with identical `(src, label, dst)` in `Single` mode, or identical `(src, label, dst, rank)` in `Multi` mode, returns `StoreError::DuplicateEdge` (`IntegrityError` in Python).
 
 ### Vector Embeddings
 - **Vertex Embeddings**: Dense continuous float vectors (`Value::FloatVector(Vec<f32>)` in Rust, `rocksgraph.Vector` in Python — not a bare `list`) attached directly to vertices as properties. Vertices can be indexed in HNSW for sub-millisecond approximate nearest neighbor (ANN) search.
@@ -51,17 +64,17 @@ A graph in RocksGraph consists of two fundamental topological entities: **Vertic
 
 RocksGraph defines the following user-facing limits and capacities:
 
-| Dimension | Supported Range / Capacity | Description |
-| :--- | :--- | :--- |
-| **Vertex ID (`id`)** | $-9,223,372,036,854,775,808$ to $9,223,372,036,854,775,807$ | 64-bit signed integer (`i64` / `int`). |
-| **Edge ID (`id`)** | 30-character string | Globally unique identifier encoding edge endpoints, label, and rank. |
-| **Edge Rank (`rank`)** | `0` to `65,534` (sentinel: `65,535`) | Usable discriminator range for parallel edges. `65,535` is reserved for auto-assignment. |
-| **Total Distinct Labels** | Up to $2,147,483,647$ (~2.1 billion) | Total unique vertex and edge label types database-wide. |
-| **Total Property Keys** | Up to $32,767$ | Total unique property keys database-wide across all entity types. |
-| **Properties per Element** | Up to $4,095$ properties | Maximum property count per individual vertex or edge record. |
-| **Max String Length** | Up to $65,535$ bytes (~64 KB) | Maximum length for any single UTF-8 string property. |
-| **Max Binary Payload** | Up to $65,535$ bytes (~64 KB) | Maximum size for any single binary (`bytes`) property. |
-| **Vector Dimensions** | Any $D \ge 1$ (typically 128 to 3072) | Number of float dimensions in a vector embedding. |
+| Dimension                  | Supported Range / Capacity                                  | Description                                                                                                       |
+| :------------------------- | :---------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------- |
+| **Vertex ID (`id`)**       | $-9,223,372,036,854,775,808$ to $9,223,372,036,854,775,807$ | 64-bit signed integer (`i64` / `int`).                                                                            |
+| **Edge ID (`id`)**         | 30-character string                                         | Globally unique identifier encoding edge endpoints, label, and rank.                                              |
+| **Edge Rank (`rank`)**     | `0` to `65,534` (sentinel: `65,535`)                        | Usable discriminator range for parallel edges. `65,535` is reserved for auto-assignment.                          |
+| **Total Distinct Labels**  | Up to $2,147,483,647$ (~2.1 billion)                        | Total unique vertex and edge label types database-wide.                                                           |
+| **Total Property Keys**    | Up to $32,767$                                              | Total unique property keys database-wide across all entity types.                                                 |
+| **Properties per Element** | Up to $4,095$ properties                                    | Maximum property count per individual vertex or edge record.                                                      |
+| **Max String Length**      | Up to $65,535$ bytes (~64 KB)                               | Maximum length for any single UTF-8 string property. Exceeding this raises `StoreError::PropertyValueTooLarge`.   |
+| **Max Binary Payload**     | Up to $65,535$ bytes (~64 KB)                               | Maximum size for any single binary (`bytes`) property. Exceeding this raises `StoreError::PropertyValueTooLarge`. |
+| **Vector Dimensions**      | Any $D \ge 1$ (typically 128 to 3072)                       | Number of float dimensions in a vector embedding.                                                                 |
 
 ---
 
@@ -69,18 +82,18 @@ RocksGraph defines the following user-facing limits and capacities:
 
 RocksGraph provides a strongly typed property engine (`Value` / `Primitive`) supporting scalars, binary blobs, and dense numeric vectors:
 
-| Data Type | Rust Type | Python Type | Description |
-| :--- | :--- | :--- | :--- |
-| **Int32** | `i32` | `int` | 32-bit signed integer |
-| **Int64** | `i64` | `int` / `rocksgraph.Int64` | 64-bit signed integer |
-| **UInt16** | `u16` | `int` | 16-bit unsigned integer (used for edge ranks) |
-| **Float32** | `f32` | `float` | 32-bit single-precision floating point |
-| **Float64** | `f64` | `float` | 64-bit double-precision floating point |
-| **String** | `String` / `&str` / `SmolStr` | `str` | UTF-8 encoded text string ($\le 65,535$ bytes) |
-| **Boolean** | `bool` | `bool` | `true` or `false` |
-| **Bytes** | `Vec<u8>` / `&[u8]` | `bytes` | Arbitrary binary payload ($\le 65,535$ bytes) |
-| **Uuid** | `u128` | `uuid.UUID` | 128-bit Universally Unique Identifier |
-| **FloatVector** | `Value::FloatVector(Vec<f32>)` | `rocksgraph.Vector` | Dense continuous float vector for similarity search — writing or reading a bare Python `list` raises `ValueError` |
+| Data Type       | Rust Type                      | Python Type                | Description                                                                                                       |
+| :-------------- | :----------------------------- | :------------------------- | :---------------------------------------------------------------------------------------------------------------- |
+| **Int32**       | `i32`                          | `int`                      | 32-bit signed integer                                                                                             |
+| **Int64**       | `i64`                          | `int` / `rocksgraph.Int64` | 64-bit signed integer                                                                                             |
+| **UInt16**      | `u16`                          | `int`                      | 16-bit unsigned integer (used for edge ranks)                                                                     |
+| **Float32**     | `f32`                          | `float`                    | 32-bit single-precision floating point                                                                            |
+| **Float64**     | `f64`                          | `float`                    | 64-bit double-precision floating point                                                                            |
+| **String**      | `String` / `&str` / `SmolStr`  | `str`                      | UTF-8 encoded text string ($\le 65,535$ bytes)                                                                    |
+| **Boolean**     | `bool`                         | `bool`                     | `true` or `false`                                                                                                 |
+| **Bytes**       | `Vec<u8>` / `&[u8]`            | `bytes`                    | Arbitrary binary payload ($\le 65,535$ bytes)                                                                     |
+| **Uuid**        | `u128`                         | `uuid.UUID`                | 128-bit Universally Unique Identifier                                                                             |
+| **FloatVector** | `Value::FloatVector(Vec<f32>)` | `rocksgraph.Vector`        | Dense continuous float vector for similarity search — writing or reading a bare Python `list` raises `ValueError` |
 
 ### Working with Data Types
 
@@ -130,11 +143,11 @@ def create_rich_vertex(graph: Graph):
 
 RocksGraph treats three names — `"id"`, `"label"`, and `"rank"` — as **reserved structural attributes**:
 
-| Reserved Name | Applicable Entity | Type | Structural Meaning | Dedicated Step |
-| :--- | :--- | :--- | :--- | :--- |
-| `"id"` | Vertex & Edge | `Int64` (Vertex) / `String` (Edge) | Primary entity identifier | `.id()` / `.hasId(...)` |
-| `"label"` | Vertex & Edge | `String` | Entity type discriminator | `.label()` / `.hasLabel(...)` |
-| `"rank"` | Edge only | `UInt16` (`u16`) | Multi-edge parallel discriminator | `.rank()` / `.hasRank(...)` |
+| Reserved Name | Applicable Entity | Type                               | Structural Meaning                | Dedicated Step                |
+| :------------ | :---------------- | :--------------------------------- | :-------------------------------- | :---------------------------- |
+| `"id"`        | Vertex & Edge     | `Int64` (Vertex) / `String` (Edge) | Primary entity identifier         | `.id()` / `.hasId(...)`       |
+| `"label"`     | Vertex & Edge     | `String`                           | Entity type discriminator         | `.label()` / `.hasLabel(...)` |
+| `"rank"`      | Edge only         | `UInt16` (`u16`)                   | Multi-edge parallel discriminator | `.rank()` / `.hasRank(...)`   |
 
 ### The Disjoint Model Rules:
 1. **Dedicated Step Access Only**: `"id"`, `"label"`, and `"rank"` cannot be accessed through generic property steps (`.values()`, `.properties()`, `.has()`). They must be accessed via dedicated steps:

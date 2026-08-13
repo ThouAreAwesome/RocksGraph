@@ -7,6 +7,21 @@ RocksGraph provides a Gremlin-compatible traversal language executed on top of a
 > [!NOTE]
 > Snippets below are excerpts, not full programs — they assume `graph`/`snap`/`txn` are already open as shown in [Getting Started](getting_started.md).
 
+## Table of Contents
+
+- [Traversal Anatomy & Execution Model](#traversal-anatomy--execution-model)
+- [1. Source Steps](#1-source-steps) — `V()`, `E()`, `addV()`, `addE()`
+- [2. Navigation Steps](#2-navigation-steps) — `out()`, `in()`, `both()`, `outE()`/`inE()`/`bothE()`, `inV()`/`outV()`/`otherV()`
+- [3. Filtering Steps](#3-filtering-steps) — `has()`, `hasLabel()`, `hasId()`, `hasRank()`, `limit()`/`skip()`/`range()`, `dedup()`
+- [4. Transformation & Projection Steps](#4-transformation--projection-steps) — `values()`, `id()`/`label()`/`rank()`, `path()`
+- [5. Vector Steps](#5-vector-steps) — `nearest()`, `similarity()`, `neighbors()`, tuning modifiers
+- [6. Aggregation, Ordering & Degree Optimization](#6-aggregation-ordering--degree-optimization) — `count()`/`sum()`/`mean()`/`max()`/`min()`/`groupCount()`/`fold()`, `degree()`, `order()`/`by()`
+- [7. Plan Inspection: `explain()`](#7-plan-inspection-explain)
+- [8. Branching & Control Flow](#8-branching--control-flow) — `repeat()`/`times()`/`until()`/`emit()`, `union()`, `coalesce()`
+- [9. Traversal Best Practices](#9-traversal-best-practices)
+- [10. Traversal Anti-Patterns](#10-traversal-anti-patterns)
+- [Related Topics](#related-topics)
+
 ---
 
 ## Traversal Anatomy & Execution Model
@@ -25,7 +40,7 @@ By default, element traversals fetch **only `id` and `label`** (0 property I/O r
 
 ## 1. Source Steps
 
-Source steps initiate the traversal pipeline.
+Source steps initiate the traversal pipeline. Every entry in this reference follows the same four-row layout: **Signature**, **Input → Output**, then a 🦀 Rust and a 🐍 Python example.
 
 ### `V([ids...])` — Vertex Stream
 Starts a traversal over all vertices or specific vertex IDs (`i64`).
@@ -33,7 +48,7 @@ Starts a traversal over all vertices or specific vertex IDs (`i64`).
 | Property | Details |
 | :--- | :--- |
 | **Signature** | `g.V([ids...])` |
-| **Input $\rightarrow$ Output** | `() -> Vertex` |
+| **Input → Output** | `() -> Vertex` |
 | **🦀 Rust** | `snap.g().V([]).to_list()?` (all vertices) or `snap.g().V([1, 2]).to_list()?` |
 | **🐍 Python** | `snap.g().V().to_list()` (all vertices) or `snap.g().V(1, 2).to_list()` |
 
@@ -43,9 +58,9 @@ Starts a traversal over all edges in the graph or specific 30-character canonica
 | Property | Details |
 | :--- | :--- |
 | **Signature** | `g.E([ids...])` |
-| **Input $\rightarrow$ Output** | `() -> Edge` |
-| **🦀 Rust** | `snap.g().E([]).to_list()?` or `snap.g().E(["AAAAAAAAAAEAAAADAAAAAAAAAAIAAA".to_string()]).to_list()?` (owned `String`s — `E` takes `IntoIterator<Item = String>`, not `&str`) |
-| **🐍 Python** | `snap.g().E().to_list()` or `snap.g().E("AAAAAAAAAAEAAAADAAAAAAAAAAIAAA").to_list()` |
+| **Input → Output** | `() -> Edge` |
+| **🦀 Rust** | `snap.g().E([]).to_list()?` (all edges) or `snap.g().E(["AAAAAAAAAAEAAAADAAAAAAAAAAIAAA".to_string()]).to_list()?` (owned `String`s — `E` takes `IntoIterator<Item = String>`, not `&str`) |
+| **🐍 Python** | `snap.g().E().to_list()` (all edges) or `snap.g().E("AAAAAAAAAAEAAAADAAAAAAAAAAIAAA").to_list()` |
 
 ### `addV(label)` — Add Vertex
 Creates a new vertex within an active transaction.
@@ -53,7 +68,7 @@ Creates a new vertex within an active transaction.
 | Property | Details |
 | :--- | :--- |
 | **Signature** | `txn.g().addV(label)` |
-| **Input $\rightarrow$ Output** | `() -> Vertex` |
+| **Input → Output** | `() -> Vertex` |
 | **🦀 Rust** | `txn.g().addV("person").property("id", 1i64).property("name", "Alice").next();` |
 | **🐍 Python** | `txn.g().addV("person").property("id", 1).property("name", "Alice").next()` |
 
@@ -63,9 +78,9 @@ Creates a directed edge between two vertices within an active transaction.
 | Property | Details |
 | :--- | :--- |
 | **Signature** | `txn.g().addE(label).from(src).to(dst)` |
-| **Input $\rightarrow$ Output** | `() -> Edge` |
-| **🦀 Rust** | `txn.g().addE("knows").from(1i64).to(2i64).property("since", 2023).property("rank", 0u16).next();` |
-| **🐍 Python** | `txn.g().addE("knows").from_(1).to(2).property("since", 2023).property("rank", 0).next()` |
+| **Input → Output** | `() -> Edge` |
+| **🦀 Rust** | `txn.g().addE("knows").from(1i64).to(2i64).property("since", 2023).next();` |
+| **🐍 Python** | `txn.g().addE("knows").from_(1).to(2).property("since", 2023).next()` |
 
 ---
 
@@ -75,66 +90,58 @@ Navigation steps traverse graph relationships between vertices and edges.
 
 ### Directional Traversal Matrix
 
+In RocksGraph, edges are strictly directed from a **Source Vertex** to a **Target Vertex**.
+
 ```
-       ┌───────────┐           ┌───────────┐
-       │  outV()   │           │   inV()   │
-       └─────▲─────┘           └─────▲─────┘
-             │                       │
-      ──outE(label)──► [ Edge ] ──inE(label)──►
-             │                       │
-       ┌─────▼─────┐           ┌─────▼─────┐
-       │  Vertex A │──out(label)─►│  Vertex B │
-       └───────────┘           └───────────┘
+[Source Vertex] ───(Edge)───► [Target Vertex]
 ```
 
-### `out([labels...])`
-Traverses from current vertices to adjacent outgoing neighbor vertices.
+**1. Direct Vertex-to-Vertex (Jumps to the neighboring vertex)**
+* **Forward**: `Source ──out()──► Target`
+* **Backward**: `Source ◄──in()─── Target`
 
-| Property | Details |
-| :--- | :--- |
-| **Input $\rightarrow$ Output** | `Vertex -> Vertex` |
-| **Arguments** | Optional list of edge label strings |
-| **🦀 Rust** | `snap.g().V([1]).out(["knows"]).to_list()?` |
-| **🐍 Python** | `snap.g().V(1).out("knows").to_list()` |
+**2. Vertex-to-Edge (Steps onto the connecting edge)**
+* **Forward Traversal**: `Source ──outE()──► (Edge)`
+* **Backward Traversal**: `Target ──inE()──► (Edge)`
 
-### `in([labels...])`
-Traverses to adjacent incoming source vertices.
+**3. Edge-to-Vertex (Resolves to the endpoint vertex)**
+When you step onto an edge, you must resolve back to a vertex. Notice how the *topological* direction of the underlying edge determines whether you use `inV` or `outV`:
+
+* **Forward Traversal (to the target):** `(Edge) ──inV()──► Target` *(Where does this edge go in?)*
+* **Backward Traversal (to the source):** `(Edge) ──outV()──► Source` *(Where did this edge come out of?)*
+
+> [!TIP]
+> Use `otherV()` to simplify edge resolution! From an `Edge`, `.otherV()` always returns the vertex you *didn't* just come from, regardless of direction. Both `outE().otherV()` and `inE().otherV()` navigate you across the edge perfectly without needing to memorize `inV` vs `outV`.
+
+### Vertex Navigation: `out()`, `in()`, `both()`
+Traverses from current vertices to adjacent neighbor vertices. The `[labels...]` argument is optional — omit it to follow edges of any label.
 
 > [!NOTE]
-> `in` is a Rust keyword, so the Rust method is the raw identifier `r#in`, not `in_`.
+> `in` is a Rust keyword. Use the raw identifier `r#in` in Rust, and `in_` in Python.
 
-| Property | Details |
-| :--- | :--- |
-| **Input $\rightarrow$ Output** | `Vertex -> Vertex` |
-| **🦀 Rust** | `snap.g().V([2]).r#in(["knows"]).values(["name"]).to_list()?` |
-| **🐍 Python** | `snap.g().V(2).in_("knows").values("name").to_list()` |
-
-### `both([labels...])`
-Traverses adjacent neighbors along both incoming and outgoing edges.
-
-| Property | Details |
-| :--- | :--- |
-| **Input $\rightarrow$ Output** | `Vertex -> Vertex` |
-| **🦀 Rust** | `snap.g().V([1]).both(["knows"]).to_list()?` |
-| **🐍 Python** | `snap.g().V(1).both("knows").to_list()` |
+| Method | Direction | Input → Output | 🦀 Rust Example | 🐍 Python Example |
+| :--- | :--- | :--- | :--- | :--- |
+| `out([labels...])` | Outgoing neighbors | `Vertex -> Vertex` | `snap.g().V([1]).out(["knows"]).to_list()?` | `snap.g().V(1).out("knows").to_list()` |
+| `in([labels...])` | Incoming neighbors | `Vertex -> Vertex` | `snap.g().V([2]).r#in(["knows"]).to_list()?` | `snap.g().V(2).in_("knows").to_list()` |
+| `both([labels...])` | All neighbors | `Vertex -> Vertex` | `snap.g().V([1]).both(["knows"]).to_list()?` | `snap.g().V(1).both("knows").to_list()` |
 
 ### Edge Navigation: `outE()`, `inE()`, `bothE()`
-Steps from vertices to incident **Edges**.
+Steps from vertices to incident **Edges**. Closely related enough to share one table — same shape, differing only by direction.
 
-| Method | Direction | Input $\rightarrow$ Output | Example (Python) |
-| :--- | :--- | :--- | :--- |
-| `outE([labels])` | Outgoing edges | `Vertex -> Edge` | `snap.g().V(1).outE("knows").to_list()` |
-| `inE([labels])` | Incoming edges | `Vertex -> Edge` | `snap.g().V(2).inE("knows").to_list()` |
-| `bothE([labels])`| All incident edges | `Vertex -> Edge` | `snap.g().V(1).bothE().to_list()` |
+| Method | Direction | Input → Output | 🦀 Rust Example | 🐍 Python Example |
+| :--- | :--- | :--- | :--- | :--- |
+| `outE([labels...])` | Outgoing edges | `Vertex -> Edge` | `snap.g().V([1]).outE(["knows"]).to_list()?` | `snap.g().V(1).outE("knows").to_list()` |
+| `inE([labels...])` | Incoming edges | `Vertex -> Edge` | `snap.g().V([2]).inE(["knows"]).to_list()?` | `snap.g().V(2).inE("knows").to_list()` |
+| `bothE([labels...])` | All incident edges | `Vertex -> Edge` | `snap.g().V([1]).bothE([]).to_list()?` | `snap.g().V(1).bothE().to_list()` |
 
 ### Vertex Resolvers: `inV()`, `outV()`, `otherV()`
-Steps from **Edges** back to connected **Vertices**.
+Steps from **Edges** back to connected **Vertices**. Same shape as the table above — one entry per resolver.
 
-| Method | Target Vertex | Input $\rightarrow$ Output | Example (Rust) |
-| :--- | :--- | :--- | :--- |
-| `inV()` | Target / Head vertex | `Edge -> Vertex` | `snap.g().E([]).inV().to_list()?` |
-| `outV()` | Source / Tail vertex | `Edge -> Vertex` | `snap.g().E([]).outV().to_list()?` |
-| `otherV()`| The vertex opposite to traverser origin | `Edge -> Vertex` | `snap.g().V([1]).bothE([]).otherV().to_list()?` |
+| Method | Target Vertex | Input → Output | 🦀 Rust Example | 🐍 Python Example |
+| :--- | :--- | :--- | :--- | :--- |
+| `inV()` | Target vertex | `Edge -> Vertex` | `snap.g().E([]).inV().to_list()?` | `snap.g().E().inV().to_list()` |
+| `outV()` | Source vertex | `Edge -> Vertex` | `snap.g().E([]).outV().to_list()?` | `snap.g().E().outV().to_list()` |
+| `otherV()` | Vertex opposite the traverser's origin | `Edge -> Vertex` | `snap.g().V([1]).bothE([]).otherV().to_list()?` | `snap.g().V(1).bothE().otherV().to_list()` |
 
 ---
 
@@ -143,10 +150,12 @@ Steps from **Edges** back to connected **Vertices**.
 Filtering steps discard items from the stream based on property predicates or cardinality boundaries.
 
 ### `has(key, [val | predicate])`
-Filters elements where property `key` matches a value or predicate (`gt`, `lt`, `gte`, `lte`, `eq`, `neq`, `within`). Note: Reserved structural keys (`"id"`, `"label"`, `"rank"`) cannot be queried with `.has()` — use `.hasId()`, `.hasLabel()`, or `.hasRank()` instead. Attempting `.has("id", ...)` (or `"label"`/`"rank"`) is rejected at query validation with a `SchemaViolation` (`SchemaError` in Python).
+Filters elements where property `key` matches a value or predicate (`gt`, `lt`, `gte`, `lte`, `eq`, `neq`, `within`). Reserved structural keys (`"id"`, `"label"`, `"rank"`) cannot be queried with `.has()` — use `.hasId()`, `.hasLabel()`, or `.hasRank()` instead. Attempting `.has("id", ...)` (or `"label"`/`"rank"`) is rejected at query validation with a `SchemaViolation` (`SchemaError` in Python).
 
 | Property | Details |
 | :--- | :--- |
+| **Signature** | `g.has(key, val_or_predicate)` |
+| **Input → Output** | `Element -> Element` |
 | **🦀 Rust** | `snap.g().V([]).has("age", 30).to_list()?`<br>`snap.g().V([]).has("age", gt(25)).to_list()?` (predicate helpers like `gt` are top-level functions — `use rocksgraph::gt;`, not a `P::` path; there is no `has_where` step) |
 | **🐍 Python** | `snap.g().V().has("age", 30).to_list()`<br>`snap.g().V().has("age", P.gt(25)).to_list()` |
 
@@ -155,6 +164,8 @@ Filters elements matching specific vertex/edge labels.
 
 | Property | Details |
 | :--- | :--- |
+| **Signature** | `g.hasLabel([labels...])` |
+| **Input → Output** | `Element -> Element` |
 | **🦀 Rust** | `snap.g().V([]).hasLabel("person").to_list()?` |
 | **🐍 Python** | `snap.g().V().hasLabel("person").to_list()` |
 
@@ -163,6 +174,8 @@ Filters vertices by integer IDs or edges by canonical ID strings.
 
 | Property | Details |
 | :--- | :--- |
+| **Signature** | `g.hasId([ids...])` |
+| **Input → Output** | `Element -> Element` |
 | **🦀 Rust** | `snap.g().V([]).hasId([1, 2, 3]).to_list()?` |
 | **🐍 Python** | `snap.g().V().hasId([1, 2, 3]).to_list()` (single argument — a value, a list, or a `P` predicate; `hasId(1, 2, 3)` is a `TypeError`) |
 
@@ -171,7 +184,8 @@ Filters edges matching specific `u16` discriminator ranks (0 to 65,535).
 
 | Property | Details |
 | :--- | :--- |
-| **Input $\rightarrow$ Output** | `Edge -> Edge` (Non-matching on Vertices) |
+| **Signature** | `g.hasRank([ranks...])` |
+| **Input → Output** | `Edge -> Edge` (no-op / empty on Vertex streams) |
 | **🦀 Rust** | `snap.g().V([1]).outE(["transfer"]).hasRank(0u16).to_list()?` |
 | **🐍 Python** | `snap.g().V(1).outE("transfer").hasRank(0).to_list()` |
 
@@ -180,6 +194,8 @@ Slices the traversal stream with early engine termination.
 
 | Property | Details |
 | :--- | :--- |
+| **Signature** | `g.limit(n)` / `g.skip(n)` / `g.range(low, high)` |
+| **Input → Output** | `Element -> Element` |
 | **🦀 Rust** | `snap.g().V([]).hasLabel("person").limit(10).to_list()?` |
 | **🐍 Python** | `snap.g().V().hasLabel("person").limit(10).to_list()` |
 
@@ -188,6 +204,8 @@ Removes duplicate objects from the stream (by traverser identity — takes no ar
 
 | Property | Details |
 | :--- | :--- |
+| **Signature** | `g.dedup()` |
+| **Input → Output** | `Element -> Element` |
 | **🦀 Rust** | `snap.g().V([1]).out(["knows"]).out(["knows"]).dedup().to_list()?` |
 | **🐍 Python** | `snap.g().V(1).out("knows").out("knows").dedup().to_list()` |
 
@@ -200,24 +218,27 @@ Extracts property values from vertices or edges as scalar values. Reserved keys 
 
 | Property | Details |
 | :--- | :--- |
-| **Input $\rightarrow$ Output** | `Element -> Value` |
+| **Signature** | `g.values([keys...])` |
+| **Input → Output** | `Element -> Value` |
 | **🦀 Rust** | `snap.g().V([1]).values(["name"]).to_list()?` |
 | **🐍 Python** | `snap.g().V(1).values("name").to_list()` |
 
 ### `id()`, `label()`, `rank()`
-Extracts the structural integer ID, string label, or edge rank of elements.
+Extracts the structural integer ID, string label, or edge rank of elements. Grouped in one table — three simple accessors, same shape.
 
-| Step | Scope | Output Type | Description |
-| :--- | :--- | :--- | :--- |
-| **`id()`** | Vertex & Edge | `Int64` (Vertex) / `String` (Edge) | Returns primary identifier |
-| **`label()`** | Vertex & Edge | `String` | Returns entity label |
-| **`rank()`** | Edge only | `UInt16` (`u16`) | Returns edge rank (0 to 65,535) |
+| Method | Scope | Output Type | 🦀 Rust Example | 🐍 Python Example |
+| :--- | :--- | :--- | :--- | :--- |
+| `id()` | Vertex & Edge | `Int64` (Vertex) / `String` (Edge) | `snap.g().V([1]).id().to_list()?` | `snap.g().V(1).id().to_list()` |
+| `label()` | Vertex & Edge | `String` | `snap.g().V([1]).label().to_list()?` | `snap.g().V(1).label().to_list()` |
+| `rank()` | Edge only | `UInt16` (`u16`), 0 to 65,535 | `snap.g().V([1]).outE([]).rank().to_list()?` | `snap.g().V(1).outE().rank().to_list()` |
 
 ### `path()`
 Returns the complete sequence of vertices and edges traversed along a path.
 
 | Property | Details |
 | :--- | :--- |
+| **Signature** | `g.path()` |
+| **Input → Output** | `Element -> Path` |
 | **🦀 Rust** | `snap.g().V([1]).out(["knows"]).out(["knows"]).path().to_list()?` |
 | **🐍 Python** | `snap.g().V(1).out("knows").out("knows").path().to_list()` |
 
@@ -230,7 +251,8 @@ Finds top-$k$ nearest vertices to query vector `q`. Must immediately follow `g.V
 
 | Property | Details |
 | :--- | :--- |
-| **Input $\rightarrow$ Output** | `() -> Vertex` |
+| **Signature** | `g.V([]).nearest(prop, q, k)` |
+| **Input → Output** | `() -> Vertex` |
 | **🦀 Rust** | `snap.g().V([]).nearest("emb", vec![0.1, 0.9, 0.0], 5).to_list()?` |
 | **🐍 Python** | `snap.g().V().nearest("emb", [0.1, 0.9, 0.0], 5).to_list()` |
 
@@ -239,7 +261,8 @@ Evaluates similarity between traverser's vector property and reference vector.
 
 | Property | Details |
 | :--- | :--- |
-| **Input $\rightarrow$ Output** | `Vertex -> Float` |
+| **Signature** | `g.similarity(prop, q, metric)` |
+| **Input → Output** | `Vertex -> Float` |
 | **🦀 Rust** | `snap.g().V([1]).out(["knows"]).similarity("emb", q, DistanceMetric::Cosine).to_list()?` |
 | **🐍 Python** | `snap.g().V(1).out("knows").similarity("emb", q, DistanceMetric.Cosine).to_list()` |
 
@@ -251,7 +274,8 @@ Expands each traverser vertex to its $k$ nearest neighbors in the target vector 
 
 | Property | Details |
 | :--- | :--- |
-| **Input $\rightarrow$ Output** | `Vertex -> Vertex` |
+| **Signature** | `g.neighbors(source_prop, target_prop, k, entity_type)` |
+| **Input → Output** | `Vertex -> Vertex` |
 | **🦀 Rust** | `snap.g().V([1]).neighbors("emb", "emb", 3, VectorEntityType::Vertex).to_list()?` |
 | **🐍 Python** | `snap.g().V(1).neighbors("emb", "emb", 3, VectorEntityType.Vertex).to_list()` |
 
@@ -270,16 +294,15 @@ Vector search steps can be customized at query time using chained modifier steps
 
 ## 6. Aggregation, Ordering & Degree Optimization
 
+Compact reference for steps that reduce a stream to a summary value. `degree()`, `order()`, and `by()` are covered in their own fuller subsections below instead of here, since a one-line summary would just duplicate that detail.
+
 | Step | Output Type | Description | Example (Python) |
 | :--- | :--- | :--- | :--- |
 | `count()` | `Int64` | Total number of elements in stream | `snap.g().V().hasLabel("person").count().next()` |
 | `sum()` | `Float / Int` | Sum of numeric properties | `snap.g().V().values("age").sum().next()` |
 | `mean()` | `Float` | Arithmetic mean of values | `snap.g().V().values("age").mean().next()` |
 | `max()`, `min()` | Scalar | Maximum or minimum value | `snap.g().V().values("score").max().next()` |
-| `groupCount()`| `Map<Key, Int64>`| Frequency histogram by key/label | `snap.g().V().groupCount().by("city").next()` |
-| `degree(dir)` | `Int64` | Direct degree calculation (`OUT`, `IN`, `BOTH`) | `snap.g().V(1).degree(Direction.OUT).next()` |
-| `order()` | *(unchanged)* | Sort traverser stream (default ascending) | `snap.g().V().values("age").order().next()` |
-| `by(...)` | *(unchanged)* | Modulate order by property key, value direction, and/or sub-traversal | `snap.g().V().order().by("age", Order.Desc).to_list()` |
+| `groupCount()` | `Map<Key, Int64>` | Frequency histogram by key/label | `snap.g().V().groupCount().by("city").next()` |
 | `fold()` | `List[Element]` | Collects entire stream into a single list | `snap.g().V(1).out("knows").values("name").fold().next()` |
 
 ### Degree Optimization & Counts Are O(1)
@@ -336,19 +359,33 @@ print(snap.g().V(1).out("knows").explain())
 ## 8. Branching & Control Flow
 
 ### `repeat(traversal)`, `times(n)`, `until(predicate)`, `emit()`
-Executes recursive multi-hop loop traversals.
+Executes recursive multi-hop loop traversals. `.repeat()` requires at least one loop terminator — `.times(n)` and/or `.until(predicate)`.
 
+> [!NOTE]
+> Omitting both `.times()` and `.until()` is rejected at query build time with a traversal error, not a silent infinite loop.
+
+🦀 Rust:
+```rust
+// Traverse up to 3 hops of friends, emitting each intermediate friend
+snap.g().V([1]).repeat(__().out(["knows"])).times(3).emit().values(["name"]).to_list()?
+```
+
+🐍 Python:
 ```python
 # Traverse up to 3 hops of friends, emitting each intermediate friend
 snap.g().V(1).repeat(out("knows")).times(3).emit().values("name").to_list()
 ```
 
-> [!NOTE]
-> `.repeat()` requires at least one loop terminator — `.times(n)` and/or `.until(predicate)`. Omitting both is rejected at query build time with a traversal error, not a silent infinite loop.
-
 ### `union(t1, t2, ...)`
 Executes multiple sub-traversals in parallel and merges their output streams.
 
+🦀 Rust:
+```rust
+// Retrieve both incoming and outgoing relationships in a single pass
+snap.g().V([1]).union([__().outE(["knows"]), __().inE(["knows"])]).to_list()?
+```
+
+🐍 Python:
 ```python
 # Retrieve both incoming and outgoing relationships in a single pass
 snap.g().V(1).union(outE("knows"), inE("knows")).to_list()
@@ -357,6 +394,13 @@ snap.g().V(1).union(outE("knows"), inE("knows")).to_list()
 ### `coalesce(t1, t2, ...)`
 Evaluates sub-traversals sequentially, returning results from the first branch that yields at least one item (ideal for idempotent upserts).
 
+🦀 Rust:
+```rust
+// Get nickname if present, else fallback to formal name
+snap.g().V([1]).coalesce([__().values(["nickname"]), __().values(["name"])]).next()?
+```
+
+🐍 Python:
 ```python
 # Get nickname if present, else fallback to formal name
 snap.g().V(1).coalesce(values("nickname"), values("name")).next()
@@ -366,23 +410,16 @@ snap.g().V(1).coalesce(values("nickname"), values("name")).next()
 
 ## 9. Traversal Best Practices
 
-### Pattern 1: Filter Each Hop When You Reach It
-`.has()` immediately followed by `.limit(n)` already stops as soon as `n` matching items are found — no extra work needed. Apply `.has()` on a hop's properties as soon as you reach that hop, rather than navigating further away from it first; see [Performance Tuning](performance.md#rule-1-filter-each-hop-when-you-reach-it) for why this differs from reordering across hops.
+Two of these are covered in full in [Performance Tuning](performance.md#2-query-traversal-optimization) — linked below rather than duplicated here.
 
-```python
-# ✅ BEST PRACTICE: Terminate immediately after finding 5 candidates
-snap.g().V(1).out("knows").has("age", P.gt(30)).limit(5).to_list()
-```
+- **Filter each hop when you reach it** — apply `.has()` on a hop's properties as soon as you reach that hop, rather than navigating further away from it first. See [Performance Tuning, Rule 1](performance.md#rule-1-filter-each-hop-when-you-reach-it) for why this differs from reordering across hops.
+  ```python
+  # ✅ Terminate immediately after finding 5 candidates
+  snap.g().V(1).out("knows").has("age", P.gt(30)).limit(5).to_list()
+  ```
+- **Specify edge labels in navigation steps** — always supply explicit edge labels (`.out(["knows"])`) rather than scanning all outgoing edges indiscriminately. See [Performance Tuning, Rule 2](performance.md#rule-2-specify-edge-labels-in-traversal-steps).
 
-### Pattern 2: Specify Edge Labels in Navigation Steps
-Always supply explicit edge labels (`.out(["knows"])`) rather than scanning all outgoing edges indiscriminately.
-
-```rust
-// ✅ BEST PRACTICE: Reads only "knows" adjacency records from storage
-snap.g().V([1]).out(["knows"]).to_list()?;
-```
-
-### Pattern 3: Use `.values()` for Specific Scalar Lookups
+### Pattern: Use `.values()` for Specific Scalar Lookups
 Avoid returning full `Vertex` or `Edge` maps if your application only needs specific scalar fields like `"name"` or `"email"`.
 
 ```python
@@ -390,7 +427,7 @@ Avoid returning full `Vertex` or `Edge` maps if your application only needs spec
 names = snap.g().V(1).out("knows").values("name").to_list()
 ```
 
-### Pattern 4: Deduplicate Across Multi-Hop Expansions
+### Pattern: Deduplicate Across Multi-Hop Expansions
 When traversing 2 or more hops of social graphs or web networks, duplicate paths converge quickly. Add `.dedup()` to bound intermediate stream cardinality.
 
 ```python

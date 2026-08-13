@@ -9,6 +9,17 @@ Unlike separated architectures where vector databases and graph databases run in
 > [!NOTE]
 > Snippets below are excerpts, not full programs — they assume `graph`/`snap`/`schema` are already open as shown in [Getting Started](getting_started.md), and that relevant enums (`VectorEntityType`, `DistanceMetric`, `AnnAlgorithm`, `Quantization`, `Order`) are imported from `rocksgraph` where used.
 
+## Table of Contents
+
+- [1. Vector Index Configuration](#1-vector-index-configuration)
+- [2. Declaring Vector Indexes](#2-declaring-vector-indexes)
+- [3. Query Primitives](#3-query-primitives)
+- [4. Query-Time Tuning Knobs](#4-query-time-tuning-knobs)
+- [5. Memory Footprint & Quantization](#5-memory-footprint--quantization)
+- [6. Vector Search Best Practices](#6-vector-search-best-practices)
+- [7. Vector Search Anti-Patterns](#7-vector-search-anti-patterns)
+- [8. Index Persistence & Crash Recovery](#8-index-persistence--crash-recovery)
+
 ---
 
 ## 1. Vector Index Configuration
@@ -209,9 +220,9 @@ related = (
 
 ---
 
-### 4. Query-Time Tuning Knobs (`with_ef_search` & `with_metric`)
+## 4. Query-Time Tuning Knobs
 
-You can override index defaults dynamically on individual queries:
+You can override index defaults dynamically on individual queries (`with_ef_search` & `with_metric`):
 
 - **`.with_ef_search(ef: usize)`**: Dynamically sets `ef_search` for `.nearest()` or `.neighbors()`.
   ```python
