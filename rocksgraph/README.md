@@ -13,14 +13,14 @@
   │                 Gremlin Traversal Engine                 │
   │  • Lazy streaming engine   • Multi-hop path traversals   │
   ├──────────────────────────────────────────────────────────┤
-  │              Logical / Snapshot Graph Layer              │
-  │  • Lock-free ReadSession   • ACID TxnSession (OCC / RYOW)│
+  │                 Graph Consistency Layer                  │
+  │  • Snapshot ReadSession    • ACID TxnSession (OCC / RYOW)│
   ├────────────────────────────┬─────────────────────────────┤
   │     Graph Data Storage     │     Vector Index Engine     │
   │  • Vertices, Edges, Props  │  • In-Memory HNSW Graph     │
-  │  • Compact adjacency lists │  • F16 / F32 quantization   │
+  │  • Schema & Type Metadata  │  • Quantization algorithms  │
   │                            └─────────────────────────────┤
-  │  • Write-Ahead Log (WAL)                                 │
+  │  • Write-Ahead Log (WAL) — crash recovery & consistency  │
   └──────────────────────────────────────────────────────────┘
 ```
 
@@ -131,17 +131,17 @@ graph.close()
 
 Comprehensive guides are available in the [`docs/guides/`](https://github.com/ThouAreAwesome/RocksGraph/tree/main/docs/guides/) directory and the [GitHub Wiki](https://github.com/ThouAreAwesome/RocksGraph/wiki):
 
-| Guide | Description |
-| :--- | :--- |
-| 🚀 [**Getting Started**](https://github.com/ThouAreAwesome/RocksGraph/wiki/getting_started) | 5-minute end-to-end walkthrough in Rust & Python. |
-| 📐 [**Data Model & Types**](https://github.com/ThouAreAwesome/RocksGraph/wiki/data_model) | Graph primitives, property types, identifier policies, and reserved keys. |
-| 🔍 [**Vector Search Deep Dive**](https://github.com/ThouAreAwesome/RocksGraph/wiki/vector_search) | HNSW parameters, quantization (`F16`), memory limits, and query primitives (`nearest`, `similarity`, `neighbors`). |
-| 🗺️ [**Gremlin Step Reference**](https://github.com/ThouAreAwesome/RocksGraph/wiki/step_reference) | Comprehensive step-by-step reference for all traversal steps and type transitions. |
-| 📋 [**Schema Management & DDL**](https://github.com/ThouAreAwesome/RocksGraph/wiki/schema_management) | Strict vs Auto schema modes, `SchemaSession`, and dynamic vector index management. |
-| 🔒 [**Transactions & Concurrency**](https://github.com/ThouAreAwesome/RocksGraph/wiki/concurrency_and_tx) | OCC conflict handling, Snapshot Isolation, and session lifecycles. |
-| ⚡ [**Bulk Loading & SST Ingest**](https://github.com/ThouAreAwesome/RocksGraph/wiki/bulk_loading) | High-throughput offline SST file generation and instant atomic DB loading. |
-| 🏎️ [**Performance Tuning**](https://github.com/ThouAreAwesome/RocksGraph/wiki/performance) | Batching strategies, memory sizing formulas, and query optimization patterns. |
-| 📊 [**Benchmarks**](https://github.com/ThouAreAwesome/RocksGraph/wiki/benchmarks) | Measured write (bulk load, transactional OCC) and read throughput/latency across dataset scales. |
+| Guide                                                                                                    | Description                                                                                                        |
+| :------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------- |
+| 🚀 [**Getting Started**](https://github.com/ThouAreAwesome/RocksGraph/wiki/getting_started)               | 5-minute end-to-end walkthrough in Rust & Python.                                                                  |
+| 📐 [**Data Model & Types**](https://github.com/ThouAreAwesome/RocksGraph/wiki/data_model)                 | Graph primitives, property types, identifier policies, and reserved keys.                                          |
+| 🔍 [**Vector Search Deep Dive**](https://github.com/ThouAreAwesome/RocksGraph/wiki/vector_search)         | HNSW parameters, quantization (`F16`), memory limits, and query primitives (`nearest`, `similarity`, `neighbors`). |
+| 🗺️ [**Gremlin Step Reference**](https://github.com/ThouAreAwesome/RocksGraph/wiki/step_reference)         | Comprehensive step-by-step reference for all traversal steps and type transitions.                                 |
+| 📋 [**Schema Management & DDL**](https://github.com/ThouAreAwesome/RocksGraph/wiki/schema_management)     | Strict vs Auto schema modes, `SchemaSession`, and dynamic vector index management.                                 |
+| 🔒 [**Transactions & Concurrency**](https://github.com/ThouAreAwesome/RocksGraph/wiki/concurrency_and_tx) | OCC conflict handling, Snapshot Isolation, and session lifecycles.                                                 |
+| ⚡ [**Bulk Loading & SST Ingest**](https://github.com/ThouAreAwesome/RocksGraph/wiki/bulk_loading)        | High-throughput offline SST file generation and instant atomic DB loading.                                         |
+| 🏎️ [**Performance Tuning**](https://github.com/ThouAreAwesome/RocksGraph/wiki/performance)                | Batching strategies, memory sizing formulas, and query optimization patterns.                                      |
+| 📊 [**Benchmarks**](https://github.com/ThouAreAwesome/RocksGraph/wiki/benchmarks)                         | Measured write (bulk load, transactional OCC) and read throughput/latency across dataset scales.                   |
 
 For Python developers, see the dedicated [Python Storefront](https://github.com/ThouAreAwesome/RocksGraph/blob/main/bindings/python/README.md).
 
@@ -152,6 +152,25 @@ For Python developers, see the dedicated [Python Storefront](https://github.com/
 A Gremlin traversal is parsed into a logical plan, optimized (index-seek folding, filter reordering), and lowered into a physical plan executed by a streaming, pull-based iterator engine. That engine reads from two co-located backends: on-disk graph storage (vertices, edges, adjacency index) and an in-memory HNSW vector index, so a single traversal pipeline can mix edge navigation with nearest-neighbor lookups without crossing a process or network boundary.
 
 For the full internal design — query planner rules, storage layout, WAL/vector-index lifecycle — see [`docs/design/architecture/`](https://github.com/ThouAreAwesome/RocksGraph/tree/main/docs/design/architecture/).
+
+---
+
+## Project Status
+
+**Maturity**: RocksGraph is pre-1.0 software, currently at v0.2.2. The core engine — ACID transactions, Gremlin traversal, integrated HNSW vector search — is functional and covered by an extensive test suite: unit tests, property-based (`proptest`) round-trip tests for the bulk loader and the bytecode wire format, and fuzz testing on the wire-format decoder. It's a young project, though: the public API isn't frozen yet, and the on-disk format — while unchanged in practice since v0.1.0 — isn't formally guaranteed stable until 1.0.0. Good fit for side projects, prototypes, and anywhere you control the blast radius of a bad upgrade. Not yet the right choice if you need a storage-format stability guarantee today.
+
+| Version | Stability                                                                             |
+| ------- | ------------------------------------------------------------------------------------- |
+| 0.2.x   | API may change. On-disk format may change. Not for production data you can't rebuild. |
+| 0.3.x   | (planned) API stable. On-disk format stable.                                          |
+| 1.0.0   | (planned) Full backward compatibility for both API and storage.                       |
+
+**Maintenance**: Actively maintained. Issues responded to within a week. Releases when there's something worth shipping, not on a schedule. If that changes, it'll be reflected here.
+
+**Roadmap** (directional, not a fixed schedule):
+- v0.2.x (current): the API keeps growing based on real usage — more Gremlin traversal steps, additional vector search capabilities, and LLM/framework integrations may all land here before anything is locked down.
+- Toward 0.3.x: once that feedback has shaped the surface, freeze the public API and the on-disk format.
+- Toward 1.0.0: formalize the on-disk format guarantee with a documented migration policy for any future breaking change.
 
 ---
 
