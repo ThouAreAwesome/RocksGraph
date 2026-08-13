@@ -51,7 +51,11 @@ use std::collections::HashMap;
 ///
 /// Use the free functions [`eq`], [`gt`], [`lt`], [`between`], [`within`], etc.
 /// to construct non-equality predicates.
+///
+/// Marked `#[non_exhaustive]`: new variants may be added in any 0.x release.
+/// Match with a wildcard arm (`_ => ...`) rather than every variant by name.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum Predicate {
     Eq(Value),
     Ne(Value),
@@ -148,7 +152,12 @@ impl<T: Into<Value>, const N: usize> From<[T; N]> for Predicate {
 /// Query results come back as the same variants:
 /// - `.values("age").next()` → `Some(Value::Int32(42))`
 /// - `.V([1]).next()` → `Some(Value::Vertex(Vertex { id: 1, … }))`
+///
+/// Marked `#[non_exhaustive]`: new variants may be added in any 0.x release
+/// (e.g. a new scalar type). Match with a wildcard arm (`_ => ...`) rather
+/// than every variant by name — see `docs/guides/data_model.md` §4.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum Value {
     // ── Scalars ───────────────────────────────────────────────────────────────
     Null,

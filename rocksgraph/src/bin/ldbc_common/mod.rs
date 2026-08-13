@@ -126,6 +126,9 @@ pub fn primitive_to_value(p: Primitive) -> Value {
         Primitive::Uuid(u) => Value::Uuid(u),
         Primitive::Bytes(b) => Value::Bytes(b),
         Primitive::FloatVector(v) => Value::FloatVector(v),
+        // `Primitive` is `#[non_exhaustive]`; this mirror needs a matching arm
+        // added alongside the real `gremlin::type_bridge::primitive_to_value`.
+        other => unimplemented!("primitive_to_value: unhandled Primitive variant {other:?}"),
     }
 }
 

@@ -58,8 +58,14 @@ impl EdgeMode {
 
 /// On-disk discriminant, pinned explicitly for the same reason as [`SchemaMode`];
 /// see [`DataType::to_u8`]/[`DataType::from_u8`].
+///
+/// Marked `#[non_exhaustive]`: new variants may be added in any 0.x release
+/// (e.g. a new supported data type). Match with a wildcard arm (`_ => ...`)
+/// rather than every variant by name. `from_u8` already returns `None` for
+/// discriminants an older binary doesn't recognize, rather than panicking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum DataType {
     Null = 0,
     Bool = 1,

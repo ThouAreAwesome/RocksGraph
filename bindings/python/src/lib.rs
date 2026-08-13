@@ -118,6 +118,14 @@ fn value_to_py(py: Python<'_>, value: Value) -> PyResult<PyObject> {
             );
             Ok(s.into_py(py))
         }
+        // `Value` is `#[non_exhaustive]`: a newer rocksgraph core may return a result
+        // type these bindings predate. Fail loudly and specifically rather than
+        // silently dropping or misrepresenting the value.
+        other => Err(pyo3::exceptions::PyNotImplementedError::new_err(format!(
+            "Unsupported query result type {other:?} — this rocksgraph Python package is older \
+             than the installed rocksgraph core and doesn't know how to convert it. Upgrade the \
+             rocksgraph Python package."
+        ))),
     }
 }
 
