@@ -225,8 +225,8 @@ class TestEdgeTraversals:
         edges = rs.g().V(v1["id"]).outE("knows").to_list()
         assert len(edges) == 1
         e = edges[0]
-        assert "src" in e
-        assert "dst" in e
+        assert "out_v" in e
+        assert "in_v" in e
         assert "label" in e or "labels" in e
 
     def test_oute_inv(self, graph):
@@ -327,7 +327,7 @@ class TestBothE:
         edges = rs.g().V(v1["id"]).bothE("knows").to_list()
         assert len(edges) >= 1
         e = edges[0]
-        assert "src" in e or "dst" in e
+        assert "out_v" in e or "in_v" in e
 
 
 @pytest.mark.skip(reason="Edge rank values >0 require multi-edge engine support")
@@ -739,8 +739,8 @@ class TestVertexEdgePropertyObjects:
         txn.commit()
         rs = graph.read()
         e = rs.g().V(v1["id"]).outE("knows").next()
-        assert e.src == v1["id"]
-        assert e.dst == v2["id"]
+        assert e.out_v == v1["id"]
+        assert e.in_v == v2["id"]
         assert e.label == "knows"
         assert e.rank == 0
 
@@ -752,7 +752,7 @@ class TestVertexEdgePropertyObjects:
         txn.commit()
         rs = graph.read()
         e = rs.g().V(v1["id"]).outE("knows").next()
-        assert e["src"] == v1["id"]
+        assert e["out_v"] == v1["id"]
         assert e["label"] == "knows"
 
     def test_property_from_properties_step(self, graph):

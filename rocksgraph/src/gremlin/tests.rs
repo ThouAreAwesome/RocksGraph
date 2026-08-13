@@ -369,6 +369,7 @@ mod integration_test {
             let Value::Int64(ct) = txn
                 .g()
                 .V([1])
+                .count()
                 .coalesce([
                     __().V([1]).values(["name", "age"]),
                     __().addV("person").property("id", 1i64).property("name", "marko").property("age", 29i32),
@@ -391,6 +392,7 @@ mod integration_test {
             let Value::Int64(ct) = txn
                 .g()
                 .V([1])
+                .count()
                 .coalesce([
                     __().V([1]).union([__().id(), __().label()]),
                     __().addV("person").property("id", 1i64).property("name", "marko").property("age", 29i32),

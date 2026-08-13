@@ -42,8 +42,8 @@ fn value_to_py(py: Python<'_>, value: Value) -> PyResult<PyObject> {
         }
         Value::Edge(e) => {
             let dict = PyDict::new_bound(py);
-            dict.set_item("src", e.out_v)?;
-            dict.set_item("dst", e.in_v)?;
+            dict.set_item("out_v", e.out_v)?;
+            dict.set_item("in_v", e.in_v)?;
             dict.set_item("label", e.label.to_string())?;
             dict.set_item("rank", e.rank)?;
 

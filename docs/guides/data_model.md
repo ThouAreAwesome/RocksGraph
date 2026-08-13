@@ -11,10 +11,11 @@ This guide outlines the core graph primitives, identifier semantics, system capa
 - [1. The Property Graph Model](#1-the-property-graph-model)
 - [2. System Limits & Capacities](#2-system-limits--capacities)
 - [3. Supported Data Types](#3-supported-data-types)
-- [4. Reserved Keys & The Disjoint Access Model](#4-reserved-keys--the-disjoint-access-model)
-- [5. Property Retrieval & the `withProperties()` Hint](#5-property-retrieval--the-withproperties-hint)
-- [6. Data Modeling Best Practices](#6-data-modeling-best-practices)
-- [7. Data Modeling Anti-Patterns](#7-data-modeling-anti-patterns)
+- [4. Query Result Types](#4-query-result-types)
+- [5. Reserved Keys & The Disjoint Access Model](#5-reserved-keys--the-disjoint-access-model)
+- [6. Property Retrieval & the `withProperties()` Hint](#6-property-retrieval--the-withproperties-hint)
+- [7. Data Modeling Best Practices](#7-data-modeling-best-practices)
+- [8. Data Modeling Anti-Patterns](#8-data-modeling-anti-patterns)
 - [Related Topics](#related-topics)
 
 ---
@@ -139,7 +140,51 @@ def create_rich_vertex(graph: Graph):
 
 ---
 
-## 4. Reserved Keys & The Disjoint Access Model
+## 4. Query Result Types
+
+§3 above covers what you can *store*. This section covers what a traversal actually *returns* — every terminal step (`to_list()`, `next()`, `iter()`) yields items of one unified value type: `Value` in Rust, and a dynamically-typed equivalent in Python. Which concrete kind you get back depends entirely on the last step in the pipeline — see the [traverser concept](step_reference.md#gremlin-traversal-language) for why.
+
+### The `Value` Variants
+
+| Category | Variants | Produced by |
+| :--- | :--- | :--- |
+| **Scalars** | `Null`, `Bool`, `Int32`, `Int64`, `UInt16`, `Float32`, `Float64`, `String`, `Uuid`, `Bytes`, `FloatVector` | `.values([...])`, `.id()`, `.label()`, `.rank()`, `.count()`, `.sum()`, `.mean()`, `.max()`/`.min()`, `.similarity()` |
+| **Graph elements** | `Vertex`, `Edge` | `.V()`, `.out()`/`.in()`/`.both()` (→ `Vertex`); `.outE()`/`.inE()`/`.bothE()` (→ `Edge`) |
+| **`Property`** | one key plus its value | `.properties([...])` |
+| **Containers** | `List`, `Map`, `Path` | `.fold()` (→ `List`); `.groupCount()`/`.group()` (→ `Map`); `.path()` (→ `Path`) |
+
+### Vertex and Edge Shape
+
+A fully materialized `Vertex` (e.g. from `snap.g().withProperties([]).V([1]).to_list()?`) has a fixed shape:
+
+🦀 Rust:
+```rust
+pub struct Vertex {
+    pub id: i64,
+    pub label: SmolStr,
+    pub properties: HashMap<String, Value>,
+}
+```
+
+🐍 Python — `Vertex`/`Edge` are dict-like objects, not plain `dict`: index with `[...]` (raises `KeyError` if absent) or `.get(key, default)`, plus `.keys()`/`.id`/`.label`/`.properties`:
+```python
+v = snap.g().withProperties().V(1).next()
+v["name"]          # KeyError if the key isn't present
+v.get("name")       # None if absent
+v.id                 # int
+v.label              # str
+v.properties         # plain dict — safe to .get()/.items() freely
+```
+
+`Edge` carries the same `.label`/`.properties`/`.rank`, plus `.out_v`/`.in_v` for its endpoints — matching Rust's field names and the official [Gremlin `outVertex`/`inVertex` terminology](https://tinkerpop.apache.org/javadocs/current/core/org/apache/tinkerpop/gremlin/structure/Edge.html) in both languages. Python's `Edge` has no `.id` property, though; use `.hasId(...)`/`g.E([...])` if you need the canonical edge ID string.
+
+### One Traverser Per Requested Key, Not One Combined Object
+
+`.values(["name", "age"])` doesn't return one item holding both — it fans out into **one separate traverser per key**, in the order requested. `snap.g().V([1]).values(["name", "age"]).to_list()?` on a vertex with both properties set returns a 2-element list — a `String` traverser, then an `Int64` traverser — not a single `{name, age}` object. If you need name and age bundled together per vertex, keep the vertex itself (`withProperties(["name", "age"]).V([1])`) rather than projecting with `.values()`.
+
+---
+
+## 5. Reserved Keys & The Disjoint Access Model
 
 RocksGraph treats three names — `"id"`, `"label"`, and `"rank"` — as **reserved structural attributes**:
 
@@ -161,7 +206,7 @@ RocksGraph treats three names — `"id"`, `"label"`, and `"rank"` — as **reser
 
 ---
 
-## 5. Property Retrieval & the `withProperties()` Hint
+## 6. Property Retrieval & the `withProperties()` Hint
 
 By default, RocksGraph optimizes query latency and I/O bandwidth by returning **only structural identifiers (`id` and `label`)** with zero property I/O overhead:
 
@@ -195,7 +240,7 @@ In graph traversals (e.g. `g.V(1).out("knows").out("knows").count()`), loading f
 
 ---
 
-## 6. Data Modeling Best Practices
+## 7. Data Modeling Best Practices
 
 ### Pattern 1: Dense Contiguous Integer Primary Keys
 Assign dense, sequential 64-bit integer IDs (`i64`) to vertices. Sequential IDs maximize storage cache efficiency and optimize edge index traversal.
@@ -209,7 +254,7 @@ Whenever you need to traverse, filter, or hop between entities, represent the re
 
 ---
 
-## 7. Data Modeling Anti-Patterns
+## 8. Data Modeling Anti-Patterns
 
 ### ❌ Anti-Pattern 1: Embedding Foreign Key Lists in String / Binary Properties
 Storing related IDs in a delimited string or binary payload prevents index-accelerated traversal.
