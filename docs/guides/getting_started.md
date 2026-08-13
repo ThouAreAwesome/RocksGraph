@@ -33,10 +33,12 @@ pip install rocksgraph
 
 RocksGraph opens an embedded database directly from a local directory path.
 
-> [!TIP]
-> **Thread-Safety & Cloning**: `Graph` is cheap to clone and fully thread-safe (`Send + Sync`). You can clone `graph` handles across multiple threads freely.
->
-> **Lifecycle & Vector Persistence**: `Graph` has no automatic persistence in `Drop`. To durably snapshot in-memory HNSW vector indexes to disk and flush resources cleanly, always invoke `graph.close()` (or `graph.index_manager().save_all()`) before application termination.
+> [!NOTE]
+> **What is a `Graph`?** A `Graph` is a handle to a directory on disk — always durable, and reopening the same path resumes its existing data rather than resetting it. For throwaway data (tests, experiments), just point `open()` at a directory you manage yourself, e.g. an OS temp dir — that's all the [Complete Runnable Examples](#6-complete-runnable-examples) below are doing.
+
+To start a new graph, call `Graph::open(path)` in Rust or `Graph(path)` in Python on an empty directory.
+
+A path can only be open once at a time: a second, independent `Graph::open(path)` call on a path an existing handle already has open fails with a lock error. This doesn't apply to sharing that same handle — clone it freely across threads instead (see [Transactions & Concurrency](concurrency_and_tx.md)).
 
 #### 🦀 Rust
 ```rust
@@ -246,7 +248,7 @@ print("Nearest person:", nearest_people)
 
 ## 6. Complete Runnable Examples
 
-Here are standalone, copy-pasteable programs demonstrating the complete lifecycle:
+Here are standalone, copy-pasteable programs demonstrating the complete lifecycle. These use an auto-deleted OS temp directory purely so the example is copy-pasteable without leaving files behind — `Graph::open()` itself is identical either way; see [Opening a Graph Database](#2-opening-a-graph-database) above for what determines whether a database's data actually persists.
 
 #### 🦀 Rust (`src/main.rs`)
 ```rust
@@ -254,7 +256,8 @@ use rocksgraph::{Graph, Value};
 use tempfile::tempdir;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 1. Create a database in a temporary directory
+    // 1. Open a database — using an OS temp dir here just so this example
+    //    doesn't leave files behind; a real path works identically.
     let dir = tempdir()?;
     let graph = Graph::open(dir.path())?;
 
@@ -294,7 +297,8 @@ from rocksgraph import Graph, Vector
 import tempfile
 
 def main():
-    # 1. Create a database in a temporary directory
+    # 1. Open a database — using an OS temp dir here just so this example
+    #    doesn't leave files behind; a real path works identically.
     dir_path = tempfile.mkdtemp()
     graph = Graph(dir_path)
 
