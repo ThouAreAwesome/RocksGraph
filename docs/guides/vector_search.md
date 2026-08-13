@@ -182,7 +182,10 @@ friend_scores = (
 ---
 
 ### 3. `.neighbors(source_prop, target_prop, k, entity_type)` (Vertex-to-Vertex ANN)
-Takes vertices currently in the traversal stream, looks up their source vector property, and finds their $k$ nearest neighbors in the target vector space.
+Takes vertices currently in the traversal stream, reads each one's `source_prop` vector as the query, and searches the `target_prop` HNSW index for the $k$ nearest neighbors.
+
+> [!NOTE]
+> `source_prop` and `target_prop` are allowed to differ so you can search across two different vector properties (e.g. a `query_emb` property against a `document_emb` index) — but both should come from the **same embedding model**. RocksGraph only validates that the two vectors have matching *dimensions* (a mismatch is a clean `VectorError::DimensionMismatch`); it can't validate that they represent the same embedding space. Two same-dimension vectors from unrelated models will return a result with no error — just a meaningless one.
 
 > [!NOTE]
 > In v0.2, vector indexing and `neighbors()` support only `VectorEntityType::Vertex` (`VectorEntityType.Vertex` in Python). Edge vector indexing is planned for v0.3.

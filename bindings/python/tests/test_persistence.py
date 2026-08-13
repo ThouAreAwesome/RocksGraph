@@ -63,8 +63,8 @@ class TestPersistence:
         edges = rs.g().V(v1["id"]).outE("knows").to_list()
         assert len(edges) == 1
         edge = edges[0]
-        assert edge["src"] == v1["id"]
-        assert edge["dst"] == v2["id"]
+        assert edge["out_v"] == v1["id"]
+        assert edge["in_v"] == v2["id"]
 
 
 def test_open_with_options_strict_mode(tmp_path):

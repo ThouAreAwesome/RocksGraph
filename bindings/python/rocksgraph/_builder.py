@@ -186,13 +186,13 @@ class Edge:
         return self._d.keys()
 
     def __hash__(self):
-        return hash((self._d["src"], self._d["dst"], self._d["label"], self._d.get("rank", 0)))
+        return hash((self._d["out_v"], self._d["in_v"], self._d["label"], self._d.get("rank", 0)))
 
     def __eq__(self, other):
         if isinstance(other, Edge):
             return (
-                self._d["src"] == other._d["src"]
-                and self._d["dst"] == other._d["dst"]
+                self._d["out_v"] == other._d["out_v"]
+                and self._d["in_v"] == other._d["in_v"]
                 and self._d["label"] == other._d["label"]
                 and self._d.get("rank", 0) == other._d.get("rank", 0)
             )
@@ -207,15 +207,15 @@ class Edge:
     def __repr__(self):
         props = self._d.get("properties", {})
         summary = ", ".join(f"{k}={v!r}" for k, v in props.items())
-        return f"Edge(src={self._d['src']!r}, dst={self._d['dst']!r}, label={self._d.get('label', '')!r}, rank={self._d.get('rank', 0)!r}{', ' + summary if summary else ''})"
+        return f"Edge(out_v={self._d['out_v']!r}, in_v={self._d['in_v']!r}, label={self._d.get('label', '')!r}, rank={self._d.get('rank', 0)!r}{', ' + summary if summary else ''})"
 
     @property
-    def src(self):
-        return self._d["src"]
+    def out_v(self):
+        return self._d["out_v"]
 
     @property
-    def dst(self):
-        return self._d["dst"]
+    def in_v(self):
+        return self._d["in_v"]
 
     @property
     def label(self):
@@ -260,7 +260,7 @@ class Property:
 def _post_process(value):
     """Recursively convert raw dicts to Vertex/Edge/Property objects."""
     if isinstance(value, dict):
-        if "src" in value and "dst" in value:
+        if "out_v" in value and "in_v" in value:
             return Edge(value)
         if "id" in value and "label" in value:
             return Vertex(value)
