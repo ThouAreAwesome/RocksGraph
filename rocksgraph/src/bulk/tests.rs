@@ -40,6 +40,123 @@ fn small_edges() -> Vec<BulkEdge> {
     ]
 }
 
+/// `BulkLoader` doesn't implement `Debug`, so `Result::unwrap_err` isn't
+/// available on `open_bulk_loader()`'s return type — extract manually.
+fn expect_open_bulk_loader_err(graph: &Graph) -> StoreError {
+    match graph.open_bulk_loader() {
+        Ok(_) => panic!("expected open_bulk_loader() to fail"),
+        Err(e) => e,
+    }
+}
+
+/// `open_bulk_loader()` must reject a graph that already has vertices —
+/// `BulkLoader` computes degree counters from scratch per batch and ingests
+/// them destructively (§`StoreError::NonEmptyGraph`), so a second load into
+/// an already-populated graph can silently corrupt referential integrity.
+#[test]
+fn test_bulk_loader_rejects_nonempty_graph() {
+    let dir = tempdir().unwrap();
+    let db_path = dir.path().join("db");
+    let graph = Graph::open(&db_path).unwrap();
+
+    // First load into a genuinely empty graph must succeed.
+    let mut loader = graph.open_bulk_loader().unwrap();
+    loader.load_vertices(small_vertices()).unwrap();
+    loader.load_edges(small_edges()).unwrap();
+    loader.commit().unwrap();
+
+    // A second load against the now-populated graph must be rejected before
+    // any vertices/edges are streamed — not merely at commit() time.
+    let err = expect_open_bulk_loader_err(&graph);
+    assert!(matches!(err, StoreError::NonEmptyGraph));
+
+    graph.close().unwrap();
+}
+
+/// The empty-graph check must key off actual data (`CF_VERTICES` contents),
+/// not "was `BulkLoader` used before" — a graph populated purely through the
+/// transactional write path must be rejected identically.
+#[test]
+fn test_bulk_loader_rejects_graph_populated_via_txn() {
+    let dir = tempdir().unwrap();
+    let db_path = dir.path().join("db");
+    let graph = Graph::open(&db_path).unwrap();
+
+    {
+        let mut txn = graph.begin();
+        txn.g().addV("Person").property("id", 1i64).next().unwrap();
+        txn.commit().unwrap();
+    }
+
+    let err = expect_open_bulk_loader_err(&graph);
+    assert!(matches!(err, StoreError::NonEmptyGraph));
+
+    graph.close().unwrap();
+}
+
+/// A graph that's been fully emptied (every vertex explicitly dropped, not
+/// just logically unused) must be accepted again — RocksDB deletes are real
+/// tombstones invisible to a fresh iterator, so this must not false-positive.
+#[test]
+fn test_bulk_loader_accepts_after_full_delete() {
+    let dir = tempdir().unwrap();
+    let db_path = dir.path().join("db");
+    let graph = Graph::open(&db_path).unwrap();
+
+    let mut loader = graph.open_bulk_loader().unwrap();
+    loader.load_vertices(small_vertices()).unwrap();
+    loader.load_edges(small_edges()).unwrap();
+    loader.commit().unwrap();
+
+    // Confirm the natural in-between state is still (correctly) rejected.
+    assert!(matches!(expect_open_bulk_loader_err(&graph), StoreError::NonEmptyGraph));
+
+    // Drop every edge, then every vertex (edges first — drop_vertex rejects
+    // while incident edges exist).
+    {
+        let mut txn = graph.begin();
+        for id in 1_i64..=5 {
+            txn.g().V([id]).outE([]).drop().next().unwrap();
+        }
+        for id in 1_i64..=5 {
+            txn.g().V([id]).drop().next().unwrap();
+        }
+        txn.commit().unwrap();
+    }
+
+    let mut loader = graph.open_bulk_loader().expect("emptied graph must be accepted again");
+    loader.load_vertices(small_vertices()).unwrap();
+    loader.load_edges(small_edges()).unwrap();
+    loader.commit().unwrap();
+
+    graph.close().unwrap();
+}
+
+/// Regression guard for the fix alongside the check itself: `open_bulk_loader`
+/// sets `bulk_load_in_progress` before constructing `BulkLoader`, so a failed
+/// construction (NonEmptyGraph) must release that flag again — otherwise every
+/// subsequent call would incorrectly fail with `BulkLoadInProgress` instead of
+/// the real, retriable `NonEmptyGraph` cause, even after the graph is emptied.
+#[test]
+fn test_nonempty_rejection_does_not_leak_in_progress_flag() {
+    let dir = tempdir().unwrap();
+    let db_path = dir.path().join("db");
+    let graph = Graph::open(&db_path).unwrap();
+
+    let mut loader = graph.open_bulk_loader().unwrap();
+    loader.load_vertices(small_vertices()).unwrap();
+    loader.load_edges(small_edges()).unwrap();
+    loader.commit().unwrap();
+
+    // Two consecutive failed attempts must both report NonEmptyGraph — if the
+    // in-progress flag leaked on the first failure, the second would instead
+    // report BulkLoadInProgress.
+    assert!(matches!(expect_open_bulk_loader_err(&graph), StoreError::NonEmptyGraph));
+    assert!(matches!(expect_open_bulk_loader_err(&graph), StoreError::NonEmptyGraph));
+
+    graph.close().unwrap();
+}
+
 #[test]
 fn test_bulk_loader_fluent_api() {
     let dir = tempdir().unwrap();

@@ -30,7 +30,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
-use rocksdb::{IngestExternalFileOptions, Options, SstFileWriter, WriteBatchWithTransaction};
+use rocksdb::{IngestExternalFileOptions, IteratorMode, Options, SstFileWriter, WriteBatchWithTransaction};
 
 use crate::{
     schema::{
@@ -214,8 +214,30 @@ pub struct BulkLoader<'a> {
     start_time: Instant,
 }
 
+/// Cheap existence check — true if `CF_VERTICES` has at least one key.
+///
+/// `BulkLoader` requires an empty graph (see [`StoreError::NonEmptyGraph`]):
+/// degree counters are computed from scratch per batch and ingested
+/// destructively, with no merge against any pre-existing on-disk value, so
+/// loading into a non-empty graph can silently corrupt them. This is a
+/// single-key seek, not a full scan — cost is independent of graph size.
+fn graph_has_vertices(graph: &crate::Graph) -> Result<bool, StoreError> {
+    let cf = graph.store.db.cf_handle(CF_VERTICES).ok_or(StoreError::MissingColumnFamily("vertices"))?;
+    let mut iter = graph.store.db.iterator_cf(&cf, IteratorMode::Start);
+    match iter.next() {
+        Some(item) => {
+            item.map_err(StoreError::RocksDb)?;
+            Ok(true)
+        }
+        None => Ok(false),
+    }
+}
+
 impl<'a> BulkLoader<'a> {
     pub(crate) fn new(graph: &'a crate::Graph) -> Result<Self, StoreError> {
+        if graph_has_vertices(graph)? {
+            return Err(StoreError::NonEmptyGraph);
+        }
         let db_path = graph.store.db.path();
         let work_dir = db_path.join("_bulk_work");
         let staging_schema = graph.schema.read().clone();

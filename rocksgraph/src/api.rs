@@ -201,7 +201,16 @@ impl Graph {
         if self.bulk_load_in_progress.swap(true, Ordering::AcqRel) {
             return Err(StoreError::BulkLoadInProgress);
         }
-        BulkLoader::new(self)
+        match BulkLoader::new(self) {
+            Ok(loader) => Ok(loader),
+            Err(e) => {
+                // Construction failed before any bulk-load state was established
+                // (e.g. NonEmptyGraph) — release the flag so a corrected retry
+                // isn't permanently blocked by this failed attempt.
+                self.bulk_load_in_progress.store(false, Ordering::Release);
+                Err(e)
+            }
+        }
     }
 
     /// Access the thread-safe schema registry directly, bypassing `SchemaSession`. Test-only:

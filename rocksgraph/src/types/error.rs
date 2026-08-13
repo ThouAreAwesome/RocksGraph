@@ -33,7 +33,13 @@ use crate::types::{CanonicalEdgeKey, VertexKey};
 
 /// The unified error type for storage and runtime failures — see the module docs
 /// for the full variant-layer breakdown and which errors are retryable.
+///
+/// Marked `#[non_exhaustive]`: new variants may be added in any 0.x release.
+/// Match with a wildcard arm (`_ => ...`), or use the classification helpers
+/// ([`category`](StoreError::category), [`is_retryable`](StoreError::is_retryable),
+/// etc.) instead of matching every variant by name.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum StoreError {
     // ═══════════════════════════════════════════════════════════════════
     // STORAGE LAYER — UNRECOVERABLE
@@ -144,6 +150,16 @@ pub enum StoreError {
     /// Attempted to load edges or commit before `load_vertices()` was called.
     VerticesNotLoaded,
 
+    /// A bulk load was attempted against a graph that already contains vertices.
+    ///
+    /// `BulkLoader` computes each vertex's degree counters from scratch per
+    /// batch and ingests them destructively via `IngestExternalFile` (no
+    /// merge with any existing on-disk value). Loading into a non-empty
+    /// graph can silently corrupt those counters — including under-counting,
+    /// which lets the `IncidentEdges` referential-integrity check pass for a
+    /// vertex that still has live edges. Empty the graph before bulk loading.
+    NonEmptyGraph,
+
     /// A vector index operation failed (dimension mismatch, capacity, I/O, etc.).
     VectorIndex(String),
 }
@@ -191,6 +207,7 @@ impl StoreError {
                 | Self::UnexpectedDataType(_)
                 | Self::VerticesNotLoaded
                 | Self::PropertyValueTooLarge(_)
+                | Self::NonEmptyGraph
         )
     }
 
@@ -212,7 +229,8 @@ impl StoreError {
             | Self::UnsupportedOperation(_)
             | Self::TraversalError(_)
             | Self::VerticesNotLoaded
-            | Self::PropertyValueTooLarge(_) => "query",
+            | Self::PropertyValueTooLarge(_)
+            | Self::NonEmptyGraph => "query",
         }
     }
 }
@@ -244,6 +262,9 @@ impl fmt::Display for StoreError {
             StoreError::IncompleteLoad { msg } => write!(f, "incomplete bulk load: {}", msg),
             StoreError::BulkLoadInProgress => write!(f, "bulk load in progress"),
             StoreError::VerticesNotLoaded => write!(f, "load_vertices must be called before load_edges or commit"),
+            StoreError::NonEmptyGraph => {
+                write!(f, "bulk load requires an empty graph (no existing vertices); empty the graph first")
+            }
             StoreError::VectorIndex(msg) => write!(f, "vector index error: {msg}"),
         }
     }
