@@ -9,6 +9,18 @@ Bulk loading bypasses online transaction logging, sorts data chunks offline into
 > [!WARNING]
 > **`BulkLoader` requires an empty graph.** `open_bulk_loader()` returns `StoreError::NonEmptyGraph` if the database already has any vertices — empty the graph first, or load into a fresh database.
 
+## Table of Contents
+
+- [1. When to Use Bulk Loading](#1-when-to-use-bulk-loading)
+- [2. Bulk Loading Workflow](#2-bulk-loading-workflow)
+- [3. Configuration Options](#3-configuration-options)
+- [4. Bulk Loading Example](#4-bulk-loading-example)
+- [5. Custom Data Sources](#5-custom-data-sources)
+- [6. Vector Indexes & Bulk Loading](#6-vector-indexes--bulk-loading)
+- [7. Bulk Loading Best Practices](#7-bulk-loading-best-practices)
+- [8. Bulk Loading Anti-Patterns](#8-bulk-loading-anti-patterns)
+- [Related Topics](#related-topics)
+
 ---
 
 ## 1. When to Use Bulk Loading

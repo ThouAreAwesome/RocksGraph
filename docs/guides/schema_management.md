@@ -9,6 +9,20 @@ This guide covers schema declaration, system limits, atomic schema updates using
 > [!NOTE]
 > Snippets below are excerpts, not full programs — they assume `graph`/`schema` are already open as shown in [Getting Started](getting_started.md), and that relevant enums (`DataType`, `SchemaMode`, `EdgeMode`, `VectorEntityType`, `DistanceMetric`, `AnnAlgorithm`, `Quantization`) are imported from `rocksgraph` where used.
 
+## Table of Contents
+
+- [1. Auto Mode vs. Strict Mode](#1-auto-mode-vs-strict-mode)
+- [2. System Schema Limits](#2-system-schema-limits)
+- [3. Supported Data Types in Schema](#3-supported-data-types-in-schema)
+- [4. Declaring Schema with `SchemaSession`](#4-declaring-schema-with-schemasession)
+- [5. Schema Design Rules & Principles](#5-schema-design-rules--principles)
+- [6. Declaring Vector Indexes](#6-declaring-vector-indexes)
+- [7. Dropping Vector Indexes](#7-dropping-vector-indexes)
+- [8. Schema Error Handling](#8-schema-error-handling)
+- [9. Schema Best Practices](#9-schema-best-practices)
+- [10. Schema Anti-Patterns](#10-schema-anti-patterns)
+- [Related Topics](#related-topics)
+
 ---
 
 ## 1. Auto Mode vs. Strict Mode

@@ -6,6 +6,17 @@ RocksGraph provides ACID transactions with Snapshot Isolation and Optimistic Con
 
 It supports concurrent readers and writers without global database locks.
 
+## Table of Contents
+
+- [1. Session Taxonomy](#1-session-taxonomy)
+- [2. Reading Data: `ReadSession`](#2-reading-data-readsession)
+- [3. Writing Data: `TxnSession` & Read-Your-Own-Writes (RYOW)](#3-writing-data-txnsession--read-your-own-writes-ryow)
+- [4. OCC Conflict Handling & Retry Loops](#4-occ-conflict-handling--retry-loops)
+- [5. What Actually Conflicts: The OCC Conflict Matrix](#5-what-actually-conflicts-the-occ-conflict-matrix)
+- [6. Transaction Best Practices](#6-transaction-best-practices)
+- [7. Transaction Anti-Patterns](#7-transaction-anti-patterns)
+- [Related Topics](#related-topics)
+
 ---
 
 ## 1. Session Taxonomy
