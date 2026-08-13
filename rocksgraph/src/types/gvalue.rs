@@ -35,7 +35,12 @@ use crate::types::{
 // ── Primitive ────────────────────────────────────────────────────────────────
 
 /// A scalar value that can appear as a property value or standalone scalar.
+///
+/// Marked `#[non_exhaustive]`: new variants may be added in any 0.x release
+/// (e.g. a new supported data type). Match with a wildcard arm (`_ => ...`)
+/// rather than every variant by name.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum Primitive {
     Null,
     Bool(bool),
