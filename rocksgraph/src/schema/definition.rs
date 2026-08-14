@@ -136,9 +136,6 @@ use crate::vector::traits::IndexOptions;
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct GraphOptions {
-    /// Vector mutation count that triggers a background checkpoint (snapshot + WAL GC).
-    /// `None`/`0` disables triggered checkpointing.
-    pub checkpoint_mutation_threshold: Option<u64>,
     // ── Persisted on first open (written to CF_SCHEMA; ignored on re-open) ────
     /// Schema mode (Auto vs Strict).
     pub mode: SchemaMode,
@@ -157,7 +154,6 @@ pub struct GraphOptions {
 impl Default for GraphOptions {
     fn default() -> Self {
         Self {
-            checkpoint_mutation_threshold: None,
             mode: SchemaMode::Auto,
             edge_mode: EdgeMode::Single,
             storage: RocksOptions::default(),
@@ -195,13 +191,6 @@ impl GraphOptions {
     /// Set the Gremlin engine execution options.
     pub fn with_execution(mut self, execution: ExecutionOptions) -> Self {
         self.execution = execution;
-        self
-    }
-
-    /// Set the vector mutation count that triggers a background checkpoint
-    /// (snapshot + WAL GC). `None` disables triggered checkpointing.
-    pub fn with_checkpoint_mutation_threshold(mut self, threshold: Option<u64>) -> Self {
-        self.checkpoint_mutation_threshold = threshold;
         self
     }
 }

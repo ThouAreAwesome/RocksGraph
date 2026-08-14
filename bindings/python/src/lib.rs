@@ -348,7 +348,7 @@ impl PyGraph {
     }
 
     #[staticmethod]
-    #[pyo3(signature = (path, *, mode = "auto", edge_mode = "single", storage = None, index = None, execution = None, checkpoint_mutation_threshold = None))]
+    #[pyo3(signature = (path, *, mode = "auto", edge_mode = "single", storage = None, index = None, execution = None))]
     fn open_with_options(
         path: &str,
         mode: &str,
@@ -356,7 +356,6 @@ impl PyGraph {
         storage: Option<&Bound<'_, PyDict>>,
         index: Option<&Bound<'_, PyDict>>,
         execution: Option<&Bound<'_, PyDict>>,
-        checkpoint_mutation_threshold: Option<u64>,
     ) -> PyResult<Self> {
         let path = PathBuf::from(path);
 
@@ -393,6 +392,9 @@ impl PyGraph {
             if let Some(v) = d.get_item("default_memory_limit")? {
                 idx.default_limit = Some(VectorIndexLimit::new(v.extract()?));
             }
+            if let Some(v) = d.get_item("default_checkpoint_mutation_threshold")? {
+                idx.default_checkpoint_mutation_threshold = Some(v.extract()?);
+            }
             if let Some(overrides) = d.get_item("per_index")? {
                 let list = overrides.downcast::<PyList>()?;
                 let mut vec = Vec::with_capacity(list.len());
@@ -418,6 +420,9 @@ impl PyGraph {
                     if let Some(v) = o.get_item("memory_limit_bytes")? {
                         entry = entry.with_memory_limit(VectorIndexLimit::new(v.extract()?));
                     }
+                    if let Some(v) = o.get_item("checkpoint_mutation_threshold")? {
+                        entry = entry.with_checkpoint_mutation_threshold(v.extract()?);
+                    }
                     vec.push(entry);
                 }
                 idx.per_index = vec;
@@ -442,8 +447,7 @@ impl PyGraph {
             .with_edge_mode(em)
             .with_storage(rocks)
             .with_index(idx)
-            .with_execution(exec)
-            .with_checkpoint_mutation_threshold(checkpoint_mutation_threshold);
+            .with_execution(exec);
         let graph = Graph::open_with_options(path, options).map_err(store_error_to_pyerr)?;
         Ok(Self { graph: Some(graph) })
     }

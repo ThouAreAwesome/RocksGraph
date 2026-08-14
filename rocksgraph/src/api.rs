@@ -107,12 +107,19 @@ use crate::{
 use std::sync::atomic::AtomicU64;
 
 #[derive(Debug)]
-pub(crate) struct CheckpointState {
+pub(crate) struct PerIndexCheckpointState {
     pub(crate) mutation_count: AtomicU64,
     pub(crate) in_progress: parking_lot::Mutex<()>,
     pub(crate) spawn_gate: std::sync::atomic::AtomicBool,
     pub(crate) threshold: u64,
 }
+
+pub(crate) type CheckpointStateMap = parking_lot::RwLock<
+    std::collections::HashMap<
+        (crate::vector::VectorEntityType, smol_str::SmolStr),
+        std::sync::Arc<PerIndexCheckpointState>,
+    >,
+>;
 
 pub struct Graph {
     pub(crate) store: Arc<RocksStorage>,
@@ -121,7 +128,7 @@ pub struct Graph {
     pub(crate) vector_indexes: Arc<RwLock<VectorIndexMap>>,
     pub(crate) index_options: IndexOptions,
     pub(crate) execution_options: crate::engine::ExecutionOptions,
-    pub(crate) checkpoint: Arc<CheckpointState>,
+    pub(crate) checkpoint_states: std::sync::Arc<CheckpointStateMap>,
 }
 
 impl Graph {
@@ -184,12 +191,7 @@ impl Graph {
             vector_indexes,
             index_options: options.index,
             execution_options: options.execution,
-            checkpoint: Arc::new(CheckpointState {
-                mutation_count: AtomicU64::new(0),
-                in_progress: parking_lot::Mutex::new(()),
-                spawn_gate: std::sync::atomic::AtomicBool::new(false),
-                threshold: options.checkpoint_mutation_threshold.unwrap_or(0),
-            }),
+            checkpoint_states: std::sync::Arc::new(parking_lot::RwLock::new(std::collections::HashMap::new())),
         })
     }
 
@@ -283,7 +285,18 @@ impl Graph {
     /// the temporary directory is dropped so RocksDB can flush and close
     /// its files cleanly.
     pub fn close(self) -> Result<(), StoreError> {
-        let _guard = self.checkpoint.in_progress.lock();
+        // Hold the map write lock through guard collection: per-index checkpoint
+        // state is created lazily on first touch (see `commit()`), so a plain
+        // `read()`-then-drop snapshot here could miss an index a concurrent
+        // commit on another `Graph` clone is touching for the first time —
+        // leaving its background save unguarded and racing with `save_all()`
+        // below. Holding `write()` blocks any such commit from registering
+        // (or looking up) per-index state until we're done collecting guards.
+        let states = self.checkpoint_states.write();
+        let state_arcs: Vec<_> = states.values().cloned().collect();
+        let _guards: Vec<_> = state_arcs.iter().map(|s| s.in_progress.lock()).collect();
+        drop(states);
+
         // save_all() persists snapshots and GCs WAL entries covered by them.
         // If save fails, WAL entries are preserved for crash recovery on next open.
         self.index_manager().save_all()
@@ -454,7 +467,7 @@ impl Clone for Graph {
             vector_indexes: Arc::clone(&self.vector_indexes),
             index_options: self.index_options.clone(),
             execution_options: self.execution_options,
-            checkpoint: Arc::clone(&self.checkpoint),
+            checkpoint_states: Arc::clone(&self.checkpoint_states),
         }
     }
 }

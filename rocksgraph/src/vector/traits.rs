@@ -188,17 +188,26 @@ pub struct PerIndexOptions {
     /// Per-index memory cap. Overrides `IndexOptions::default_limit` when set.
     /// `None` = fall back to the graph-wide default.
     pub memory_limit: Option<VectorIndexLimit>,
+    /// Number of property writes (across all `commit()` calls) that trigger a background checkpoint.
+    /// Overrides `IndexOptions::default_checkpoint_mutation_threshold`.
+    pub checkpoint_mutation_threshold: Option<u64>,
 }
 
 impl PerIndexOptions {
     /// Create per-index options targeting `(entity_type, property)`.
     pub fn new(entity_type: VectorEntityType, property: impl Into<SmolStr>) -> Self {
-        Self { entity_type, property: property.into(), memory_limit: None }
+        Self { entity_type, property: property.into(), memory_limit: None, checkpoint_mutation_threshold: None }
     }
 
     /// Set a memory cap for this specific index.
     pub fn with_memory_limit(mut self, limit: VectorIndexLimit) -> Self {
         self.memory_limit = Some(limit);
+        self
+    }
+
+    /// Set a background checkpoint threshold for this specific index.
+    pub fn with_checkpoint_mutation_threshold(mut self, threshold: u64) -> Self {
+        self.checkpoint_mutation_threshold = Some(threshold);
         self
     }
 }
@@ -213,6 +222,9 @@ pub struct IndexOptions {
     /// Default memory limit applied to every vector index.
     /// `None` = unlimited (expert escape hatch — can OOM if not sized to RAM).
     pub default_limit: Option<VectorIndexLimit>,
+    /// Default number of property writes (across all `commit()` calls) that trigger a background checkpoint.
+    /// `None` = disabled (background checkpointing off).
+    pub default_checkpoint_mutation_threshold: Option<u64>,
     /// Per-index settings matched by `(entity_type, property)`. Takes precedence
     /// over `default_limit` for whichever fields are set.
     pub per_index: Vec<PerIndexOptions>,
@@ -222,6 +234,12 @@ impl IndexOptions {
     /// Apply a default memory limit to all indexes that have no per-index override.
     pub fn with_default_limit(mut self, limit: VectorIndexLimit) -> Self {
         self.default_limit = Some(limit);
+        self
+    }
+
+    /// Set a default background checkpoint threshold for all vector indexes.
+    pub fn with_default_checkpoint_mutation_threshold(mut self, threshold: u64) -> Self {
+        self.default_checkpoint_mutation_threshold = Some(threshold);
         self
     }
 
@@ -241,6 +259,18 @@ impl IndexOptions {
             }
         }
         self.default_limit.as_ref().map(|l| l.memory_limit_bytes)
+    }
+
+    /// Resolve the configured checkpoint mutation threshold for a specific index.
+    pub fn checkpoint_mutation_threshold(&self, entity_type: VectorEntityType, property: &str) -> Option<u64> {
+        for ov in &self.per_index {
+            if ov.entity_type == entity_type && ov.property == property {
+                if let Some(threshold) = ov.checkpoint_mutation_threshold {
+                    return Some(threshold);
+                }
+            }
+        }
+        self.default_checkpoint_mutation_threshold
     }
 }
 

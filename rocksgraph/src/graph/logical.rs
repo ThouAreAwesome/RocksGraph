@@ -25,6 +25,166 @@ use std::{
 use super::{helpers::edge_matches, Existence, StagedSchema, TxnSchemaCache};
 use crate::engine::ExecutionOptions;
 
+// ── Vector op grouping ───────────────────────────────────────────────────────
+//
+// `commit()` needs a per-`(entity_type, prop_name)` breakdown of a batch's
+// pending vector ops twice: once pre-commit (insert counts, for the HNSW
+// capacity pre-flight check) and once post-commit (insert+remove totals, for
+// per-index checkpoint-trigger accounting). Both are computed from one pass
+// here rather than two separate `HashMap`-building passes over the same ops.
+
+/// Per-index vector-op counts for one `commit()` batch: `(inserted, total)`
+/// per `(entity_type, prop_name)`. Most commits touch only a handful of
+/// distinct vector-indexed properties (often just one), so this stays inline
+/// on the stack — `SmallVec` only spills to the heap if a single commit
+/// genuinely spans more than `INLINE_VECTOR_INDEXES` distinct indexes.
+const INLINE_VECTOR_INDEXES: usize = 4;
+type VectorOpGroups =
+    smallvec::SmallVec<[((crate::vector::VectorEntityType, smol_str::SmolStr), (u64, u64)); INLINE_VECTOR_INDEXES]>;
+
+fn vector_op_index_key(op: &crate::vector::PendingVectorOp) -> (crate::vector::VectorEntityType, &smol_str::SmolStr) {
+    let (key, prop_name) = match op {
+        crate::vector::PendingVectorOp::Inserted { key, prop_name, .. }
+        | crate::vector::PendingVectorOp::Removed { key, prop_name, .. } => (key, prop_name),
+    };
+    let entity_type = match key {
+        crate::vector::EntityKey::Vertex(_) => crate::vector::VectorEntityType::Vertex,
+        crate::vector::EntityKey::Edge(_) => crate::vector::VectorEntityType::Edge,
+    };
+    (entity_type, prop_name)
+}
+
+/// Group `ops` by `(entity_type, prop_name)` via a linear scan against the
+/// (typically tiny) result set built so far, rather than a `HashMap` — the
+/// number of distinct vector indexes touched by one commit is almost always
+/// small enough that this beats hashing, and it lets `SmallVec` itself decide
+/// when to spill to the heap instead of a separate hand-rolled fallback path.
+fn group_vector_ops(ops: &[crate::vector::PendingVectorOp]) -> VectorOpGroups {
+    let mut groups: VectorOpGroups = smallvec::SmallVec::new();
+    for op in ops {
+        let (et, prop) = vector_op_index_key(op);
+        let is_insert = matches!(op, crate::vector::PendingVectorOp::Inserted { .. });
+        match groups.iter_mut().find(|(key, _)| key.0 == et && key.1 == *prop) {
+            Some((_, counts)) => {
+                counts.1 += 1;
+                if is_insert {
+                    counts.0 += 1;
+                }
+            }
+            None => groups.push(((et, prop.clone()), (u64::from(is_insert), 1))),
+        }
+    }
+    groups
+}
+
+/// Check that inserting `pending` more vectors into `idx_key`'s index won't
+/// exceed its configured memory limit once HNSW's capacity-doubling kicks
+/// in. Called pre-commit so the whole batch can be rejected atomically —
+/// see the pre-flight comment in `commit()`.
+fn check_vector_capacity(
+    indexes: &VectorIndexMap,
+    idx_key: &(crate::vector::VectorEntityType, smol_str::SmolStr),
+    pending: usize,
+) -> Result<(), StoreError> {
+    // A pure-deletion batch (`pending == 0`) never calls `insert()`, so it can
+    // never trigger HNSW's capacity doubling — skip the simulation entirely,
+    // rather than let `cur_size + 0 >= cur_cap` spuriously fire when the index
+    // happens to sit exactly at capacity and block an unrelated deletion.
+    if pending == 0 {
+        return Ok(());
+    }
+    let Some(arc) = indexes.get(idx_key) else {
+        return Ok(());
+    };
+    let guard = arc.read();
+    let dim = guard.dimension();
+    let cur_size = guard.size();
+    let cur_cap = guard.capacity().max(crate::vector::hnsw::DEFAULT_RESERVE_CAPACITY);
+    // HNSW expands when size >= capacity: cur_cap * 2 (hnsw.rs insert()).
+    // Only check if this batch would trigger expansion.
+    if cur_size + pending >= cur_cap {
+        // TODO(v0.3/edge-case): If pending is large enough to require multiple capacity
+        // doublings (cur_size + pending > cur_cap * 2), simulate the full doubling loop to
+        // compute exact final capacity rather than a single doubling.
+        let new_cap = cur_cap.max(1).saturating_mul(2).max(crate::vector::hnsw::DEFAULT_RESERVE_CAPACITY);
+        let used = new_cap.saturating_mul(dim).saturating_mul(guard.bytes_per_scalar());
+        if let Some(limit) = guard.memory_limit_bytes() {
+            if used >= limit {
+                let prop_name = &idx_key.1;
+                return Err(StoreError::VectorIndex(format!(
+                    "memory limit exceeded for '{prop_name}': \
+                     projected {used} bytes after capacity expand to {new_cap} \
+                     (limit {limit} bytes)"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Increment `idx_key`'s per-index mutation counter by `count` and, if this
+/// pushes it past its configured threshold, spawn a background checkpoint
+/// for that index (bounded to one in-flight spawn per index via `spawn_gate`).
+fn trigger_index_checkpoint(
+    graph_handle: &crate::api::Graph,
+    idx_key: (crate::vector::VectorEntityType, smol_str::SmolStr),
+    count: u64,
+) {
+    let state = {
+        let map = graph_handle.checkpoint_states.read();
+        if let Some(s) = map.get(&idx_key) {
+            s.clone()
+        } else {
+            drop(map);
+            let threshold =
+                graph_handle.index_options.checkpoint_mutation_threshold(idx_key.0, &idx_key.1).unwrap_or(0);
+            let mut map = graph_handle.checkpoint_states.write();
+            map.entry(idx_key.clone())
+                .or_insert_with(|| {
+                    std::sync::Arc::new(crate::api::PerIndexCheckpointState {
+                        mutation_count: std::sync::atomic::AtomicU64::new(0),
+                        in_progress: parking_lot::Mutex::new(()),
+                        spawn_gate: std::sync::atomic::AtomicBool::new(false),
+                        threshold,
+                    })
+                })
+                .clone()
+        }
+    };
+
+    // `mutation_count` is a pure heuristic trigger — no other memory
+    // operation's visibility depends on it. Mutual exclusion between
+    // background saves and `close()` comes from `in_progress`/`spawn_gate`,
+    // not from this counter, so `Relaxed` costs nothing in correctness
+    // while avoiding the acquire/release fences `AcqRel` doesn't need here.
+    let prior = state.mutation_count.fetch_add(count, std::sync::atomic::Ordering::Relaxed);
+
+    if state.threshold > 0
+        && prior + count >= state.threshold
+        && state
+            .spawn_gate
+            .compare_exchange(false, true, std::sync::atomic::Ordering::Acquire, std::sync::atomic::Ordering::Relaxed)
+            .is_ok()
+    {
+        let graph = graph_handle.clone();
+        let state_clone = state.clone();
+        std::thread::spawn(move || {
+            struct ResetGateOnDrop(std::sync::Arc<crate::api::PerIndexCheckpointState>);
+            impl Drop for ResetGateOnDrop {
+                fn drop(&mut self) {
+                    self.0.spawn_gate.store(false, std::sync::atomic::Ordering::Release);
+                }
+            }
+            let _reset_gate = ResetGateOnDrop(state_clone.clone());
+
+            if let Some(_guard) = state_clone.in_progress.try_lock() {
+                state_clone.mutation_count.store(0, std::sync::atomic::Ordering::Relaxed);
+                let _ = graph.index_manager().save(idx_key.0, &idx_key.1);
+            }
+        });
+    }
+}
+
 // ── LogicalGraph ──────────────────────────────────────────────────────────────
 /// Query-scoped logical graph wrapping a store transaction.
 ///
@@ -1170,44 +1330,15 @@ impl LogicalGraph {
         // RocksDB transaction has already committed and we cannot roll back the
         // in-memory state.  Check capacity headroom up front so the entire batch
         // is atomic: either all inserts succeed, or none are attempted.
+        //
+        // Grouped once via `group_vector_ops` and reused below (post-commit) for
+        // checkpoint-trigger accounting, instead of re-scanning `vector_pending_ops`
+        // a second time for the same per-index breakdown.
+        let vector_op_groups = group_vector_ops(&self.vector_pending_ops);
         if !self.vector_pending_ops.is_empty() {
             let indexes = self.vector_indexes.read();
-            let mut pending_per_index: HashMap<(crate::vector::VectorEntityType, smol_str::SmolStr), usize> =
-                HashMap::new();
-            for op in &self.vector_pending_ops {
-                // TODO(v0.4): derive entity_type from the op once edge index support is added.
-                if let crate::vector::PendingVectorOp::Inserted { prop_name, .. } = op {
-                    let idx_key = (crate::vector::VectorEntityType::Vertex, prop_name.clone());
-                    *pending_per_index.entry(idx_key).or_default() += 1;
-                }
-            }
-            for ((entity_type, prop_name), pending) in pending_per_index {
-                let idx_key = (entity_type, prop_name.clone());
-                if let Some(arc) = indexes.get(&idx_key) {
-                    let guard = arc.read();
-                    let dim = guard.dimension();
-                    let cur_size = guard.size();
-                    let cur_cap = guard.capacity().max(crate::vector::hnsw::DEFAULT_RESERVE_CAPACITY);
-                    // HNSW expands when size >= capacity: cur_cap * 2 (hnsw.rs insert()).
-                    // Only check if this batch would trigger expansion.
-                    if cur_size + pending >= cur_cap {
-                        // TODO(v0.3/edge-case): If pending is large enough to require multiple capacity
-                        // doublings (cur_size + pending > cur_cap * 2), simulate the full doubling loop to
-                        // compute exact final capacity rather than a single doubling.
-                        let new_cap =
-                            cur_cap.max(1).saturating_mul(2).max(crate::vector::hnsw::DEFAULT_RESERVE_CAPACITY);
-                        let used = new_cap.saturating_mul(dim).saturating_mul(guard.bytes_per_scalar());
-                        if let Some(limit) = guard.memory_limit_bytes() {
-                            if used >= limit {
-                                return Err(StoreError::VectorIndex(format!(
-                                    "memory limit exceeded for '{prop_name}': \
-                                     projected {used} bytes after capacity expand to {new_cap} \
-                                     (limit {limit} bytes)"
-                                )));
-                            }
-                        }
-                    }
-                }
+            for (key, (inserted, _total)) in &vector_op_groups {
+                check_vector_capacity(&indexes, key, *inserted as usize)?;
             }
         }
 
@@ -1270,43 +1401,8 @@ impl LogicalGraph {
 
         if commit_result.is_ok() && !self.vector_pending_ops.is_empty() {
             if let Some(graph_handle) = &self.graph_handle {
-                let prior = graph_handle
-                    .checkpoint
-                    .mutation_count
-                    .fetch_add(self.vector_pending_ops.len() as u64, std::sync::atomic::Ordering::AcqRel);
-                if graph_handle.checkpoint.threshold > 0
-                    && prior + self.vector_pending_ops.len() as u64 >= graph_handle.checkpoint.threshold
-                    && graph_handle
-                        .checkpoint
-                        .spawn_gate
-                        .compare_exchange(
-                            false,
-                            true,
-                            std::sync::atomic::Ordering::Acquire,
-                            std::sync::atomic::Ordering::Relaxed,
-                        )
-                        .is_ok()
-                {
-                    let graph = graph_handle.clone();
-                    std::thread::spawn(move || {
-                        // Resets `spawn_gate` on drop — including during unwinding if
-                        // `save_all()` panics — so a panic inside the checkpoint can't
-                        // permanently disable future triggers the way a plain `store()`
-                        // placed after this block would (that call would simply never
-                        // be reached on the panicking path).
-                        struct ResetGateOnDrop(Arc<crate::api::CheckpointState>);
-                        impl Drop for ResetGateOnDrop {
-                            fn drop(&mut self) {
-                                self.0.spawn_gate.store(false, std::sync::atomic::Ordering::Release);
-                            }
-                        }
-                        let _reset_gate = ResetGateOnDrop(Arc::clone(&graph.checkpoint));
-
-                        if let Some(_guard) = graph.checkpoint.in_progress.try_lock() {
-                            graph.checkpoint.mutation_count.store(0, std::sync::atomic::Ordering::Release);
-                            let _ = graph.index_manager().save_all();
-                        }
-                    });
+                for (key, (_inserted, total)) in vector_op_groups {
+                    trigger_index_checkpoint(graph_handle, key, total);
                 }
             }
         }
