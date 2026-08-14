@@ -4,15 +4,14 @@
 use crate::{
     schema::Schema,
     store::rocks::transaction::Transaction,
-    types::kv_codec,
     types::{
         element::{Edge, Property, Vertex},
         keys::{
             AdjacentEdgeCursor, AdjacentEdgesOptions, CanonicalEdgeKey, CanonicalKey, Direction, EdgeKey, LabelId,
             VertexKey, DEFAULT_RANK,
         },
-        prop_key::PropKey,
-        prop_key::{ID_KEY_ID, LABEL_KEY_ID},
+        kv_codec,
+        prop_key::{PropKey, ID_KEY_ID, LABEL_KEY_ID},
         Primitive, Rank, StoreError,
     },
     vector::VectorIndexMap,
@@ -23,8 +22,7 @@ use std::{
     sync::Arc,
 };
 
-use super::helpers::edge_matches;
-use super::{Existence, StagedSchema, TxnSchemaCache};
+use super::{helpers::edge_matches, Existence, StagedSchema, TxnSchemaCache};
 use crate::engine::ExecutionOptions;
 
 // ── LogicalGraph ──────────────────────────────────────────────────────────────
@@ -43,6 +41,7 @@ pub(crate) struct LogicalGraph {
     pub(crate) schema_cache: TxnSchemaCache,
     pub(crate) staged_schema: StagedSchema,
     pub(crate) vector_indexes: Arc<RwLock<VectorIndexMap>>,
+    pub(crate) vector_indexed_props: std::collections::HashSet<u16>,
     pub(crate) vector_pending_ops: Vec<crate::vector::PendingVectorOp>,
 }
 
@@ -57,6 +56,16 @@ impl LogicalGraph {
         // Creates a new `LogicalGraph` instance, initializing its in-memory caches
         // and associating it with a store transaction.
         let schema_cache = TxnSchemaCache::from_schema(&schema.read());
+        let mut vector_indexed_props = std::collections::HashSet::new();
+        for (entity_type, prop_name) in vector_indexes.read().keys() {
+            if *entity_type != crate::vector::VectorEntityType::Vertex {
+                continue;
+            }
+            if let Some(id) = schema_cache.prop_key_id(prop_name.as_str()) {
+                vector_indexed_props.insert(id);
+            }
+        }
+
         Self {
             store,
             vertices: HashMap::new(),
@@ -69,6 +78,7 @@ impl LogicalGraph {
             schema_cache,
             staged_schema: StagedSchema::default(),
             vector_indexes,
+            vector_indexed_props,
             vector_pending_ops: Vec::new(),
         }
     }
@@ -962,18 +972,8 @@ impl LogicalGraph {
                     return Err(StoreError::IncidentEdges);
                 }
                 self.mark_dirty(*key, Existence::Tombstone);
-                let vertex_prop_ids: Vec<u16> = {
-                    let indexes = self.vector_indexes.read();
-                    indexes
-                        .keys()
-                        .filter(|(ent, _)| *ent == crate::vector::VectorEntityType::Vertex)
-                        .filter_map(|(_, prop_name)| self.schema_cache.prop_key_id(prop_name))
-                        .collect()
-                };
-                if !vertex_prop_ids.is_empty() {
-                    for pid in vertex_prop_ids {
-                        self.maybe_record_wal_remove(key, pid);
-                    }
+                for pid in self.vector_indexed_props.clone() {
+                    self.maybe_record_wal_remove(key, pid);
                 }
             }
             CanonicalKey::Edge(ek) => {
@@ -1003,10 +1003,8 @@ impl LogicalGraph {
 
     /// If a vector index exists for `prop_key_id`, record a WAL insert pending op.
     fn maybe_record_wal_insert(&mut self, owner: &CanonicalKey, prop_key_id: u16, vec: &[f32]) {
-        let indexes = self.vector_indexes.read();
-        if let Some(prop_name) = self.schema_cache.prop_key_str(prop_key_id) {
-            let key = (crate::vector::VectorEntityType::Vertex, prop_name.clone());
-            if indexes.contains_key(&key) {
+        if self.vector_indexed_props.contains(&prop_key_id) {
+            if let Some(prop_name) = self.schema_cache.prop_key_str(prop_key_id) {
                 if let CanonicalKey::Vertex(vk) = owner {
                     let ts = crate::vector::wal::next_timestamp();
                     let ek = crate::vector::EntityKey::Vertex(*vk);
@@ -1023,10 +1021,8 @@ impl LogicalGraph {
 
     /// If a vector index exists for `prop_key_id`, record a WAL remove pending op.
     fn maybe_record_wal_remove(&mut self, owner: &CanonicalKey, prop_key_id: u16) {
-        let indexes = self.vector_indexes.read();
-        if let Some(prop_name) = self.schema_cache.prop_key_str(prop_key_id) {
-            let key = (crate::vector::VectorEntityType::Vertex, prop_name.clone());
-            if indexes.contains_key(&key) {
+        if self.vector_indexed_props.contains(&prop_key_id) {
+            if let Some(prop_name) = self.schema_cache.prop_key_str(prop_key_id) {
                 if let CanonicalKey::Vertex(vk) = owner {
                     let ts = crate::vector::wal::next_timestamp();
                     let ek = crate::vector::EntityKey::Vertex(*vk);

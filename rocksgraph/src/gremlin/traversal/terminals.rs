@@ -82,8 +82,11 @@ impl PlanAppender for ReadTraversal<'_> {
             self.error = Some(err);
         }
     }
-    fn pending_repeat_mut(&mut self) -> &mut Option<RepeatBuilder> {
-        &mut self.pending_repeat
+    fn take_pending_repeat(&mut self) -> Option<RepeatBuilder> {
+        self.pending_repeat.take()
+    }
+    fn set_pending_repeat(&mut self, rb: Option<RepeatBuilder>) {
+        self.pending_repeat = rb;
     }
 }
 
@@ -218,7 +221,10 @@ impl PlanAppender for WriteTraversal<'_> {
             self.error = Some(err);
         }
     }
-    fn pending_repeat_mut(&mut self) -> &mut Option<RepeatBuilder> {
-        &mut self.pending_repeat
+    fn take_pending_repeat(&mut self) -> Option<RepeatBuilder> {
+        self.pending_repeat.take()
+    }
+    fn set_pending_repeat(&mut self, rb: Option<RepeatBuilder>) {
+        self.pending_repeat = rb;
     }
 }
