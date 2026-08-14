@@ -37,17 +37,21 @@ fn generate_random_string(len: usize) -> String {
     rand::thread_rng().sample_iter(rand::distributions::Alphanumeric).take(len).map(char::from).collect()
 }
 
-/// Upserts a vertex by id. `.V([id]).count()` always yields exactly one traverser
-/// (0 or 1 as an Int64), so `coalesce()` runs its check-then-create branches exactly
-/// once regardless of whether the vertex already exists.
+/// Upserts a vertex by id. `coalesce()` runs its branches per upstream traverser, so an
+/// empty upstream (`.V([id])` when `id` doesn't exist yet) would skip every branch,
+/// including `addV()` — silently creating nothing. `.fold()` guards against that: it
+/// always yields exactly one traverser (a list, empty or not), so `coalesce()` always
+/// has something to branch on. The first branch, `unfold()`, re-expands that list back
+/// to the existing vertex when there is one. This is the same pattern TinkerPop itself
+/// uses for get-or-create (`.fold().coalesce(unfold(), addV(...))`).
 fn upsert_vertex(txn: &mut TxnSession, id: i64) -> Result<(), StoreError> {
     let mut rng = rand::thread_rng();
     let age = rng.gen_range(18..100i64);
     txn.g()
         .V([id])
-        .count()
+        .fold()
         .coalesce([
-            __().V([id]).id(),
+            __().unfold(),
             __().addV(VERTEX_LABEL)
                 .property("id", id)
                 .property(NAME_KEY, generate_random_string(10))

@@ -376,7 +376,7 @@ snap.g().V(1).union(outE("knows"), inE("knows")).to_list()
 ```
 
 ### `coalesce(t1, t2, ...)`
-Evaluates sub-traversals sequentially, returning results from the first branch that yields at least one item (ideal for idempotent upserts).
+Evaluates sub-traversals sequentially, returning results from the first branch that yields at least one item.
 
 🦀 Rust:
 ```rust
@@ -389,6 +389,14 @@ snap.g().V([1]).coalesce([__().values(["nickname"]), __().values(["name"])]).nex
 # Get nickname if present, else fallback to formal name
 snap.g().V(1).coalesce(values("nickname"), values("name")).next()
 ```
+
+> [!WARNING]
+> `coalesce()` runs its branches **per upstream traverser** — it does not run at all if
+> upstream produced zero traversers. `.V([id]).coalesce([...])` on an `id` that doesn't
+> exist yields *no* traversers to branch on, so an `addV()` fallback branch silently
+> never runs. This is not a RocksGraph quirk — real TinkerPop has the identical trap.
+> See [Traversal Anti-Patterns](#10-traversal-anti-patterns) below for the correct
+> get-or-create idiom.
 
 ---
 
@@ -472,6 +480,30 @@ for user_id in user_ids:
 
 # ✅ CORRECT: Single batched multi-source traversal
 friend_names = snap.g().V(*user_ids).out("knows").values("name").to_list()
+```
+
+### ❌ Anti-Pattern 3: Unprimed `coalesce()` Upsert
+`coalesce()` evaluates its branches once **per traverser it receives from upstream** — it
+is not a general "try this, or else do that" construct. If upstream yields zero
+traversers (a `.V(id)` lookup for an `id` that doesn't exist yet), `coalesce()` has
+nothing to branch on and skips every branch, including an `addV()` fallback. The vertex
+is silently never created — no error, no exception, just a no-op. This is the same trap
+real Apache TinkerPop has; its fix is the same one here: prime the input with `.fold()`
+first, which always yields exactly one traverser (an empty or non-empty list) regardless
+of whether the match existed, then `unfold()` it back out in the first branch.
+
+```python
+# ❌ ANTI-PATTERN: silently creates nothing if vertex `id` doesn't exist
+txn.g().V(id).coalesce(
+    values("name"),
+    addV("person").property("id", id).property("name", "alice"),
+).next()
+
+# ✅ CORRECT: fold() guarantees coalesce() always has a traverser to branch on
+txn.g().V(id).fold().coalesce(
+    unfold().values("name"),
+    addV("person").property("id", id).property("name", "alice"),
+).next()
 ```
 
 ---
