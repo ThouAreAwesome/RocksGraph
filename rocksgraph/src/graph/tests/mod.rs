@@ -87,3 +87,4 @@ fn get_adjacent_edges_test(
         .unwrap()
         .0
 }
+mod multi_edge;
