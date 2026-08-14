@@ -25,10 +25,12 @@
 //! | [`annotate_edges`] | Sort-merge join: attaches `end_vertex_label` to each edge record |
 //! | [`write_degree_sst`] | Three-way merge of label file + out-degree + in-degree → degree CF SST |
 
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
-use std::time::Instant;
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::atomic::Ordering,
+    time::Instant,
+};
 
 use rocksdb::{IngestExternalFileOptions, IteratorMode, Options, SstFileWriter, WriteBatchWithTransaction};
 
@@ -37,8 +39,7 @@ use crate::{
         definition::{EdgeMode, PropKeyConfig, SchemaMode},
         DataType, GraphOptions, Schema,
     },
-    store::rocks::cf_options,
-    store::RocksOptions,
+    store::{rocks::cf_options, RocksOptions},
     types::{
         gvalue::Primitive,
         keys::{CanonicalEdgeKey, LabelId, Rank, VertexKey},
@@ -50,9 +51,11 @@ use crate::{
     },
 };
 
-use super::degree::{write_degree_sst, SortedLabelFile};
-use super::edge_annotator::annotate_edges;
-use super::sort::ExternalSorter;
+use super::{
+    degree::{write_degree_sst, SortedLabelFile},
+    edge_annotator::annotate_edges,
+    sort::ExternalSorter,
+};
 use crate::store::rocks::{CF_EDGES_IN, CF_EDGES_OUT, CF_SCHEMA, CF_VERTEX_DEGREE, CF_VERTICES};
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -137,6 +140,8 @@ pub struct BulkLoadStats {
     pub sst_files: usize,
     /// Wall-clock time for the whole `load_vertices` → `load_edges` → `commit` run, in seconds.
     pub duration_secs: f64,
+    /// Wall-clock time specifically for the vector index rebuild phase, in seconds.
+    pub index_build_duration_secs: Option<f64>,
 }
 
 /// Trait for types that can be converted into a [`BulkVertex`] or error.
@@ -768,10 +773,15 @@ impl<'a> BulkLoader<'a> {
             let vi = self.graph.vector_indexes.read();
             vi.keys().cloned().collect()
         };
-        for (entity_type, prop_name) in vector_indexes_to_rebuild {
-            if entity_type == crate::vector::VectorEntityType::Vertex {
-                self.graph.index_manager().rebuild(entity_type, &prop_name)?;
+        let mut index_build_duration_secs = None;
+        if !vector_indexes_to_rebuild.is_empty() {
+            let t0_idx = std::time::Instant::now();
+            for (entity_type, prop_name) in vector_indexes_to_rebuild {
+                if entity_type == crate::vector::VectorEntityType::Vertex {
+                    self.graph.index_manager().rebuild(entity_type, &prop_name)?;
+                }
             }
+            index_build_duration_secs = Some(t0_idx.elapsed().as_secs_f64());
         }
 
         // Phase 6 (commit): Clear crash marker
@@ -807,6 +817,7 @@ impl<'a> BulkLoader<'a> {
             edges_written: self.ecount,
             sst_files: n_files,
             duration_secs,
+            index_build_duration_secs,
         })
     }
 }

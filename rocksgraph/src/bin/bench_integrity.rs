@@ -6,8 +6,8 @@
 //! Run with: `cargo run --bin bench_integrity -- --data-dir <path>`
 //!
 //! Currently checks:
-//! - **Degree integrity**: verifies that the O(1) `vertex_degree` CF counters agree
-//!   with a full adjacency scan across every vertex.
+//! - **Degree integrity**: verifies that the O(1) `vertex_degree` CF counters agree with a full adjacency scan across
+//!   every vertex.
 //!
 //! ## Streaming comparison
 //!

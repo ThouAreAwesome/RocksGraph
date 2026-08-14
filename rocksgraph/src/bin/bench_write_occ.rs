@@ -7,11 +7,18 @@
 //!
 //! Usage:
 //! ```text
-//! bench_write_occ --data-dir <path> --file-path <path> [--parallelism N]  (default: 3)
+//! bench_write_occ --data-dir <path> --file-path <path> [--parallelism N] [--vector-dim N] [--checkpoint-threshold N]
 //! ```
 
+#[path = "vector_bench_common/mod.rs"]
+mod vector_bench_common;
+
 use hdrhistogram::Histogram;
-use rocksgraph::{Graph, StoreError, TraversalBuilder, TxnSession, __};
+use rocksgraph::{
+    schema::GraphOptions, AnnAlgorithm, DistanceMetric, Graph, HnswConfig, StoreError, TraversalBuilder, TxnSession,
+    VectorEntityType, VectorIndexConfig, __,
+};
+use vector_bench_common::random_normal_vector;
 
 use rand::Rng;
 use std::{
@@ -29,6 +36,7 @@ const NAME_KEY: &str = "name";
 const AGE_KEY: &str = "age";
 const WEIGHT_KEY: &str = "weight";
 const TIMESTAMP_KEY: &str = "timestamp";
+const VECTOR_KEY: &str = "embedding";
 
 const MAX_RETRIES: usize = 5;
 const RETRY_DELAY_MS: u64 = 1;
@@ -37,33 +45,26 @@ fn generate_random_string(len: usize) -> String {
     rand::thread_rng().sample_iter(rand::distributions::Alphanumeric).take(len).map(char::from).collect()
 }
 
-/// Upserts a vertex by id. `coalesce()` runs its branches per upstream traverser, so an
-/// empty upstream (`.V([id])` when `id` doesn't exist yet) would skip every branch,
-/// including `addV()` — silently creating nothing. `.fold()` guards against that: it
-/// always yields exactly one traverser (a list, empty or not), so `coalesce()` always
-/// has something to branch on. The first branch, `unfold()`, re-expands that list back
-/// to the existing vertex when there is one. This is the same pattern TinkerPop itself
-/// uses for get-or-create (`.fold().coalesce(unfold(), addV(...))`).
-fn upsert_vertex(txn: &mut TxnSession, id: i64) -> Result<(), StoreError> {
+/// Upserts a vertex by id.
+fn upsert_vertex(txn: &mut TxnSession, id: i64, vector_dim: usize) -> Result<(), StoreError> {
     let mut rng = rand::thread_rng();
     let age = rng.gen_range(18..100i64);
-    txn.g()
-        .V([id])
-        .fold()
-        .coalesce([
-            __().unfold(),
-            __().addV(VERTEX_LABEL)
-                .property("id", id)
-                .property(NAME_KEY, generate_random_string(10))
-                .property(AGE_KEY, age),
-        ])
-        .next()?;
+
+    let mut add_v = __()
+        .addV(VERTEX_LABEL)
+        .property("id", id)
+        .property(NAME_KEY, generate_random_string(10))
+        .property(AGE_KEY, age);
+
+    if vector_dim > 0 {
+        add_v = add_v.property(VECTOR_KEY, rocksgraph::Value::FloatVector(random_normal_vector(vector_dim)));
+    }
+
+    txn.g().V([id]).fold().coalesce([__().unfold(), add_v]).next()?;
     Ok(())
 }
 
-/// Upserts the edge `src -> dst`. `src` is guaranteed to already exist in this
-/// transaction's overlay (its own upsert runs first), so `.V([src])` alone always
-/// yields exactly one traverser.
+/// Upserts the edge `src -> dst`.
 fn upsert_edge(txn: &mut TxnSession, src: i64, dst: i64) -> Result<(), StoreError> {
     let mut rng = rand::thread_rng();
     let weight = rng.gen_range(0.1..10.0f64);
@@ -103,6 +104,19 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(3);
 
+    let vector_dim = args
+        .iter()
+        .position(|a| a == "--vector-dim")
+        .and_then(|p| args.get(p + 1))
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0);
+
+    let checkpoint_threshold = args
+        .iter()
+        .position(|a| a == "--checkpoint-threshold")
+        .and_then(|p| args.get(p + 1))
+        .and_then(|s| s.parse::<u64>().ok());
+
     if data_dir.exists() {
         std::fs::remove_dir_all(&data_dir)?;
     }
@@ -111,7 +125,23 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     let lines: Arc<Vec<String>> = Arc::new(BufReader::new(file).lines().collect::<Result<_, _>>()?);
     let line_count = lines.len();
 
-    let graph = Graph::open(&data_dir)?;
+    let mut opts = GraphOptions::default();
+    if let Some(t) = checkpoint_threshold {
+        opts.index = opts.index.with_default_checkpoint_mutation_threshold(t);
+    }
+    let graph = Graph::open_with_options(&data_dir, opts)?;
+
+    if vector_dim > 0 {
+        let mut schema = graph.open_schema();
+        schema.add_vector_index(VectorIndexConfig::new(
+            VECTOR_KEY,
+            VectorEntityType::Vertex,
+            vector_dim,
+            DistanceMetric::Cosine,
+            AnnAlgorithm::Hnsw(HnswConfig::default()),
+        ));
+        schema.commit()?;
+    }
 
     let start = Instant::now();
     let chunk_size = (line_count + parallelism - 1).div_ceil(parallelism);
@@ -139,8 +169,8 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                 let op_start = Instant::now();
                 for attempt in 0..MAX_RETRIES {
                     let mut txn = graph.begin();
-                    let staged = upsert_vertex(&mut txn, src)
-                        .and_then(|_| upsert_vertex(&mut txn, dst))
+                    let staged = upsert_vertex(&mut txn, src, vector_dim)
+                        .and_then(|_| upsert_vertex(&mut txn, dst, vector_dim))
                         .and_then(|_| upsert_edge(&mut txn, src, dst));
 
                     match staged.and_then(|_| txn.commit()) {
@@ -177,6 +207,12 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
 
     let elapsed = start.elapsed().as_secs_f64();
     println!("=== Transactional OCC Write Complete ===");
+    if vector_dim > 0 {
+        println!("Vector Dimension: {vector_dim}");
+    }
+    if let Some(t) = checkpoint_threshold {
+        println!("Checkpoint Threshold: {t}");
+    }
     println!("Edges processed: {line_count} (each upserts 2 vertices + 1 edge, {total_mutations} mutations total)");
     println!("Elapsed:         {elapsed:.2}s");
     println!("Throughput:      {:.0} edges/s", line_count as f64 / elapsed);
