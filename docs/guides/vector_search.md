@@ -332,12 +332,38 @@ Creating multiple unquantized F32 indexes with $M=64$ on memory-constrained serv
 Vector index durability is guaranteed through an integrated write-ahead log (WAL) and disk-persisted index snapshots:
 
 - **Atomic Durability on Commit**: Vector index updates are committed atomically within the exact same transaction as the graph topology, ensuring zero divergence between graph records and vector index state.
-- **Explicit Snapshot Checkpointing**: Index snapshots are written to disk **only** when `graph.close()` or `graph.index_manager().save_all()` is explicitly called, which also trims old WAL records.
+- **Snapshot Checkpointing**: Index snapshots — and the WAL trimming that goes with them — are written to disk in three ways:
+  1. **Automatically**, in the background, once enough vector-property writes accumulate — see below.
+  2. On a clean shutdown, via `graph.close()`.
+  3. On demand, via an explicit `graph.index_manager().save_all()` call.
 - **Clean Shutdown vs. Crash Recovery**:
   - **Clean Shutdown (`graph.close()`)**: Snapshots are saved immediately; subsequent `Graph::open` starts instantaneously.
-  - **Unclean Shutdown / Crash**: If the process terminates without saving a snapshot, `Graph::open` recovers state by replaying all WAL mutations logged since the last saved snapshot. For large, long-running write sessions with millions of vectors, replaying uncheckpointed WAL records can take several seconds to minutes.
+  - **Unclean Shutdown / Crash**: If the process terminates without a snapshot since the last checkpoint, `Graph::open` recovers state by replaying all WAL mutations logged since then. For large, long-running write sessions with millions of vectors, replaying a long-uncheckpointed WAL can take several seconds to minutes — which is exactly what background checkpointing bounds.
+
+### Automatic Background Checkpointing
+
+Set `checkpoint_mutation_threshold` in `GraphOptions` to have RocksGraph checkpoint on its own once that many vector-property writes have accumulated across commits, on a background thread — you don't need to call `save_all()` yourself for this to happen:
+
+#### 🦀 Rust
+```rust
+use rocksgraph::{Graph, GraphOptions};
+
+let mut options = GraphOptions::default();
+options.checkpoint_mutation_threshold = Some(50_000);
+let graph = Graph::open_with_options(path, options)?;
+```
+
+#### 🐍 Python
+```python
+from rocksgraph import Graph, GraphOptions
+
+options = GraphOptions(checkpoint_mutation_threshold=50_000)
+graph = Graph.open_with_options(path, options=options)
+```
+
+`None` (the default, in both languages) disables automatic checkpointing — matching the older, fully-manual behavior described above. This doesn't replace `graph.close()`: still call it before process exit, since it's the only thing that guarantees a snapshot at the *exact* moment you stop, rather than at the last threshold crossing.
 
 > [!TIP]
-> **Operational Best Practice**: In long-running write workloads or batch import pipelines, call `graph.index_manager().save_all()` periodically (e.g. every 100,000 vectors or every hour) to bound WAL recovery time, and always call `graph.close()` before process exit.
+> **Operational Best Practice**: prefer `checkpoint_mutation_threshold` for long-running write workloads or batch import pipelines over calling `save_all()` yourself on a timer — it reacts to actual write volume rather than a guessed interval. To trigger a checkpoint outside of normal write volume (e.g. before a planned maintenance window), call `graph.index_manager().save_all()` explicitly. Either way, always call `graph.close()` before process exit.
 
 

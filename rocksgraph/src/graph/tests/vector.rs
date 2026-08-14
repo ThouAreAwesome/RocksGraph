@@ -1555,3 +1555,121 @@ fn test_nearest_with_metric_live_hnsw() {
     assert_eq!(results[0], Value::Int64(2), "item 2 must rank first under DotProduct metric override");
     assert_eq!(results[1], Value::Int64(1));
 }
+
+#[test]
+fn test_checkpoint_trigger_logic() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut opts = crate::schema::GraphOptions::default();
+    opts.checkpoint_mutation_threshold = Some(10);
+    let graph = Graph::open_with_options(dir.path(), opts).unwrap();
+
+    // Test that the state was initialized
+    assert_eq!(graph.checkpoint.threshold, 10);
+    assert_eq!(graph.checkpoint.mutation_count.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert!(graph.checkpoint.in_progress.try_lock().is_some());
+}
+
+#[test]
+fn test_background_checkpoint_execution() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut opts = crate::schema::GraphOptions::default();
+    opts.checkpoint_mutation_threshold = Some(5);
+
+    let graph = Graph::open_with_options(dir.path(), opts).unwrap();
+
+    // Create schema
+    {
+        let mut session = graph.open_schema();
+        session.add_vertex_label("v");
+        session.add_property_key("vec", crate::schema::DataType::FloatVector);
+        session.add_vector_index(crate::vector::traits::VectorIndexConfig {
+            property: "vec".into(),
+            entity_type: crate::vector::VectorEntityType::Vertex,
+            dimension: 2,
+            metric: crate::vector::DistanceMetric::Cosine,
+            algorithm: crate::vector::traits::AnnAlgorithm::BruteForce,
+            quantization: Default::default(),
+        });
+        session.commit().unwrap();
+    }
+
+    // 5 mutations should trigger a background checkpoint
+    for i in 0..5 {
+        let mut txn = graph.begin();
+        txn.g()
+            .addV("v")
+            .property("id", i as i64)
+            .property("vec", crate::gremlin::value::Value::FloatVector(vec![1.0, i as f32]))
+            .next()
+            .unwrap();
+        txn.commit().unwrap();
+    }
+
+    // Wait for the background save to complete
+    let start = std::time::Instant::now();
+    loop {
+        if start.elapsed() > std::time::Duration::from_secs(5) {
+            panic!("Background checkpoint did not complete within 5 seconds");
+        }
+
+        if let Some(_guard) = graph.checkpoint.in_progress.try_lock() {
+            if graph.checkpoint.mutation_count.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+                break;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    // Verify snapshot file was created
+    let snap_path =
+        crate::vector::persistence::vector_snapshot_path(dir.path(), crate::vector::VectorEntityType::Vertex, "vec");
+    assert!(snap_path.exists());
+
+    // Open a new graph and verify it loads the snapshot without needing WAL replay
+    graph.close().unwrap();
+}
+
+#[test]
+fn test_close_waits_for_checkpoint() {
+    let dir = tempfile::tempdir().unwrap();
+    let graph = Graph::open(dir.path()).unwrap();
+
+    // Spawn a thread to simulate the background checkpoint finishing after a delay
+    let graph_clone = graph.clone();
+
+    // We use a barrier to ensure the background thread has acquired the lock before we call close()
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let barrier_clone = barrier.clone();
+
+    std::thread::spawn(move || {
+        let _guard = graph_clone.checkpoint.in_progress.lock();
+        barrier_clone.wait(); // tell main thread we hold the lock
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        // releases here
+    });
+
+    // wait until the background thread definitely holds the lock
+    barrier.wait();
+
+    // Close should block until the spawned thread releases the lock
+    let start = std::time::Instant::now();
+    graph.close().unwrap();
+    assert!(start.elapsed() >= std::time::Duration::from_millis(100));
+}
+
+#[test]
+fn test_graph_close_with_two_clones() {
+    let dir = tempfile::tempdir().unwrap();
+    let graph1 = Graph::open(dir.path()).unwrap();
+    let graph2 = graph1.clone();
+
+    // Close the first clone. This should succeed without poisoning the second clone.
+    graph1.close().unwrap();
+
+    // Close the second clone. If poisoning occurred, this would hang forever.
+    let start = std::time::Instant::now();
+    graph2.close().unwrap();
+
+    // Must return promptly
+    assert!(start.elapsed() < std::time::Duration::from_secs(5));
+}

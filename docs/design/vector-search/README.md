@@ -17,6 +17,7 @@ then read the sub-documents for the area you are working on or reviewing.
 | [design_vector_api.md](design_vector_api.md)                               | **Interface-stable** API for all scenarios: index lifecycle, online CRUD, query variants, bulk load, schema evolution, introspection; stability guarantee matrix; error types                                                                                      | Proposal |
 | [design_vector_codec.md](design_vector_codec.md)                           | Binary wire protocol extension: `PRIM_FLOATVECTOR` (tag 10), opcodes 61–67 (`nearest`, `similarity`, `neighbors`, hint modulators), endianness rules, Python/TS codec changes, Rust decoder additions, wire format hex examples                           | Proposal |
 | [design_hnsw_impl.md](design_hnsw_impl.md)                                 | `UsearchHnswIndex`: usearch crate integration, `CanonicalEdgeKey`→monotonic u64 label mapping, all 6 `VectorIndex` trait methods, tombstone tracking, snapshot file format (byte layout + CRC-32C), cold-start rebuild, WAL replay, per-query `ef_search` override | Proposal |
+| [design_vector_checkpoint.md](design_vector_checkpoint.md)                 | Background checkpoint triggering: option comparison (app-driven, persistent thread, inline, trigger-and-spawn), chosen trigger-and-spawn design, `Mutex<()>` concurrency guard vs. bare `AtomicBool`, blast radius during a checkpoint, complexity estimate | Proposal |
 
 ---
 

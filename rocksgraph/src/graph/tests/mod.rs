@@ -35,6 +35,7 @@ fn open() -> (RocksStorage, tempfile::TempDir) {
             schema.clone(),
             crate::vector::empty_vector_index_map(),
             Default::default(),
+            None,
         );
         {
             let mut s = schema.write();
@@ -68,7 +69,7 @@ fn open() -> (RocksStorage, tempfile::TempDir) {
 fn ctx(store: &RocksStorage) -> LogicalGraph {
     let loaded = store.load_schema(crate::schema::SchemaMode::Auto, crate::schema::EdgeMode::Single).unwrap();
     let schema = std::sync::Arc::new(parking_lot::RwLock::new(loaded));
-    LogicalGraph::new(store.begin(), schema, crate::vector::empty_vector_index_map(), Default::default())
+    LogicalGraph::new(store.begin(), schema, crate::vector::empty_vector_index_map(), Default::default(), None)
 }
 
 fn cek(src: i64, label: LabelId, dst: i64) -> CanonicalEdgeKey {

@@ -348,7 +348,7 @@ impl PyGraph {
     }
 
     #[staticmethod]
-    #[pyo3(signature = (path, *, mode = "auto", edge_mode = "single", storage = None, index = None, execution = None))]
+    #[pyo3(signature = (path, *, mode = "auto", edge_mode = "single", storage = None, index = None, execution = None, checkpoint_mutation_threshold = None))]
     fn open_with_options(
         path: &str,
         mode: &str,
@@ -356,6 +356,7 @@ impl PyGraph {
         storage: Option<&Bound<'_, PyDict>>,
         index: Option<&Bound<'_, PyDict>>,
         execution: Option<&Bound<'_, PyDict>>,
+        checkpoint_mutation_threshold: Option<u64>,
     ) -> PyResult<Self> {
         let path = PathBuf::from(path);
 
@@ -441,7 +442,8 @@ impl PyGraph {
             .with_edge_mode(em)
             .with_storage(rocks)
             .with_index(idx)
-            .with_execution(exec);
+            .with_execution(exec)
+            .with_checkpoint_mutation_threshold(checkpoint_mutation_threshold);
         let graph = Graph::open_with_options(path, options).map_err(store_error_to_pyerr)?;
         Ok(Self { graph: Some(graph) })
     }
