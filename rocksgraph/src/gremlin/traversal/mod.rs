@@ -511,12 +511,12 @@ pub trait TraversalBuilder: PlanAppender {
     fn is(mut self, pred: impl Into<Predicate>) -> Self {
         let p = pred.into();
         match &p {
-            Predicate::Eq(v) |
-            Predicate::Ne(v) |
-            Predicate::Gt(v) |
-            Predicate::Gte(v) |
-            Predicate::Lt(v) |
-            Predicate::Lte(v) => {
+            Predicate::Eq(v)
+            | Predicate::Ne(v)
+            | Predicate::Gt(v)
+            | Predicate::Gte(v)
+            | Predicate::Lt(v)
+            | Predicate::Lte(v) => {
                 if value_to_primitive(v.clone()).is_none() {
                     self.record_error(StoreError::UnexpectedDataType(format!(
                         "is() expects scalar values, got: {:?}",
