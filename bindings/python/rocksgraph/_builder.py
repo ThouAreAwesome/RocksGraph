@@ -979,8 +979,9 @@ class RocksOptions:
 class IndexOptions:
     """Vector index runtime options. Mirrors rocksgraph::IndexOptions."""
 
-    def __init__(self, *, default_memory_limit: int = 0, per_index_overrides: list | None = None):
+    def __init__(self, *, default_memory_limit: int = 0, default_checkpoint_mutation_threshold: int | None = None, per_index_overrides: list | None = None):
         self.default_memory_limit = default_memory_limit
+        self.default_checkpoint_mutation_threshold = default_checkpoint_mutation_threshold
         self.per_index_overrides = per_index_overrides or []
 
 
@@ -1014,14 +1015,12 @@ class GraphOptions:
         storage: RocksOptions = None,
         index: IndexOptions = None,
         execution: ExecutionOptions = None,
-        checkpoint_mutation_threshold: int = None,
     ):
         self.mode = mode
         self.edge_mode = edge_mode
         self.storage = storage or RocksOptions()
         self.index = index or IndexOptions()
         self.execution = execution or ExecutionOptions()
-        self.checkpoint_mutation_threshold = checkpoint_mutation_threshold
 
 
 class IndexManager:
@@ -1051,10 +1050,12 @@ class Graph:
 
         opts = options or GraphOptions()
         index_dict = None
-        if opts.index.default_memory_limit or opts.index.per_index_overrides:
+        if opts.index.default_memory_limit or opts.index.default_checkpoint_mutation_threshold or opts.index.per_index_overrides:
             index_dict = {}
             if opts.index.default_memory_limit:
                 index_dict["default_memory_limit"] = opts.index.default_memory_limit
+            if opts.index.default_checkpoint_mutation_threshold:
+                index_dict["default_checkpoint_mutation_threshold"] = opts.index.default_checkpoint_mutation_threshold
             if opts.index.per_index_overrides:
                 index_dict["per_index_overrides"] = opts.index.per_index_overrides
         self._graph = PyGraph.open_with_options(
@@ -1076,7 +1077,6 @@ class Graph:
                 "scan_edges_batch_size": opts.execution.scan_edges_batch_size,
                 "get_adjacent_edges_batch_size": opts.execution.get_adjacent_edges_batch_size,
             },
-            checkpoint_mutation_threshold=opts.checkpoint_mutation_threshold,
         )
 
     @staticmethod
@@ -1085,8 +1085,9 @@ class Graph:
 
         Args:
             path: Path to the database directory.
-            options: GraphOptions instance (mode, edge_mode, storage, index, execution,
-                checkpoint_mutation_threshold).
+            options: GraphOptions instance (mode, edge_mode, storage, index, execution).
+                Automatic background checkpointing is configured via
+                `index=IndexOptions(default_checkpoint_mutation_threshold=...)`.
         """
         return Graph(path, options=options)
 

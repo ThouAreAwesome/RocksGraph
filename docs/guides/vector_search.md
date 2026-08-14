@@ -342,28 +342,29 @@ Vector index durability is guaranteed through an integrated write-ahead log (WAL
 
 ### Automatic Background Checkpointing
 
-Set `checkpoint_mutation_threshold` in `GraphOptions` to have RocksGraph checkpoint on its own once that many vector-property writes have accumulated across commits, on a background thread — you don't need to call `save_all()` yourself for this to happen:
+Set `default_checkpoint_mutation_threshold` on `IndexOptions` to have RocksGraph checkpoint on its own once that many vector-property writes have accumulated across commits, on a background thread — you don't need to call `save_all()` yourself for this to happen. The threshold is tracked **per index**: each declared vector index gets its own mutation counter and triggers its own background save independently, so a hot index doesn't wait on a quiet one. Use `PerIndexOptions` to override the default for a specific index.
 
 #### 🦀 Rust
 ```rust
 use rocksgraph::{Graph, GraphOptions};
+use rocksgraph::schema::IndexOptions;
 
-let mut options = GraphOptions::default();
-options.checkpoint_mutation_threshold = Some(50_000);
+let options = GraphOptions::default()
+    .with_index(IndexOptions::default().with_default_checkpoint_mutation_threshold(50_000));
 let graph = Graph::open_with_options(path, options)?;
 ```
 
 #### 🐍 Python
 ```python
-from rocksgraph import Graph, GraphOptions
+from rocksgraph import Graph, GraphOptions, IndexOptions
 
-options = GraphOptions(checkpoint_mutation_threshold=50_000)
+options = GraphOptions(index=IndexOptions(default_checkpoint_mutation_threshold=50_000))
 graph = Graph.open_with_options(path, options=options)
 ```
 
 `None` (the default, in both languages) disables automatic checkpointing — matching the older, fully-manual behavior described above. This doesn't replace `graph.close()`: still call it before process exit, since it's the only thing that guarantees a snapshot at the *exact* moment you stop, rather than at the last threshold crossing.
 
 > [!TIP]
-> **Operational Best Practice**: prefer `checkpoint_mutation_threshold` for long-running write workloads or batch import pipelines over calling `save_all()` yourself on a timer — it reacts to actual write volume rather than a guessed interval. To trigger a checkpoint outside of normal write volume (e.g. before a planned maintenance window), call `graph.index_manager().save_all()` explicitly. Either way, always call `graph.close()` before process exit.
+> **Operational Best Practice**: prefer `default_checkpoint_mutation_threshold` for long-running write workloads or batch import pipelines over calling `save_all()` yourself on a timer — it reacts to actual write volume rather than a guessed interval. To trigger a checkpoint outside of normal write volume (e.g. before a planned maintenance window), call `graph.index_manager().save_all()` explicitly. Either way, always call `graph.close()` before process exit.
 
 

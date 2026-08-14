@@ -141,11 +141,13 @@ class RocksOptions:
 
 class IndexOptions:
     default_memory_limit: int
+    default_checkpoint_mutation_threshold: int | None
     per_index_overrides: list
     def __init__(
         self,
         *,
         default_memory_limit: int = 0,
+        default_checkpoint_mutation_threshold: int | None = None,
         per_index_overrides: list | None = None,
     ) -> None: ...
 
@@ -167,7 +169,6 @@ class GraphOptions:
     storage: RocksOptions
     index: IndexOptions
     execution: ExecutionOptions
-    checkpoint_mutation_threshold: int | None
     def __init__(
         self,
         *,
@@ -176,7 +177,6 @@ class GraphOptions:
         storage: RocksOptions | None = None,
         index: IndexOptions | None = None,
         execution: ExecutionOptions | None = None,
-        checkpoint_mutation_threshold: int | None = None,
     ) -> None: ...
 
 class P:

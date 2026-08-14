@@ -1,7 +1,12 @@
 # Design: Vector Index Checkpoint Triggering — Trigger-and-Spawn Background Save
 
-Status: proposal — addresses `TODO.md` §1 P0 "Background / Periodic Checkpointing
-(Online Snapshotting)". Builds on the existing snapshot/WAL-GC mechanism in
+Status: §1–13 implemented (`Graph::commit`, per-index `checkpoint_states` map,
+`IndexOptions::default_checkpoint_mutation_threshold` / `PerIndexOptions::checkpoint_mutation_threshold`,
+Rust + Python) — addresses `TODO.md` §1 P0 "Background / Periodic Checkpointing
+(Online Snapshotting)". The graph-wide `GraphOptions::checkpoint_mutation_threshold`
+field from §1–12 has been removed per the §13h migration (it never shipped in a
+release, so no compat shim was needed); checkpoint thresholds are now configured
+exclusively through `IndexOptions`. Builds on the existing snapshot/WAL-GC mechanism in
 `design_vector_wal.md` §9 and the per-index locking model in
 `design_vector_concurrency.md` §3–4; does not change either.
 
@@ -30,6 +35,18 @@ Status: proposal — addresses `TODO.md` §1 P0 "Background / Periodic Checkpoin
 - [10. Implementation checklist](#10-implementation-checklist)
 - [11. Complexity & effort estimate](#11-complexity--effort-estimate)
 - [12. Open questions](#12-open-questions)
+- [13. Extension: per-index checkpoint triggering](#13-extension-per-index-checkpoint-triggering)
+  - [13a. Why this is lower-risk than it looked at first](#13a-why-this-is-lower-risk-than-it-looked-at-first)
+  - [13b. Configuration surface](#13b-configuration-surface)
+  - [13c. Per-index checkpoint state](#13c-per-index-checkpoint-state)
+  - [13d. Trigger logic in commit()](#13d-trigger-logic-in-commit)
+  - [13e. Coordinating with close()](#13e-coordinating-with-close)
+  - [13f. Reused vs. new machinery](#13f-reused-vs-new-machinery)
+  - [13g. Python bindings](#13g-python-bindings)
+  - [13h. Migration — no backward-compat shim](#13h-migration--no-backward-compat-shim)
+  - [13i. Testing strategy](#13i-testing-strategy)
+  - [13j. Implementation checklist](#13j-implementation-checklist)
+  - [13k. Complexity & effort estimate](#13k-complexity--effort-estimate)
 
 ---
 
@@ -374,3 +391,374 @@ test. No new dependencies, no new column families, no wire-format changes.
 - Default value (if any) for `checkpoint_mutation_threshold` — the original
   TODO sketch suggested ~50,000 as an example; no benchmark backs that number
   yet.
+
+---
+
+## 13. Extension: per-index checkpoint triggering
+
+Status: proposal. Extends §1–12 (implemented) rather than replacing it —
+everything below reuses the trigger-and-spawn mechanics, the `Mutex<()>`
+guard pattern, and the `save()`/WAL-GC primitives already shipped.
+
+### 13a. Why this is lower-risk than it looked at first
+
+The shipped design (§1–12) is graph-wide: one counter, one guard, one
+`save_all()` call covering every declared index. The natural worry with
+"make it per-index instead" is that it multiplies the concurrency surface
+that took several review rounds to get right the first time (a real,
+demonstrated cost — see §8/§11's history of this doc, and the two bugs found
+during implementation review: the `close()`-poisons-the-guard deadlock and
+the TOCTOU thread-spawn storm).
+
+But checked directly against the storage layer, the hard part is already
+done:
+
+- Each declared index is a fully independent `usearch::Index` in memory
+  (`UsearchHnswIndex { inner: Index, ... }`, `vector/hnsw.rs`) — no shared
+  state between indexes.
+- Each index already has its own on-disk snapshot file
+  (`vector_snapshot_path` → `vector_idx_{property}.snapshot`, distinct per
+  `(entity_type, property)`).
+- **`IndexManager::save(entity_type, property)` — the single-index
+  checkpoint — already exists and is already used** (`api.rs:406`). This
+  isn't new functionality; it's the same primitive `save_all()` already
+  calls in a loop.
+- `gc_vector_wal` (`vector/wal.rs:285`) already computes its deletion range
+  **per index independently** — it loops over every declared index, reads
+  that index's own `last_replayed_timestamp` as its cutoff, and deletes only
+  within that index's own `[prop_key_id][entity_type]` key-prefix range
+  within the shared `CF_VECTOR_WAL`. Calling it after saving only one index
+  is already safe today — the other indexes' entries are simply
+  re-scanned against their unchanged (already-covered) cutoff, which is a
+  no-op, not a correctness risk.
+- `CF_VECTOR_WAL` has no `prefix_extractor` configured (`store.rs:287`,
+  plain `Options::default()`), so its per-index prefix-scoped GC scans
+  behave like the cheap, flat-scaling `vertices`-CF seeks established
+  elsewhere in this project's benchmarking work, not like the pathological
+  `edges_out` case — no seek-cost risk analogous to that one lurking here.
+
+So this extension is entirely about replicating the *triggering* layer
+(counter + guard + spawn) per index and pointing it at `save()` instead of
+`save_all()` — not about building new storage or WAL-truncation mechanics.
+
+### 13b. Configuration surface
+
+Mirror the existing `default_limit` / `PerIndexOptions.memory_limit` pattern
+exactly, rather than inventing a new shape:
+
+```rust
+pub struct IndexOptions {
+    pub default_limit: Option<VectorIndexLimit>,
+    pub default_checkpoint_mutation_threshold: Option<u64>,  // new
+    pub per_index: Vec<PerIndexOptions>,
+}
+
+pub struct PerIndexOptions {
+    pub entity_type: VectorEntityType,
+    pub property: SmolStr,
+    pub memory_limit: Option<VectorIndexLimit>,
+    pub checkpoint_mutation_threshold: Option<u64>,  // new — overrides the default when set
+}
+```
+
+Resolution order for a given `(entity_type, property)`: per-index override →
+`IndexOptions::default_checkpoint_mutation_threshold` → disabled.
+`GraphOptions::checkpoint_mutation_threshold` (§7) is retired by this
+change — see §13h.
+
+### 13c. Per-index checkpoint state
+
+Add a second map alongside `vector_indexes`, not merged into
+`VectorIndexMap` itself (keeps that type's shape — and every existing call
+site that already matches on it — untouched):
+
+```rust
+pub(crate) struct PerIndexCheckpointState {
+    mutation_count: AtomicU64,
+    in_progress: parking_lot::Mutex<()>,
+    spawn_gate: AtomicBool,
+    threshold: u64,  // resolved per §13b at the time the entry is created
+}
+
+pub(crate) type CheckpointStateMap =
+    Arc<RwLock<HashMap<(VectorEntityType, SmolStr), Arc<PerIndexCheckpointState>>>>;
+```
+
+Entries are created **lazily**, on first touch, via the entry API when a
+commit's pending ops first reference a given `(entity_type, property)` —
+not proactively populated when a vector index is declared. This sidesteps
+needing to keep this map in sync with `vector_indexes` on every
+`add_vector_index`/`drop_vector_index` schema change: a dropped index just
+leaves a harmless, tiny, orphaned entry (a few atomics) rather than a
+correctness problem, since nothing ever reads it again once its index is
+gone. (A cleanup pass on schema-drop is a reasonable follow-up, not a
+blocker — see §13j.)
+
+### 13d. Trigger logic in commit()
+
+Today, `commit()` sums `self.vector_pending_ops.len()` into one counter.
+This changes to grouping first:
+
+```rust
+let mut by_index: HashMap<(VectorEntityType, SmolStr), u64> = HashMap::new();
+for op in &self.vector_pending_ops {
+    let (entity_type, prop_name) = match op {
+        PendingVectorOp::Inserted { key, prop_name, .. }
+        | PendingVectorOp::Removed { key, prop_name, .. } => {
+            // No `EntityKey` → `VectorEntityType` conversion exists yet (checked —
+            // `EntityKey` is defined in `vector/brute_force.rs`, no such `From` impl
+            // today); this is a small new match to write, not something to assume
+            // is already there: `EntityKey::Vertex(_) => VectorEntityType::Vertex`,
+            // `EntityKey::Edge(_) => VectorEntityType::Edge`.
+            (entity_type_of(key), prop_name.clone())
+        }
+    };
+    *by_index.entry((entity_type, prop_name)).or_default() += 1;
+}
+
+for ((entity_type, prop_name), count) in by_index {
+    let state = get_or_create(&self.checkpoint_states, entity_type, prop_name.clone());
+    let prior = state.mutation_count.fetch_add(count, Ordering::AcqRel);
+    if state.threshold > 0
+        && prior + count >= state.threshold
+        && state.spawn_gate.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok()
+    {
+        let graph = self.graph_handle.clone().unwrap();
+        let state = Arc::clone(&state);
+        std::thread::spawn(move || {
+            struct ResetGateOnDrop(Arc<PerIndexCheckpointState>);
+            impl Drop for ResetGateOnDrop {
+                fn drop(&mut self) { self.0.spawn_gate.store(false, Ordering::Release); }
+            }
+            let _reset_gate = ResetGateOnDrop(Arc::clone(&state));
+            if let Some(_guard) = state.in_progress.try_lock() {
+                state.mutation_count.store(0, Ordering::Release);
+                let _ = graph.index_manager().save(entity_type, &prop_name);
+            }
+        });
+    }
+}
+```
+
+Note: `commit()`'s existing pre-flight capacity-check block (§11, "Apply
+committed vector mutations") already builds a similar per-`(entity_type,
+prop_name)` grouping but currently **hardcodes `VectorEntityType::Vertex`**
+rather than deriving it from the op's `EntityKey` — a pre-existing
+simplification, harmless today since edge indexes aren't supported yet
+(§5, P4 backlog), but worth deriving correctly in this new code rather than
+copying that shortcut forward, so this stays correct the moment edge index
+support lands.
+
+### 13e. Coordinating with close()
+
+The single biggest correctness risk in this extension, and the one that
+deserves the most review attention: `close()` currently acquires **one**
+`in_progress.lock()` before its own `save_all()`. With N independent
+per-index guards, it must wait for **all** of them, not just the one it
+happens to check first — otherwise a background per-index checkpoint could
+still be mid-flight, writing to a snapshot file `close()`'s own
+`save_all()` is about to also write, reproducing the exact file-write race
+§4/§5d were built to prevent, just at per-index granularity instead of
+graph-wide.
+
+**Correction (post-implementation review):** the code sketch originally here
+used `checkpoint_states.read()`, dropped before locking the individual
+guards:
+
+```rust
+// WRONG — see explanation below
+let states = self.checkpoint_states.read();
+let _guards: Vec<_> = states.values().map(|s| s.in_progress.lock()).collect();
+drop(states);
+self.index_manager().save_all()
+```
+
+This under-guards: per-index state is created *lazily*, on first touch
+(§13c), not proactively at schema-declaration time. A concurrent commit on
+a sibling `Graph` clone that's the *first-ever* mutation to an
+already-declared index in this process inserts a brand-new
+`PerIndexCheckpointState` into the map — and if that happens after
+`close()`'s `read()` snapshot but before `close()` finishes, the new
+state's guard is never collected. If that same commit's op count also
+crosses threshold, its spawned background thread's `try_lock()` on that
+guard succeeds (since `close()` never took it), and its `save()` call can
+run concurrently with `close()`'s own `save_all()` writing the *same*
+snapshot file — since neither `save()` nor `save_all()` synchronize with
+each other except through these guards. That's a real, if narrow, instance
+of the exact file-write race this section calls out, not the
+already-accepted "schema change mid-iteration" case (which is about the
+*set of declared indexes* changing, a different thing from a *known*
+index's per-process checkpoint state being created for the first time).
+
+Fixed by holding the map lock as a **write** lock through guard collection,
+closing the window entirely — no new entry can be inserted (the `commit()`
+lookup/insert path in §13c also goes through this same lock) until
+`close()` has already captured every existing state's guard:
+
+```rust
+pub fn close(self) -> Result<(), StoreError> {
+    let states = self.checkpoint_states.write();
+    let state_arcs: Vec<_> = states.values().cloned().collect();
+    let _guards: Vec<_> = state_arcs.iter().map(|s| s.in_progress.lock()).collect();
+    drop(states);
+    self.index_manager().save_all()
+}
+```
+
+No deadlock risk: the background checkpoint thread never touches
+`checkpoint_states` (it already holds its own `Arc<PerIndexCheckpointState>`
+captured at spawn time), so it can't be waiting on the write lock while
+`close()` waits on its `in_progress` guard. Concurrent commits on sibling
+clones simply block on the map lock until `close()` finishes collecting
+guards, then proceed normally.
+
+This narrows, but doesn't fully eliminate, the race: a sibling clone can
+still commit and spawn a background save for an *already-known* index
+concurrently with `close()`'s `save_all()` call itself (after the write
+lock is released) — an inherent consequence of sibling clones staying live
+and mutable during another clone's `close()`, not something guard
+collection can prevent without a much larger global write-barrier. In that
+residual case `save_snapshot_file`'s CRC-32C (`persistence.rs`) still
+guarantees corruption is *detected* on next load rather than silently
+accepted, and the WAL remains the source of truth either way — worst case
+is a wasted/corrupted snapshot forcing a full WAL replay on next open, not
+lost data. Accepted as a known limitation rather than engineered away here.
+
+### 13f. Reused vs. new machinery
+
+To be explicit about what's actually new work here versus what's a direct
+copy of already-reviewed, already-tested code:
+
+| Piece | Status |
+|---|---|
+| `Mutex<()>` RAII guard pattern | Reused verbatim (was the fix for the `close()` deadlock in §5d) |
+| CAS-based `spawn_gate: AtomicBool` | Reused verbatim (was the fix for the thread-spawn storm) |
+| `ResetGateOnDrop` panic-safety wrapper | Reused verbatim |
+| `save()` / `gc_vector_wal` | Fully existing, unmodified |
+| Per-`(entity_type, property)` state map | New |
+| Grouping `vector_pending_ops` by index before triggering | New |
+| `close()` waiting on N guards instead of 1 | New (small, but the one place a subtle bug could hide) |
+
+### 13g. Python bindings
+
+`IndexOptions`/`PerIndexOptions` already have a working Python-to-Rust
+plumbing path — `_builder.py`'s `Graph.__init__` already builds an
+`index_dict` with a `per_index_overrides` list, and `bindings/python/src/lib.rs`
+already parses each override entry's `memory_limit_bytes` field
+(`lib.rs:395-422`). Adding `checkpoint_mutation_threshold` to that same
+per-override dict, and `default_checkpoint_mutation_threshold` alongside
+the existing `default_memory_limit` at the `IndexOptions` level, follows
+the identical parsing pattern already in place — no new mechanism, same
+shape as the memory-limit fields sitting right next to it.
+
+### 13h. Migration — no backward-compat shim
+
+`GraphOptions::checkpoint_mutation_threshold` hasn't shipped in a release —
+it was added this session, on this branch. There's no external caller to
+protect, so no seed/fallback logic is needed. Plan is a clean replacement,
+not a compatibility layer:
+
+- Remove `GraphOptions::checkpoint_mutation_threshold` and its builder
+  method (`schema/definition.rs`).
+- Move that exact field, doc comment, and default (`None`) to
+  `IndexOptions::default_checkpoint_mutation_threshold` (§13b).
+- Update the one call site in `Graph::open_with_options` (`api.rs`) that
+  currently reads `options.checkpoint_mutation_threshold` to instead read
+  it off `options.index.default_checkpoint_mutation_threshold` when
+  constructing the initial `CheckpointState`/`CheckpointStateMap`.
+- Python: rename `GraphOptions(checkpoint_mutation_threshold=...)` to the
+  equivalent `IndexOptions(default_checkpoint_mutation_threshold=...)`
+  parameter, update `_builder.py`, `__init__.pyi`, and `lib.rs`'s parsing
+  accordingly — same three files touched when the field was first added,
+  just relocated.
+- Update `docs/guides/vector_search.md` §8's examples (written last turn)
+  to construct `IndexOptions` instead of `GraphOptions` directly for the
+  threshold — everything else in that section stays accurate as-is.
+
+This also simplifies §13d/§13k slightly: no dual-resolution logic between
+a graph-wide field and an index-level default, just the single per-index
+resolution order from §13b (per-index override → `IndexOptions` default →
+disabled).
+
+### 13i. Testing strategy
+
+- Two indexes, two different thresholds, confirm each triggers
+  independently and a low-volume index's commits never trigger the
+  other's save (direct test of the grouping logic in §13d).
+- `close()` with two simulated in-flight per-index checkpoints
+  (mirroring `test_close_waits_for_checkpoint`'s barrier-based pattern,
+  doubled), confirming it waits for both before proceeding.
+- Reuse the exact empirical verification approach already used to validate
+  §1–12: temporary instrumentation counters, run under concurrent load,
+  confirm no thread-spawn storm per index (the same 40-concurrent-commits
+  test from this doc's implementation review, repeated per index).
+- Regression test mirroring `test_graph_close_with_clones`, but with
+  multiple declared indexes, confirming no per-index guard poisoning
+  survives a `close()` call on one clone.
+
+### 13j. Implementation checklist
+
+- [x] `IndexOptions::default_checkpoint_mutation_threshold`,
+      `PerIndexOptions::checkpoint_mutation_threshold` (+ builder methods,
+      matching `with_memory_limit`'s pattern)
+- [x] `PerIndexCheckpointState` + `CheckpointStateMap`, lazy entry creation
+- [x] Group `vector_pending_ops` by `(entity_type, property)` in `commit()`,
+      deriving `entity_type` from `EntityKey` rather than hardcoding Vertex
+- [x] Per-index trigger logic (§13d), reusing the CAS gate + RAII reset
+      pattern verbatim
+- [x] `close()` waits on all per-index guards (§13e) — highest-priority
+      review item. Initial implementation under-guarded (`read()`-then-drop
+      missed states created lazily by concurrent commits); fixed to hold
+      the map lock as `write()` through guard collection — see §13e's
+      post-implementation correction.
+- [x] §13h migration: remove `GraphOptions::checkpoint_mutation_threshold`,
+      move it to `IndexOptions::default_checkpoint_mutation_threshold`
+      (Rust, Python, and the `vector_search.md` §8 examples). The field was
+      initially left in place, unused (dead — `Graph::open_with_options`
+      never read it, and the Python `_builder.py` wrapper didn't even
+      forward it to the Rust layer), silently no-opping the documented
+      `checkpoint_mutation_threshold=` example in both languages until
+      found in review and removed.
+- [x] Python: extend the existing per-index-override dict parsing (§13g)
+- [x] Tests per §13i (`test_checkpoint_trigger_logic`,
+      `test_background_checkpoint_execution`, `test_close_waits_for_checkpoint`,
+      `test_graph_close_with_two_clones`, `test_independent_per_index_triggers`
+      in `graph/tests/vector.rs`)
+- [x] Regression test for the `close()`-vs-lazy-state-creation race fixed
+      above: `test_new_index_state_blocked_during_close_guard_collection`
+      in `graph/tests/vector.rs` verifies the write-lock mechanism actually
+      blocks a concurrent first-touch commit from creating a new
+      `PerIndexCheckpointState` entry while guards are being collected.
+- [ ] Optional: cleanup pass for orphaned checkpoint-state entries on
+      `drop_vector_index` (not correctness-critical, deferred by default)
+
+### 13k. Complexity & effort estimate
+
+**Low-to-moderate — smaller than §1–12 was**, because the two hardest
+problems (getting the guard semantics right, and proving the storage layer
+supports independent per-index saves) are already solved and being
+reused, not reinvented:
+
+- **Configuration + plumbing** (§13b, §13g) — *low effort*, direct copy of
+  the existing `memory_limit` pattern at every layer (Rust struct, builder
+  method, Python dict parsing).
+- **Per-index state + grouping in `commit()`** (§13c, §13d) — *low-to-moderate*.
+  Mechanically small, but this is where a new class of bug *could* hide if
+  the lazy-entry creation isn't handled carefully under concurrent access
+  (two commits racing to create the same map entry) — worth an explicit
+  `entry().or_insert_with(...)`-style atomic get-or-create rather than a
+  check-then-insert.
+- **`close()` change** (§13e) — *low effort* to write, but the
+  highest-priority item for review, since it's the one place this design
+  could reintroduce the exact class of bug §5d/§8 already fixed once, now
+  at a different granularity.
+- **Testing** (§13i) — *moderate*, but every test pattern needed already
+  exists and gets duplicated/parameterized rather than designed from
+  scratch — real effort, low risk of missing a scenario.
+- **No changes** to `save()`, `gc_vector_wal`, snapshot format, or
+  `CF_VECTOR_WAL` — confirmed in §13a that none of this needs to move.
+
+Rough shape: similar file count to §1–12 (`schema/definition.rs`,
+`vector/traits.rs`, `graph/logical.rs`, `api.rs`, Python bindings, tests),
+most of it structurally mechanical once §13c/§13d's core pattern is
+written once and then it's "the same thing, keyed by index."

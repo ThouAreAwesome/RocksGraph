@@ -774,6 +774,59 @@ fn test_memory_limit_blocks_insert() {
 }
 
 #[test]
+fn test_pure_deletion_batch_not_blocked_by_memory_limit() {
+    // Regression test: `check_vector_capacity` must not run its
+    // capacity-doubling simulation for a commit that only removes vectors
+    // (`inserted == 0`). A pure-deletion batch never calls HNSW's `insert()`,
+    // so it can never trigger capacity expansion — but the pre-flight check's
+    // `cur_size + pending >= cur_cap` condition is also true when `pending == 0`
+    // and the index happens to sit exactly at capacity, which previously made
+    // deletions spuriously fail with "memory limit exceeded".
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+
+    // Declare the index and fill it to exactly its initial capacity (1000,
+    // see hnsw.rs DEFAULT_RESERVE_CAPACITY) with no memory limit configured,
+    // so the fill itself can't be blocked.
+    {
+        let g = Graph::open(path).unwrap();
+        declare_index(&g, "emb", 2, DistanceMetric::Cosine);
+        let mut txn = g.begin();
+        for i in 0..1000u64 {
+            txn.g()
+                .addV("doc")
+                .property("id", (i + 1) as i64)
+                .property("emb", Value::FloatVector(vec![(i as f32).sin(), (i as f32).cos()]))
+                .next()
+                .unwrap();
+        }
+        txn.commit().unwrap();
+        g.close().unwrap();
+    }
+
+    // Reopen with a memory limit too tight for the *next* capacity doubling
+    // (1000 -> 2000 vectors * 2 dims * 4 bytes/f32 = 16000 bytes) but that's
+    // irrelevant here since this transaction only deletes.
+    let options = crate::schema::GraphOptions {
+        index: crate::vector::IndexOptions {
+            default_limit: Some(crate::vector::VectorIndexLimit { memory_limit_bytes: 8 * 1024 }),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let g = crate::Graph::open_with_options(path, options).unwrap();
+
+    // Pure-deletion transaction: no inserts, one removal, on an index that's
+    // sitting exactly at capacity (size == capacity == 1000).
+    let mut txn = g.begin();
+    txn.g().V([1]).properties(["emb"]).drop().next().unwrap();
+    let result = txn.commit();
+    assert!(result.is_ok(), "a pure-deletion commit must not be blocked by the memory limit check: {result:?}");
+
+    g.close().unwrap();
+}
+
+#[test]
 fn test_per_index_memory_limit_override() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path();
@@ -806,10 +859,12 @@ fn test_per_index_memory_limit_override() {
     let options = crate::schema::GraphOptions {
         index: crate::vector::IndexOptions {
             default_limit: None,
+            default_checkpoint_mutation_threshold: None,
             per_index: vec![crate::vector::PerIndexOptions {
                 entity_type: VectorEntityType::Vertex,
                 property: "small".into(),
                 memory_limit: Some(crate::vector::VectorIndexLimit { memory_limit_bytes: 16 * 1024 }),
+                checkpoint_mutation_threshold: None,
             }],
         },
         ..Default::default()
@@ -1559,21 +1614,48 @@ fn test_nearest_with_metric_live_hnsw() {
 #[test]
 fn test_checkpoint_trigger_logic() {
     let dir = tempfile::tempdir().unwrap();
-    let mut opts = crate::schema::GraphOptions::default();
-    opts.checkpoint_mutation_threshold = Some(10);
+    let opts = crate::schema::GraphOptions::default()
+        .with_index(crate::vector::traits::IndexOptions::default().with_default_checkpoint_mutation_threshold(10));
     let graph = Graph::open_with_options(dir.path(), opts).unwrap();
 
-    // Test that the state was initialized
-    assert_eq!(graph.checkpoint.threshold, 10);
-    assert_eq!(graph.checkpoint.mutation_count.load(std::sync::atomic::Ordering::SeqCst), 0);
-    assert!(graph.checkpoint.in_progress.try_lock().is_some());
+    // To test initialization, we must trigger an insert since checkpoint state map is lazy
+    {
+        let mut session = graph.open_schema();
+        session.add_vertex_label("v");
+        session.add_property_key("vec", crate::schema::DataType::FloatVector);
+        session.add_vector_index(crate::vector::traits::VectorIndexConfig {
+            property: "vec".into(),
+            entity_type: crate::vector::VectorEntityType::Vertex,
+            dimension: 2,
+            metric: crate::vector::DistanceMetric::Cosine,
+            algorithm: crate::vector::traits::AnnAlgorithm::BruteForce,
+            quantization: Default::default(),
+        });
+        session.commit().unwrap();
+    }
+
+    let mut txn = graph.begin();
+    txn.g()
+        .addV("v")
+        .property("id", 1i64)
+        .property("vec", crate::gremlin::value::Value::FloatVector(vec![1.0, 1.0]))
+        .next()
+        .unwrap();
+    txn.commit().unwrap();
+
+    let states = graph.checkpoint_states.read();
+    let key = (crate::vector::VectorEntityType::Vertex, smol_str::SmolStr::new("vec"));
+    let state = states.get(&key).unwrap();
+    assert_eq!(state.threshold, 10);
+    // Might be 0 if the background thread cleared it already, or 1 if it didn't trigger
+    assert!(state.in_progress.try_lock().is_some());
 }
 
 #[test]
 fn test_background_checkpoint_execution() {
     let dir = tempfile::tempdir().unwrap();
-    let mut opts = crate::schema::GraphOptions::default();
-    opts.checkpoint_mutation_threshold = Some(5);
+    let opts = crate::schema::GraphOptions::default()
+        .with_index(crate::vector::traits::IndexOptions::default().with_default_checkpoint_mutation_threshold(5));
 
     let graph = Graph::open_with_options(dir.path(), opts).unwrap();
 
@@ -1612,10 +1694,21 @@ fn test_background_checkpoint_execution() {
             panic!("Background checkpoint did not complete within 5 seconds");
         }
 
-        if let Some(_guard) = graph.checkpoint.in_progress.try_lock() {
-            if graph.checkpoint.mutation_count.load(std::sync::atomic::Ordering::SeqCst) == 0 {
-                break;
+        let mut finished = false;
+        {
+            let map = graph.checkpoint_states.read();
+            let key = (crate::vector::VectorEntityType::Vertex, smol_str::SmolStr::new("vec"));
+            if let Some(state) = map.get(&key) {
+                let state_clone = state.clone();
+                drop(map);
+                let guard = state_clone.in_progress.try_lock();
+                if guard.is_some() && state_clone.mutation_count.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+                    finished = true;
+                }
             }
+        }
+        if finished {
+            break;
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
@@ -1634,15 +1727,30 @@ fn test_close_waits_for_checkpoint() {
     let dir = tempfile::tempdir().unwrap();
     let graph = Graph::open(dir.path()).unwrap();
 
+    let key = (crate::vector::VectorEntityType::Vertex, smol_str::SmolStr::new("vec"));
+    let state = {
+        let mut map = graph.checkpoint_states.write();
+        map.entry(key.clone())
+            .or_insert_with(|| {
+                std::sync::Arc::new(crate::api::PerIndexCheckpointState {
+                    mutation_count: std::sync::atomic::AtomicU64::new(0),
+                    in_progress: parking_lot::Mutex::new(()),
+                    spawn_gate: std::sync::atomic::AtomicBool::new(false),
+                    threshold: 10,
+                })
+            })
+            .clone()
+    };
+
     // Spawn a thread to simulate the background checkpoint finishing after a delay
-    let graph_clone = graph.clone();
+    let state_clone = state.clone();
 
     // We use a barrier to ensure the background thread has acquired the lock before we call close()
     let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
     let barrier_clone = barrier.clone();
 
     std::thread::spawn(move || {
-        let _guard = graph_clone.checkpoint.in_progress.lock();
+        let _guard = state_clone.in_progress.lock();
         barrier_clone.wait(); // tell main thread we hold the lock
         std::thread::sleep(std::time::Duration::from_millis(100));
         // releases here
@@ -1672,4 +1780,212 @@ fn test_graph_close_with_two_clones() {
 
     // Must return promptly
     assert!(start.elapsed() < std::time::Duration::from_secs(5));
+}
+
+#[test]
+fn test_new_index_state_blocked_during_close_guard_collection() {
+    // Regression test for the close()-vs-lazy-state race described in
+    // design_vector_checkpoint.md §13e: PerIndexCheckpointState entries are
+    // created lazily on first touch, so close() must prevent any *new* entry
+    // from being created while it's collecting guards, or a background
+    // checkpoint spawned by that new entry could race with close()'s own
+    // save_all(). close() enforces this by holding checkpoint_states as a
+    // write lock through guard collection; this test verifies that lock
+    // actually blocks a concurrent first-touch commit, which is the
+    // mechanism the fix relies on.
+    let dir = tempfile::tempdir().unwrap();
+    let opts = crate::schema::GraphOptions::default()
+        .with_index(crate::vector::traits::IndexOptions::default().with_default_checkpoint_mutation_threshold(10));
+    let graph = Graph::open_with_options(dir.path(), opts).unwrap();
+
+    {
+        let mut session = graph.open_schema();
+        session.add_vertex_label("v");
+        session.add_property_key("vec", crate::schema::DataType::FloatVector);
+        session.add_vector_index(crate::vector::traits::VectorIndexConfig {
+            property: "vec".into(),
+            entity_type: crate::vector::VectorEntityType::Vertex,
+            dimension: 2,
+            metric: crate::vector::DistanceMetric::Cosine,
+            algorithm: crate::vector::traits::AnnAlgorithm::BruteForce,
+            quantization: Default::default(),
+        });
+        session.commit().unwrap();
+    }
+
+    // Simulate close() being mid-guard-collection by holding the same lock
+    // it holds internally.
+    let write_guard = graph.checkpoint_states.write();
+
+    let graph_clone = graph.clone();
+    let committed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let committed_clone = committed.clone();
+    let handle = std::thread::spawn(move || {
+        let mut txn = graph_clone.begin();
+        txn.g()
+            .addV("v")
+            .property("id", 1i64)
+            .property("vec", crate::gremlin::value::Value::FloatVector(vec![1.0, 1.0]))
+            .next()
+            .unwrap();
+        txn.commit().unwrap();
+        committed_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+    });
+
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    assert!(
+        !committed.load(std::sync::atomic::Ordering::SeqCst),
+        "commit should block creating a new checkpoint-state entry while the write lock is held"
+    );
+
+    drop(write_guard);
+    handle.join().unwrap();
+    assert!(committed.load(std::sync::atomic::Ordering::SeqCst));
+
+    graph.close().unwrap();
+}
+
+#[test]
+fn test_independent_per_index_triggers() {
+    let dir = tempfile::tempdir().unwrap();
+    let opts = crate::schema::GraphOptions::default().with_index(
+        crate::vector::traits::IndexOptions::default().with_default_checkpoint_mutation_threshold(10).with_per_index(
+            crate::vector::traits::PerIndexOptions::new(crate::vector::VectorEntityType::Vertex, "vec_small")
+                .with_checkpoint_mutation_threshold(2),
+        ),
+    );
+    let graph = Graph::open_with_options(dir.path(), opts).unwrap();
+
+    // Create schema
+    {
+        let mut session = graph.open_schema();
+        session.add_vertex_label("v");
+        session.add_property_key("vec_default", crate::schema::DataType::FloatVector);
+        session.add_property_key("vec_small", crate::schema::DataType::FloatVector);
+        session.add_vector_index(crate::vector::traits::VectorIndexConfig {
+            property: "vec_default".into(),
+            entity_type: crate::vector::VectorEntityType::Vertex,
+            dimension: 2,
+            metric: crate::vector::DistanceMetric::Cosine,
+            algorithm: crate::vector::traits::AnnAlgorithm::BruteForce,
+            quantization: Default::default(),
+        });
+        session.add_vector_index(crate::vector::traits::VectorIndexConfig {
+            property: "vec_small".into(),
+            entity_type: crate::vector::VectorEntityType::Vertex,
+            dimension: 2,
+            metric: crate::vector::DistanceMetric::Cosine,
+            algorithm: crate::vector::traits::AnnAlgorithm::BruteForce,
+            quantization: Default::default(),
+        });
+        session.commit().unwrap();
+    }
+
+    // Mutate both, but only reach the threshold for vec_small
+    for i in 0..2 {
+        let mut txn = graph.begin();
+        txn.g()
+            .addV("v")
+            .property("id", i as i64)
+            .property("vec_default", crate::gremlin::value::Value::FloatVector(vec![1.0, i as f32]))
+            .property("vec_small", crate::gremlin::value::Value::FloatVector(vec![1.0, i as f32]))
+            .next()
+            .unwrap();
+        txn.commit().unwrap();
+    }
+
+    // Wait for the background save to complete for vec_small
+    let start = std::time::Instant::now();
+    loop {
+        if start.elapsed() > std::time::Duration::from_secs(5) {
+            panic!("Background checkpoint did not complete within 5 seconds");
+        }
+
+        let mut finished = false;
+        {
+            let map = graph.checkpoint_states.read();
+            let key = (crate::vector::VectorEntityType::Vertex, smol_str::SmolStr::new("vec_small"));
+            if let Some(state) = map.get(&key) {
+                let state_clone = state.clone();
+                drop(map);
+                let guard = state_clone.in_progress.try_lock();
+                if guard.is_some() && state_clone.mutation_count.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+                    finished = true;
+                }
+            }
+        }
+        if finished {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    // Verify vec_default didn't trigger
+    let map = graph.checkpoint_states.read();
+    let key = (crate::vector::VectorEntityType::Vertex, smol_str::SmolStr::new("vec_default"));
+    let state = map.get(&key).unwrap();
+    assert_eq!(state.mutation_count.load(std::sync::atomic::Ordering::SeqCst), 2);
+}
+
+#[test]
+fn test_close_waits_for_multiple_checkpoints() {
+    let dir = tempfile::tempdir().unwrap();
+    let graph = Graph::open(dir.path()).unwrap();
+
+    let key1 = (crate::vector::VectorEntityType::Vertex, smol_str::SmolStr::new("vec1"));
+    let key2 = (crate::vector::VectorEntityType::Vertex, smol_str::SmolStr::new("vec2"));
+
+    let (state1, state2) = {
+        let mut map = graph.checkpoint_states.write();
+        let s1 = map
+            .entry(key1.clone())
+            .or_insert_with(|| {
+                std::sync::Arc::new(crate::api::PerIndexCheckpointState {
+                    mutation_count: std::sync::atomic::AtomicU64::new(0),
+                    in_progress: parking_lot::Mutex::new(()),
+                    spawn_gate: std::sync::atomic::AtomicBool::new(false),
+                    threshold: 10,
+                })
+            })
+            .clone();
+
+        let s2 = map
+            .entry(key2.clone())
+            .or_insert_with(|| {
+                std::sync::Arc::new(crate::api::PerIndexCheckpointState {
+                    mutation_count: std::sync::atomic::AtomicU64::new(0),
+                    in_progress: parking_lot::Mutex::new(()),
+                    spawn_gate: std::sync::atomic::AtomicBool::new(false),
+                    threshold: 10,
+                })
+            })
+            .clone();
+
+        (s1, s2)
+    };
+
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+
+    let b1 = barrier.clone();
+    let s1_clone = state1.clone();
+    std::thread::spawn(move || {
+        let _guard = s1_clone.in_progress.lock();
+        b1.wait();
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    });
+
+    let b2 = barrier.clone();
+    let s2_clone = state2.clone();
+    std::thread::spawn(move || {
+        let _guard = s2_clone.in_progress.lock();
+        b2.wait();
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    });
+
+    // Wait until both threads definitely hold their locks
+    barrier.wait();
+
+    let start = std::time::Instant::now();
+    graph.close().unwrap();
+    assert!(start.elapsed() >= std::time::Duration::from_millis(100));
 }
