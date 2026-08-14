@@ -109,10 +109,11 @@ pub trait PlanAppender: Sized {
     fn plan_mut(&mut self) -> &mut LogicalPlan;
     fn record_error(&mut self, err: StoreError);
 
-    fn pending_repeat_mut(&mut self) -> &mut Option<RepeatBuilder>;
+    fn take_pending_repeat(&mut self) -> Option<RepeatBuilder>;
+    fn set_pending_repeat(&mut self, rb: Option<RepeatBuilder>);
 
     fn flush_pending_repeat(&mut self) {
-        if let Some(rb) = self.pending_repeat_mut().take() {
+        if let Some(rb) = self.take_pending_repeat() {
             if rb.until.is_none() && rb.times.is_none() {
                 self.record_error(StoreError::TraversalError(
                     "repeat() requires at least one stop condition — call .times(n) or .until(cond).".to_string(),
@@ -248,8 +249,11 @@ impl PlanAppender for GraphTraversal {
             self.error = Some(err);
         }
     }
-    fn pending_repeat_mut(&mut self) -> &mut Option<RepeatBuilder> {
-        &mut self.pending_repeat
+    fn take_pending_repeat(&mut self) -> Option<RepeatBuilder> {
+        self.pending_repeat.take()
+    }
+    fn set_pending_repeat(&mut self, rb: Option<RepeatBuilder>) {
+        self.pending_repeat = rb;
     }
 }
 
@@ -507,12 +511,12 @@ pub trait TraversalBuilder: PlanAppender {
     fn is(mut self, pred: impl Into<Predicate>) -> Self {
         let p = pred.into();
         match &p {
-            Predicate::Eq(v)
-            | Predicate::Ne(v)
-            | Predicate::Gt(v)
-            | Predicate::Gte(v)
-            | Predicate::Lt(v)
-            | Predicate::Lte(v) => {
+            Predicate::Eq(v) |
+            Predicate::Ne(v) |
+            Predicate::Gt(v) |
+            Predicate::Gte(v) |
+            Predicate::Lt(v) |
+            Predicate::Lte(v) => {
                 if value_to_primitive(v.clone()).is_none() {
                     self.record_error(StoreError::UnexpectedDataType(format!(
                         "is() expects scalar values, got: {:?}",
@@ -1015,8 +1019,12 @@ pub trait TraversalBuilder: PlanAppender {
         if let Some(err) = body.error.take() {
             self.record_error(err);
         }
-        *self.pending_repeat_mut() =
-            Some(RepeatBuilder { body: body.into_plan(), until: None, times: None, emit: EmitSpec::Never });
+        self.set_pending_repeat(Some(RepeatBuilder {
+            body: body.into_plan(),
+            until: None,
+            times: None,
+            emit: EmitSpec::Never,
+        }));
         self
     }
 
@@ -1027,7 +1035,8 @@ pub trait TraversalBuilder: PlanAppender {
             ));
             return self;
         }
-        match self.pending_repeat_mut() {
+        let mut pr = self.take_pending_repeat();
+        match pr {
             Some(ref mut rb) => {
                 if rb.times.is_some() || rb.until.is_some() {
                     self.record_error(StoreError::TraversalError(
@@ -1041,6 +1050,7 @@ pub trait TraversalBuilder: PlanAppender {
                 self.record_error(StoreError::TraversalError("times() must immediately follow repeat().".to_string()))
             }
         }
+        self.set_pending_repeat(pr);
         self
     }
 
@@ -1049,7 +1059,8 @@ pub trait TraversalBuilder: PlanAppender {
         if let Some(err) = cond.error.take() {
             self.record_error(err);
         }
-        match self.pending_repeat_mut() {
+        let mut pr = self.take_pending_repeat();
+        match pr {
             Some(ref mut rb) => {
                 if rb.times.is_some() || rb.until.is_some() {
                     self.record_error(StoreError::TraversalError(
@@ -1063,16 +1074,19 @@ pub trait TraversalBuilder: PlanAppender {
                 self.record_error(StoreError::TraversalError("until() must immediately follow repeat().".to_string()))
             }
         }
+        self.set_pending_repeat(pr);
         self
     }
 
     fn emit(mut self) -> Self {
-        match self.pending_repeat_mut() {
+        let mut pr = self.take_pending_repeat();
+        match pr {
             Some(ref mut rb) => rb.emit = EmitSpec::Always,
             None => {
                 self.record_error(StoreError::TraversalError("emit() must immediately follow repeat().".to_string()))
             }
         }
+        self.set_pending_repeat(pr);
         self
     }
 
@@ -1081,12 +1095,14 @@ pub trait TraversalBuilder: PlanAppender {
         if let Some(err) = cond.error.take() {
             self.record_error(err);
         }
-        match self.pending_repeat_mut() {
+        let mut pr = self.take_pending_repeat();
+        match pr {
             Some(ref mut rb) => rb.emit = EmitSpec::If(cond.into_plan()),
             None => {
                 self.record_error(StoreError::TraversalError("emit_if() must immediately follow repeat().".to_string()))
             }
         }
+        self.set_pending_repeat(pr);
         self
     }
 }
