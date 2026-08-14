@@ -381,9 +381,9 @@ fn test_concurrent_auto_mode_writes_do_not_starve_schema_lock() {
     fn upsert_vertex(txn: &mut TxnSession, vertex_id: i64) {
         txn.g()
             .V([vertex_id])
-            .count()
+            .fold()
             .coalesce([
-                __().V([vertex_id]).id(),
+                __().unfold().id(),
                 __().addV("person").property("id", vertex_id).property("name", "x").property("age", 30i32),
             ])
             .next()

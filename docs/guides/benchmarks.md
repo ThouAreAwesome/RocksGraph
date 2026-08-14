@@ -23,8 +23,8 @@ loader.commit()?;
 
 // Transactional OCC benchmark: idempotent upsert via coalesce(), retried on conflict
 let mut txn = graph.begin();
-txn.g().V([id]).count().coalesce([
-    __().V([id]).values(["id"]),
+txn.g().V([id]).fold().coalesce([
+    __().unfold(),
     __().addV(label).property("id", id) /* ... */,
 ]).next()?;
 txn.commit()?;

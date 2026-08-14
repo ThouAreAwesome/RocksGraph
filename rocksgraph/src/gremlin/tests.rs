@@ -363,15 +363,15 @@ mod integration_test {
     fn test_tinkerpop_modern_coalesce_upsert_vertex() {
         let graph = setup_modern_graph();
 
-        // Vertex 1 already exists → coalesce takes the values([...]) branch → 2 values
+        // Vertex 1 already exists → coalesce takes the unfold() branch → 2 values
         {
             let mut txn = graph.begin();
             let Value::Int64(ct) = txn
                 .g()
                 .V([1])
-                .count()
+                .fold()
                 .coalesce([
-                    __().V([1]).values(["name", "age"]),
+                    __().unfold().values(["name", "age"]),
                     __().addV("person").property("id", 1i64).property("name", "marko").property("age", 29i32),
                 ])
                 .count()
@@ -392,9 +392,9 @@ mod integration_test {
             let Value::Int64(ct) = txn
                 .g()
                 .V([1])
-                .count()
+                .fold()
                 .coalesce([
-                    __().V([1]).union([__().id(), __().label()]),
+                    __().unfold().union([__().id(), __().label()]),
                     __().addV("person").property("id", 1i64).property("name", "marko").property("age", 29i32),
                 ])
                 .count()
@@ -414,9 +414,9 @@ mod integration_test {
             let Value::Int64(ct) = txn
                 .g()
                 .V([10])
-                .count()
+                .fold()
                 .coalesce([
-                    __().V([10]).values(["name", "age"]),
+                    __().unfold().values(["name", "age"]),
                     __().addV("person").property("id", 10i64).property("name", "marko").property("age", 18i32),
                 ])
                 .count()
@@ -430,15 +430,15 @@ mod integration_test {
             txn.commit().unwrap();
         }
 
-        // Vertex 10 now exists → coalesce takes the values([...]) branch → 2 values
+        // Vertex 10 now exists → coalesce takes the unfold() branch → 2 values
         {
             let mut txn = graph.begin();
             let Value::Int64(ct) = txn
                 .g()
                 .V([10])
-                .count()
+                .fold()
                 .coalesce([
-                    __().V([10]).values(["name", "age"]),
+                    __().unfold().values(["name", "age"]),
                     __().addV("person").property("id", 10i64).property("name", "marko").property("age", 18i32),
                 ])
                 .count()
@@ -451,6 +451,38 @@ mod integration_test {
             assert_eq!(ct, 2);
             txn.commit().unwrap();
         }
+    }
+
+    /// Regression guard for a known Gremlin footgun: `coalesce()` runs its branches
+    /// per upstream traverser, so an *empty* upstream (e.g. `.V([id])` when `id`
+    /// doesn't exist) means `coalesce()` never runs any branch at all — including
+    /// `addV()` — silently creating nothing. This is not RocksGraph-specific; real
+    /// TinkerPop has the identical trap, which is exactly why its canonical
+    /// get-or-create idiom is `.fold().coalesce(unfold(), addV(...))` — see
+    /// `test_tinkerpop_modern_coalesce_upsert_vertex` for the correct form.
+    #[test]
+    fn test_coalesce_upsert_without_fold_is_a_silent_noop() {
+        let graph = setup_modern_graph();
+        let mut txn = graph.begin();
+
+        // Vertex 999 does not exist. No `.fold()` priming — the naive/misused form.
+        let result = txn
+            .g()
+            .V([999])
+            .coalesce([
+                __().values(["name"]),
+                __().addV("person").property("id", 999i64).property("name", "should_not_exist"),
+            ])
+            .next()
+            .unwrap();
+        assert_eq!(result, None, "coalesce() on an empty upstream must yield nothing, not run addV()");
+        txn.commit().unwrap();
+
+        // Confirm nothing was actually created — this is silent data loss, not just an
+        // empty result set.
+        let mut snap = graph.read();
+        let count = snap.g().V([999]).count().next().unwrap().unwrap();
+        assert_eq!(count, Value::Int64(0), "addV() branch must not have run for a nonexistent upstream vertex");
     }
 
     #[test]
