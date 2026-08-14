@@ -43,6 +43,7 @@ pub(crate) struct LogicalGraph {
     pub(crate) vector_indexes: Arc<RwLock<VectorIndexMap>>,
     pub(crate) vector_indexed_props: std::collections::HashSet<u16>,
     pub(crate) vector_pending_ops: Vec<crate::vector::PendingVectorOp>,
+    pub(crate) graph_handle: Option<crate::api::Graph>,
 }
 
 impl LogicalGraph {
@@ -52,9 +53,11 @@ impl LogicalGraph {
         schema: Arc<RwLock<Schema>>,
         vector_indexes: Arc<RwLock<VectorIndexMap>>,
         execution_options: ExecutionOptions,
+        graph_handle: Option<crate::api::Graph>,
     ) -> Self {
-        // Creates a new `LogicalGraph` instance, initializing its in-memory caches
-        // and associating it with a store transaction.
+        // Compute the vector-indexed properties cache once for the transaction,
+        // mirroring how TxnSchemaCache works. This eliminates lock contention
+        // on the VectorIndexMap when processing element updates/deletions.
         let schema_cache = TxnSchemaCache::from_schema(&schema.read());
         let mut vector_indexed_props = std::collections::HashSet::new();
         for (entity_type, prop_name) in vector_indexes.read().keys() {
@@ -80,6 +83,7 @@ impl LogicalGraph {
             vector_indexes,
             vector_indexed_props,
             vector_pending_ops: Vec::new(),
+            graph_handle,
         }
     }
 
@@ -1260,6 +1264,49 @@ impl LogicalGraph {
                             guard.set_last_replayed_timestamp(*ts);
                         }
                     }
+                }
+            }
+        }
+
+        if commit_result.is_ok() && !self.vector_pending_ops.is_empty() {
+            if let Some(graph_handle) = &self.graph_handle {
+                let prior = graph_handle
+                    .checkpoint
+                    .mutation_count
+                    .fetch_add(self.vector_pending_ops.len() as u64, std::sync::atomic::Ordering::AcqRel);
+                if graph_handle.checkpoint.threshold > 0
+                    && prior + self.vector_pending_ops.len() as u64 >= graph_handle.checkpoint.threshold
+                    && graph_handle
+                        .checkpoint
+                        .spawn_gate
+                        .compare_exchange(
+                            false,
+                            true,
+                            std::sync::atomic::Ordering::Acquire,
+                            std::sync::atomic::Ordering::Relaxed,
+                        )
+                        .is_ok()
+                {
+                    let graph = graph_handle.clone();
+                    std::thread::spawn(move || {
+                        // Resets `spawn_gate` on drop — including during unwinding if
+                        // `save_all()` panics — so a panic inside the checkpoint can't
+                        // permanently disable future triggers the way a plain `store()`
+                        // placed after this block would (that call would simply never
+                        // be reached on the panicking path).
+                        struct ResetGateOnDrop(Arc<crate::api::CheckpointState>);
+                        impl Drop for ResetGateOnDrop {
+                            fn drop(&mut self) {
+                                self.0.spawn_gate.store(false, std::sync::atomic::Ordering::Release);
+                            }
+                        }
+                        let _reset_gate = ResetGateOnDrop(Arc::clone(&graph.checkpoint));
+
+                        if let Some(_guard) = graph.checkpoint.in_progress.try_lock() {
+                            graph.checkpoint.mutation_count.store(0, std::sync::atomic::Ordering::Release);
+                            let _ = graph.index_manager().save_all();
+                        }
+                    });
                 }
             }
         }

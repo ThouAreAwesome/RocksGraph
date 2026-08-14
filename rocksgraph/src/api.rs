@@ -104,6 +104,16 @@ use crate::{
 ///
 /// For index maintenance operations (rebuild after bulk ingestion, checkpointing, future
 /// export/import), obtain an [`IndexManager`] handle via [`Graph::index_manager`].
+use std::sync::atomic::AtomicU64;
+
+#[derive(Debug)]
+pub(crate) struct CheckpointState {
+    pub(crate) mutation_count: AtomicU64,
+    pub(crate) in_progress: parking_lot::Mutex<()>,
+    pub(crate) spawn_gate: std::sync::atomic::AtomicBool,
+    pub(crate) threshold: u64,
+}
+
 pub struct Graph {
     pub(crate) store: Arc<RocksStorage>,
     pub(crate) schema: Arc<RwLock<Schema>>,
@@ -111,6 +121,7 @@ pub struct Graph {
     pub(crate) vector_indexes: Arc<RwLock<VectorIndexMap>>,
     pub(crate) index_options: IndexOptions,
     pub(crate) execution_options: crate::engine::ExecutionOptions,
+    pub(crate) checkpoint: Arc<CheckpointState>,
 }
 
 impl Graph {
@@ -173,6 +184,12 @@ impl Graph {
             vector_indexes,
             index_options: options.index,
             execution_options: options.execution,
+            checkpoint: Arc::new(CheckpointState {
+                mutation_count: AtomicU64::new(0),
+                in_progress: parking_lot::Mutex::new(()),
+                spawn_gate: std::sync::atomic::AtomicBool::new(false),
+                threshold: options.checkpoint_mutation_threshold.unwrap_or(0),
+            }),
         })
     }
 
@@ -241,6 +258,7 @@ impl Graph {
                 Arc::clone(&self.schema),
                 Arc::clone(&self.vector_indexes),
                 self.execution_options,
+                Some(self.clone()),
             ),
             committed: false,
         }
@@ -265,6 +283,7 @@ impl Graph {
     /// the temporary directory is dropped so RocksDB can flush and close
     /// its files cleanly.
     pub fn close(self) -> Result<(), StoreError> {
+        let _guard = self.checkpoint.in_progress.lock();
         // save_all() persists snapshots and GCs WAL entries covered by them.
         // If save fails, WAL entries are preserved for crash recovery on next open.
         self.index_manager().save_all()
@@ -435,6 +454,7 @@ impl Clone for Graph {
             vector_indexes: Arc::clone(&self.vector_indexes),
             index_options: self.index_options.clone(),
             execution_options: self.execution_options,
+            checkpoint: Arc::clone(&self.checkpoint),
         }
     }
 }

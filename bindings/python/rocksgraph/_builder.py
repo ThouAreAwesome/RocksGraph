@@ -1014,12 +1014,14 @@ class GraphOptions:
         storage: RocksOptions = None,
         index: IndexOptions = None,
         execution: ExecutionOptions = None,
+        checkpoint_mutation_threshold: int = None,
     ):
         self.mode = mode
         self.edge_mode = edge_mode
         self.storage = storage or RocksOptions()
         self.index = index or IndexOptions()
         self.execution = execution or ExecutionOptions()
+        self.checkpoint_mutation_threshold = checkpoint_mutation_threshold
 
 
 class IndexManager:
@@ -1074,6 +1076,7 @@ class Graph:
                 "scan_edges_batch_size": opts.execution.scan_edges_batch_size,
                 "get_adjacent_edges_batch_size": opts.execution.get_adjacent_edges_batch_size,
             },
+            checkpoint_mutation_threshold=opts.checkpoint_mutation_threshold,
         )
 
     @staticmethod
@@ -1082,7 +1085,8 @@ class Graph:
 
         Args:
             path: Path to the database directory.
-            options: GraphOptions instance (mode, edge_mode, storage, index, execution).
+            options: GraphOptions instance (mode, edge_mode, storage, index, execution,
+                checkpoint_mutation_threshold).
         """
         return Graph(path, options=options)
 

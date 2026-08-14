@@ -167,6 +167,7 @@ class GraphOptions:
     storage: RocksOptions
     index: IndexOptions
     execution: ExecutionOptions
+    checkpoint_mutation_threshold: int | None
     def __init__(
         self,
         *,
@@ -175,6 +176,7 @@ class GraphOptions:
         storage: RocksOptions | None = None,
         index: IndexOptions | None = None,
         execution: ExecutionOptions | None = None,
+        checkpoint_mutation_threshold: int | None = None,
     ) -> None: ...
 
 class P:

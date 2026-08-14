@@ -13,7 +13,7 @@ These tasks are required for long-running production server deployments to bound
   - *Action*: Implemented in `gc_vector_wal`: after saving snapshots during `close()`, obsolete WAL records ($ts \le \text{cutoff\_ts}$) are purged from `CF_VECTOR_WAL`.
   - *Target*: [api.rs](file:///Users/austinhan/Workplace/RocksGraph/rocksgraph/src/api.rs) `close()`.
 
-- [ ] **Background / Periodic Checkpointing (Online Snapshotting)**
+- [x] **Background / Periodic Checkpointing (Online Snapshotting)** — implemented in `Graph::commit` using the trigger-and-spawn design from [design_vector_checkpoint.md](design_vector_checkpoint.md).
   - *Context*: Snapshots are currently saved on `Graph::close()`, `Graph::rebuild_vector_index()`, or explicit `Graph::save_vector_indexes()`. In long-running 24/7 server environments that risk ungraceful termination (SIGKILL / OOM / power loss), the lack of periodic snapshots means crash recovery must replay large volumes of accumulated WAL entries.
   - *Cost Characteristics*:
     - **Monolithic rewrite**: HNSW proximity graphs mutate in-place, so each snapshot writes the full index to a temporary file with CRC-32C before atomic rename ($\approx 76\text{ MB}$ for 100k 128-dim vectors, $\sim 38\text{ ms}$ on NVMe).
