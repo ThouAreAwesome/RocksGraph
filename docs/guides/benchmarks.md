@@ -211,3 +211,33 @@ since a full scan deterministically covers the same dataset every time.
 
 Q8/Q9's single-sample latency is reported as mean only — percentiles collapse to the
 same value with `n=1`.
+
+### Vector Index Overhead
+
+The vector index benchmarks measure the mechanism cost of vector indexing (WAL writes, per-commit checkpoint accounting, incremental HNSW insert calls) separately from the rest of the RocksGraph system. 
+
+The vectors used are synthetic L2-normalized unit vectors drawn from a standard normal distribution. The topology reused is the LiveJournal edge list.
+
+#### Bulk Load and Index Build
+
+The following table isolates the SST ingest wall time from the vector index build wall time using `bench_vector_bulk_load`:
+
+| Scale | Dimension | Quantization | Ingest Time (s) | Index Build Time (s) | Total Time (s) | Throughput (edges/s) |
+|---|---|---|---|---|---|---|
+| 10M edges / 3.16M vertices | 128 | F32 | | | | |
+| 10M edges / 3.16M vertices | 384 | F32 | | | | |
+| 10M edges / 3.16M vertices | 768 | F32 | | | | |
+| 10M edges / 3.16M vertices | 1536 | F32 | | | | |
+| 10M edges / 3.16M vertices | 384 | F16 | | | | |
+
+#### Transactional OCC Write with Vector Indexing
+
+The following table measures the throughput and latency overhead of maintaining a vector index synchronously during a transactional OCC write workload (`bench_write_occ`), isolating the cost of the per-commit checkpoint trigger accounting:
+
+| Scale | Dimension | Parallelism | Checkpoint Threshold | Throughput (edges/s) | p50 Latency (μs) | p99 Latency (μs) |
+|---|---|---|---|---|---|---|
+| 10M edges | 0 (baseline) | 3 | None | | | |
+| 10M edges | 384 | 3 | None | | | |
+| 10M edges | 384 | 3 | 1000 | | | |
+| 10M edges | 384 | 16 | None | | | |
+| 10M edges | 384 | 16 | 1000 | | | |
