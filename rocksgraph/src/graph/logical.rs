@@ -1367,6 +1367,16 @@ impl LogicalGraph {
         }
 
         // Apply committed vector mutations to in-memory indexes.
+        //
+        // Each index is taken with a *shared* (read) lock here, not exclusive: both
+        // `UsearchHnswIndex` and `BruteForceIndex` implement `insert`/`remove`/
+        // `set_last_replayed_timestamp` as `&self` methods that are internally safe
+        // to call concurrently (HNSW: `resize_lock` + per-key `upsert_locks`;
+        // BruteForce: an inner `RwLock` around its entry vector). Concurrent OLTP
+        // commits touching the *same* index therefore no longer serialize against
+        // each other at this outer lock — only genuine internal contention (e.g. a
+        // reactive HNSW capacity grow) still does. See vector-search/TODO.md for
+        // the benchmark that motivated this.
         if commit_result.is_ok() {
             let indexes = self.vector_indexes.read();
             for op in &self.vector_pending_ops {
@@ -1374,7 +1384,7 @@ impl LogicalGraph {
                     crate::vector::PendingVectorOp::Inserted { key, prop_name, vector, ts, .. } => {
                         let idx_key = (crate::vector::VectorEntityType::Vertex, prop_name.clone());
                         if let Some(arc) = indexes.get(&idx_key) {
-                            let mut guard = arc.write();
+                            let guard = arc.read();
                             // Only advance the WAL timestamp on success. If insert fails (e.g.
                             // memory limit exceeded), leaving the timestamp behind allows WAL
                             // replay on the next open to retry the entry once the limit is raised.
@@ -1390,7 +1400,7 @@ impl LogicalGraph {
                     crate::vector::PendingVectorOp::Removed { key, prop_name, ts, .. } => {
                         let idx_key = (crate::vector::VectorEntityType::Vertex, prop_name.clone());
                         if let Some(arc) = indexes.get(&idx_key) {
-                            let mut guard = arc.write();
+                            let guard = arc.read();
                             let _ = guard.remove(key);
                             guard.set_last_replayed_timestamp(*ts);
                         }

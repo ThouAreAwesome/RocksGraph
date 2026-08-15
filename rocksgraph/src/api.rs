@@ -438,7 +438,17 @@ impl IndexManager {
         let map = vector_indexes.read();
         for ((entity_type, prop_name), arc) in map.iter() {
             let snap_path = vector_snapshot_path(&store.path, *entity_type, prop_name);
-            let guard = arc.read();
+            // Exclusive, not shared: `insert`/`remove` hold the read side of this same
+            // lock (see `logical.rs`'s post-commit apply loop), and usearch's
+            // `save_to_buffer()` has no internal synchronization of its own against
+            // concurrent mutation (confirmed against usearch's C++ source — it walks
+            // `vectors_lookup_`/`size()` with no lock at all). Taking `.write()` here
+            // guarantees no insert/remove/capacity-grow is in flight while we read
+            // `last_replayed_timestamp()` and serialize, which also closes the window
+            // where a racing `set_last_replayed_timestamp` from a still-in-flight insert
+            // on another thread could advance the watermark past data that isn't
+            // actually in this snapshot yet (permanent data loss on crash+WAL-replay).
+            let guard = arc.write();
             let ts = guard.last_replayed_timestamp();
             guard.save(&snap_path, ts).map_err(|e| StoreError::VectorIndex(e.to_string()))?;
         }
@@ -459,7 +469,8 @@ impl IndexManager {
         let found = map.contains_key(&key);
         if let Some(arc) = map.get(&key) {
             let snap_path = vector_snapshot_path(&store.path, entity_type, property);
-            let guard = arc.read();
+            // See the matching comment in `save_all` — must exclude concurrent insert/remove.
+            let guard = arc.write();
             let ts = guard.last_replayed_timestamp();
             guard.save(&snap_path, ts).map_err(|e| StoreError::VectorIndex(e.to_string()))?;
         }

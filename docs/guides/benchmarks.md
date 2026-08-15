@@ -232,12 +232,23 @@ The following table isolates the SST ingest wall time from the vector index buil
 
 #### Transactional OCC Write with Vector Indexing
 
-The following table measures the throughput and latency overhead of maintaining a vector index synchronously during a transactional OCC write workload (`bench_write_occ`), isolating the cost of the per-commit checkpoint trigger accounting:
+Isolates the cost of maintaining an HNSW index synchronously during OLTP commits
+(`bench_write_occ`). `soc-LiveJournal1-10k.txt` (10,000 edges → 30,000 mutations:
+2 vertex + 1 edge upsert per edge) — smaller than the 1 M/10 M scale used above,
+chosen for fast iteration while isolating the mechanism cost; treat throughput as
+directional rather than a prediction at the larger scales used elsewhere in this doc.
 
-| Scale | Dimension | Parallelism | Checkpoint Threshold | Throughput (edges/s) | p50 Latency (μs) | p99 Latency (μs) |
-|---|---|---|---|---|---|---|
-| 10M edges | 0 (baseline) | 3 | None | | | |
-| 10M edges | 384 | 3 | None | | | |
-| 10M edges | 384 | 3 | 1000 | | | |
-| 10M edges | 384 | 16 | None | | | |
-| 10M edges | 384 | 16 | 1000 | | | |
+| Vector Dim | Parallelism | Throughput (edges/s) | p50 (μs) | p99 (μs) |
+|---|---:|---:|---:|---:|
+| none (reference) | 1 | 35,106 | 27.6 | 39.9 |
+| none (reference) | 8 | 78,297 | 93.6 | 236.7 |
+| 384 | 1 | 823 | 1,266.7 | 2,308.1 |
+| 384 | 4 | 2,963 | 1,362.9 | 3,414.0 |
+| 384 | 8 | 3,953 | 1,623.0 | 5,861.4 |
+
+**The HNSW insert itself dominates cost**: a single-threaded dim-384 commit is
+~43x slower than a no-vector commit — that gap is the real per-commit cost of
+indexing a vector, not a locking or transaction-engine overhead. Throughput
+does scale with parallelism (823 → 3,953 edges/s from 1 → 8 threads) since
+concurrent commits touching the same index are not serialized against each
+other beyond genuine internal contention (e.g. a reactive HNSW capacity grow).

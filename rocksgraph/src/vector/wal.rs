@@ -227,7 +227,7 @@ pub(crate) fn replay_vector_wal(
     // seek key = [prop_key_id BE][entity_type BE][seek_ts BE]
     for (entity_type, prop_key_id, arc) in by_prop_and_entity {
         let entity_type_byte = entity_type.to_u8();
-        let mut guard = arc.write();
+        let guard = arc.write();
         let last_ts = guard.last_replayed_timestamp();
         max_ts = max_ts.max(last_ts);
         let seek_ts = if last_ts == 0 { 0 } else { last_ts.saturating_add(1) };

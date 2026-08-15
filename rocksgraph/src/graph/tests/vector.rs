@@ -989,6 +989,160 @@ fn test_rebuild_survives_multiple_capacity_growth_cycles() {
     g.close().unwrap();
 }
 
+#[test]
+fn test_concurrent_oltp_commits_same_vector_index() {
+    // Regression test for the OLTP concurrent-write relaxation: `logical.rs`'s
+    // post-commit "apply vector mutations" loop now takes each index's `Arc<RwLock<..>>`
+    // with `.read()` instead of `.write()`, relying on `UsearchHnswIndex`/`BruteForceIndex`
+    // being internally safe for concurrent `&self` insert/remove/set_last_replayed_timestamp
+    // calls (resize_lock + upsert_locks for HNSW). Multiple threads committing distinct
+    // vertices through independent `TxnSession`s, all touching the same vector index, must
+    // no longer serialize on that outer lock and must still leave every vertex retrievable
+    // with no lost or corrupted vectors.
+    let dir = tempfile::tempdir().unwrap();
+    let dim = 8usize;
+    let g = Graph::open(dir.path()).unwrap();
+    declare_index(&g, "emb", dim, DistanceMetric::Cosine);
+
+    const THREADS: i64 = 8;
+    const PER_THREAD: i64 = 40;
+
+    let handles: Vec<_> = (0..THREADS)
+        .map(|t| {
+            let g = g.clone();
+            std::thread::spawn(move || {
+                for i in 0..PER_THREAD {
+                    let id = t * 10_000 + i;
+                    let emb: Vec<f32> = (0..dim).map(|d| ((id * 7 + d as i64 * 3) as f32).sin()).collect();
+                    // OCC conflicts between concurrent commits (e.g. on shared schema/id-allocation
+                    // state) are expected and unrelated to the vector-index locking under test —
+                    // retry, matching bench_write_occ.rs's pattern for concurrent OLTP writers.
+                    loop {
+                        let mut txn = g.begin();
+                        let staged = txn
+                            .g()
+                            .addV("doc")
+                            .property("id", id)
+                            .property("emb", Value::FloatVector(emb.clone()))
+                            .next();
+                        match staged.and_then(|_| txn.commit()) {
+                            Ok(_) => break,
+                            Err(StoreError::Conflict) => continue,
+                            Err(e) => panic!("commit failed for id={id}: {e}"),
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+    for h in handles {
+        h.join().unwrap();
+    }
+
+    let mut snap = g.read();
+    let total = snap.g().V([]).count().next().unwrap().unwrap();
+    assert_eq!(total, Value::Int64(THREADS * PER_THREAD), "no vertex lost across concurrent OLTP commits");
+
+    let results =
+        snap.g().V([]).nearest("emb", vec![1.0; dim], (THREADS * PER_THREAD) as usize).id().to_list().unwrap();
+    assert_eq!(
+        ids_from_results(results).len() as i64,
+        THREADS * PER_THREAD,
+        "every concurrently-committed vector must be present in the live HNSW index"
+    );
+
+    g.close().unwrap();
+}
+
+#[test]
+fn test_concurrent_oltp_commits_with_background_checkpoint() {
+    // Regression test for a save()-vs-insert() race found via code review after the OLTP
+    // concurrent-write relaxation above: `IndexManager::save`/`save_all` used to take
+    // `arc.read()` on the same per-index lock that `logical.rs`'s apply loop now also takes
+    // `.read()` for insert/remove — so a background checkpoint (`trigger_index_checkpoint`)
+    // could run fully concurrently with an in-flight insert on another thread. usearch's
+    // `save_to_buffer()` has no internal synchronization of its own (confirmed against its
+    // C++ source: it walks `vectors_lookup_`/`size()` without taking `slot_lookup_mutex_`),
+    // so a save concurrent with a capacity-triggered reallocation was a real segfault risk;
+    // and even without a reallocation, a save could observe `last_replayed_timestamp()`
+    // advanced (by a *different* thread's already-finished insert) past an insert that
+    // hadn't finished landing in the index yet on some other thread — permanent data loss
+    // on crash+WAL-replay, since the snapshot would be stamped as covering a timestamp it
+    // doesn't actually contain. Fixed by taking `.write()` in `IndexManager::save`/`save_all`,
+    // which cannot proceed while any insert/remove is in flight.
+    //
+    // None of the other concurrency tests catch this because they all leave checkpointing
+    // disabled (no `checkpoint_mutation_threshold` configured), so `trigger_index_checkpoint`
+    // never actually spawns a background save during heavy concurrent inserts. This test sets
+    // a low threshold so saves fire repeatedly *during* the concurrent commit storm, then
+    // verifies every vector survives a close (which drains any in-flight background save via
+    // `checkpoint_states`' `in_progress` lock — see `Graph::close`) and reopen.
+    let dir = tempfile::tempdir().unwrap();
+    let dim = 8usize;
+    let options = crate::schema::GraphOptions {
+        index: crate::vector::IndexOptions { default_checkpoint_mutation_threshold: Some(10), ..Default::default() },
+        ..Default::default()
+    };
+    let g = Graph::open_with_options(dir.path(), options).unwrap();
+    declare_index(&g, "emb", dim, DistanceMetric::Cosine);
+
+    const THREADS: i64 = 8;
+    const PER_THREAD: i64 = 40;
+
+    let handles: Vec<_> = (0..THREADS)
+        .map(|t| {
+            let g = g.clone();
+            std::thread::spawn(move || {
+                for i in 0..PER_THREAD {
+                    let id = t * 10_000 + i;
+                    let emb: Vec<f32> = (0..dim).map(|d| ((id * 7 + d as i64 * 3) as f32).sin()).collect();
+                    loop {
+                        let mut txn = g.begin();
+                        let staged = txn
+                            .g()
+                            .addV("doc")
+                            .property("id", id)
+                            .property("emb", Value::FloatVector(emb.clone()))
+                            .next();
+                        match staged.and_then(|_| txn.commit()) {
+                            Ok(_) => break,
+                            Err(StoreError::Conflict) => continue,
+                            Err(e) => panic!("commit failed for id={id}: {e}"),
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+    for h in handles {
+        h.join().unwrap();
+    }
+
+    g.close().unwrap();
+
+    // Reopen fresh: if the race had lost or corrupted a vector, this is where it would show —
+    // either as a missing vertex (snapshot's watermark skipped WAL entries it didn't actually
+    // contain) or a hang/panic from a corrupted snapshot/segfault during the run above.
+    let g = Graph::open(dir.path()).unwrap();
+    let mut snap = g.read();
+    let total = snap.g().V([]).count().next().unwrap().unwrap();
+    assert_eq!(
+        total,
+        Value::Int64(THREADS * PER_THREAD),
+        "no vertex lost across concurrent OLTP commits racing a background checkpoint"
+    );
+
+    let results =
+        snap.g().V([]).nearest("emb", vec![1.0; dim], (THREADS * PER_THREAD) as usize).id().to_list().unwrap();
+    assert_eq!(
+        ids_from_results(results).len() as i64,
+        THREADS * PER_THREAD,
+        "every vector must survive close+reopen after concurrent commits with active checkpointing"
+    );
+
+    g.close().unwrap();
+}
+
 fn measure_recall(
     snap: &mut crate::ReadSession,
     vectors: &[Vec<f32>],
