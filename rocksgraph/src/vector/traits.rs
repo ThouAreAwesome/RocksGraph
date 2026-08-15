@@ -355,7 +355,11 @@ pub(crate) trait VectorIndex: Send + Sync {
     fn last_replayed_timestamp(&self) -> u64;
 
     /// Advance the replayed timestamp after WAL catch-up or cold-start rebuild.
-    fn set_last_replayed_timestamp(&mut self, seq: u64);
+    ///
+    /// `&self`, not `&mut self`: called from the OLTP commit path under a shared
+    /// (read) lock on the index, alongside concurrent `insert`/`remove` calls on
+    /// other keys — see `logical.rs`'s post-commit "apply vector mutations" loop.
+    fn set_last_replayed_timestamp(&self, seq: u64);
 
     /// Apply memory limit from `IndexOptions`. No-op for BruteForce.
     fn set_memory_limit(&mut self, _limit_bytes: usize) {}

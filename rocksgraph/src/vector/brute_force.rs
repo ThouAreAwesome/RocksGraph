@@ -99,7 +99,7 @@ pub(crate) fn dist_to_sim(metric: super::traits::DistanceMetric, dist: f32) -> f
 #[derive(Debug, Default)]
 pub struct BruteForceIndex {
     entries: std::sync::RwLock<Vec<(EntityKey, Vec<f32>)>>,
-    last_replayed_timestamp: u64,
+    last_replayed_timestamp: std::sync::atomic::AtomicU64,
     property: SmolStr,
     memory_limit_bytes: Option<usize>,
     metric: super::traits::DistanceMetric,
@@ -227,11 +227,11 @@ impl VectorIndex for BruteForceIndex {
     }
 
     fn last_replayed_timestamp(&self) -> u64 {
-        self.last_replayed_timestamp
+        self.last_replayed_timestamp.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    fn set_last_replayed_timestamp(&mut self, seq: u64) {
-        self.last_replayed_timestamp = seq;
+    fn set_last_replayed_timestamp(&self, seq: u64) {
+        self.last_replayed_timestamp.store(seq, std::sync::atomic::Ordering::Relaxed);
     }
 
     fn metric(&self) -> super::traits::DistanceMetric {

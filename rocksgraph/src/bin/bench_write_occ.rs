@@ -7,7 +7,8 @@
 //!
 //! Usage:
 //! ```text
-//! bench_write_occ --data-dir <path> --file-path <path> [--parallelism N] [--vector-dim N] [--checkpoint-threshold N]
+//! bench_write_occ --data-dir <path> --file-path <path> [--parallelism N] [--vector-dim N]
+//!     [--checkpoint-threshold N] [--quantization f32|f16]
 //! ```
 
 #[path = "vector_bench_common/mod.rs"]
@@ -15,8 +16,8 @@ mod vector_bench_common;
 
 use hdrhistogram::Histogram;
 use rocksgraph::{
-    schema::GraphOptions, AnnAlgorithm, DistanceMetric, Graph, HnswConfig, StoreError, TraversalBuilder, TxnSession,
-    VectorEntityType, VectorIndexConfig, __,
+    schema::GraphOptions, AnnAlgorithm, DistanceMetric, Graph, HnswConfig, Quantization, StoreError, TraversalBuilder,
+    TxnSession, VectorEntityType, VectorIndexConfig, __,
 };
 use vector_bench_common::random_normal_vector;
 
@@ -117,6 +118,13 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|p| args.get(p + 1))
         .and_then(|s| s.parse::<u64>().ok());
 
+    let quantization_str = args.iter().position(|a| a == "--quantization").and_then(|p| args.get(p + 1));
+    let quantization = match quantization_str.map(|s| s.as_str()) {
+        Some("f16") => Quantization::F16,
+        Some("f32") | None => Quantization::F32,
+        Some(other) => panic!("Unknown quantization: {}", other),
+    };
+
     if data_dir.exists() {
         std::fs::remove_dir_all(&data_dir)?;
     }
@@ -133,13 +141,16 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
 
     if vector_dim > 0 {
         let mut schema = graph.open_schema();
-        schema.add_vector_index(VectorIndexConfig::new(
-            VECTOR_KEY,
-            VectorEntityType::Vertex,
-            vector_dim,
-            DistanceMetric::Cosine,
-            AnnAlgorithm::Hnsw(HnswConfig::default()),
-        ));
+        schema.add_vector_index(
+            VectorIndexConfig::new(
+                VECTOR_KEY,
+                VectorEntityType::Vertex,
+                vector_dim,
+                DistanceMetric::Cosine,
+                AnnAlgorithm::Hnsw(HnswConfig::default()),
+            )
+            .with_quantization(quantization),
+        );
         schema.commit()?;
     }
 
@@ -209,6 +220,7 @@ fn run_with_args(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Transactional OCC Write Complete ===");
     if vector_dim > 0 {
         println!("Vector Dimension: {vector_dim}");
+        println!("Quantization: {quantization:?}");
     }
     if let Some(t) = checkpoint_threshold {
         println!("Checkpoint Threshold: {t}");

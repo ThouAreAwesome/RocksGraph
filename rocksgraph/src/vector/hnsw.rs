@@ -127,7 +127,7 @@ pub struct UsearchHnswIndex {
     inner: Index,
     config: VectorIndexConfig,
     tombstone_count: std::sync::atomic::AtomicU64,
-    last_replayed_timestamp: u64,
+    last_replayed_timestamp: std::sync::atomic::AtomicU64,
     memory_limit_bytes: Option<usize>,
     default_ef_search: usize,
 
@@ -149,7 +149,7 @@ impl std::fmt::Debug for UsearchHnswIndex {
             .field("size", &self.inner.size())
             .field("capacity", &self.inner.capacity())
             .field("tombstones", &self.tombstone_count)
-            .field("last_replayed_timestamp", &self.last_replayed_timestamp)
+            .field("last_replayed_timestamp", &self.last_replayed_timestamp.load(std::sync::atomic::Ordering::Relaxed))
             .field("edge_label_count", &self.edge_map.as_ref().map(|m| m.count()))
             .finish()
     }
@@ -180,7 +180,7 @@ impl UsearchHnswIndex {
             config: config.clone(),
             default_ef_search: config.algorithm_ef_search(),
             tombstone_count: std::sync::atomic::AtomicU64::new(0),
-            last_replayed_timestamp: 0,
+            last_replayed_timestamp: std::sync::atomic::AtomicU64::new(0),
             memory_limit_bytes: None,
             edge_map: if is_edge { Some(EdgeLabelMap::new()) } else { None },
             resize_lock: parking_lot::RwLock::new(()),
@@ -407,11 +407,11 @@ impl VectorIndex for UsearchHnswIndex {
     }
 
     fn last_replayed_timestamp(&self) -> u64 {
-        self.last_replayed_timestamp
+        self.last_replayed_timestamp.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    fn set_last_replayed_timestamp(&mut self, seq: u64) {
-        self.last_replayed_timestamp = seq;
+    fn set_last_replayed_timestamp(&self, seq: u64) {
+        self.last_replayed_timestamp.store(seq, std::sync::atomic::Ordering::Relaxed);
     }
 
     fn set_memory_limit(&mut self, limit_bytes: usize) {
@@ -475,7 +475,7 @@ pub fn load_vector_index(path: &Path, config: &VectorIndexConfig) -> Result<Usea
         inner,
         config: config.clone(),
         tombstone_count: std::sync::atomic::AtomicU64::new(header.tombstone_count),
-        last_replayed_timestamp: header.last_replayed_timestamp,
+        last_replayed_timestamp: std::sync::atomic::AtomicU64::new(header.last_replayed_timestamp),
         memory_limit_bytes: None,
         default_ef_search: config.algorithm_ef_search(),
         edge_map: if is_edge { Some(EdgeLabelMap::new()) } else { None },
