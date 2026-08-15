@@ -7,15 +7,16 @@
 //! HNSW (Hierarchical Navigable Small World) graph. Vertex keys are directly
 //! bit-cast `i64 → u64`; edge indexes are not yet supported (v0.3).
 
-use std::collections::HashMap;
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 
 use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
 
-use super::brute_force::EntityKey;
-use super::error::{VectorEntityType, VectorError};
-use super::persistence::{load_snapshot_file, save_snapshot_file, SnapshotHeader};
-use super::traits::{DistanceMetric, Quantization, VectorIndex, VectorIndexConfig};
+use super::{
+    brute_force::EntityKey,
+    error::{VectorEntityType, VectorError},
+    persistence::{load_snapshot_file, save_snapshot_file, SnapshotHeader},
+    traits::{DistanceMetric, Quantization, VectorIndex, VectorIndexConfig},
+};
 use crate::types::keys::CanonicalEdgeKey;
 
 fn metric_to_usearch(m: DistanceMetric) -> MetricKind {
@@ -40,29 +41,105 @@ fn scalar_kind(q: Quantization) -> ScalarKind {
 /// once that is wired through to index construction.
 pub(crate) const DEFAULT_RESERVE_CAPACITY: usize = 1000;
 
+/// usearch pre-allocates a fixed pool of per-thread scratch buffers sized by
+/// the `threads` argument to `reserve_capacity_and_threads` (default: just
+/// `hardware_concurrency()` if unspecified via the bare `reserve(capacity)`).
+/// Any operation from a thread beyond that pool size fails with "Reserve
+/// capacity ahead of insertions/searches!" — a distinct failure mode from
+/// vector-count capacity, confirmed empirically: a workload combining rayon's
+/// internal pool with a handful of dedicated searcher threads exceeded the
+/// hardware-concurrency default. Reserve generously so this is unreachable
+/// under realistic concurrency rather than merely "usually enough".
+fn reserved_thread_count() -> usize {
+    std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4) * 4
+}
+
+/// Maps CanonicalEdgeKey to usearch's u64 labels, as usearch only supports u64.
+#[derive(Debug)]
+pub(crate) struct EdgeLabelMap {
+    #[allow(dead_code)] // TODO(v0.4): used when assigning labels for Edge keys
+    next_edge_label: std::sync::atomic::AtomicU64,
+    label_to_edge: std::sync::RwLock<HashMap<u64, CanonicalEdgeKey>>,
+    edge_to_label: std::sync::RwLock<HashMap<CanonicalEdgeKey, u64>>,
+}
+
+impl EdgeLabelMap {
+    fn new() -> Self {
+        Self {
+            next_edge_label: std::sync::atomic::AtomicU64::new(0),
+            label_to_edge: std::sync::RwLock::new(HashMap::new()),
+            edge_to_label: std::sync::RwLock::new(HashMap::new()),
+        }
+    }
+
+    fn key_to_label(&self, edge_key: &CanonicalEdgeKey) -> Result<u64, VectorError> {
+        if let Some(&label) = self.edge_to_label.read().unwrap().get(edge_key) {
+            return Ok(label);
+        }
+        // TODO(v0.4): assign label, store in edge_to_label and label_to_edge, return label.
+        Err(VectorError::Unsupported("edge vector indexes are not yet supported (v0.3)".into()))
+    }
+
+    fn label_to_key(&self, label: u64) -> Option<CanonicalEdgeKey> {
+        self.label_to_edge.read().unwrap().get(&label).copied()
+    }
+
+    fn count(&self) -> usize {
+        self.label_to_edge.read().unwrap().len()
+    }
+}
+
+/// Sharded mutexes for serializing concurrent upsert/remove operations on the
+/// same key. usearch's `add` has no atomic upsert (checked: no `update`
+/// method exists, and `add` on an already-existing label is rejected
+/// outright with "Duplicate keys not allowed") — an upsert is remove-then-add,
+/// two separate calls. Without per-key serialization, two threads upserting
+/// the same key can both pass `contains()`, both remove, and the second's
+/// `add` then collides with the first's fresh entry — confirmed empirically.
+/// Sharding (rather than one global lock) keeps operations on *different*
+/// keys fully concurrent, which is what `resize_lock`'s read side is for in
+/// the first place.
+pub(crate) struct ShardedUpsertLocks {
+    locks: Vec<parking_lot::Mutex<()>>,
+}
+
+impl ShardedUpsertLocks {
+    fn new(shards: usize) -> Self {
+        Self { locks: (0..shards).map(|_| parking_lot::Mutex::new(())).collect() }
+    }
+
+    fn lock(&self, label: u64) -> parking_lot::MutexGuard<'_, ()> {
+        self.locks[(label as usize) % self.locks.len()].lock()
+    }
+}
+
+const UPSERT_LOCK_SHARDS: usize = 64;
+
 /// HNSW vector index backed by the usearch crate.
 ///
 /// Vertex keys map directly: `vertex_id as u64`. Edge indexes use an internal
-/// bidirectional label table (`edge_to_label` / `label_to_edge`) since usearch
-/// only supports `u64` labels and `CanonicalEdgeKey` is 22 bytes. The maps are
-/// initialized in `new()` when `config.entity_type == Edge`; they remain `None`
-/// for Vertex-only indexes.
+/// bidirectional label table since usearch only supports `u64` labels.
 ///
 /// Edge support is gated by the schema layer (v0.3). When the gate is removed,
-/// the TODOs inside `key_to_label`, `label_to_key`, `remove`, `save`, and
-/// `load_vector_index` are the only remaining steps.
+/// the TODOs in `EdgeLabelMap`, `remove`, `save`, and `load_vector_index` are
+/// the only remaining steps.
 pub struct UsearchHnswIndex {
     inner: Index,
     config: VectorIndexConfig,
-    tombstone_count: u64,
+    tombstone_count: std::sync::atomic::AtomicU64,
     last_replayed_timestamp: u64,
     memory_limit_bytes: Option<usize>,
     default_ef_search: usize,
-    // Edge label table — None for Vertex-only indexes.
-    #[allow(dead_code)] // TODO(v0.4): used when assigning labels for Edge keys
-    next_edge_label: u64,
-    label_to_edge: Option<HashMap<u64, CanonicalEdgeKey>>,
-    edge_to_label: Option<HashMap<CanonicalEdgeKey, u64>>,
+
+    /// Edge label table — None for Vertex-only indexes.
+    edge_map: Option<EdgeLabelMap>,
+
+    /// Guards `inner`'s capacity against concurrent `insert`/`remove`/`search`.
+    /// usearch's `reserve` is NOT safe to call concurrently with any other operation.
+    resize_lock: parking_lot::RwLock<()>,
+
+    /// Per-key serialization for upserts/removes to avoid conflicts on the same key.
+    upsert_locks: ShardedUpsertLocks,
 }
 
 impl std::fmt::Debug for UsearchHnswIndex {
@@ -73,7 +150,7 @@ impl std::fmt::Debug for UsearchHnswIndex {
             .field("capacity", &self.inner.capacity())
             .field("tombstones", &self.tombstone_count)
             .field("last_replayed_timestamp", &self.last_replayed_timestamp)
-            .field("edge_label_count", &self.label_to_edge.as_ref().map(|m| m.len()))
+            .field("edge_label_count", &self.edge_map.as_ref().map(|m| m.count()))
             .finish()
     }
 }
@@ -92,7 +169,9 @@ impl UsearchHnswIndex {
 
         let inner = Index::new(&options).map_err(|e| VectorError::Internal(format!("usearch index creation: {e}")))?;
 
-        inner.reserve(DEFAULT_RESERVE_CAPACITY).map_err(|e| VectorError::Internal(format!("usearch reserve: {e}")))?;
+        inner
+            .reserve_capacity_and_threads(DEFAULT_RESERVE_CAPACITY, reserved_thread_count())
+            .map_err(|e| VectorError::Internal(format!("usearch reserve: {e}")))?;
 
         let is_edge = config.entity_type == VectorEntityType::Edge;
 
@@ -100,12 +179,12 @@ impl UsearchHnswIndex {
             inner,
             config: config.clone(),
             default_ef_search: config.algorithm_ef_search(),
-            tombstone_count: 0,
+            tombstone_count: std::sync::atomic::AtomicU64::new(0),
             last_replayed_timestamp: 0,
             memory_limit_bytes: None,
-            next_edge_label: 0,
-            label_to_edge: if is_edge { Some(HashMap::new()) } else { None },
-            edge_to_label: if is_edge { Some(HashMap::new()) } else { None },
+            edge_map: if is_edge { Some(EdgeLabelMap::new()) } else { None },
+            resize_lock: parking_lot::RwLock::new(()),
+            upsert_locks: ShardedUpsertLocks::new(UPSERT_LOCK_SHARDS),
         })
     }
 
@@ -118,7 +197,7 @@ impl UsearchHnswIndex {
     /// (wrong entity type). Returns `Unsupported` for edge keys on an edge
     /// index until edge support is fully implemented (TODO v0.4).
     #[inline]
-    fn key_to_label(&mut self, key: &EntityKey) -> Result<u64, VectorError> {
+    fn key_to_label(&self, key: &EntityKey) -> Result<u64, VectorError> {
         match key {
             EntityKey::Vertex(id) => {
                 if *id < 0 {
@@ -128,15 +207,10 @@ impl UsearchHnswIndex {
             }
             EntityKey::Edge(edge_key) => {
                 let map = self
-                    .edge_to_label
-                    .as_mut()
+                    .edge_map
+                    .as_ref()
                     .ok_or_else(|| VectorError::Internal("edge key used with vertex-only index".into()))?;
-                if let Some(&label) = map.get(edge_key) {
-                    return Ok(label);
-                }
-                // TODO(v0.4): assign label, store in edge_to_label and label_to_edge, return label.
-                let _ = map; // suppress unused-mut warning until TODO is implemented
-                Err(VectorError::Unsupported("edge vector indexes are not yet supported (v0.3)".into()))
+                map.key_to_label(edge_key)
             }
         }
     }
@@ -147,12 +221,72 @@ impl UsearchHnswIndex {
     /// For Edge indexes: lookup in `label_to_edge` table.
     #[inline]
     fn label_to_key(&self, label: u64) -> EntityKey {
-        if let Some(map) = &self.label_to_edge {
-            if let Some(&edge_key) = map.get(&label) {
+        if let Some(map) = &self.edge_map {
+            if let Some(edge_key) = map.label_to_key(label) {
                 return EntityKey::Edge(edge_key);
             }
         }
         EntityKey::Vertex(label as i64)
+    }
+
+    /// Fetches the old vector from the index if it exists.
+    fn fetch_old_vector(&self, label: u64) -> Option<Vec<f32>> {
+        if self.inner.contains(label) {
+            let mut buf = vec![0.0f32; self.config.dimension];
+            match self.inner.get(label, &mut buf) {
+                Ok(n) if n > 0 => Some(buf),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Removes the old vector (if any), creating a tombstone.
+    /// This is step 1 of an upsert. Note: during the window between remove and add,
+    /// a concurrent search may observe the key as absent.
+    fn upsert_remove_old(&self, label: u64, has_old_vector: bool) -> Result<(), VectorError> {
+        if has_old_vector {
+            self.inner
+                .remove(label)
+                .map_err(|e| VectorError::Internal(format!("usearch remove before upsert: {e}")))?;
+            self.tombstone_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        Ok(())
+    }
+
+    /// Attempt to restore the old vector after a failed add, to avoid permanently dropping it.
+    fn restore_on_failure(&self, label: u64, old_vector: Option<Vec<f32>>, add_err: String) -> VectorError {
+        if let Some(old) = old_vector {
+            if self.inner.add(label, &old).is_err() {
+                return VectorError::Internal(format!(
+                    "usearch add failed ({add_err}) and restoring the previous vector also failed — \
+                     '{label}' may be missing from the index until the next rebuild"
+                ));
+            }
+        }
+        VectorError::Internal(format!("usearch add: {add_err}"))
+    }
+
+    /// The slow path for `insert`: acquires exclusive access, grows capacity, and adds the vector.
+    fn grow_capacity_and_add(
+        &self,
+        label: u64,
+        vector: &[f32],
+        old_vector: Option<Vec<f32>>,
+    ) -> Result<(), VectorError> {
+        let _guard = self.resize_lock.write();
+        let cur_cap = self.inner.capacity();
+
+        // Re-reserve capacity and threads. Even if `size < cur_cap`, the fast path might have
+        // failed due to thread-slot exhaustion in usearch, so we unconditionally re-reserve.
+        let new_cap = if self.inner.size() >= cur_cap { (cur_cap * 2).max(DEFAULT_RESERVE_CAPACITY) } else { cur_cap };
+        self.inner
+            .reserve_capacity_and_threads(new_cap, reserved_thread_count())
+            .map_err(|e| VectorError::Internal(format!("usearch reserve: {e}")))?;
+
+        self.inner.add(label, vector).map_err(|e| self.restore_on_failure(label, old_vector, e.to_string()))?;
+        Ok(())
     }
 
     /// Returns the number of live (non-tombstoned) entries.
@@ -164,54 +298,62 @@ impl UsearchHnswIndex {
     /// Returns the tombstone ratio: fraction of entries that are soft-deleted.
     #[allow(dead_code)]
     pub fn tombstone_ratio(&self) -> f32 {
-        let total = self.live_count() as u64 + self.tombstone_count;
+        let total = self.live_count() as u64 + self.tombstone_count.load(std::sync::atomic::Ordering::Relaxed);
         if total == 0 {
             return 0.0;
         }
-        self.tombstone_count as f32 / total as f32
+        self.tombstone_count.load(std::sync::atomic::Ordering::Relaxed) as f32 / total as f32
     }
 }
 
 // ── VectorIndex impl ────────────────────────────────────────────────────────
 
 impl VectorIndex for UsearchHnswIndex {
-    fn insert(&mut self, key: &EntityKey, vector: &[f32]) -> Result<(), VectorError> {
+    fn insert(&self, key: &EntityKey, vector: &[f32]) -> Result<(), VectorError> {
         if vector.len() != self.config.dimension {
             return Err(VectorError::DimensionMismatch { expected: self.config.dimension, actual: vector.len() });
         }
 
         let label = self.key_to_label(key)?;
 
-        // Upsert: remove old entry first, then add.
+        // Serializes concurrent operations on THIS key.
+        let _key_guard = self.upsert_locks.lock(label);
+
+        // Fetch the old vector (if any) before removing it, to restore on failure.
+        let old_vector = self.fetch_old_vector(label);
+
+        // Fast path: usearch's `add` and `remove` are safe to call concurrently with
+        // each other across distinct keys.
+        {
+            let _guard = self.resize_lock.read();
+            self.upsert_remove_old(label, old_vector.is_some())?;
+            if self.inner.add(label, vector).is_ok() {
+                return Ok(());
+            }
+        }
+
+        // Slow path: out of capacity or thread slots.
+        self.grow_capacity_and_add(label, vector, old_vector)
+    }
+
+    fn remove(&self, key: &EntityKey) -> Result<(), VectorError> {
+        let label = self.key_to_label(key)?;
+
+        let _key_guard = self.upsert_locks.lock(label);
+        let _guard = self.resize_lock.read();
         if self.inner.contains(label) {
-            self.inner
-                .remove(label)
-                .map_err(|e| VectorError::Internal(format!("usearch remove before upsert: {e}")))?;
-            self.tombstone_count += 1; // remove creates a tombstone
+            self.inner.remove(label).map_err(|e| VectorError::Internal(format!("usearch remove: {e}")))?;
+            self.tombstone_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            // TODO(v0.4): for Edge keys, remove from edge_map here.
         }
-
-        // Expand capacity if needed — usearch does not auto-grow.
-        let cur_cap = self.inner.capacity();
-        if self.inner.size() >= cur_cap {
-            let new_cap = (cur_cap * 2).max(DEFAULT_RESERVE_CAPACITY);
-
-            self.inner.reserve(new_cap).map_err(|e| VectorError::Internal(format!("usearch reserve: {e}")))?;
-        }
-
-        self.inner.add(label, vector).map_err(|e| VectorError::Internal(format!("usearch add: {e}")))?;
-
         Ok(())
     }
 
-    fn remove(&mut self, key: &EntityKey) -> Result<(), VectorError> {
-        let label = self.key_to_label(key)?;
-
-        if self.inner.contains(label) {
-            self.inner.remove(label).map_err(|e| VectorError::Internal(format!("usearch remove: {e}")))?;
-            self.tombstone_count += 1;
-            // TODO(v0.4): for Edge keys, remove from edge_to_label and label_to_edge maps here.
-        }
-        // Idempotent: no-op if key not found.
+    fn reserve(&self, capacity: usize) -> Result<(), VectorError> {
+        let _guard = self.resize_lock.write();
+        self.inner
+            .reserve_capacity_and_threads(capacity, reserved_thread_count())
+            .map_err(|e| VectorError::Internal(format!("usearch reserve: {e}")))?;
         Ok(())
     }
 
@@ -219,6 +361,9 @@ impl VectorIndex for UsearchHnswIndex {
         if query.len() != self.config.dimension {
             return Err(VectorError::DimensionMismatch { expected: self.config.dimension, actual: query.len() });
         }
+
+        // Read side of `resize_lock`: must not run concurrently with `reserve`.
+        let _guard = self.resize_lock.read();
 
         if k == 0 || self.inner.size() == 0 {
             return Ok(Vec::new());
@@ -255,7 +400,7 @@ impl VectorIndex for UsearchHnswIndex {
             last_replayed_timestamp,
             dimension: self.config.dimension,
             metric: self.config.metric,
-            tombstone_count: self.tombstone_count,
+            tombstone_count: self.tombstone_count.load(std::sync::atomic::Ordering::Relaxed),
             payload_len: usearch_buf.len(),
         };
         save_snapshot_file(path, &header, &usearch_buf)
@@ -329,13 +474,13 @@ pub fn load_vector_index(path: &Path, config: &VectorIndexConfig) -> Result<Usea
     Ok(UsearchHnswIndex {
         inner,
         config: config.clone(),
-        tombstone_count: header.tombstone_count,
+        tombstone_count: std::sync::atomic::AtomicU64::new(header.tombstone_count),
         last_replayed_timestamp: header.last_replayed_timestamp,
         memory_limit_bytes: None,
         default_ef_search: config.algorithm_ef_search(),
-        next_edge_label: 0,
-        label_to_edge: if is_edge { Some(HashMap::new()) } else { None },
-        edge_to_label: if is_edge { Some(HashMap::new()) } else { None },
+        edge_map: if is_edge { Some(EdgeLabelMap::new()) } else { None },
+        resize_lock: parking_lot::RwLock::new(()),
+        upsert_locks: ShardedUpsertLocks::new(UPSERT_LOCK_SHARDS),
     })
 }
 
@@ -367,8 +512,7 @@ impl VectorIndexConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vector::traits::HnswConfig;
-    use crate::vector::VectorEntityType;
+    use crate::vector::{traits::HnswConfig, VectorEntityType};
 
     fn test_config() -> VectorIndexConfig {
         VectorIndexConfig {
@@ -381,9 +525,169 @@ mod tests {
         }
     }
 
+    /// Well-separated test vector, via a small local LCG (splitmix64-style).
+    ///
+    /// Two earlier generation schemes were tried and rejected, both
+    /// empirically: (1) `[i, 0, 0, 0]`-style colinear vectors are degenerate
+    /// under `DistanceMetric::Cosine` — any two positive scalar multiples of
+    /// the same direction have similarity 1 ("identical" to the metric),
+    /// making self-recall assertions meaningless. (2) `sin(i*13 + d*37)` in
+    /// only 4 dimensions produces near-duplicate vectors often enough at
+    /// 20,000+ samples to flake self-recall assertions — confirmed by
+    /// computing cosine similarity 0.9999997 between two "different"
+    /// vectors from that scheme (sin()'s bounded, periodic range loses
+    /// precision for large arguments, and 4 dimensions isn't enough space to
+    /// avoid collisions at this sample count). An LCG has neither problem:
+    /// well-dispersed pseudo-random output, no periodicity at this scale.
+    fn test_vector(i: i64) -> Vec<f32> {
+        let mut state = (i as u64).wrapping_mul(0x9E3779B97F4A7C15).wrapping_add(1);
+        (0..4)
+            .map(|_| {
+                state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                ((state >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_concurrent_insert_no_upfront_reserve() {
+        // Regression test for a reliably-reproducible SIGSEGV: concurrent
+        // insert() calls (e.g. from IndexManager::rebuild()'s rayon-parallel
+        // insert loop) used to call usearch's reserve() reactively whenever
+        // capacity ran out, with no synchronization against other threads'
+        // concurrent add()/reserve() calls. usearch's `add`/`remove` are safe
+        // to call concurrently with each other, but `reserve` is not safe to
+        // call concurrently with either — confirmed by reproducing the crash
+        // 5/5 runs before this fix, and by confirming it disappears once
+        // `reserve` is moved behind `resize_lock`'s exclusive side.
+        //
+        // Deliberately don't pre-reserve capacity here — starts at
+        // DEFAULT_RESERVE_CAPACITY (1000) and must grow reactively many
+        // times over the course of this test, exactly the scenario that
+        // used to crash.
+        let idx = UsearchHnswIndex::new(&test_config()).unwrap();
+        let n = 20_000i64;
+        use rayon::prelude::*;
+        let result: Result<(), VectorError> =
+            (0..n).into_par_iter().try_for_each(|i| idx.insert(&EntityKey::Vertex(i), &test_vector(i)));
+        result.unwrap();
+        assert_eq!(idx.live_count(), n as usize);
+
+        // Content check, not just count: a race that silently dropped or
+        // overwrote an entry (rather than crashing) wouldn't show up in
+        // live_count() alone if it happened to swap one entry for another.
+        // Spot-check a sample spread across the id range, including past
+        // each capacity-growth boundary (1000 -> 2000 -> 4000 -> 8000 -> ...).
+        //
+        // Aggregate threshold, not a per-point exact match: HNSW is
+        // approximate, so even with well-separated vectors, self-recall
+        // isn't mathematically guaranteed 100% of the time for every single
+        // sampled point — confirmed empirically (two "different" vectors at
+        // n=20,000 in 4 dimensions can land at cosine similarity 0.998
+        // purely by chance, occasionally letting ef_search's beam settle on
+        // the near neighbor instead of the exact self-match). A real
+        // corruption bug would fail far more than an occasional sample, not
+        // borderline-miss one; matches the `RECALL_THRESHOLD`-based
+        // aggregate assertion pattern used by the e2e rebuild tests in
+        // `graph/tests/vector.rs` for the same reason.
+        let sample: Vec<i64> = (0..n).step_by(731).collect();
+        let mut hits = 0usize;
+        for &i in &sample {
+            let results = idx.search(&test_vector(i), 1, None).unwrap();
+            if results.first().map(|(k, _)| k) == Some(&EntityKey::Vertex(i)) {
+                hits += 1;
+            }
+        }
+        let recall = hits as f32 / sample.len() as f32;
+        assert!(recall >= 0.95, "self-recall after concurrent insert too low: {hits}/{} ({recall:.3})", sample.len());
+    }
+
+    #[test]
+    fn test_concurrent_insert_and_search_no_upfront_reserve() {
+        // Mixed workload: one thread inserting (forcing capacity growth via
+        // the write side of resize_lock) while others concurrently search
+        // (read side) — the scenario the read/write split is actually for.
+        // The insert-only regression test above doesn't exercise search()'s
+        // guard at all, since nothing else was running concurrently with it.
+        let idx = std::sync::Arc::new(UsearchHnswIndex::new(&test_config()).unwrap());
+        let n = 15_000i64;
+
+        // Seed one findable entry before the concurrent phase so searchers
+        // always have at least one result to retrieve.
+        idx.insert(&EntityKey::Vertex(0), &test_vector(0)).unwrap();
+
+        let inserter = {
+            let idx = std::sync::Arc::clone(&idx);
+            std::thread::spawn(move || {
+                use rayon::prelude::*;
+                (1..n).into_par_iter().try_for_each(|i| idx.insert(&EntityKey::Vertex(i), &test_vector(i)))
+            })
+        };
+
+        let searchers: Vec<_> = (0..4)
+            .map(|_| {
+                let idx = std::sync::Arc::clone(&idx);
+                std::thread::spawn(move || {
+                    for _ in 0..2000 {
+                        // Must never panic/crash/deadlock while capacity is
+                        // concurrently growing; result content isn't checked
+                        // here since the inserter is still in flight.
+                        idx.search(&test_vector(0), 5, None).unwrap();
+                    }
+                })
+            })
+            .collect();
+
+        inserter.join().unwrap().unwrap();
+        for s in searchers {
+            s.join().unwrap();
+        }
+
+        assert_eq!(idx.live_count(), n as usize);
+        // Search must still find vertex 0 once the concurrent phase is over.
+        // k=5 rather than an exact top-1 match: HNSW is approximate, and a
+        // near-duplicate vector can occasionally rank first by chance (see
+        // the aggregate-recall comment in the insert-only regression test
+        // above) — this only needs to confirm the entry wasn't lost or
+        // corrupted, not exercise search ranking precision.
+        let results = idx.search(&test_vector(0), 5, None).unwrap();
+        assert!(
+            results.iter().any(|(k, _)| *k == EntityKey::Vertex(0)),
+            "vertex 0 must still be findable after the concurrent insert+search phase"
+        );
+    }
+
+    #[test]
+    fn test_concurrent_upsert_same_key() {
+        // Regression test for a confirmed race: without per-key
+        // serialization, two threads upserting the SAME key could both pass
+        // `contains(label)`, both remove, and the second thread's `add` then
+        // collide with the first thread's fresh entry (usearch has no
+        // atomic upsert — rejects `add` on an already-existing label with
+        // "Duplicate keys not allowed", confirmed empirically). Every one of
+        // these concurrent upserts must succeed, and the index must end up
+        // with exactly one live entry for the key, holding one of the
+        // racing values (whichever happened to run last).
+        let idx = UsearchHnswIndex::new(&test_config()).unwrap();
+        idx.insert(&EntityKey::Vertex(1), &test_vector(0)).unwrap();
+
+        use rayon::prelude::*;
+        let result: Result<(), VectorError> =
+            (1..=200i64).into_par_iter().try_for_each(|i| idx.insert(&EntityKey::Vertex(1), &test_vector(i)));
+        result.unwrap();
+
+        assert_eq!(idx.live_count(), 1, "concurrent upserts of the same key must leave exactly one live entry");
+        // Whichever racing value ended up stored, a broad search must find
+        // exactly one result — the key itself, not the specific value (that
+        // outcome is inherently non-deterministic under the race).
+        let results = idx.search(&test_vector(1), 200, None).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, EntityKey::Vertex(1));
+    }
+
     #[test]
     fn test_insert_search() {
-        let mut idx = UsearchHnswIndex::new(&test_config()).unwrap();
+        let idx = UsearchHnswIndex::new(&test_config()).unwrap();
         idx.insert(&EntityKey::Vertex(1), &[1.0, 0.0, 0.0, 0.0]).unwrap();
         idx.insert(&EntityKey::Vertex(2), &[0.0, 1.0, 0.0, 0.0]).unwrap();
         idx.insert(&EntityKey::Vertex(3), &[0.7, 0.7, 0.0, 0.0]).unwrap();
@@ -395,25 +699,25 @@ mod tests {
 
     #[test]
     fn test_remove() {
-        let mut idx = UsearchHnswIndex::new(&test_config()).unwrap();
+        let idx = UsearchHnswIndex::new(&test_config()).unwrap();
         idx.insert(&EntityKey::Vertex(1), &[1.0, 0.0, 0.0, 0.0]).unwrap();
         idx.insert(&EntityKey::Vertex(2), &[0.0, 1.0, 0.0, 0.0]).unwrap();
         assert_eq!(idx.live_count(), 2);
         idx.remove(&EntityKey::Vertex(1)).unwrap();
         assert_eq!(idx.live_count(), 1);
-        assert_eq!(idx.tombstone_count, 1);
+        assert_eq!(idx.tombstone_count.load(std::sync::atomic::Ordering::Relaxed), 1);
     }
 
     #[test]
     fn test_remove_idempotent() {
-        let mut idx = UsearchHnswIndex::new(&test_config()).unwrap();
+        let idx = UsearchHnswIndex::new(&test_config()).unwrap();
         idx.remove(&EntityKey::Vertex(999)).unwrap(); // no-op
-        assert_eq!(idx.tombstone_count, 0);
+        assert_eq!(idx.tombstone_count.load(std::sync::atomic::Ordering::Relaxed), 0);
     }
 
     #[test]
     fn test_save_load_roundtrip() {
-        let mut idx = UsearchHnswIndex::new(&test_config()).unwrap();
+        let idx = UsearchHnswIndex::new(&test_config()).unwrap();
         idx.insert(&EntityKey::Vertex(1), &[1.0, 0.0, 0.0, 0.0]).unwrap();
         idx.insert(&EntityKey::Vertex(2), &[0.0, 1.0, 0.0, 0.0]).unwrap();
 
@@ -430,14 +734,14 @@ mod tests {
 
     #[test]
     fn test_dimension_mismatch() {
-        let mut idx = UsearchHnswIndex::new(&test_config()).unwrap();
+        let idx = UsearchHnswIndex::new(&test_config()).unwrap();
         let err = idx.insert(&EntityKey::Vertex(1), &[1.0, 0.0, 0.0]).unwrap_err();
         assert!(matches!(err, VectorError::DimensionMismatch { .. }));
     }
 
     #[test]
     fn test_edge_key_rejected_on_vertex_index() {
-        let mut idx = UsearchHnswIndex::new(&test_config()).unwrap();
+        let idx = UsearchHnswIndex::new(&test_config()).unwrap();
         let ek = EntityKey::Edge(CanonicalEdgeKey { src_id: 1, label_id: 1, dst_id: 2, rank: 0 });
         let err = idx.insert(&ek, &[1.0, 0.0, 0.0, 0.0]).unwrap_err();
         assert!(matches!(err, VectorError::Internal(ref msg) if msg.contains("edge key used with vertex-only index")));
@@ -471,7 +775,7 @@ mod tests {
             algorithm: AnnAlgorithm::Hnsw(HnswConfig { m: 16, ef_construction: 200, ef_search: 64 }),
             quantization: Quantization::F32,
         };
-        let mut index = UsearchHnswIndex::new(&config).unwrap();
+        let index = UsearchHnswIndex::new(&config).unwrap();
 
         // 1. Generate and insert dataset (2,000 vectors triggers dynamic capacity growth past 1,000 default)
         let mut dataset: Vec<Vec<f32>> = Vec::with_capacity(num_vectors);
@@ -511,7 +815,7 @@ mod tests {
 
     #[test]
     fn test_corrupt_snapshot_crc() {
-        let mut idx = UsearchHnswIndex::new(&test_config()).unwrap();
+        let idx = UsearchHnswIndex::new(&test_config()).unwrap();
         idx.insert(&EntityKey::Vertex(1), &[1.0, 0.0, 0.0, 0.0]).unwrap();
 
         let dir = tempfile::tempdir().unwrap();
@@ -530,7 +834,7 @@ mod tests {
 
     #[test]
     fn test_corrupt_snapshot_magic() {
-        let mut idx = UsearchHnswIndex::new(&test_config()).unwrap();
+        let idx = UsearchHnswIndex::new(&test_config()).unwrap();
         idx.insert(&EntityKey::Vertex(1), &[1.0, 0.0, 0.0, 0.0]).unwrap();
 
         let dir = tempfile::tempdir().unwrap();
@@ -548,7 +852,7 @@ mod tests {
 
     #[test]
     fn test_search_boundary_k() {
-        let mut idx = UsearchHnswIndex::new(&test_config()).unwrap();
+        let idx = UsearchHnswIndex::new(&test_config()).unwrap();
         idx.insert(&EntityKey::Vertex(1), &[1.0, 0.0, 0.0, 0.0]).unwrap();
         idx.insert(&EntityKey::Vertex(2), &[0.0, 1.0, 0.0, 0.0]).unwrap();
 
@@ -563,7 +867,7 @@ mod tests {
 
     #[test]
     fn test_reject_negative_vertex_id() {
-        let mut idx = UsearchHnswIndex::new(&test_config()).unwrap();
+        let idx = UsearchHnswIndex::new(&test_config()).unwrap();
         let res = idx.insert(&EntityKey::Vertex(-5), &[1.0, 0.0, 0.0, 0.0]);
         assert!(res.is_err());
         assert!(matches!(res.unwrap_err(), VectorError::Internal(msg) if msg.contains("invalid negative vertex id")));
@@ -580,8 +884,8 @@ mod tests {
         cfg_f16.dimension = dim;
         cfg_f16.quantization = Quantization::F16;
 
-        let mut idx_f32 = UsearchHnswIndex::new(&cfg_f32).unwrap();
-        let mut idx_f16 = UsearchHnswIndex::new(&cfg_f16).unwrap();
+        let idx_f32 = UsearchHnswIndex::new(&cfg_f32).unwrap();
+        let idx_f16 = UsearchHnswIndex::new(&cfg_f16).unwrap();
 
         let num_entries = 100;
         for i in 0..num_entries {
@@ -615,5 +919,24 @@ mod tests {
         assert_eq!(res_f16.len(), 5);
         // Top match should agree
         assert_eq!(res_f32[0].0, res_f16[0].0);
+    }
+    #[test]
+    fn test_capacity_bug_with_tombstones() {
+        let idx = UsearchHnswIndex::new(&test_config()).unwrap();
+        idx.reserve(2).unwrap();
+        let cap = idx.inner.capacity();
+        println!("Capacity after reserve(2): {}", cap);
+        for i in 1..=cap {
+            idx.insert(&EntityKey::Vertex(i as i64), &[1.0, 0.0, 0.0, 0.0]).unwrap();
+        }
+        println!(
+            "Size: {}, Tombs: {}",
+            idx.inner.size(),
+            idx.tombstone_count.load(std::sync::atomic::Ordering::Relaxed)
+        );
+        idx.remove(&EntityKey::Vertex(1)).unwrap();
+
+        let res = idx.insert(&EntityKey::Vertex(99999), &[0.0, 0.0, 1.0, 0.0]);
+        assert!(res.is_ok(), "Insert failed: {:?}", res.err());
     }
 }

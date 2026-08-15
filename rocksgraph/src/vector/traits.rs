@@ -10,8 +10,10 @@ use std::path::Path;
 
 use smol_str::SmolStr;
 
-use super::brute_force::EntityKey;
-use super::error::{VectorEntityType, VectorError};
+use super::{
+    brute_force::EntityKey,
+    error::{VectorEntityType, VectorError},
+};
 
 // ── Distance metric ──────────────────────────────────────────────────────────
 
@@ -21,6 +23,7 @@ use super::error::{VectorEntityType, VectorError};
 /// using the wrong metric silently degrades retrieval quality without raising
 /// an error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u8)]
 pub enum DistanceMetric {
     /// Cosine similarity: `dot(a, b) / (|a| * |b|)`.
     #[default]
@@ -29,6 +32,23 @@ pub enum DistanceMetric {
     Euclidean = 1,
     /// Inner (dot) product: `sum(a_i * b_i)`.
     DotProduct = 2,
+}
+
+impl DistanceMetric {
+    #[inline]
+    pub(crate) fn to_u8(self) -> u8 {
+        self as u8
+    }
+
+    #[inline]
+    pub(crate) fn from_u8(val: u8) -> Option<Self> {
+        match val {
+            0 => Some(Self::Cosine),
+            1 => Some(Self::Euclidean),
+            2 => Some(Self::DotProduct),
+            _ => None,
+        }
+    }
 }
 
 // ── Algorithm configuration ──────────────────────────────────────────────────
@@ -84,6 +104,11 @@ pub enum AnnAlgorithm {
     Hnsw(HnswConfig) = 1,
 }
 
+impl AnnAlgorithm {
+    pub(crate) const ID_BRUTE_FORCE: u8 = 0;
+    pub(crate) const ID_HNSW: u8 = 1;
+}
+
 // ── Quantization ─────────────────────────────────────────────────────────────
 
 /// Scalar precision for vectors stored in the in-memory ANN index.
@@ -91,6 +116,7 @@ pub enum AnnAlgorithm {
 /// The public API and RocksDB storage always use f32. Quantization applies
 /// only to the in-memory ANN index — it is a transparent memory optimisation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u8)]
 pub enum Quantization {
     /// Half-precision float (IEEE 754 binary16). Halves memory at <0.1%
     /// additional recall loss. Default for v0.2.
@@ -98,6 +124,22 @@ pub enum Quantization {
     F16 = 0,
     /// Full-precision float (IEEE 754 binary32). Opt-in for maximum recall.
     F32 = 1,
+}
+
+impl Quantization {
+    #[inline]
+    pub(crate) fn to_u8(self) -> u8 {
+        self as u8
+    }
+
+    #[inline]
+    pub(crate) fn from_u8(val: u8) -> Option<Self> {
+        match val {
+            0 => Some(Self::F16),
+            1 => Some(Self::F32),
+            _ => None,
+        }
+    }
 }
 
 // ── Structural configuration (persisted to CF_SCHEMA) ────────────────────────
@@ -284,10 +326,15 @@ impl IndexOptions {
 #[allow(dead_code)]
 pub(crate) trait VectorIndex: Send + Sync {
     /// Insert or update the vector for an entity key.
-    fn insert(&mut self, key: &EntityKey, vector: &[f32]) -> Result<(), VectorError>;
+    fn insert(&self, key: &EntityKey, vector: &[f32]) -> Result<(), VectorError>;
 
     /// Remove an entity key from the index. Idempotent: no-op if not present.
-    fn remove(&mut self, key: &EntityKey) -> Result<(), VectorError>;
+    fn remove(&self, key: &EntityKey) -> Result<(), VectorError>;
+
+    /// Pre-allocate capacity for `capacity` vectors.
+    fn reserve(&self, _capacity: usize) -> Result<(), VectorError> {
+        Ok(())
+    }
 
     /// Search for the `k` nearest neighbours to `query`, returning
     /// `(entity_key, distance_or_similarity)` pairs. The returned ordering

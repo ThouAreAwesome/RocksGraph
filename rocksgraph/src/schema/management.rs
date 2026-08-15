@@ -12,24 +12,24 @@ use crate::{
 
 fn encode_vector_index_config(config: &VectorIndexConfig) -> Vec<u8> {
     let mut val = Vec::with_capacity(1 + 4 + 1 + 1 + 4 + 4 + 4 + 1);
-    val.push(config.entity_type as u8);
+    val.push(config.entity_type.to_u8());
     val.extend_from_slice(&(config.dimension as u32).to_le_bytes());
-    val.push(config.metric as u8);
+    val.push(config.metric.to_u8());
     match &config.algorithm {
         crate::vector::AnnAlgorithm::BruteForce => {
-            val.push(0u8);
+            val.push(crate::vector::AnnAlgorithm::ID_BRUTE_FORCE);
             val.extend_from_slice(&0u32.to_le_bytes());
             val.extend_from_slice(&0u32.to_le_bytes());
             val.extend_from_slice(&0u32.to_le_bytes());
         }
         crate::vector::AnnAlgorithm::Hnsw(h) => {
-            val.push(1u8);
+            val.push(crate::vector::AnnAlgorithm::ID_HNSW);
             val.extend_from_slice(&(h.m as u32).to_le_bytes());
             val.extend_from_slice(&(h.ef_construction as u32).to_le_bytes());
             val.extend_from_slice(&(h.ef_search as u32).to_le_bytes());
         }
     }
-    val.push(config.quantization as u8);
+    val.push(config.quantization.to_u8());
     val
 }
 
@@ -79,23 +79,20 @@ fn encode_vector_index_config(config: &VectorIndexConfig) -> Vec<u8> {
 /// Three properties of this schema are easy to assume otherwise, so they're called out
 /// explicitly here:
 ///
-/// 1. **A property key is global, with exactly one type, shared by every vertex label and every
-///    edge label.** `make_property_key("weight", DataType::Float64)` declares "weight" once for
-///    the *entire graph* — there is no per-vertex-label or per-edge-label property scoping. A
-///    `"person"` vertex, a `"software"` vertex, and a `"knows"` edge that all set a `"weight"`
-///    property are all writing to the *same* property key definition, and all of them must use
-///    `Float64`; declaring (or auto-inferring) `"weight"` as a second, incompatible type from any
-///    of them is a [`StoreError::SchemaConflict`]/[`StoreError::SchemaViolation`]. Every declared
-///    property key is implicitly legal on every label, vertex or edge alike — there's no way to
-///    restrict a key to specific labels.
+/// 1. **A property key is global, with exactly one type, shared by every vertex label and every edge label.**
+///    `make_property_key("weight", DataType::Float64)` declares "weight" once for the *entire graph* — there is no
+///    per-vertex-label or per-edge-label property scoping. A `"person"` vertex, a `"software"` vertex, and a `"knows"`
+///    edge that all set a `"weight"` property are all writing to the *same* property key definition, and all of them
+///    must use `Float64`; declaring (or auto-inferring) `"weight"` as a second, incompatible type from any of them is a
+///    [`StoreError::SchemaConflict`]/[`StoreError::SchemaViolation`]. Every declared property key is implicitly legal
+///    on every label, vertex or edge alike — there's no way to restrict a key to specific labels.
 /// 2. **Edge multiplicity (`EdgeMode`) is one graph-wide setting, not per-edge-label.**
-///    [`set_edge_mode`](SchemaSession::set_edge_mode) flips `Single`/`Multi` for *every* edge
-///    label at once — there's no way for one edge label (e.g. `"knows"`) to stay `Single` while
-///    another (e.g. `"created"`) is `Multi` in the same graph. `Multi` mode requires an explicit
-///    `"rank"` property to disambiguate otherwise-identical parallel edges.
-/// 3. **No vertex-label ↔ edge-label connection constraints.** Any edge label can connect any two
-///    vertices regardless of their labels — there's no way to declare "`knows` only connects
-///    `person` to `person`".
+///    [`set_edge_mode`](SchemaSession::set_edge_mode) flips `Single`/`Multi` for *every* edge label at once — there's
+///    no way for one edge label (e.g. `"knows"`) to stay `Single` while another (e.g. `"created"`) is `Multi` in the
+///    same graph. `Multi` mode requires an explicit `"rank"` property to disambiguate otherwise-identical parallel
+///    edges.
+/// 3. **No vertex-label ↔ edge-label connection constraints.** Any edge label can connect any two vertices regardless
+///    of their labels — there's no way to declare "`knows` only connects `person` to `person`".
 ///
 /// [`SchemaMode`] (`Auto`/`Strict`) is also a single graph-wide setting rather than per-label.
 pub struct SchemaSession {
@@ -194,10 +191,12 @@ impl SchemaSession {
     /// is only swapped in (and the RocksDB write only issued) once every staged item has
     /// been validated successfully.
     pub fn commit(self) -> Result<(), StoreError> {
-        use crate::store::rocks::CF_SCHEMA;
-        use crate::types::kv_codec::{
-            encode_schema_key, encode_schema_label_value, encode_schema_meta, encode_schema_prop_value,
-            SCHEMA_KIND_EDGE_LABEL, SCHEMA_KIND_PROP_KEY, SCHEMA_KIND_VERTEX_LABEL, SCHEMA_META_KEY,
+        use crate::{
+            store::rocks::CF_SCHEMA,
+            types::kv_codec::{
+                encode_schema_key, encode_schema_label_value, encode_schema_meta, encode_schema_prop_value,
+                SCHEMA_KIND_EDGE_LABEL, SCHEMA_KIND_PROP_KEY, SCHEMA_KIND_VERTEX_LABEL, SCHEMA_META_KEY,
+            },
         };
         use rocksdb::WriteBatchWithTransaction;
 
