@@ -28,7 +28,7 @@ Graph(path)
   ├── .read()             ──► ReadSession     (Lock-free point-in-time snapshot reads)
   ├── .begin()            ──► TxnSession      (ACID transactional writes with RYOW)
   ├── .open_schema()      ──► SchemaSession   (Atomic DDL — labels, types, vector indexes)
-  ├── .open_bulk_loader() ──► BulkLoader      (High-throughput offline SST file ingestion)
+  ├── .open_bulk_loader() ──► BulkLoader      (High-throughput offline bulk ingestion)
   └── .index_manager()    ──► IndexManager    (Vector index maintenance — rebuild, save)
 ```
 
@@ -275,5 +275,5 @@ In multi-threaded environments, two concurrent transactions modifying the same v
 ## Related Topics
 
 - [Getting Started](getting_started.md) — 5-minute practical onboarding.
-- [Bulk Loading](bulk_loading.md) — High-throughput offline SST ingestion.
+- [Bulk Loading](bulk_loading.md) — High-throughput offline bulk ingestion.
 - [Performance Tuning](performance.md) — Optimizing throughput and concurrency.

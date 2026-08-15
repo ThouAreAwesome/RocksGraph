@@ -13,7 +13,7 @@ libfuzzer-sys = "0.4"
 
 [dependencies.rocksgraph]
 path = "../rocksgraph"
-version = "0.2.2"
+version = "0.2.3"
 features = ["fuzzing"]
 
 [[bin]]

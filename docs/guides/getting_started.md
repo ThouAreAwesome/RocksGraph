@@ -340,5 +340,5 @@ Explore the focused topic guides for deep dives into specific subsystems:
 - [Vector Search Deep Dive](vector_search.md) — HNSW tuning, memory boundaries, distance metrics, and quantization.
 - [Schema Management](schema_management.md) — Strict vs Auto schema modes, `SchemaSession`, and runtime DDL.
 - [Transactions & Concurrency](concurrency_and_tx.md) — OCC conflict handling, isolation, and session lifecycles.
-- [Bulk Loading](bulk_loading.md) — High-throughput offline SST file ingestion.
+- [Bulk Loading](bulk_loading.md) — High-throughput offline bulk ingestion.
 - [Performance Tuning](performance.md) — Batch sizing, vector memory calculations, and query optimization.

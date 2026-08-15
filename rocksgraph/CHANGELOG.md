@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-08-15
+
+### Added
+- **Automatic background vector-index checkpointing**: `GraphOptions.index.default_checkpoint_mutation_threshold` (global) or `PerIndexOptions::with_checkpoint_mutation_threshold()` (per-index) trigger an async snapshot save once an index's mutation count crosses the threshold — Rust and Python parity
+- `BulkLoader` now rejects loading into a non-empty graph with `StoreError::NonEmptyGraph` — previously, per-batch degree counters (computed from scratch and ingested destructively) could be silently corrupted by loading on top of existing data
+- `just stress-test [rounds]` recipe: repeatedly runs every concurrency-regression test, surfacing races a single `cargo test` pass has a real chance of missing
+- Vector-index build/rebuild and OLTP-with-vector-indexing overhead now measured and published in `docs/guides/benchmarks.md`
+
+### Changed
+- `Value`, `Primitive`, `DataType`, `Predicate`, and `StoreError` are now `#[non_exhaustive]` — adding a new variant is no longer a silent breaking change for exhaustive matches; match with a wildcard arm or use the classification helpers (e.g. `StoreError::category()`, `is_retryable()`) instead
+- Python: `Edge.src`/`Edge.dst` renamed to `out_v`/`in_v`, matching Rust's field names and the official Gremlin `outVertex`/`inVertex` spec
+- Recommended `coalesce()` upsert pattern corrected in docs and examples: `.V([id]).count().coalesce([...])` silently skips its `addV()` branch when the vertex doesn't exist yet, since an empty upstream skips every `coalesce()` branch; use `.fold().coalesce([unfold(), addV(...)])` instead, TinkerPop's own idiom for get-or-create
+
+### Performance
+- Vector-indexed OLTP commits touching the same index no longer serialize against each other — throughput scales up to ~5x at 8 threads vs. 1 thread (see `docs/guides/benchmarks.md`)
+- `IndexManager::rebuild()` (also used for post-bulk-load index construction) is significantly faster: HNSW inserts now run in parallel instead of sequentially, and a redundant sequential decode pass was removed
+- Vector-indexed property writes: reduced per-write lock overhead by caching which properties are vector-indexed once per transaction instead of re-checking on every write
+
+### Fixed
+- **Critical**: concurrent writes to a vector index could crash the process or, in a narrow timing window, silently lose a committed mutation on crash recovery — both fixed by correcting internal locking around capacity growth and index snapshotting. See `docs/design/vector-search/vector_index_TODO.md` for the root-cause detail
+- Concurrent upserts of the same key into a vector index could fail with a spurious error — fixed with per-key locking that keeps distinct keys fully concurrent
+- `close()` deadlock and a thread-spawn race under concurrent background-checkpoint triggers
+- Spurious memory-limit error on a commit batch that only deletes vectors, which can never actually trigger capacity expansion
+
 ## [0.2.2] — 2026-08-12
 
 ### Added
