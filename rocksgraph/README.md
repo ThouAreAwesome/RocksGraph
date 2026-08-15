@@ -157,7 +157,7 @@ For the full internal design — query planner rules, storage layout, WAL/vector
 
 ## Project Status
 
-**Maturity**: RocksGraph is pre-1.0 software, currently at v0.2.2. The core engine — ACID transactions, Gremlin traversal, integrated HNSW vector search — is functional and covered by an extensive test suite: unit tests, property-based (`proptest`) round-trip tests for the bulk loader and the bytecode wire format, and fuzz testing on the wire-format decoder. It's a young project, though: the public API isn't frozen yet, and the on-disk format — while unchanged in practice since v0.1.0 — isn't formally guaranteed stable until 1.0.0. Good fit for side projects, prototypes, and anywhere you control the blast radius of a bad upgrade. Not yet the right choice if you need a storage-format stability guarantee today.
+**Maturity**: RocksGraph is pre-1.0 software, currently at v0.2.3. The core engine — ACID transactions, Gremlin traversal, integrated HNSW vector search — is functional and covered by an extensive test suite: unit tests, property-based (`proptest`) round-trip tests for the bulk loader and the bytecode wire format, and fuzz testing on the wire-format decoder. It's a young project, though: the public API isn't frozen yet, and the on-disk format — while unchanged in practice since v0.1.0 — isn't formally guaranteed stable until 1.0.0. Good fit for side projects, prototypes, and anywhere you control the blast radius of a bad upgrade. Not yet the right choice if you need a storage-format stability guarantee today.
 
 | Version | Stability                                                                             |
 | ------- | ------------------------------------------------------------------------------------- |

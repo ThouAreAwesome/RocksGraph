@@ -280,7 +280,7 @@ Expands each traverser vertex to its $k$ nearest neighbors in the target vector 
 | **🦀 Rust** | `snap.g().V([1]).neighbors("emb", "emb", 3, VectorEntityType::Vertex).to_list()?` |
 | **🐍 Python** | `snap.g().V(1).neighbors("emb", "emb", 3, VectorEntityType.Vertex).to_list()` |
 
-### Vector Step Modifiers (Tuning Knobs)
+### Vector Step Modifiers
 
 Vector search steps can be customized at query time using chained modifier steps:
 

@@ -9,7 +9,7 @@
 - [Schema Management](schema_management.md)
 - [Vector Search Deep Dive](vector_search.md)
 - [Transactions & Concurrency](concurrency_and_tx.md)
-- [Bulk Loading & SST Ingest](bulk_loading.md)
+- [Bulk Loading](bulk_loading.md)
 - [Performance Tuning](performance.md)
 - [Benchmarks](benchmarks.md)
 

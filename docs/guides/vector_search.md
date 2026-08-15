@@ -14,7 +14,7 @@ Unlike separated architectures where vector databases and graph databases run in
 - [1. Vector Index Configuration](#1-vector-index-configuration)
 - [2. Declaring Vector Indexes](#2-declaring-vector-indexes)
 - [3. Query Primitives](#3-query-primitives)
-- [4. Query-Time Tuning Knobs](#4-query-time-tuning-knobs)
+- [4. Query-Time Overrides](#4-query-time-overrides)
 - [5. Memory Footprint & Quantization](#5-memory-footprint--quantization)
 - [6. Vector Search Best Practices](#6-vector-search-best-practices)
 - [7. Vector Search Anti-Patterns](#7-vector-search-anti-patterns)
@@ -223,7 +223,7 @@ related = (
 
 ---
 
-## 4. Query-Time Tuning Knobs
+## 4. Query-Time Overrides
 
 You can override index defaults dynamically on individual queries (`with_ef_search` & `with_metric`):
 

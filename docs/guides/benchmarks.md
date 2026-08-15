@@ -6,7 +6,7 @@ Results are recorded here for each major version. Benchmarks run against the
 [`rocksgraph/src/bin/`](https://github.com/ThouAreAwesome/RocksGraph/tree/main/rocksgraph/src/bin)
 for the benchmark binaries:
 
-- `bench_write` — bulk-load (SST ingest) throughput
+- `bench_write` — bulk-load throughput
 - `bench_write_occ` — transactional OCC (OLTP) write throughput
 - `bench_read` — read query latency/throughput
 
@@ -32,7 +32,7 @@ txn.commit()?;
 
 ---
 
-## v0.2.2 (2026-08)
+## v0.2.3 (2026-08)
 
 ### Environment
 
@@ -52,7 +52,7 @@ scaling picture across all three sizes.
 
 ---
 
-### Write: Bulk Load (SST ingest)
+### Write: Bulk Load
 
 `BulkLoader` streams vertices and edges through `ExternalSorter`, writes sorted SST
 files, and ingests them atomically via `IngestExternalFile` — bypassing WAL, memtable

@@ -151,5 +151,5 @@ $$\text{RAM (bytes)} \approx N \times \left( \text{dim} \times \text{bytes\_per\
 ## Related Topics
 
 - [Vector Search Deep Dive](vector_search.md) — Vector parameters and query primitives.
-- [Bulk Loading](bulk_loading.md) — Offline SST import engine.
+- [Bulk Loading](bulk_loading.md) — High-throughput offline bulk ingestion.
 - [Transactions & Concurrency](concurrency_and_tx.md) — OCC transaction lifecycle.
