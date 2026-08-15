@@ -59,11 +59,7 @@ use crate::{
     gremlin::traversal::{ReadTraversal, WriteTraversal},
     schema::{GraphOptions, Schema, SchemaSession},
     store::RocksStorage,
-    types::{
-        gvalue::Primitive,
-        keys::{CanonicalKey, VertexKey},
-        StoreError,
-    },
+    types::{gvalue::Primitive, keys::VertexKey, StoreError},
     vector::{
         error::{VectorEntityType, VectorError},
         hnsw::UsearchHnswIndex,
@@ -274,7 +270,6 @@ impl Graph {
             schema: Arc::downgrade(&self.schema),
             vector_indexes: Arc::downgrade(&self.vector_indexes),
             index_options: self.index_options.clone(),
-            execution_options: self.execution_options,
         }
     }
 
@@ -319,7 +314,6 @@ pub struct IndexManager {
     schema: Weak<RwLock<Schema>>,
     vector_indexes: Weak<RwLock<VectorIndexMap>>,
     index_options: IndexOptions,
-    execution_options: crate::engine::ExecutionOptions,
 }
 
 impl IndexManager {
@@ -383,28 +377,24 @@ impl IndexManager {
             }
         }
 
-        let mut snap = LogicalSnapshot::new(
-            store.snapshot(),
-            Arc::clone(&schema),
-            Arc::new(RwLock::new(HashMap::new())),
-            self.execution_options,
-        );
+        // Bypass `LogicalSnapshot`'s repeated-access cache — `rebuild()` visits every
+        // vertex exactly once, so the cache adds cost with no benefit. The raw scan
+        // already decodes each vertex's full property blob off the RocksDB iterator
+        // (see `Snapshot::scan_vertices`), so there is no separate I/O phase to
+        // resolve property values — `Vertex::get_value` is a pure, no-I/O in-memory
+        // decode, safe to run in the same parallel pass as the HNSW insert.
+        let mut snap = store.snapshot();
         let mut start_from: Option<VertexKey> = None;
         loop {
             let (vertices, next) = snap.scan_vertices(None, start_from, 10000)?;
 
-            // Resolve property values sequentially
-            let mut chunk = Vec::with_capacity(vertices.len());
-            for vk in vertices {
-                let k = CanonicalKey::Vertex(vk);
-                if let Ok(Some(Primitive::FloatVector(v))) = snap.get_value(&k, prop_key_id) {
-                    chunk.push((EntityKey::Vertex(vk), v));
-                }
-            }
-
-            // Insert concurrently
             use rayon::prelude::*;
-            chunk.into_par_iter().try_for_each(|(vk, v)| index.insert(&vk, &v))?;
+            vertices.into_par_iter().try_for_each(|vt| -> Result<(), VectorError> {
+                if let Some(Primitive::FloatVector(v)) = vt.get_value(prop_key_id) {
+                    index.insert(&EntityKey::Vertex(vt.id), &v)?;
+                }
+                Ok(())
+            })?;
 
             match next {
                 Some(v) => start_from = Some(v),
