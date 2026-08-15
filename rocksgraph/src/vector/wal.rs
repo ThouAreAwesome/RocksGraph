@@ -137,7 +137,7 @@ fn encode_entity_key(key: &EntityKey) -> Result<Vec<u8>, VectorError> {
     match key {
         EntityKey::Vertex(vk) => {
             let mut buf = Vec::with_capacity(9);
-            buf.push(0x00);
+            buf.push(crate::vector::VectorEntityType::Vertex.to_u8());
             buf.extend_from_slice(&vk.to_le_bytes());
             Ok(buf)
         }
@@ -149,16 +149,18 @@ fn decode_entity_key(bytes: &[u8]) -> Result<(EntityKey, usize), StoreError> {
     if bytes.is_empty() {
         return Err(StoreError::CorruptData("empty entity key in WAL"));
     }
-    match bytes[0] {
-        0x00 => {
+    match crate::vector::VectorEntityType::from_u8(bytes[0]) {
+        Some(crate::vector::VectorEntityType::Vertex) => {
             if bytes.len() < 9 {
                 return Err(StoreError::CorruptData("truncated vertex key in WAL"));
             }
             let id = i64::from_le_bytes(bytes[1..9].try_into().unwrap());
             Ok((EntityKey::Vertex(id), 9))
         }
-        0x01 => Err(StoreError::UnsupportedOperation("edge vector WAL entries are not yet supported".into())),
-        _ => Err(StoreError::CorruptData("unknown entity key discriminant in WAL")),
+        Some(crate::vector::VectorEntityType::Edge) => {
+            Err(StoreError::UnsupportedOperation("edge vector WAL entries are not yet supported".into()))
+        }
+        None => Err(StoreError::CorruptData("unknown entity key discriminant in WAL")),
     }
 }
 
@@ -172,7 +174,7 @@ pub(crate) fn flush_vector_wal(
         match op {
             crate::vector::PendingVectorOp::Inserted { key, prop_name, vector, ts } => {
                 if let Some(prop_key_id) = resolve_prop_id(prop_name) {
-                    let wal_key = encode_wal_key(prop_key_id, 0x00, *ts);
+                    let wal_key = encode_wal_key(prop_key_id, crate::vector::VectorEntityType::Vertex.to_u8(), *ts);
                     if let Ok(wal_val) = encode_wal_insert(key, vector) {
                         store.put_wal_entry(&wal_key, &wal_val)?;
                     }
@@ -180,7 +182,7 @@ pub(crate) fn flush_vector_wal(
             }
             crate::vector::PendingVectorOp::Removed { key, prop_name, ts } => {
                 if let Some(prop_key_id) = resolve_prop_id(prop_name) {
-                    let wal_key = encode_wal_key(prop_key_id, 0x00, *ts);
+                    let wal_key = encode_wal_key(prop_key_id, crate::vector::VectorEntityType::Vertex.to_u8(), *ts);
                     if let Ok(wal_val) = encode_wal_remove(key) {
                         store.put_wal_entry(&wal_key, &wal_val)?;
                     }
@@ -224,10 +226,7 @@ pub(crate) fn replay_vector_wal(
     // Incremental prefix-seek replay per declared index:
     // seek key = [prop_key_id BE][entity_type BE][seek_ts BE]
     for (entity_type, prop_key_id, arc) in by_prop_and_entity {
-        let entity_type_byte = match entity_type {
-            crate::vector::VectorEntityType::Vertex => 0x00,
-            crate::vector::VectorEntityType::Edge => 0x01,
-        };
+        let entity_type_byte = entity_type.to_u8();
         let mut guard = arc.write();
         let last_ts = guard.last_replayed_timestamp();
         max_ts = max_ts.max(last_ts);

@@ -76,8 +76,8 @@ pub(crate) fn save_snapshot_file(path: &Path, header: &SnapshotHeader, payload: 
     header_buf[HDR_OFF_VERSION..HDR_OFF_VERSION + 2].copy_from_slice(&SNAPSHOT_FORMAT_VERSION.to_be_bytes());
     header_buf[HDR_OFF_TIMESTAMP..HDR_OFF_TIMESTAMP + 8].copy_from_slice(&header.last_replayed_timestamp.to_le_bytes());
     header_buf[HDR_OFF_DIMENSION..HDR_OFF_DIMENSION + 4].copy_from_slice(&(header.dimension as u32).to_le_bytes());
-    header_buf[HDR_OFF_METRIC] = header.metric as u8;
-    header_buf[HDR_OFF_ALGORITHM] = 1u8; // algorithm byte: 1=HNSW
+    header_buf[HDR_OFF_METRIC] = header.metric.to_u8();
+    header_buf[HDR_OFF_ALGORITHM] = AnnAlgorithm::ID_HNSW; // algorithm byte: 1=HNSW
     header_buf[HDR_OFF_TOMBSTONE_COUNT..HDR_OFF_TOMBSTONE_COUNT + 8]
         .copy_from_slice(&header.tombstone_count.to_le_bytes());
     header_buf[HDR_OFF_NEXT_EDGE_LABEL..HDR_OFF_NEXT_EDGE_LABEL + 8].copy_from_slice(&0u64.to_le_bytes());
@@ -138,12 +138,8 @@ pub(crate) fn load_snapshot_file(
         return Err(VectorError::DimensionMismatch { expected: expected_dim, actual: stored_dim });
     }
 
-    let stored_metric = match stored_metric_byte {
-        0 => DistanceMetric::Cosine,
-        1 => DistanceMetric::Euclidean,
-        2 => DistanceMetric::DotProduct,
-        _ => return Err(VectorError::Internal("unknown metric in snapshot".into())),
-    };
+    let stored_metric = DistanceMetric::from_u8(stored_metric_byte)
+        .ok_or_else(|| VectorError::Internal("unknown metric in snapshot".into()))?;
     if stored_metric != expected_metric {
         return Err(VectorError::Unsupported(format!(
             "snapshot metric ({stored_metric:?}) does not match config ({expected_metric:?})",
@@ -196,21 +192,12 @@ fn decode_vector_config_bytes(property: &str, value: &[u8]) -> Option<VectorInde
     if value.len() < CFG_MIN_LEN {
         return None;
     }
-    let entity_type = match value[CFG_OFF_ENTITY_TYPE] {
-        0 => VectorEntityType::Vertex,
-        1 => VectorEntityType::Edge,
-        _ => return None,
-    };
+    let entity_type = VectorEntityType::from_u8(value[CFG_OFF_ENTITY_TYPE])?;
     let dimension = u32::from_le_bytes(value[CFG_OFF_DIMENSION..CFG_OFF_DIMENSION + 4].try_into().unwrap()) as usize;
-    let metric = match value[CFG_OFF_METRIC] {
-        0 => DistanceMetric::Cosine,
-        1 => DistanceMetric::Euclidean,
-        2 => DistanceMetric::DotProduct,
-        _ => return None,
-    };
+    let metric = DistanceMetric::from_u8(value[CFG_OFF_METRIC])?;
     let algorithm = match value[CFG_OFF_ALGORITHM] {
-        0 => AnnAlgorithm::BruteForce,
-        1 => AnnAlgorithm::Hnsw(HnswConfig {
+        AnnAlgorithm::ID_BRUTE_FORCE => AnnAlgorithm::BruteForce,
+        AnnAlgorithm::ID_HNSW => AnnAlgorithm::Hnsw(HnswConfig {
             m: u32::from_le_bytes(value[CFG_OFF_HNSW_M..CFG_OFF_HNSW_M + 4].try_into().unwrap()) as usize,
             ef_construction: u32::from_le_bytes(
                 value[CFG_OFF_HNSW_EF_CONSTRUCTION..CFG_OFF_HNSW_EF_CONSTRUCTION + 4].try_into().unwrap(),
@@ -220,11 +207,7 @@ fn decode_vector_config_bytes(property: &str, value: &[u8]) -> Option<VectorInde
         }),
         _ => return None,
     };
-    let quantization = match value[CFG_OFF_QUANTIZATION] {
-        0 => Quantization::F16,
-        1 => Quantization::F32,
-        _ => Quantization::default(),
-    };
+    let quantization = Quantization::from_u8(value[CFG_OFF_QUANTIZATION]).unwrap_or_default();
     Some(VectorIndexConfig {
         property: SmolStr::from(property),
         entity_type,

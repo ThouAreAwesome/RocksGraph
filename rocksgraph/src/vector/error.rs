@@ -9,9 +9,26 @@ use smol_str::SmolStr;
 
 /// Identifies whether a vector property belongs to a vertex or an edge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
 pub enum VectorEntityType {
     Vertex = 0,
     Edge = 1,
+}
+
+impl VectorEntityType {
+    #[inline]
+    pub(crate) fn to_u8(self) -> u8 {
+        self as u8
+    }
+
+    #[inline]
+    pub(crate) fn from_u8(val: u8) -> Option<Self> {
+        match val {
+            0 => Some(Self::Vertex),
+            1 => Some(Self::Edge),
+            _ => None,
+        }
+    }
 }
 
 /// Errors raised by vector index operations.

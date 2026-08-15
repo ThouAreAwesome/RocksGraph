@@ -374,6 +374,15 @@ impl IndexManager {
         let scan_start_ts = crate::vector::wal::current_timestamp();
         index.set_last_replayed_timestamp(scan_start_ts);
 
+        // Reserve capacity based on RocksDB estimation.
+        if let Some(cf) = store.db.cf_handle(crate::store::rocks::CF_VERTICES) {
+            if let Ok(Some(estimate)) = store.db.property_int_value_cf(&cf, "rocksdb.estimate-num-keys") {
+                if estimate > 0 {
+                    let _ = index.reserve(estimate as usize);
+                }
+            }
+        }
+
         let mut snap = LogicalSnapshot::new(
             store.snapshot(),
             Arc::clone(&schema),
@@ -382,13 +391,21 @@ impl IndexManager {
         );
         let mut start_from: Option<VertexKey> = None;
         loop {
-            let (vertices, next) = snap.scan_vertices(None, start_from, 1000)?;
+            let (vertices, next) = snap.scan_vertices(None, start_from, 10000)?;
+
+            // Resolve property values sequentially
+            let mut chunk = Vec::with_capacity(vertices.len());
             for vk in vertices {
                 let k = CanonicalKey::Vertex(vk);
                 if let Ok(Some(Primitive::FloatVector(v))) = snap.get_value(&k, prop_key_id) {
-                    index.insert(&EntityKey::Vertex(vk), &v)?;
+                    chunk.push((EntityKey::Vertex(vk), v));
                 }
             }
+
+            // Insert concurrently
+            use rayon::prelude::*;
+            chunk.into_par_iter().try_for_each(|(vk, v)| index.insert(&vk, &v))?;
+
             match next {
                 Some(v) => start_from = Some(v),
                 None => break,

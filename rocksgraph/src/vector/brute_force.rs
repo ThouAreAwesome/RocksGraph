@@ -98,7 +98,7 @@ pub(crate) fn dist_to_sim(metric: super::traits::DistanceMetric, dist: f32) -> f
 #[allow(dead_code)]
 #[derive(Debug, Default)]
 pub struct BruteForceIndex {
-    entries: Vec<(EntityKey, Vec<f32>)>,
+    entries: std::sync::RwLock<Vec<(EntityKey, Vec<f32>)>>,
     last_replayed_timestamp: u64,
     property: SmolStr,
     memory_limit_bytes: Option<usize>,
@@ -117,43 +117,45 @@ impl BruteForceIndex {
     }
 
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.entries.read().unwrap().len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.entries.read().unwrap().is_empty()
     }
 
     /// Insert or update the vector for an entity key.
-    pub fn insert(&mut self, key: EntityKey, vector: Vec<f32>) {
-        if let Some(pos) = self.entries.iter().position(|(k, _)| *k == key) {
-            self.entries[pos].1 = vector;
+    pub fn insert(&self, key: EntityKey, vector: Vec<f32>) {
+        let mut entries = self.entries.write().unwrap();
+        if let Some(pos) = entries.iter().position(|(k, _)| *k == key) {
+            entries[pos].1 = vector;
         } else {
-            self.entries.push((key, vector));
+            entries.push((key, vector));
         }
     }
 
     /// Remove an entity key from the index.
-    pub fn remove(&mut self, key: &EntityKey) {
-        self.entries.retain(|(k, _)| k != key);
+    pub fn remove(&self, key: &EntityKey) {
+        self.entries.write().unwrap().retain(|(k, _)| k != key);
     }
 
     /// Exact KNN search: computes cosine similarity against every entry
     /// and returns the top k results sorted by descending similarity.
     pub fn search(&self, query: &[f32], k: usize) -> Vec<(EntityKey, f32)> {
-        if k == 0 || self.entries.is_empty() {
+        let entries = self.entries.read().unwrap();
+        if k == 0 || entries.is_empty() {
             return Vec::new();
         }
         let mut scored: Vec<(EntityKey, f32)> =
-            self.entries.iter().map(|(key, vec)| (key.clone(), metric_sim(self.metric, vec, query))).collect();
+            entries.iter().map(|(key, vec)| (key.clone(), metric_sim(self.metric, vec, query))).collect();
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         scored.truncate(k);
         scored
     }
 
     /// Clear all entries.
-    pub fn clear(&mut self) {
-        self.entries.clear();
+    pub fn clear(&self) {
+        self.entries.write().unwrap().clear();
     }
 }
 
@@ -163,15 +165,16 @@ use super::error::VectorError;
 use super::traits::VectorIndex;
 
 impl VectorIndex for BruteForceIndex {
-    fn insert(&mut self, key: &EntityKey, vector: &[f32]) -> Result<(), VectorError> {
-        let is_update = self.entries.iter().any(|(k, _)| k == key);
+    fn insert(&self, key: &EntityKey, vector: &[f32]) -> Result<(), VectorError> {
+        let mut entries = self.entries.write().unwrap();
+        let is_update = entries.iter().any(|(k, _)| k == key);
         if !is_update {
             if let Some(limit) = self.memory_limit_bytes {
                 // Each entry occupies `dim * 4` bytes of vector data.
                 let projected =
-                    (self.entries.len() + 1).checked_mul(vector.len()).and_then(|x| x.checked_mul(4)).ok_or_else(
-                        || VectorError::MemoryLimitExceeded { index: self.property.clone(), used: usize::MAX, limit },
-                    )?;
+                    (entries.len() + 1).checked_mul(vector.len()).and_then(|x| x.checked_mul(4)).ok_or_else(|| {
+                        VectorError::MemoryLimitExceeded { index: self.property.clone(), used: usize::MAX, limit }
+                    })?;
                 if projected > limit {
                     return Err(VectorError::MemoryLimitExceeded {
                         index: self.property.clone(),
@@ -181,10 +184,10 @@ impl VectorIndex for BruteForceIndex {
                 }
             }
         }
-        if let Some(pos) = self.entries.iter().position(|(k, _)| k == key) {
-            self.entries[pos].1 = vector.to_vec();
+        if let Some(pos) = entries.iter().position(|(k, _)| k == key) {
+            entries[pos].1 = vector.to_vec();
         } else {
-            self.entries.push((key.clone(), vector.to_vec()));
+            entries.push((key.clone(), vector.to_vec()));
         }
         Ok(())
     }
@@ -198,20 +201,21 @@ impl VectorIndex for BruteForceIndex {
     }
 
     fn size(&self) -> usize {
-        self.entries.len()
+        self.entries.read().unwrap().len()
     }
 
-    fn remove(&mut self, key: &EntityKey) -> Result<(), VectorError> {
-        self.entries.retain(|(k, _)| k != key);
+    fn remove(&self, key: &EntityKey) -> Result<(), VectorError> {
+        self.entries.write().unwrap().retain(|(k, _)| k != key);
         Ok(())
     }
 
     fn search(&self, query: &[f32], k: usize, _ef_search: Option<usize>) -> Result<Vec<(EntityKey, f32)>, VectorError> {
-        if k == 0 || self.entries.is_empty() {
+        let entries = self.entries.read().unwrap();
+        if k == 0 || entries.is_empty() {
             return Ok(Vec::new());
         }
         let mut scored: Vec<(EntityKey, f32)> =
-            self.entries.iter().map(|(key, vec)| (key.clone(), metric_sim(self.metric, vec, query))).collect();
+            entries.iter().map(|(key, vec)| (key.clone(), metric_sim(self.metric, vec, query))).collect();
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         scored.truncate(k);
         Ok(scored)
@@ -257,7 +261,7 @@ mod tests {
 
     #[test]
     fn test_index_insert_search() {
-        let mut idx = BruteForceIndex::new();
+        let idx = BruteForceIndex::new();
         idx.insert(EntityKey::Vertex(1), vec![1.0, 0.0]);
         idx.insert(EntityKey::Vertex(2), vec![0.0, 1.0]);
         idx.insert(EntityKey::Vertex(3), vec![0.7, 0.7]);
@@ -270,7 +274,7 @@ mod tests {
 
     #[test]
     fn test_index_remove() {
-        let mut idx = BruteForceIndex::new();
+        let idx = BruteForceIndex::new();
         idx.insert(EntityKey::Vertex(1), vec![1.0, 0.0]);
         idx.insert(EntityKey::Vertex(2), vec![0.0, 1.0]);
         assert_eq!(idx.len(), 2);
@@ -283,7 +287,7 @@ mod tests {
 
     #[test]
     fn test_index_clear() {
-        let mut idx = BruteForceIndex::new();
+        let idx = BruteForceIndex::new();
         idx.insert(EntityKey::Vertex(1), vec![1.0, 0.0]);
         idx.clear();
         assert!(idx.is_empty());

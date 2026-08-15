@@ -947,6 +947,48 @@ fn test_rebuild_preserves_search_quality() {
     g.close().unwrap();
 }
 
+#[test]
+fn test_rebuild_survives_multiple_capacity_growth_cycles() {
+    // Regression test for the SIGSEGV fixed via hnsw.rs's resize_lock:
+    // IndexManager::rebuild()'s rayon-parallel insert loop (api.rs) must
+    // survive not just one reactive capacity-growth event but several
+    // cascading ones within a single rebuild. LCG_N (1001, used by
+    // test_rebuild_preserves_search_quality above) only forces a single
+    // growth event (1000 -> 2000); this test forces at least two more
+    // (-> 4000 -> 8000), exercising the exact end-to-end call chain
+    // (IndexManager::rebuild -> rayon -> UsearchHnswIndex::insert) that
+    // reliably segfaulted before the fix, not just the isolated
+    // UsearchHnswIndex-level unit tests in hnsw.rs.
+    let dir = tempfile::tempdir().unwrap();
+    let n = 4500usize;
+    let vectors = vector_fixtures::lcg_vectors(n, LCG_DIM, 7);
+    vector_fixtures::build_vector_graph(dir.path(), &vectors, DistanceMetric::Cosine, Quantization::F32, true);
+
+    let g = Graph::open(dir.path()).unwrap();
+
+    // Exact count, not just approximate recall: a race that silently
+    // dropped an entry during the parallel insert loop wouldn't necessarily
+    // show up as a recall dip if the missing vertex wasn't sampled.
+    let mut snap = g.read();
+    let total = snap.g().V([]).count().next().unwrap().unwrap();
+    assert_eq!(
+        total,
+        Value::Int64(n as i64),
+        "all {n} vertices must survive a rebuild spanning multiple capacity-growth cycles"
+    );
+
+    let src_ids: Vec<i64> = (1..=n as i64).step_by(97).collect();
+    let (recall, failures) = measure_recall(&mut snap, &vectors, &src_ids, LCG_K, RECALL_THRESHOLD);
+    if !failures.is_empty() {
+        for (src_id, r) in &failures {
+            eprintln!("post-rebuild (multi-growth-cycle) recall: src={src_id} recall={r:.3}");
+        }
+    }
+    assert!(recall >= RECALL_THRESHOLD, "post-rebuild (multi-growth-cycle) recall {:.3}", recall);
+
+    g.close().unwrap();
+}
+
 fn measure_recall(
     snap: &mut crate::ReadSession,
     vectors: &[Vec<f32>],
