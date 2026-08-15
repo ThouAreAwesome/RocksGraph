@@ -214,41 +214,45 @@ same value with `n=1`.
 
 ### Vector Index Overhead
 
-The vector index benchmarks measure the mechanism cost of vector indexing (WAL writes, per-commit checkpoint accounting, incremental HNSW insert calls) separately from the rest of the RocksGraph system. 
+The vector index benchmarks measure the mechanism cost of vector indexing (WAL writes, per-commit checkpoint accounting, incremental HNSW insert calls) separately from the rest of the RocksGraph system.
 
-The vectors used are synthetic L2-normalized unit vectors drawn from a standard normal distribution. The topology reused is the LiveJournal edge list.
+The vectors used are synthetic L2-normalized unit vectors drawn from a standard normal distribution. Both tables below use the same dataset — `soc-LiveJournal1-1M.txt` (1,000,000 edges / 1,093,302 vertices), the same 1 M tier used in the main OCC section above — so bulk-load/rebuild cost and OLTP ingest cost are directly comparable at one scale. Quantization is F16 throughout (the library default).
 
 #### Bulk Load and Index Build
 
-The following table isolates the SST ingest wall time from the vector index build wall time using `bench_vector_bulk_load`:
+The following table isolates the SST ingest wall time from the vector index build wall time using `bench_vector_bulk_load`. "Index Build" is `IndexManager::rebuild()` — the same rayon-parallel insert path used for post-bulk-load index construction generally:
 
-| Scale | Dimension | Quantization | Ingest Time (s) | Index Build Time (s) | Total Time (s) | Throughput (edges/s) |
-|---|---|---|---|---|---|---|
-| 10M edges / 3.16M vertices | 128 | F32 | | | | |
-| 10M edges / 3.16M vertices | 384 | F32 | | | | |
-| 10M edges / 3.16M vertices | 768 | F32 | | | | |
-| 10M edges / 3.16M vertices | 1536 | F32 | | | | |
-| 10M edges / 3.16M vertices | 384 | F16 | | | | |
+| Dimension | Quantization | Ingest Time (s) | Index Build Time (s) | Total Time (s) |
+|---|---|---:|---:|---:|
+| 128 | F16 | 6.37 | 204.41 | 210.78 |
+| 768 | F16 | 21.47 | 960.61 | 982.08 |
+
+Index build time scales sub-linearly with dimension here (128→768 is 6x the
+dimension but only ~4.7x the build time) — plausible since a meaningful share
+of HNSW's per-insert cost is graph-structural bookkeeping (neighbor-list
+maintenance at each layer) that doesn't scale with dimension at all, so it
+becomes proportionally less dominant as the pure distance-computation cost
+(which does scale with dimension) grows. Not conclusive from two data points,
+but consistent with the theory. Ingest (the non-vector SST-write path) is
+unaffected by dimension, as expected.
 
 #### Transactional OCC Write with Vector Indexing
 
-Isolates the cost of maintaining an HNSW index synchronously during OLTP commits
-(`bench_write_occ`). `soc-LiveJournal1-10k.txt` (10,000 edges → 30,000 mutations:
-2 vertex + 1 edge upsert per edge) — smaller than the 1 M/10 M scale used above,
-chosen for fast iteration while isolating the mechanism cost; treat throughput as
-directional rather than a prediction at the larger scales used elsewhere in this doc.
+Isolates the cost of maintaining an HNSW index synchronously during OLTP commits (`bench_write_occ`), on the same `soc-LiveJournal1-1M.txt` dataset as the bulk-load table above (1,000,000 edges → 3,000,000 mutations: 2 vertex + 1 edge upsert per edge):
 
 | Vector Dim | Parallelism | Throughput (edges/s) | p50 (μs) | p99 (μs) |
 |---|---:|---:|---:|---:|
-| none (reference) | 1 | 35,106 | 27.6 | 39.9 |
-| none (reference) | 8 | 78,297 | 93.6 | 236.7 |
-| 384 | 1 | 823 | 1,266.7 | 2,308.1 |
-| 384 | 4 | 2,963 | 1,362.9 | 3,414.0 |
-| 384 | 8 | 3,953 | 1,623.0 | 5,861.4 |
+| none (reference) | 2 | 54,067 | 36.4 | 44.9 |
+| none (reference) | 8 | 69,345 | 109.6 | 260.5 |
+| 384 (F16) | 2 | 725 | 2,252.8 | 15,540.2 |
+| 384 (F16) | 8 | 1,730 | 4,167.7 | 15,999.0 |
 
-**The HNSW insert itself dominates cost**: a single-threaded dim-384 commit is
-~43x slower than a no-vector commit — that gap is the real per-commit cost of
-indexing a vector, not a locking or transaction-engine overhead. Throughput
-does scale with parallelism (823 → 3,953 edges/s from 1 → 8 threads) since
+**The HNSW insert itself dominates cost**: at parallelism 2, a dim-384 commit
+is ~75x slower than a no-vector commit — that gap is the real per-commit cost
+of indexing a vector, not a locking or transaction-engine overhead, and it's
+larger at this 1 M scale than at the smaller scales used to validate the
+concurrency fix itself (see `docs/design/vector-search/vector_index_TODO.md`),
+consistent with HNSW's per-insert cost growing as the graph grows. Throughput
+still scales with parallelism (725 → 1,730 edges/s from 2 → 8 threads) since
 concurrent commits touching the same index are not serialized against each
 other beyond genuine internal contention (e.g. a reactive HNSW capacity grow).
