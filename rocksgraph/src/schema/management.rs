@@ -30,6 +30,14 @@ fn encode_vector_index_config(config: &VectorIndexConfig) -> Vec<u8> {
         }
     }
     val.push(config.quantization.to_u8());
+    if let crate::vector::Quantization::RaBitQ { seed } = config.quantization {
+        if let Some(s) = seed {
+            val.push(1);
+            val.extend_from_slice(&s.to_le_bytes());
+        } else {
+            val.push(0);
+        }
+    }
     val
 }
 

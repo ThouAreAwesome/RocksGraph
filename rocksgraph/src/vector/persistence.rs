@@ -207,7 +207,12 @@ fn decode_vector_config_bytes(property: &str, value: &[u8]) -> Option<VectorInde
         }),
         _ => return None,
     };
-    let quantization = Quantization::from_u8(value[CFG_OFF_QUANTIZATION]).unwrap_or_default();
+    let mut quantization = Quantization::from_u8(value[CFG_OFF_QUANTIZATION]).unwrap_or_default();
+    if let Quantization::RaBitQ { ref mut seed } = quantization {
+        if value.len() > CFG_MIN_LEN && value[CFG_MIN_LEN] == 1 && value.len() >= CFG_MIN_LEN + 9 {
+            *seed = Some(u64::from_le_bytes(value[CFG_MIN_LEN + 1..CFG_MIN_LEN + 9].try_into().unwrap()));
+        }
+    }
     Some(VectorIndexConfig {
         property: SmolStr::from(property),
         entity_type,

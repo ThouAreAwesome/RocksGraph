@@ -31,6 +31,7 @@ fn scalar_kind(q: Quantization) -> ScalarKind {
     match q {
         Quantization::F16 => ScalarKind::F16,
         Quantization::F32 => ScalarKind::F32,
+        Quantization::RaBitQ { .. } => ScalarKind::B1,
     }
 }
 
@@ -140,6 +141,8 @@ pub struct UsearchHnswIndex {
 
     /// Per-key serialization for upserts/removes to avoid conflicts on the same key.
     upsert_locks: ShardedUpsertLocks,
+
+    pub(crate) rabitq_transform: Option<crate::vector::rabitq::RaBitQTransform>,
 }
 
 impl std::fmt::Debug for UsearchHnswIndex {
@@ -155,10 +158,23 @@ impl std::fmt::Debug for UsearchHnswIndex {
     }
 }
 
+enum OldVector {
+    F32(Vec<f32>),
+    Packed(Vec<u8>),
+}
+
 impl UsearchHnswIndex {
     pub fn new(config: &VectorIndexConfig) -> Result<Self, VectorError> {
+        let mut dimensions = config.dimension;
+        if let Quantization::RaBitQ { seed } = config.quantization {
+            let actual_seed = seed.unwrap_or(42);
+            let transform = crate::vector::rabitq::RaBitQTransform::new(config.dimension, actual_seed, config.metric);
+            dimensions = transform.pad_dim() + 64; // pad_dim bits + 8 bytes (64 bits) trailer
+        }
+        let mut rabitq_transform = None;
+
         let options = IndexOptions {
-            dimensions: config.dimension,
+            dimensions,
             metric: metric_to_usearch(config.metric),
             quantization: scalar_kind(config.quantization),
             connectivity: config.algorithm_connectivity(),
@@ -167,7 +183,16 @@ impl UsearchHnswIndex {
             ..Default::default()
         };
 
-        let inner = Index::new(&options).map_err(|e| VectorError::Internal(format!("usearch index creation: {e}")))?;
+        let mut inner =
+            Index::new(&options).map_err(|e| VectorError::Internal(format!("usearch index creation: {e}")))?;
+
+        if let Quantization::RaBitQ { seed } = config.quantization {
+            let actual_seed = seed.unwrap_or(42);
+            let transform = crate::vector::rabitq::RaBitQTransform::new(config.dimension, actual_seed, config.metric);
+            let metric_fn = crate::vector::rabitq::create_rabitq_metric(transform.pad_dim(), config.metric);
+            inner.change_metric::<usearch::b1x8>(metric_fn);
+            rabitq_transform = Some(transform);
+        }
 
         inner
             .reserve_capacity_and_threads(DEFAULT_RESERVE_CAPACITY, reserved_thread_count())
@@ -185,6 +210,7 @@ impl UsearchHnswIndex {
             edge_map: if is_edge { Some(EdgeLabelMap::new()) } else { None },
             resize_lock: parking_lot::RwLock::new(()),
             upsert_locks: ShardedUpsertLocks::new(UPSERT_LOCK_SHARDS),
+            rabitq_transform,
         })
     }
 
@@ -230,15 +256,27 @@ impl UsearchHnswIndex {
     }
 
     /// Fetches the old vector from the index if it exists.
-    fn fetch_old_vector(&self, label: u64) -> Option<Vec<f32>> {
-        if self.inner.contains(label) {
-            let mut buf = vec![0.0f32; self.config.dimension];
-            match self.inner.get(label, &mut buf) {
-                Ok(n) if n > 0 => Some(buf),
+    fn fetch_old_vector(&self, label: u64) -> Option<OldVector> {
+        if !self.inner.contains(label) {
+            return None;
+        }
+        if self.rabitq_transform.is_some() {
+            let dimensions = self.inner.dimensions();
+            let mut buf = vec![0u8; dimensions];
+            let b1x8_slice = unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut usearch::b1x8, buf.len()) };
+            match self.inner.get(label, b1x8_slice) {
+                Ok(n) if n > 0 => {
+                    buf.truncate(dimensions.div_ceil(8));
+                    Some(OldVector::Packed(buf))
+                }
                 _ => None,
             }
         } else {
-            None
+            let mut buf = vec![0.0f32; self.config.dimension];
+            match self.inner.get(label, &mut buf) {
+                Ok(n) if n > 0 => Some(OldVector::F32(buf)),
+                _ => None,
+            }
         }
     }
 
@@ -256,9 +294,16 @@ impl UsearchHnswIndex {
     }
 
     /// Attempt to restore the old vector after a failed add, to avoid permanently dropping it.
-    fn restore_on_failure(&self, label: u64, old_vector: Option<Vec<f32>>, add_err: String) -> VectorError {
+    fn restore_on_failure(&self, label: u64, old_vector: Option<OldVector>, add_err: String) -> VectorError {
         if let Some(old) = old_vector {
-            if self.inner.add(label, &old).is_err() {
+            let res = match &old {
+                OldVector::F32(vec) => self.inner.add(label, vec.as_slice()),
+                OldVector::Packed(buf) => {
+                    let b1x8_slice = unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const usearch::b1x8, buf.len()) };
+                    self.inner.add(label, b1x8_slice)
+                }
+            };
+            if res.is_err() {
                 return VectorError::Internal(format!(
                     "usearch add failed ({add_err}) and restoring the previous vector also failed — \
                      '{label}' may be missing from the index until the next rebuild"
@@ -273,7 +318,8 @@ impl UsearchHnswIndex {
         &self,
         label: u64,
         vector: &[f32],
-        old_vector: Option<Vec<f32>>,
+        old_vector: Option<OldVector>,
+        b1x8_slice: Option<&[usearch::b1x8]>,
     ) -> Result<(), VectorError> {
         let _guard = self.resize_lock.write();
         let cur_cap = self.inner.capacity();
@@ -285,7 +331,9 @@ impl UsearchHnswIndex {
             .reserve_capacity_and_threads(new_cap, reserved_thread_count())
             .map_err(|e| VectorError::Internal(format!("usearch reserve: {e}")))?;
 
-        self.inner.add(label, vector).map_err(|e| self.restore_on_failure(label, old_vector, e.to_string()))?;
+        let res =
+            if let Some(packed) = b1x8_slice { self.inner.add(label, packed) } else { self.inner.add(label, vector) };
+        res.map_err(|e| self.restore_on_failure(label, old_vector, e.to_string()))?;
         Ok(())
     }
 
@@ -324,16 +372,32 @@ impl VectorIndex for UsearchHnswIndex {
 
         // Fast path: usearch's `add` and `remove` are safe to call concurrently with
         // each other across distinct keys.
+        let packed_vector =
+            if let Some(ref transform) = self.rabitq_transform { transform.transform_and_pack(vector) } else { vec![] };
+
+        let b1x8_slice = if !packed_vector.is_empty() {
+            // SAFETY: usearch::b1x8 is a transparent u8 wrapper, and packed_vector has the exact byte length expected.
+            let ptr = packed_vector.as_ptr() as *const usearch::b1x8;
+            Some(unsafe { std::slice::from_raw_parts(ptr, packed_vector.len()) })
+        } else {
+            None
+        };
+
         {
             let _guard = self.resize_lock.read();
             self.upsert_remove_old(label, old_vector.is_some())?;
-            if self.inner.add(label, vector).is_ok() {
+            let res = if let Some(packed) = b1x8_slice {
+                self.inner.add(label, packed)
+            } else {
+                self.inner.add(label, vector)
+            };
+            if res.is_ok() {
                 return Ok(());
             }
         }
 
         // Slow path: out of capacity or thread slots.
-        self.grow_capacity_and_add(label, vector, old_vector)
+        self.grow_capacity_and_add(label, vector, old_vector, b1x8_slice)
     }
 
     fn remove(&self, key: &EntityKey) -> Result<(), VectorError> {
@@ -375,7 +439,35 @@ impl VectorIndex for UsearchHnswIndex {
         } else {
             None
         };
-        let matches = self.inner.search(query, k).map_err(|e| VectorError::Internal(format!("usearch search: {e}")))?;
+
+        let matches = if let Some(ref transform) = self.rabitq_transform {
+            let mut rotated = transform.rotate(query);
+            if self.metric() == DistanceMetric::Cosine {
+                let norm = rotated.iter().map(|x| x * x).sum::<f32>().sqrt();
+                if norm > 0.0 {
+                    rotated.iter_mut().for_each(|x| *x /= norm);
+                }
+            }
+            
+            crate::vector::rabitq::CURRENT_QUERY.with(|q| {
+                *q.borrow_mut() = Some(rotated);
+            });
+            let bits_len = transform.pad_dim().div_ceil(8);
+            let dummy_bytes = vec![0u8; bits_len + 8];
+            // SAFETY: Dummy bytes buffer corresponds directly to b1x8 which is a wrapper over u8.
+            let dummy_b1x8_slice =
+                unsafe { std::slice::from_raw_parts(dummy_bytes.as_ptr() as *const usearch::b1x8, dummy_bytes.len()) };
+
+            let res = self
+                .inner
+                .search(dummy_b1x8_slice, k)
+                .map_err(|e| VectorError::Internal(format!("usearch search: {e}")));
+            crate::vector::rabitq::CURRENT_QUERY.with(|q| *q.borrow_mut() = None);
+            res?
+        } else {
+            self.inner.search(query, k).map_err(|e| VectorError::Internal(format!("usearch search: {e}")))?
+        };
+
         if prev_ef.is_some() {
             self.inner.change_expansion_search(self.default_ef_search);
         }
@@ -442,6 +534,7 @@ impl VectorIndex for UsearchHnswIndex {
         match self.config.quantization {
             crate::vector::Quantization::F16 => 2,
             crate::vector::Quantization::F32 => 4,
+            crate::vector::Quantization::RaBitQ { .. } => 1,
         }
     }
 }
@@ -455,8 +548,15 @@ impl VectorIndex for UsearchHnswIndex {
 pub fn load_vector_index(path: &Path, config: &VectorIndexConfig) -> Result<UsearchHnswIndex, VectorError> {
     let (header, usearch_bytes) = load_snapshot_file(path, config.dimension, config.metric)?;
 
+    let mut dimensions = config.dimension;
+    if let Quantization::RaBitQ { seed } = config.quantization {
+        let actual_seed = seed.unwrap_or(42);
+        let transform = crate::vector::rabitq::RaBitQTransform::new(config.dimension, actual_seed, config.metric);
+        dimensions = transform.pad_dim() + 64;
+    }
+
     let options = IndexOptions {
-        dimensions: config.dimension,
+        dimensions,
         metric: metric_to_usearch(config.metric),
         quantization: scalar_kind(config.quantization),
         connectivity: config.algorithm_connectivity(),
@@ -465,8 +565,18 @@ pub fn load_vector_index(path: &Path, config: &VectorIndexConfig) -> Result<Usea
         ..Default::default()
     };
 
-    let inner = Index::new(&options).map_err(|e| VectorError::Internal(format!("usearch create for load: {e}")))?;
+    let mut inner = Index::new(&options).map_err(|e| VectorError::Internal(format!("usearch create for load: {e}")))?;
+
     inner.load_from_buffer(&usearch_bytes).map_err(|e| VectorError::Internal(format!("usearch load: {e}")))?;
+
+    let mut rabitq_transform = None;
+    if let Quantization::RaBitQ { seed } = config.quantization {
+        let actual_seed = seed.unwrap_or(42);
+        let transform = crate::vector::rabitq::RaBitQTransform::new(config.dimension, actual_seed, config.metric);
+        let metric_fn = crate::vector::rabitq::create_rabitq_metric(transform.pad_dim(), config.metric);
+        inner.change_metric::<usearch::b1x8>(metric_fn);
+        rabitq_transform = Some(transform);
+    }
 
     let is_edge = config.entity_type == VectorEntityType::Edge;
 
@@ -481,6 +591,7 @@ pub fn load_vector_index(path: &Path, config: &VectorIndexConfig) -> Result<Usea
         edge_map: if is_edge { Some(EdgeLabelMap::new()) } else { None },
         resize_lock: parking_lot::RwLock::new(()),
         upsert_locks: ShardedUpsertLocks::new(UPSERT_LOCK_SHARDS),
+        rabitq_transform,
     })
 }
 
@@ -938,5 +1049,66 @@ mod tests {
 
         let res = idx.insert(&EntityKey::Vertex(99999), &[0.0, 0.0, 1.0, 0.0]);
         assert!(res.is_ok(), "Insert failed: {:?}", res.err());
+    }
+}
+
+#[cfg(test)]
+mod rabitq_tests {
+    use super::*;
+    use crate::vector::{cosine_sim, AnnAlgorithm, DistanceMetric, HnswConfig, Quantization, VectorEntityType};
+    use std::collections::HashSet;
+
+    #[test]
+    fn test_rabitq_recall_vs_brute_force_large() {
+        let mut seed: u64 = 42;
+        let mut next_f32 = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            ((seed >> 33) as f32) / ((1u32 << 31) as f32) - 0.5
+        };
+
+        let dim = 768; // RaBitQ usually needs larger dimensions to show value
+        let num_vectors = 2000;
+        let k = 10;
+        let num_queries = 50;
+
+        let config = VectorIndexConfig {
+            property: "emb".into(),
+            entity_type: VectorEntityType::Vertex,
+            dimension: dim,
+            metric: DistanceMetric::Cosine,
+            algorithm: AnnAlgorithm::Hnsw(HnswConfig { m: 16, ef_construction: 200, ef_search: 64 }),
+            quantization: Quantization::RaBitQ { seed: Some(42) },
+        };
+        let index = UsearchHnswIndex::new(&config).unwrap();
+
+        let mut dataset: Vec<Vec<f32>> = Vec::with_capacity(num_vectors);
+        for id in 0..num_vectors {
+            let vec: Vec<f32> = (0..dim).map(|_| next_f32()).collect();
+            index.insert(&EntityKey::Vertex(id as i64), &vec).unwrap();
+            dataset.push(vec);
+        }
+
+        let mut total_hits = 0;
+        for _ in 0..num_queries {
+            let query: Vec<f32> = (0..dim).map(|_| next_f32()).collect();
+            let mut exact: Vec<(i64, f32)> =
+                dataset.iter().enumerate().map(|(id, vec)| (id as i64, cosine_sim(vec, &query))).collect();
+            exact.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            let ground_truth: HashSet<i64> = exact.iter().take(k).map(|(id, _)| *id).collect();
+
+            let results = index.search(&query, k, Some(200)).unwrap();
+            for (key, _) in results {
+                if let EntityKey::Vertex(id) = key {
+                    if ground_truth.contains(&id) {
+                        total_hits += 1;
+                    }
+                }
+            }
+        }
+
+        let avg_recall = total_hits as f32 / (num_queries * k) as f32;
+        println!("RaBitQ Avg Recall: {:.2}%", avg_recall * 100.0);
+        // Expecting around 20-30% without re-ranking
+        assert!(avg_recall >= 0.15, "RaBitQ Recall was {:.2}%, expected >= 15%", avg_recall * 100.0);
     }
 }

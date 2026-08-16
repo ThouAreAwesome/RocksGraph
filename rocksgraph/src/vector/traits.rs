@@ -124,12 +124,19 @@ pub enum Quantization {
     F16 = 0,
     /// Full-precision float (IEEE 754 binary32). Opt-in for maximum recall.
     F32 = 1,
+    /// RaBitQ 1-bit quantization with an optional seed for the rotation matrix.
+    /// Provides massive memory reduction.
+    RaBitQ { seed: Option<u64> },
 }
 
 impl Quantization {
     #[inline]
     pub(crate) fn to_u8(self) -> u8 {
-        self as u8
+        match self {
+            Self::F16 => 0,
+            Self::F32 => 1,
+            Self::RaBitQ { .. } => 2,
+        }
     }
 
     #[inline]
@@ -137,6 +144,7 @@ impl Quantization {
         match val {
             0 => Some(Self::F16),
             1 => Some(Self::F32),
+            2 => Some(Self::RaBitQ { seed: None }), // Seed is populated by the caller if present
             _ => None,
         }
     }

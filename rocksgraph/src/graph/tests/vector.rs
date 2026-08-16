@@ -2185,3 +2185,33 @@ fn test_close_waits_for_multiple_checkpoints() {
     graph.close().unwrap();
     assert!(start.elapsed() >= std::time::Duration::from_millis(100));
 }
+
+#[test]
+fn test_nearest_hnsw_rabitq_recall_vs_exact() {
+    let dir = tempfile::tempdir().unwrap();
+    let vectors = vector_fixtures::lcg_vectors(LCG_N, LCG_DIM, 42);
+    vector_fixtures::build_vector_graph(dir.path(), &vectors, DistanceMetric::Cosine, Quantization::RaBitQ { seed: Some(42) }, true);
+    let queries = vector_fixtures::lcg_vectors(20, LCG_DIM, 99);
+
+    let g = Graph::open(dir.path()).unwrap();
+    let mut snap = g.read();
+    let mut total = 0.0f32;
+    let mut failures = Vec::new();
+    for (i, q) in queries.iter().enumerate() {
+        let ids = ids_from_results(snap.g().V([]).nearest("emb", q.clone(), LCG_K).id().to_list().unwrap());
+        let exact = vector_fixtures::exact_top_k(&vectors, q, LCG_K, DistanceMetric::Cosine);
+        let r = vector_fixtures::recall(&ids, &exact, LCG_K);
+        total += r;
+        if r < RECALL_THRESHOLD {
+            failures.push((i, r));
+        }
+    }
+    let avg = total / queries.len() as f32;
+    if !failures.is_empty() {
+        for (i, r) in &failures {
+            eprintln!("rabitq nearest recall: query={i} recall={r:.3}");
+        }
+    }
+    assert!(avg >= RECALL_THRESHOLD, "avg rabitq nearest recall {:.3} < {RECALL_THRESHOLD}", avg);
+    g.close().unwrap();
+}

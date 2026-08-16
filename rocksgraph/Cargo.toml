@@ -43,7 +43,7 @@ rocksdb = "0.24"
 bimap = "0.6"
 
 tempfile = "3"
-rand = "0.8"
+rand = { version = "0.8", features = ["std_rng"] }
 hdrhistogram = "7.5.4"
 tracing = { version = "0.1", optional = true }
 

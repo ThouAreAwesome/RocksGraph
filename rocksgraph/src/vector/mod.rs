@@ -13,6 +13,7 @@ pub(crate) mod brute_force;
 pub(crate) mod error;
 pub(crate) mod hnsw;
 pub(crate) mod persistence;
+pub(crate) mod rabitq;
 pub(crate) mod traits;
 pub(crate) mod wal;
 

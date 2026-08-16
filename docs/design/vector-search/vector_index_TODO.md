@@ -154,10 +154,48 @@ complexity (see below).
 
 ### 4. RaBitQ
 
-Discussed and deliberately deferred — real potential speedup on the
-distance-computation side, but a large, separate v0.4-scope project (needs
-an async training pipeline and a warm-up fallback before the index is
-trained). Not recommended as a near-term next step; revisit after (4).
+Revised (2026-08-16): the original note here claimed RaBitQ "needs an async
+training pipeline and a warm-up fallback before the index is trained" —
+checked the actual algorithm (SIGMOD 2024, Gao & Long) and that's wrong.
+RaBitQ's core transform needs no training: a fixed, data-independent random
+rotation (Johnson-Lindenstrauss transform), generated once and applied
+uniformly, followed by deterministic per-vector bit quantization computed
+from that vector alone (rotation, sign bits, a per-vector rescaling factor).
+Vectors can be quantized on arrival, streaming — the same shape as F16
+conversion today, no warm-up needed. The "training" association comes from
+RaBitQ's common pairing with IVF in reference implementations (the original
+repo's query-time code is literally `ivf_rabitq.h`), where IVF's k-means
+centroid computation is a genuine training phase — but that belongs to IVF,
+not RaBitQ, and RocksGraph is HNSW-only, no IVF (`design_ann_algorithm_and_library.md`).
+
+This lowers the estimated complexity from the original assessment, but it's
+still real work: no established, license-compatible Rust crate exists for
+RaBitQ today (surveyed 2026-08-16, updating `design_ann_algorithm_and_library.md`
+§6's "no established Rust crate" note with specifics):
+
+- **`VectorDB-NTU/RaBitQ-Library`** (the paper authors' own reference impl) —
+  Apache-2.0, C++ core + Python bindings, no Rust bindings, structured as a
+  reusable library (not just a benchmark harness). License-compatible and the
+  most mature option, but would need the same treatment as usearch: a thin
+  Rust FFI wrapper around the C++ core, not a drop-in dependency.
+- **`rabitq-rs`** (crates.io) — Apache-2.0, pure Rust, but very new (3 months
+  old, 36 downloads) and built as a standalone IVF+RaBitQ+MSTG ANN engine, not
+  a quantization-only primitive that could plug into the existing
+  `UsearchHnswIndex`.
+- **`rabitq` (crates.io)** — more downloads/history, but **AGPL-3.0** —
+  copyleft, incompatible with shipping inside a permissively-licensed
+  embedded DB. Ruled out regardless of maturity.
+- Elastic's OSQ (the current production-grade refinement of RaBitQ, per (3)'s
+  discussion) is Java-only, part of Apache Lucene — not embeddable in Rust at
+  all.
+
+So the realistic path, if this is ever pursued, is wrapping the C++
+RaBitQ-Library the way usearch itself is wrapped today — not adding a crate.
+Implementing the rotation + quantization + bitwise/SIMD distance estimation
+from scratch and integrating it as a new `Quantization` variant alongside
+F16/F32 is still real work, just not a training pipeline. Revisit after (3)
+[F16 vs F32 build-speed comparison] to establish how much headroom remains to
+justify it.
 
 ### 5. Native batch-insert API / keyspace-partitioned scanning
 
